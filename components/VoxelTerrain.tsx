@@ -199,6 +199,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     
     const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
 
+    // Queue for pending remeshes to avoid blocking
+    const remeshQueue = useRef<string[]>([]);
+
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === '1') setBuildMat(MaterialType.DIRT);
@@ -224,27 +227,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         // Start simulation manager
         simulationManager.start();
 
-        // Set callback for re-meshing when simulation updates
-        simulationManager.setCallback((key) => {
-            if (workerRef.current) {
-                const chunk = chunksRef.current[key];
-                const metadata = metadataDB.getChunk(key);
-                if (chunk && metadata) {
-                     workerRef.current.postMessage({
-                        type: 'REMESH',
-                        payload: {
-                            key,
-                            cx: chunk.cx,
-                            cz: chunk.cz,
-                            density: chunk.density,
-                            material: chunk.material,
-                            wetness: metadata['wetness'],
-                            mossiness: metadata['mossiness'],
-                            version: chunk.version + 1 // Increment version to force update
-                        }
-                    });
+        // Set callback for batched updates
+        simulationManager.setCallback((keys) => {
+            // Add unique keys to queue
+            keys.forEach(key => {
+                if (!remeshQueue.current.includes(key)) {
+                    remeshQueue.current.push(key);
                 }
-            }
+            });
         });
 
         const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
@@ -291,7 +281,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         return () => worker.terminate();
     }, []);
 
-    // 1. Infinite Terrain Loading
+    // 1. Infinite Terrain Loading & Processing Remesh Queue
     useFrame(() => {
         if (!camera || !workerRef.current) return;
 
@@ -334,6 +324,34 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             chunksRef.current = newChunks;
             setChunks(newChunks);
         }
+
+        // Process Remesh Queue (Throttle: max 2 per frame)
+        if (remeshQueue.current.length > 0) {
+             const maxPerFrame = 2;
+             for (let i=0; i<maxPerFrame; i++) {
+                 const key = remeshQueue.current.shift();
+                 if (!key) break;
+
+                 const chunk = chunksRef.current[key];
+                 const metadata = metadataDB.getChunk(key);
+
+                 if (chunk && metadata) {
+                     workerRef.current.postMessage({
+                        type: 'REMESH',
+                        payload: {
+                            key,
+                            cx: chunk.cx,
+                            cz: chunk.cz,
+                            density: chunk.density,
+                            material: chunk.material,
+                            wetness: metadata['wetness'],
+                            mossiness: metadata['mossiness'],
+                            version: chunk.version + 1
+                        }
+                    });
+                 }
+             }
+        }
     });
 
     // 2. Interaction Logic
@@ -348,6 +366,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         
         if (hit) {
             const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
+            const dist = origin.distanceTo(rapierHitPoint);
+
             const offset = action === 'DIG' ? -0.1 : 0.1;
             const hitPoint = new THREE.Vector3(
                 rapierHitPoint.x + direction.x * offset, 
@@ -356,7 +376,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             );
             
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
-            const radius = DIG_RADIUS;
+
+            // Precision digging/building check
+            const radius = (dist < 3.0) ? 0.5 : DIG_RADIUS;
 
             const minWx = hitPoint.x - (radius + 2); 
             const maxWx = hitPoint.x + (radius + 2);
