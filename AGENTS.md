@@ -1,0 +1,14 @@
+## Agent Notes for `VoxelCraft`
+
+- **Project type**: Vite + React + TypeScript + `three` / `@react-three/*` voxel terrain demo.
+- **Entry point**: React entry is `index.tsx` in the project root, which mounts `App` into the `#root` div in `index.html`.
+- **Dev server**: Use `npm install` once, then `npm run dev` from the project root. Vite serves on port `3000` (see `vite.config.ts`).
+- **HTML entry**: `index.html` must include a `<script type="module" src="/index.tsx"></script>` tag so Vite can load the React app. If the page is pure black with no UI, check that this tag is present.
+- **Styling**: Tailwind is loaded via CDN in `index.html` (not via a local config). Utility classes in React components rely on that `<script src="https://cdn.tailwindcss.com"></script>` in the HTML.
+- **Pointer lock / controls**: The app uses `PointerLockControls` and keyboard controls; clicking into the canvas captures the pointer, and `InteractionLayer` handles mouse events for dig/build actions.
+- **Environment variables**: `vite.config.ts` maps `GEMINI_API_KEY` from `.env.local` into `process.env.*` for use by the app.
+- **User preferences**: 
+  - Keep edits focused on the user’s immediate request; suggest larger refactors before doing them.
+  - Add docstrings / JSDoc-style comments to new functions or components you introduce.
+  - Do not edit build artifacts in `dist/`; change source files instead.
+- **2025-03-xx seam fix**: Boundary snapping is enabled in `utils/mesher.ts` so adjacent chunks share exact edge vertices. A later attempt to rewire face construction caused exploded geometry; we reverted to the original quad assembly (with snapping retained). If cracks reappear, re-check face winding vs. normal direction before changing index wiring.

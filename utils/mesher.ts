@@ -138,17 +138,14 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
   const bufIdx = (x: number, y: number, z: number) => x + y * size + z * size * size;
 
   const pushQuad = (c0: number, c1: number, c2: number, c3: number, flipped: boolean) => {
-     if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
-         // FIXED: Swapped the flipped logic. 
-         // If flipped (Solid->Air), we want Normal pointing towards Air.
-         // The previous order produced inward normals. This order produces outward normals.
-         if (!flipped) {
-            indices.push(c0, c1, c2, c2, c1, c3);
-         } else {
-            indices.push(c2, c1, c0, c3, c1, c2);
-         }
-     }
-  };
+    if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
+        if (!flipped) {
+           indices.push(c0, c1, c2, c2, c1, c3);
+        } else {
+           indices.push(c2, c1, c0, c3, c1, c2);
+        }
+    }
+ };
 
   for (let z = start; z < end; z++) {
     for (let y = start; y < end; y++) {
