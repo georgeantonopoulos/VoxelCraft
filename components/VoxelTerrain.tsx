@@ -21,6 +21,7 @@ interface ChunkState {
     meshPositions: Float32Array;
     meshIndices: Uint32Array;
     meshMaterials: Float32Array;
+    meshNormals: Float32Array;
 }
 
 interface VoxelTerrainProps {
@@ -61,16 +62,23 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
             geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
         }
 
+        // Handle custom normals
+        if (chunk.meshNormals && chunk.meshNormals.length > 0) {
+            geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
+        } else {
+            // Fallback if no analytic normals provided
+            geom.computeVertexNormals();
+        }
+
         // Set Index
         geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
 
         // Compute derived data
-        geom.computeVertexNormals();
         geom.computeBoundingBox();
         geom.computeBoundingSphere();
 
         return geom;
-    }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.version]);
+    }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.version]);
 
     // If no geometry, render nothing
     if (!geometry) return null;
@@ -210,7 +218,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                         key, cx, cz, density, material, version: 0,
                         meshPositions: mesh.positions,
                         meshIndices: mesh.indices,
-                        meshMaterials: mesh.materials
+                        meshMaterials: mesh.materials,
+                        meshNormals: mesh.normals
                     };
                     changed = true;
                 }
@@ -296,7 +305,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                                 version: chunk.version + 1,
                                 meshPositions: newMesh.positions,
                                 meshIndices: newMesh.indices,
-                                meshMaterials: newMesh.materials
+                                meshMaterials: newMesh.materials,
+                                meshNormals: newMesh.normals
                             };
                             anyModified = true;
                             

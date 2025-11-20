@@ -121,7 +121,7 @@ const TerrainShaderMaterial = shaderMaterial(
 
     float triplanarNoise(vec3 pos, vec3 normal, float scale) {
         vec3 blend = max(abs(normal) - 0.4, 0.0);
-        blend /= dot(blend, vec3(1.0));
+        blend /= (dot(blend, vec3(1.0)) + 0.00001);
         
         float x = fbm(pos.yz * scale);
         float y = fbm(pos.zx * scale);
@@ -146,19 +146,20 @@ const TerrainShaderMaterial = shaderMaterial(
     }
 
     void main() {
-      float slope = clamp(dot(vWorldNormal, vec3(0.0, 1.0, 0.0)), -1.0, 1.0);
+      vec3 worldNormal = normalize(vWorldNormal);
+      float slope = clamp(dot(worldNormal, vec3(0.0, 1.0, 0.0)), -1.0, 1.0);
       float m = vMaterial;
       float height = vHeight;
 
       // Multi-scale noise for subtle color variation and macro breakup
-      float macroNoise = triplanarNoise(vPosition, vWorldNormal, 0.04) * uMacroVariation;
-      float microNoise = triplanarNoise(vPosition, vWorldNormal, 0.7);
+      float macroNoise = triplanarNoise(vPosition, worldNormal, 0.04) * uMacroVariation;
+      float microNoise = triplanarNoise(vPosition, worldNormal, 0.7);
 
-      vec3 c_stone = triSampleColor(vPosition, vWorldNormal, uColorStone, 0.12);
-      vec3 c_grass = triSampleColor(vPosition, vWorldNormal, uColorGrass, 0.1);
+      vec3 c_stone = triSampleColor(vPosition, worldNormal, uColorStone, 0.12);
+      vec3 c_grass = triSampleColor(vPosition, worldNormal, uColorGrass, 0.1);
       c_grass = mix(c_grass, c_grass * 0.82 + vec3(0.06, 0.08, 0.02), macroNoise * 0.5 + 0.5);
-      vec3 c_dirt = triSampleColor(vPosition, vWorldNormal, uColorDirt, 0.18);
-      vec3 c_sand = triSampleColor(vPosition, vWorldNormal, uColorSand, 0.2);
+      vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.18);
+      vec3 c_sand = triSampleColor(vPosition, worldNormal, uColorSand, 0.2);
 
       vec3 baseColor = c_stone;
       float specular = 0.08;
@@ -197,7 +198,7 @@ const TerrainShaderMaterial = shaderMaterial(
       // Small darkening in cavities to fake ambient occlusion.
       float ao = clamp(1.0 - (1.0 - slope) * uAOIntensity - macroNoise * 0.25, 0.55, 1.0);
 
-      vec3 normal = calcDetailNormal(vPosition, vWorldNormal);
+      vec3 normal = calcDetailNormal(vPosition, worldNormal);
       vec3 lightDir = normalize(uSunDir);
       vec3 viewDir = normalize(cameraPosition - vPosition);
 
