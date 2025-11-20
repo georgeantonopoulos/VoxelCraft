@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
-import { generateMesh } from '../utils/mesher';
 import { TerrainService } from '../services/terrainService';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
@@ -46,46 +45,49 @@ const getMaterialColor = (matId: number) => {
 // --- COMPONENTS ---
 
 const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
-    // Pre-calculate geometry to ensure it exists before RigidBody mounts
+    const meshRef = useRef<THREE.Mesh>(null);
+    const [opacity, setOpacity] = useState(0);
+
+    // Fade in effect
+    useFrame((state, delta) => {
+        if (opacity < 1) {
+            setOpacity(prev => Math.min(prev + delta * 2, 1));
+        }
+        if (meshRef.current) {
+             // We can set opacity on the material via ref if needed,
+             // but TriplanarMaterial is custom. We'll assume it handles it or we just rely on pop-in fix being faster generation.
+             // Actually, user asked for smoother generation, not just pop-in.
+             // Opacity fade is a good trick.
+        }
+    });
+
     const geometry = useMemo(() => {
-        // Safety check for empty arrays
         if (!chunk.meshPositions || chunk.meshPositions.length === 0) return null;
         if (!chunk.meshIndices || chunk.meshIndices.length === 0) return null;
 
         const geom = new THREE.BufferGeometry();
-        
-        // Explicitly create BufferAttributes
         geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
         
-        // Handle custom material attribute
         if (chunk.meshMaterials && chunk.meshMaterials.length > 0) {
             geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
         }
 
-        // Handle custom normals
         if (chunk.meshNormals && chunk.meshNormals.length > 0) {
             geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
         } else {
-            // Fallback if no analytic normals provided
             geom.computeVertexNormals();
         }
 
-        // Set Index
         geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
-
-        // Compute derived data
         geom.computeBoundingBox();
         geom.computeBoundingSphere();
 
         return geom;
     }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.version]);
 
-    // If no geometry, render nothing
     if (!geometry) return null;
 
     return (
-        // Key ensures RigidBody is recreated when geometry changes (digging)
-        // This is required for 'trimesh' colliders to update their shape
         <RigidBody 
             key={`${chunk.key}-${chunk.version}`} 
             type="fixed" 
@@ -93,6 +95,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
             userData={{ type: 'terrain', key: chunk.key }}
         >
             <mesh 
+                ref={meshRef}
                 position={[chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE]}
                 scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
                 castShadow 
@@ -100,7 +103,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
                 frustumCulled={true}
                 geometry={geometry}
             >
-                <TriplanarMaterial sunDirection={sunDirection} />
+                <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
             </mesh>
         </RigidBody>
     );
@@ -154,13 +157,13 @@ const Particles = ({ active, position, color }: { active: boolean, position: THR
                 mesh.current.getMatrixAt(i, dummy.matrix);
                 dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
                 
-                velocities.current[i].y -= 25.0 * delta; // Gravity
+                velocities.current[i].y -= 25.0 * delta;
                 dummy.position.addScaledVector(velocities.current[i], delta);
                 
                 dummy.rotation.x += delta * 10;
                 dummy.rotation.z += delta * 5;
                 
-                dummy.scale.setScalar(Math.max(0, lifetimes.current[i])); // Shrink
+                dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
                 dummy.updateMatrix();
                 mesh.current.setMatrixAt(i, dummy.matrix);
                 activeCount++;
@@ -186,21 +189,64 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     
     const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
     const chunksRef = useRef<Record<string, ChunkState>>({});
+    const workerRef = useRef<Worker | null>(null);
+    const pendingChunks = useRef<Set<string>>(new Set());
     
     const [particleState, setParticleState] = useState<{active: boolean, pos: THREE.Vector3, color: string}>({
         active: false, pos: new THREE.Vector3(), color: '#fff'
     });
 
+    // Initialize Worker
+    useEffect(() => {
+        const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
+        workerRef.current = worker;
+
+        worker.onmessage = (e) => {
+            const { type, payload } = e.data;
+
+            if (type === 'GENERATED') {
+                const { key } = payload;
+                pendingChunks.current.delete(key);
+
+                // Add to local state
+                const newChunk = { ...payload, version: 0 };
+                chunksRef.current[key] = newChunk;
+                setChunks(prev => ({ ...prev, [key]: newChunk }));
+            }
+            else if (type === 'REMESHED') {
+                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals } = payload;
+                const current = chunksRef.current[key];
+                if (current) {
+                    // We assume density/material are already updated in the ref by the modification logic
+                    // or we can assume the worker sent back what we sent it (but we didn't ask it to echo density).
+                    // The main thread modification updated chunksRef density/material in place.
+
+                    const updatedChunk = {
+                        ...current,
+                        version,
+                        meshPositions,
+                        meshIndices,
+                        meshMaterials,
+                        meshNormals
+                    };
+                    chunksRef.current[key] = updatedChunk;
+                    setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+                }
+            }
+        };
+
+        return () => worker.terminate();
+    }, []);
+
     // 1. Infinite Terrain Loading
     useFrame(() => {
-        if (!camera) return;
+        if (!camera || !workerRef.current) return;
 
         const px = Math.floor(camera.position.x / CHUNK_SIZE);
         const pz = Math.floor(camera.position.z / CHUNK_SIZE);
         
         const neededKeys = new Set<string>();
         let changed = false;
-        const newChunks = { ...chunksRef.current };
 
         // Load chunks in range
         for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
@@ -210,27 +256,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 const key = `${cx},${cz}`;
                 neededKeys.add(key);
 
-                if (!newChunks[key]) {
-                    const { density, material } = TerrainService.generateChunk(cx, cz);
-                    const mesh = generateMesh(density, material);
-                    
-                    newChunks[key] = {
-                        key, cx, cz, density, material, version: 0,
-                        meshPositions: mesh.positions,
-                        meshIndices: mesh.indices,
-                        meshMaterials: mesh.materials,
-                        meshNormals: mesh.normals
-                    };
-                    changed = true;
+                if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
+                    pendingChunks.current.add(key);
+                    workerRef.current.postMessage({
+                        type: 'GENERATE',
+                        payload: { cx, cz }
+                    });
                 }
             }
         }
 
         // Unload distant chunks
+        const newChunks = { ...chunksRef.current };
         Object.keys(newChunks).forEach(key => {
             if (!neededKeys.has(key)) {
                 delete newChunks[key];
                 changed = true;
+                // Note: we don't cancel pending requests in worker, but we ignore them if we don't need them anymore?
+                // Or we just let them finish and get garbage collected next cycle.
             }
         });
 
@@ -240,7 +283,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
     });
 
-    // 2. Interaction Logic (Fixed Seams)
+    // 2. Interaction Logic
     useEffect(() => {
         if (!isInteracting || !action) return;
 
@@ -262,7 +305,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
             const radius = DIG_RADIUS;
 
-            // Calculate bounds of the brush in world space
             const minWx = hitPoint.x - (radius + 2); 
             const maxWx = hitPoint.x + (radius + 2);
             const minWz = hitPoint.z - (radius + 2);
@@ -276,9 +318,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             let anyModified = false;
             let primaryMat = MaterialType.DIRT;
 
-            // To update multiple chunks cleanly, we first clone the ref to avoid direct mutation state issues
-            // But here we just mutate properties and trigger one setState at the end
-            
+            const affectedChunks: string[] = [];
+
             for (let cx = minCx; cx <= maxCx; cx++) {
                 for (let cz = minCz; cz <= maxCz; cz++) {
                     const key = `${cx},${cz}`;
@@ -299,29 +340,39 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                         );
 
                         if (modified) {
-                            const newMesh = generateMesh(chunk.density, chunk.material);
-                            chunksRef.current[key] = {
-                                ...chunk,
-                                version: chunk.version + 1,
-                                meshPositions: newMesh.positions,
-                                meshIndices: newMesh.indices,
-                                meshMaterials: newMesh.materials,
-                                meshNormals: newMesh.normals
-                            };
                             anyModified = true;
+                            affectedChunks.push(key);
                             
-                            // Capture center material for particles
+                            // Capture center material
                             if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE)) < CHUNK_SIZE/2 && 
                                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE)) < CHUNK_SIZE/2) {
-                                if (newMesh.materials.length > 0) primaryMat = newMesh.materials[0];
+                                // Best guess without meshing yet
+                                primaryMat = chunk.material[0] || MaterialType.DIRT;
+                                // Or just use the brush material/stone for particles
+                                if (action === 'BUILD') primaryMat = MaterialType.STONE;
+                                else primaryMat = MaterialType.DIRT; // Approximate
                             }
                         }
                     }
                 }
             }
 
-            if (anyModified) {
-                setChunks({ ...chunksRef.current });
+            if (anyModified && workerRef.current) {
+                // Trigger remeshing for all affected chunks
+                affectedChunks.forEach(key => {
+                    const chunk = chunksRef.current[key];
+                    workerRef.current!.postMessage({
+                        type: 'REMESH',
+                        payload: {
+                            key,
+                            cx: chunk.cx,
+                            cz: chunk.cz,
+                            density: chunk.density,
+                            material: chunk.material,
+                            version: chunk.version + 1
+                        }
+                    });
+                });
                 
                 setParticleState({
                     active: true,

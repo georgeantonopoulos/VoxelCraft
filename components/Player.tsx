@@ -5,7 +5,7 @@ import { useKeyboardControls } from '@react-three/drei';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '../constants';
 
-export const Player = () => {
+export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
   const [, getKeys] = useKeyboardControls();
   const { rapier, world } = useRapier();
@@ -52,7 +52,7 @@ export const Player = () => {
       colliders={false} 
       mass={1} 
       type="dynamic" 
-      position={[16, 32, 16]} 
+      position={position}
       enabledRotations={[false, false, false]}
       friction={0}
     >
