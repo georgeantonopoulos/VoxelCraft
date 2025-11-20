@@ -16,11 +16,15 @@ interface ChunkState {
     cz: number;
     density: Float32Array;
     material: Uint8Array;
+    wetness: Uint8Array;
+    mossiness: Uint8Array;
     version: number;
     meshPositions: Float32Array;
     meshIndices: Uint32Array;
     meshMaterials: Float32Array;
     meshNormals: Float32Array;
+    meshWetness: Float32Array;
+    meshMossiness: Float32Array;
 }
 
 interface VoxelTerrainProps {
@@ -38,6 +42,10 @@ const getMaterialColor = (matId: number) => {
         case MaterialType.SAND: return '#dcd0a0';
         case MaterialType.DIRT: return '#5d4037';
         case MaterialType.GRASS: return '#55aa33';
+        case MaterialType.CLAY: return '#a67b5b';
+        case MaterialType.WATER_SOURCE: return '#3b85d1';
+        case MaterialType.WATER_FLOWING: return '#3b85d1';
+        case MaterialType.MOSSY_STONE: return '#5c8a3c';
         default: return '#888888';
     }
 };
@@ -70,6 +78,14 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         
         if (chunk.meshMaterials && chunk.meshMaterials.length > 0) {
             geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
+        }
+
+        if (chunk.meshWetness && chunk.meshWetness.length > 0) {
+            geom.setAttribute('aWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
+        }
+
+        if (chunk.meshMossiness && chunk.meshMossiness.length > 0) {
+            geom.setAttribute('aMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
         }
 
         if (chunk.meshNormals && chunk.meshNormals.length > 0) {
@@ -187,6 +203,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     const { camera } = useThree();
     const { world, rapier } = useRapier();
     
+    const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === '1') setBuildMat(MaterialType.DIRT);
+            if (e.key === '2') setBuildMat(MaterialType.STONE);
+            if (e.key === '3') setBuildMat(MaterialType.WATER_SOURCE);
+            if (e.key === '4') setBuildMat(MaterialType.MOSSY_STONE);
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
     const chunksRef = useRef<Record<string, ChunkState>>({});
     const workerRef = useRef<Worker | null>(null);
@@ -214,20 +243,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 setChunks(prev => ({ ...prev, [key]: newChunk }));
             }
             else if (type === 'REMESHED') {
-                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals } = payload;
+                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, wetness, mossiness } = payload;
                 const current = chunksRef.current[key];
                 if (current) {
-                    // We assume density/material are already updated in the ref by the modification logic
-                    // or we can assume the worker sent back what we sent it (but we didn't ask it to echo density).
-                    // The main thread modification updated chunksRef density/material in place.
-
                     const updatedChunk = {
                         ...current,
                         version,
                         meshPositions,
                         meshIndices,
                         meshMaterials,
-                        meshNormals
+                        meshNormals,
+                        meshWetness,
+                        meshMossiness,
+                        wetness: wetness || current.wetness, // Update physics data if returned
+                        mossiness: mossiness || current.mossiness
                     };
                     chunksRef.current[key] = updatedChunk;
                     setChunks(prev => ({ ...prev, [key]: updatedChunk }));
@@ -336,7 +365,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                             { x: localX, y: localY, z: localZ },
                             radius,
                             delta,
-                            MaterialType.STONE
+                            buildMat
                         );
 
                         if (modified) {
@@ -349,7 +378,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                                 // Best guess without meshing yet
                                 primaryMat = chunk.material[0] || MaterialType.DIRT;
                                 // Or just use the brush material/stone for particles
-                                if (action === 'BUILD') primaryMat = MaterialType.STONE;
+                                if (action === 'BUILD') primaryMat = buildMat;
                                 else primaryMat = MaterialType.DIRT; // Approximate
                             }
                         }
@@ -369,6 +398,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                             cz: chunk.cz,
                             density: chunk.density,
                             material: chunk.material,
+                            wetness: chunk.wetness,
+                            mossiness: chunk.mossiness,
                             version: chunk.version + 1
                         }
                     });
@@ -384,6 +415,37 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             }
         }
     }, [isInteracting, action, camera, world, rapier]);
+
+    // 3. Simulation Loop (Slow Tick)
+    useEffect(() => {
+        if (!workerRef.current) return;
+
+        const interval = setInterval(() => {
+            const activeChunks = Object.values(chunksRef.current);
+
+            // Limit simulation to nearby chunks or throttle?
+            // For now, simulate all loaded chunks.
+            activeChunks.forEach(chunk => {
+                // Don't simulate if already pending or very distant?
+                // Simple pass:
+                workerRef.current!.postMessage({
+                    type: 'SIMULATE',
+                    payload: {
+                        key: chunk.key,
+                        cx: chunk.cx,
+                        cz: chunk.cz,
+                        density: chunk.density,
+                        material: chunk.material,
+                        wetness: chunk.wetness,
+                        mossiness: chunk.mossiness,
+                        version: chunk.version
+                    }
+                });
+            });
+        }, 500); // 500ms tick
+
+        return () => clearInterval(interval);
+    }, []);
 
     return (
         <group>

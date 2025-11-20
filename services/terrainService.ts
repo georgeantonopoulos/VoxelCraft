@@ -46,10 +46,12 @@ export class TerrainService {
       return 20; // Fallback
   }
 
-  static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array } {
+  static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, wetness: Uint8Array, mossiness: Uint8Array } {
     const size = TOTAL_SIZE;
     const density = new Float32Array(size * size * size);
     const material = new Uint8Array(size * size * size);
+    const wetness = new Uint8Array(size * size * size);
+    const mossiness = new Uint8Array(size * size * size);
     
     const worldOffsetX = cx * CHUNK_SIZE;
     const worldOffsetZ = cz * CHUNK_SIZE;
@@ -146,10 +148,14 @@ export class TerrainService {
           } else {
             material[idx] = MaterialType.AIR;
           }
+
+          // Initial Wetness/Mossiness (Could be procedural, currently clean)
+          wetness[idx] = 0;
+          mossiness[idx] = 0;
         }
       }
     }
-    return { density, material };
+    return { density, material, wetness, mossiness };
   }
 
   static modifyChunk(

@@ -12,12 +12,19 @@ const getMat = (material: Uint8Array, x: number, y: number, z: number, size: num
     return material[x + y * size + z * size * size];
 };
 
-export function generateMesh(density: Float32Array, material: Uint8Array): MeshData {
+const getByte = (arr: Uint8Array, x: number, y: number, z: number, size: number) => {
+    if (x < 0 || y < 0 || z < 0 || x >= size || y >= size || z >= size) return 0;
+    return arr[x + y * size + z * size * size];
+};
+
+export function generateMesh(density: Float32Array, material: Uint8Array, wetness: Uint8Array, mossiness: Uint8Array): MeshData {
   const size = TOTAL_SIZE;
   const vertices: number[] = [];
   const indices: number[] = [];
   const mats: number[] = []; 
   const norms: number[] = [];
+  const wets: number[] = [];
+  const moss: number[] = [];
   
   const vertexIndices = new Int32Array(size * size * size).fill(-1);
   
@@ -123,6 +130,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
              
              // --- Material Selection ---
              let bestMat = MaterialType.DIRT; 
+             let bestWet = 0;
+             let bestMoss = 0;
              let minSolidVal = 99999.0; 
              
              const check = (val: number, mx: number, my: number, mz: number) => {
@@ -132,6 +141,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
                         if (val < minSolidVal) {
                             minSolidVal = val;
                             bestMat = m;
+                            bestWet = getByte(wetness, mx, my, mz, size);
+                            bestMoss = getByte(mossiness, mx, my, mz, size);
                         }
                     }
                  }
@@ -147,6 +158,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
              check(v111, x+1, y+1, z+1);
 
              mats.push(bestMat);
+             wets.push(bestWet / 255.0);   // Normalize to 0-1 for shader
+             moss.push(bestMoss / 255.0);  // Normalize to 0-1 for shader
              vertexIndices[x + y * size + z * size * size] = (vertices.length / 3) - 1;
         }
       }
@@ -233,6 +246,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
     positions: new Float32Array(vertices),
     indices: new Uint32Array(indices),
     normals: new Float32Array(norms),
-    materials: new Float32Array(mats)
+    materials: new Float32Array(mats),
+    wetness: new Float32Array(wets),
+    mossiness: new Float32Array(moss)
   };
 }

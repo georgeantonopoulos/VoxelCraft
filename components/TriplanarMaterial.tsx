@@ -18,6 +18,9 @@ const TerrainShaderMaterial = shaderMaterial(
     uColorGrass: new THREE.Color('#3d9a24'),
     uColorSand: new THREE.Color('#e6dcab'),
     uColorSnow: new THREE.Color('#ffffff'),
+    uColorClay: new THREE.Color('#a67b5b'),
+    uColorWater: new THREE.Color('#3b85d1'),
+    uColorMoss: new THREE.Color('#5c8a3c'),
     uFogColorNear: new THREE.Color('#bcd5f1'),
     uFogColorFar: new THREE.Color('#e3eef8'),
     uFogDensity: 0.015,
@@ -32,6 +35,8 @@ const TerrainShaderMaterial = shaderMaterial(
   `
     precision highp float;
     in float aMaterial;
+    in float aWetness;
+    in float aMossiness;
     
     out vec3 vNormal;
     out vec3 vPosition;
@@ -39,12 +44,16 @@ const TerrainShaderMaterial = shaderMaterial(
     out float vMaterial;
     out float vDepth;
     out float vHeight;
+    out float vWetness;
+    out float vMossiness;
     
     void main() {
       vNormal = normalize(normalMatrix * normal);
       vWorldNormal = normalize(mat3(modelMatrix) * normal);
       vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
       vMaterial = aMaterial;
+      vWetness = aWetness;
+      vMossiness = aMossiness;
       vHeight = vPosition.y;
       
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -67,6 +76,9 @@ const TerrainShaderMaterial = shaderMaterial(
     uniform vec3 uColorDirt;
     uniform vec3 uColorSand;
     uniform vec3 uColorSnow;
+    uniform vec3 uColorClay;
+    uniform vec3 uColorWater;
+    uniform vec3 uColorMoss;
     uniform vec3 uColorBedrock;
     uniform vec3 uFogColorNear;
     uniform vec3 uFogColorFar;
@@ -84,6 +96,8 @@ const TerrainShaderMaterial = shaderMaterial(
     in float vMaterial;
     in float vDepth;
     in float vHeight;
+    in float vWetness;
+    in float vMossiness;
 
     out vec4 fragColor;
 
@@ -138,13 +152,30 @@ const TerrainShaderMaterial = shaderMaterial(
 
       vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.18);
       vec3 c_sand = triSampleColor(vPosition, worldNormal, uColorSand, 0.2);
+      vec3 c_clay = triSampleColor(vPosition, worldNormal, uColorClay, 0.15);
+      vec3 c_water = uColorWater; // Water is uniform usually
+      vec3 c_moss = triSampleColor(vPosition, worldNormal, uColorMoss, 0.1);
 
       vec3 baseColor = c_stone;
       float specular = 0.08;
+      float roughness = 0.8;
 
       float snowLine = smoothstep(18.0, 28.0, height);
       float beach = smoothstep(uWaterLevel - 1.5, uWaterLevel + 2.0, height);
       float dirtBand = smoothstep(0.2, 0.65, slope);
+
+      // Material Blending
+      // 0: Air
+      // 1: Bedrock
+      // 2: Stone
+      // 3: Dirt
+      // 4: Grass
+      // 5: Sand
+      // 6: Snow
+      // 7: Clay
+      // 8: Water Source
+      // 9: Water Flowing
+      // 10: Mossy Stone (Explicit)
 
       if (m < 2.0) {
          baseColor = mix(uColorBedrock, c_stone, clamp(m, 0.0, 1.0));
@@ -156,9 +187,24 @@ const TerrainShaderMaterial = shaderMaterial(
          specular = 0.03;
       } else if (m < 5.0) {
          baseColor = mix(c_grass, c_sand, clamp(m - 4.0, 0.0, 1.0));
-      } else {
+      } else if (m < 6.0) {
          baseColor = mix(c_sand, uColorSnow, clamp(m - 5.0, 0.0, 1.0));
          specular = 0.35;
+      } else if (m < 7.0) {
+         baseColor = mix(uColorSnow, c_clay, clamp(m - 6.0, 0.0, 1.0));
+      } else if (m < 8.0) {
+         baseColor = mix(c_clay, c_water, clamp(m - 7.0, 0.0, 1.0));
+         specular = 0.8;
+      } else {
+         // Water/Mossy
+         baseColor = c_water;
+         specular = 0.9;
+      }
+
+      // Explicit Mossy Stone Override (approx m=10)
+      if (abs(m - 10.0) < 0.5) {
+          baseColor = c_moss;
+          specular = 0.05;
       }
 
       float rockThreshold = 1.0 - smoothstep(0.55, 0.8, slope);
@@ -166,6 +212,23 @@ const TerrainShaderMaterial = shaderMaterial(
       baseColor = mix(baseColor, mix(baseColor, uColorSnow, 0.65), snowLine);
       baseColor = mix(baseColor, mix(baseColor, c_sand, 0.7), beach * (1.0 - snowLine));
       baseColor = mix(baseColor, c_dirt, dirtBand * 0.35);
+
+      // --- Alive World Effects ---
+
+      // 1. Wetness (Muddy/Dark/Specular)
+      // S-Curve for wetness visual
+      float wetFactor = smoothstep(0.1, 0.8, vWetness);
+      baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7); // Darken
+      specular = mix(specular, 0.6, wetFactor * 0.8); // Make shiny
+
+      // 2. Moss Growth (Overlay)
+      // Use noise to create patches
+      float mossNoise = getNoise(vPosition, 0.3);
+      float mossThreshold = smoothstep(0.3, 0.7, vMossiness + mossNoise * 0.3);
+
+      // Only apply moss where it makes sense (not on water or snow usually, but let's assume simulation handles that)
+      baseColor = mix(baseColor, c_moss, mossThreshold);
+      specular = mix(specular, 0.02, mossThreshold); // Moss is matte
 
       float ao = clamp(1.0 - (1.0 - slope) * uAOIntensity - macroNoise * 0.25, 0.55, 1.0);
 
