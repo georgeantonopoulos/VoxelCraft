@@ -144,17 +144,18 @@ const TerrainShaderMaterial = shaderMaterial(
       // Macro variation
       float macroNoise = getNoise(vPosition, 0.05) * uMacroVariation; // Low freq
 
-      vec3 c_stone = triSampleColor(vPosition, worldNormal, uColorStone, 0.12);
-      vec3 c_grass = triSampleColor(vPosition, worldNormal, uColorGrass, 0.1);
+      // Increased texture frequency (smaller noise) for more detail
+      vec3 c_stone = triSampleColor(vPosition, worldNormal, uColorStone, 0.3);
+      vec3 c_grass = triSampleColor(vPosition, worldNormal, uColorGrass, 0.25);
 
       // Modulate grass
       c_grass = mix(c_grass, c_grass * 0.8 + vec3(0.1, 0.1, 0.0), macroNoise * 0.5);
 
-      vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.18);
-      vec3 c_sand = triSampleColor(vPosition, worldNormal, uColorSand, 0.2);
-      vec3 c_clay = triSampleColor(vPosition, worldNormal, uColorClay, 0.15);
-      vec3 c_water = uColorWater; // Water is uniform usually
-      vec3 c_moss = triSampleColor(vPosition, worldNormal, uColorMoss, 0.1);
+      vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.35);
+      vec3 c_sand = triSampleColor(vPosition, worldNormal, uColorSand, 0.4);
+      vec3 c_clay = triSampleColor(vPosition, worldNormal, uColorClay, 0.3);
+      vec3 c_water = uColorWater;
+      vec3 c_moss = triSampleColor(vPosition, worldNormal, uColorMoss, 0.3);
 
       vec3 baseColor = c_stone;
       float specular = 0.08;
@@ -217,14 +218,14 @@ const TerrainShaderMaterial = shaderMaterial(
 
       // 1. Wetness (Muddy/Dark/Specular)
       // S-Curve for wetness visual
-      float wetFactor = smoothstep(0.1, 0.8, vWetness);
+      float wetFactor = smoothstep(0.05, 0.6, vWetness);
       baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7); // Darken
       specular = mix(specular, 0.6, wetFactor * 0.8); // Make shiny
 
       // 2. Moss Growth (Overlay)
       // Use noise to create patches
-      float mossNoise = getNoise(vPosition, 0.3);
-      float mossThreshold = smoothstep(0.3, 0.7, vMossiness + mossNoise * 0.3);
+      float mossNoise = getNoise(vPosition, 0.5);
+      float mossThreshold = smoothstep(0.2, 0.5, vMossiness + mossNoise * 0.2);
 
       // Only apply moss where it makes sense (not on water or snow usually, but let's assume simulation handles that)
       baseColor = mix(baseColor, c_moss, mossThreshold);

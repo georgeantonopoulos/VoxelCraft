@@ -416,19 +416,32 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
     }, [isInteracting, action, camera, world, rapier]);
 
-    // 3. Simulation Loop (Slow Tick)
-    useEffect(() => {
+    // 3. Simulation Loop (Staggered)
+    const simQueue = useRef<string[]>([]);
+
+    useFrame(() => {
         if (!workerRef.current) return;
 
-        const interval = setInterval(() => {
-            const activeChunks = Object.values(chunksRef.current);
+        // Refill queue if empty
+        if (simQueue.current.length === 0) {
+            // Shuffle or just take keys? Just keys for now.
+            const keys = Object.keys(chunksRef.current);
+            if (keys.length > 0) {
+                 simQueue.current = keys;
+            }
+        }
 
-            // Limit simulation to nearby chunks or throttle?
-            // For now, simulate all loaded chunks.
-            activeChunks.forEach(chunk => {
-                // Don't simulate if already pending or very distant?
-                // Simple pass:
-                workerRef.current!.postMessage({
+        // Process batch
+        const BATCH_SIZE = 2;
+        for (let i = 0; i < BATCH_SIZE; i++) {
+            if (simQueue.current.length === 0) break;
+
+            const key = simQueue.current.pop();
+            if (!key) continue;
+
+            const chunk = chunksRef.current[key];
+            if (chunk) {
+                workerRef.current.postMessage({
                     type: 'SIMULATE',
                     payload: {
                         key: chunk.key,
@@ -441,11 +454,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                         version: chunk.version
                     }
                 });
-            });
-        }, 500); // 500ms tick
-
-        return () => clearInterval(interval);
-    }, []);
+            }
+        }
+    });
 
     return (
         <group>

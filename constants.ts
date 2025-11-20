@@ -30,7 +30,7 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
   [MaterialType.STONE]: {
     absorptionRate: 15, // Gets wet moderately fast
     dryingRate: 25,     // Dries fast on surface
-    mossGrowthRate: 3,  // Grows moss slowly if wet
+    mossGrowthRate: 8,  // Grows moss slowly if wet
     mossDecayRate: 5    // Moss dies slowly if dry
   },
   [MaterialType.DIRT]: {
