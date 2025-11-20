@@ -18,7 +18,6 @@ interface ChunkState {
     cz: number;
     density: Float32Array;
     material: Uint8Array;
-    // Metadata is now managed by MetadataDB, but we might keep a local ref or version
     version: number;
     meshPositions: Float32Array;
     meshIndices: Uint32Array;
@@ -220,8 +219,34 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         active: false, pos: new THREE.Vector3(), color: '#fff'
     });
 
-    // Initialize Worker
+    // Initialize Worker and Simulation
     useEffect(() => {
+        // Start simulation manager
+        simulationManager.start();
+
+        // Set callback for re-meshing when simulation updates
+        simulationManager.setCallback((key) => {
+            if (workerRef.current) {
+                const chunk = chunksRef.current[key];
+                const metadata = metadataDB.getChunk(key);
+                if (chunk && metadata) {
+                     workerRef.current.postMessage({
+                        type: 'REMESH',
+                        payload: {
+                            key,
+                            cx: chunk.cx,
+                            cz: chunk.cz,
+                            density: chunk.density,
+                            material: chunk.material,
+                            wetness: metadata['wetness'],
+                            mossiness: metadata['mossiness'],
+                            version: chunk.version + 1 // Increment version to force update
+                        }
+                    });
+                }
+            }
+        });
+
         const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
         workerRef.current = worker;
 
@@ -229,11 +254,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const { type, payload } = e.data;
 
             if (type === 'GENERATED') {
-                const { key, metadata } = payload;
+                const { key, metadata, material } = payload;
                 pendingChunks.current.delete(key);
 
                 // Register metadata to DB
                 metadataDB.initChunk(key, metadata);
+
+                // Register with SimulationManager (send initial data to worker)
+                simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
 
                 // Add to local state
                 const newChunk = { ...payload, version: 0 };
@@ -271,7 +299,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const pz = Math.floor(camera.position.z / CHUNK_SIZE);
         
         const neededKeys = new Set<string>();
-        const neededKeysArray: string[] = [];
         let changed = false;
 
         // Load chunks in range
@@ -281,7 +308,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 const cz = pz + z;
                 const key = `${cx},${cz}`;
                 neededKeys.add(key);
-                neededKeysArray.push(key);
 
                 if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
                     pendingChunks.current.add(key);
@@ -297,6 +323,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const newChunks = { ...chunksRef.current };
         Object.keys(newChunks).forEach(key => {
             if (!neededKeys.has(key)) {
+                // Remove from simulation
+                simulationManager.removeChunk(key);
                 delete newChunks[key];
                 changed = true;
             }
@@ -306,9 +334,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             chunksRef.current = newChunks;
             setChunks(newChunks);
         }
-
-        // Update active chunks for simulation
-        simulationManager.updateActiveChunks(neededKeysArray);
     });
 
     // 2. Interaction Logic
@@ -391,20 +416,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     const chunk = chunksRef.current[key];
                     const metadata = metadataDB.getChunk(key);
 
-                    workerRef.current!.postMessage({
-                        type: 'REMESH',
-                        payload: {
-                            key,
-                            cx: chunk.cx,
-                            cz: chunk.cz,
-                            density: chunk.density,
-                            material: chunk.material,
-                            // Pass current metadata
-                            wetness: metadata?.['wetness'] || new Uint8Array(0),
-                            mossiness: metadata?.['mossiness'] || new Uint8Array(0),
-                            version: chunk.version + 1
-                        }
-                    });
+                    // Also update simulation worker with new materials!
+                    // We should ideally send an UPDATE_CHUNK message, but ADD_CHUNK overwrites it in our simple worker implementation.
+                    if (chunk && metadata) {
+                        simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
+
+                        workerRef.current!.postMessage({
+                            type: 'REMESH',
+                            payload: {
+                                key,
+                                cx: chunk.cx,
+                                cz: chunk.cz,
+                                density: chunk.density,
+                                material: chunk.material,
+                                // Pass current metadata
+                                wetness: metadata?.['wetness'] || new Uint8Array(0),
+                                mossiness: metadata?.['mossiness'] || new Uint8Array(0),
+                                version: chunk.version + 1
+                            }
+                        });
+                    }
                 });
                 
                 setParticleState({
@@ -417,33 +448,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             }
         }
     }, [isInteracting, action, camera, world, rapier]);
-
-    // 3. Simulation Loop (Now Main Thread Controlled)
-    useFrame((state) => {
-        // We use the simulation manager for the "Slow Tick"
-        // Pass a callback to trigger remeshing when a chunk updates
-        simulationManager.tick(state.clock.elapsedTime * 1000, chunksRef.current, (key) => {
-            if (workerRef.current) {
-                const chunk = chunksRef.current[key];
-                const metadata = metadataDB.getChunk(key);
-                if (chunk && metadata) {
-                     workerRef.current.postMessage({
-                        type: 'REMESH',
-                        payload: {
-                            key,
-                            cx: chunk.cx,
-                            cz: chunk.cz,
-                            density: chunk.density,
-                            material: chunk.material,
-                            wetness: metadata['wetness'],
-                            mossiness: metadata['mossiness'],
-                            version: chunk.version + 1 // Increment version to force update
-                        }
-                    });
-                }
-            }
-        });
-    });
 
     return (
         <group>
