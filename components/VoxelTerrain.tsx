@@ -4,9 +4,11 @@ import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
 import { TerrainService } from '../services/terrainService';
+import { metadataDB } from '../services/MetadataDB';
+import { simulationManager } from '../services/SimulationManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
-import { MaterialType } from '../types';
+import { MaterialType, ChunkMetadata } from '../types';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -16,8 +18,7 @@ interface ChunkState {
     cz: number;
     density: Float32Array;
     material: Uint8Array;
-    wetness: Uint8Array;
-    mossiness: Uint8Array;
+    // Metadata is now managed by MetadataDB, but we might keep a local ref or version
     version: number;
     meshPositions: Float32Array;
     meshIndices: Uint32Array;
@@ -60,12 +61,6 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     useFrame((state, delta) => {
         if (opacity < 1) {
             setOpacity(prev => Math.min(prev + delta * 2, 1));
-        }
-        if (meshRef.current) {
-             // We can set opacity on the material via ref if needed,
-             // but TriplanarMaterial is custom. We'll assume it handles it or we just rely on pop-in fix being faster generation.
-             // Actually, user asked for smoother generation, not just pop-in.
-             // Opacity fade is a good trick.
         }
     });
 
@@ -234,8 +229,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const { type, payload } = e.data;
 
             if (type === 'GENERATED') {
-                const { key } = payload;
+                const { key, metadata } = payload;
                 pendingChunks.current.delete(key);
+
+                // Register metadata to DB
+                metadataDB.initChunk(key, metadata);
 
                 // Add to local state
                 const newChunk = { ...payload, version: 0 };
@@ -243,7 +241,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 setChunks(prev => ({ ...prev, [key]: newChunk }));
             }
             else if (type === 'REMESHED') {
-                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, wetness, mossiness } = payload;
+                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness } = payload;
                 const current = chunksRef.current[key];
                 if (current) {
                     const updatedChunk = {
@@ -255,8 +253,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                         meshNormals,
                         meshWetness,
                         meshMossiness,
-                        wetness: wetness || current.wetness, // Update physics data if returned
-                        mossiness: mossiness || current.mossiness
                     };
                     chunksRef.current[key] = updatedChunk;
                     setChunks(prev => ({ ...prev, [key]: updatedChunk }));
@@ -275,6 +271,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const pz = Math.floor(camera.position.z / CHUNK_SIZE);
         
         const neededKeys = new Set<string>();
+        const neededKeysArray: string[] = [];
         let changed = false;
 
         // Load chunks in range
@@ -284,6 +281,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 const cz = pz + z;
                 const key = `${cx},${cz}`;
                 neededKeys.add(key);
+                neededKeysArray.push(key);
 
                 if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
                     pendingChunks.current.add(key);
@@ -301,8 +299,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             if (!neededKeys.has(key)) {
                 delete newChunks[key];
                 changed = true;
-                // Note: we don't cancel pending requests in worker, but we ignore them if we don't need them anymore?
-                // Or we just let them finish and get garbage collected next cycle.
             }
         });
 
@@ -310,6 +306,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             chunksRef.current = newChunks;
             setChunks(newChunks);
         }
+
+        // Update active chunks for simulation
+        simulationManager.updateActiveChunks(neededKeysArray);
     });
 
     // 2. Interaction Logic
@@ -390,6 +389,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 // Trigger remeshing for all affected chunks
                 affectedChunks.forEach(key => {
                     const chunk = chunksRef.current[key];
+                    const metadata = metadataDB.getChunk(key);
+
                     workerRef.current!.postMessage({
                         type: 'REMESH',
                         payload: {
@@ -398,8 +399,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                             cz: chunk.cz,
                             density: chunk.density,
                             material: chunk.material,
-                            wetness: chunk.wetness,
-                            mossiness: chunk.mossiness,
+                            // Pass current metadata
+                            wetness: metadata?.['wetness'] || new Uint8Array(0),
+                            mossiness: metadata?.['mossiness'] || new Uint8Array(0),
                             version: chunk.version + 1
                         }
                     });
@@ -416,46 +418,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
     }, [isInteracting, action, camera, world, rapier]);
 
-    // 3. Simulation Loop (Staggered)
-    const simQueue = useRef<string[]>([]);
-
-    useFrame(() => {
-        if (!workerRef.current) return;
-
-        // Refill queue if empty
-        if (simQueue.current.length === 0) {
-            // Shuffle or just take keys? Just keys for now.
-            const keys = Object.keys(chunksRef.current);
-            if (keys.length > 0) {
-                 simQueue.current = keys;
+    // 3. Simulation Loop (Now Main Thread Controlled)
+    useFrame((state) => {
+        // We use the simulation manager for the "Slow Tick"
+        // Pass a callback to trigger remeshing when a chunk updates
+        simulationManager.tick(state.clock.elapsedTime * 1000, chunksRef.current, (key) => {
+            if (workerRef.current) {
+                const chunk = chunksRef.current[key];
+                const metadata = metadataDB.getChunk(key);
+                if (chunk && metadata) {
+                     workerRef.current.postMessage({
+                        type: 'REMESH',
+                        payload: {
+                            key,
+                            cx: chunk.cx,
+                            cz: chunk.cz,
+                            density: chunk.density,
+                            material: chunk.material,
+                            wetness: metadata['wetness'],
+                            mossiness: metadata['mossiness'],
+                            version: chunk.version + 1 // Increment version to force update
+                        }
+                    });
+                }
             }
-        }
-
-        // Process batch
-        const BATCH_SIZE = 2;
-        for (let i = 0; i < BATCH_SIZE; i++) {
-            if (simQueue.current.length === 0) break;
-
-            const key = simQueue.current.pop();
-            if (!key) continue;
-
-            const chunk = chunksRef.current[key];
-            if (chunk) {
-                workerRef.current.postMessage({
-                    type: 'SIMULATE',
-                    payload: {
-                        key: chunk.key,
-                        cx: chunk.cx,
-                        cz: chunk.cz,
-                        density: chunk.density,
-                        material: chunk.material,
-                        wetness: chunk.wetness,
-                        mossiness: chunk.mossiness,
-                        version: chunk.version
-                    }
-                });
-            }
-        }
+        });
     });
 
     return (

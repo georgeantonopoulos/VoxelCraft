@@ -27,12 +27,18 @@ export interface MaterialProperties {
   mossDecayRate: number;  // How fast mossiness decreases if dry
 }
 
+// Flexible Metadata Structure
+export type MetadataLayer = Uint8Array;
+
+export interface ChunkMetadata {
+  [key: string]: MetadataLayer;
+}
+
 export interface ChunkData {
   id: string;
   density: Float32Array;
   material: Uint8Array; // Stores material ID per voxel
-  wetness: Uint8Array;  // Stores wetness level (0-255)
-  mossiness: Uint8Array; // Stores moss level (0-255)
+  metadata: ChunkMetadata; // Flexible metadata storage
   size: number;
   position: Vector3;
 }

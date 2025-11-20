@@ -1,7 +1,7 @@
 
 import { CHUNK_SIZE, PAD, TOTAL_SIZE, WATER_LEVEL, ISO_LEVEL } from '../constants';
 import { noise } from '../utils/noise';
-import { MaterialType } from '../types';
+import { MaterialType, ChunkMetadata } from '../types';
 
 export class TerrainService {
   // Generate density and material for a specific chunk coordinate (cx, cz)
@@ -46,13 +46,15 @@ export class TerrainService {
       return 20; // Fallback
   }
 
-  static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, wetness: Uint8Array, mossiness: Uint8Array } {
+  static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, metadata: ChunkMetadata } {
     const size = TOTAL_SIZE;
     const density = new Float32Array(size * size * size);
     const material = new Uint8Array(size * size * size);
+
+    // Initialize flexible metadata
     const wetness = new Uint8Array(size * size * size);
     const mossiness = new Uint8Array(size * size * size);
-    
+
     const worldOffsetX = cx * CHUNK_SIZE;
     const worldOffsetZ = cz * CHUNK_SIZE;
 
@@ -116,7 +118,6 @@ export class TerrainService {
             const soilDepth = 8.0 + soilNoise * 4.0; 
             
             const depth = (surfaceHeight + overhang) - wy;
-            const slope = Math.abs(cliffNoise); 
 
             // Bedrock bottom
             if (wy < -8) {
@@ -146,16 +147,28 @@ export class TerrainService {
                 }
             }
           } else {
-            material[idx] = MaterialType.AIR;
+            // --- Water Generation ---
+            if (wy <= WATER_LEVEL) {
+                material[idx] = MaterialType.WATER_SOURCE;
+                // Initially set water blocks to full wetness
+                wetness[idx] = 255;
+            } else {
+                material[idx] = MaterialType.AIR;
+            }
           }
 
           // Initial Wetness/Mossiness (Could be procedural, currently clean)
-          wetness[idx] = 0;
-          mossiness[idx] = 0;
+          // Already initialized to 0
         }
       }
     }
-    return { density, material, wetness, mossiness };
+
+    const metadata: ChunkMetadata = {
+        wetness,
+        mossiness
+    };
+
+    return { density, material, metadata };
   }
 
   static modifyChunk(
