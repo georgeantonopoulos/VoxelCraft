@@ -28,6 +28,7 @@ export interface MaterialProperties {
 }
 
 // Flexible Metadata Structure
+// TypedArray for metadata layers
 export type MetadataLayer = Uint8Array;
 
 export interface ChunkMetadata {

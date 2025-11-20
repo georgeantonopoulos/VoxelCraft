@@ -8,7 +8,7 @@ import { metadataDB } from '../services/MetadataDB';
 import { simulationManager } from '../services/SimulationManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
-import { MaterialType, ChunkMetadata } from '../types';
+import { MaterialType, ChunkMetadata } from '@/types';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -251,7 +251,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 metadataDB.initChunk(key, metadata);
 
                 // Register with SimulationManager (send initial data to worker)
-                simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
+                simulationManager.addChunk(
+                    key, 
+                    payload.cx, 
+                    payload.cz, 
+                    material, 
+                    metadata.wetness || new Uint8Array(0), 
+                    metadata.mossiness || new Uint8Array(0)
+                );
 
                 // Add to local state
                 const newChunk = { ...payload, version: 0 };
@@ -354,31 +361,46 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
     });
 
-    // 2. Interaction Logic
-    useEffect(() => {
+    // 2. Interaction Logic (Continuous via useFrame)
+    const lastInteractionTime = useRef(0);
+    
+    useFrame((state) => {
         if (!isInteracting || !action) return;
+
+        // Cooldown check (0.15s = ~6.6 blocks/sec)
+        if (state.clock.elapsedTime - lastInteractionTime.current < 0.15) return;
+        
+        lastInteractionTime.current = state.clock.elapsedTime;
 
         const origin = camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         
         const ray = new rapier.Ray(origin, direction);
-        const hit = world.castRay(ray, 8.0, true);
+        const hit = world.castRay(ray, 40.0, true);
         
         if (hit) {
             const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
             const dist = origin.distanceTo(rapierHitPoint);
 
-            const offset = action === 'DIG' ? -0.1 : 0.1;
+            // Direction is normalized camera forward vector.
+            // DIG: Move point INTO the block (positive direction)
+            // BUILD: Move point OUT of the block (negative direction)
+            const offset = action === 'DIG' ? 0.1 : -0.1;
             const hitPoint = new THREE.Vector3(
                 rapierHitPoint.x + direction.x * offset, 
                 rapierHitPoint.y + direction.y * offset, 
                 rapierHitPoint.z + direction.z * offset
             );
             
-            const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
+            // Use strong delta to ensure block breaking/placing even at depth
+            // The TerrainService clamps density to +/- 20.0, so 40.0 ensures a full transition.
+            const INTERACTION_STRENGTH = 1.0;
+            const delta = action === 'DIG' ? -INTERACTION_STRENGTH : INTERACTION_STRENGTH;
 
             // Precision digging/building check
-            const radius = (dist < 3.0) ? 0.5 : DIG_RADIUS;
+            // Use precision mode if within reach (8.0 units)
+            // Radius 0.9 ensures we hit the target voxel without affecting neighbors too much
+            const radius = (dist < 30.0) ? 3.0 : DIG_RADIUS;
 
             const minWx = hitPoint.x - (radius + 2); 
             const maxWx = hitPoint.x + (radius + 2);
@@ -441,7 +463,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     // Also update simulation worker with new materials!
                     // We should ideally send an UPDATE_CHUNK message, but ADD_CHUNK overwrites it in our simple worker implementation.
                     if (chunk && metadata) {
-                        simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
+                        simulationManager.addChunk(
+                            key, 
+                            chunk.cx, 
+                            chunk.cz, 
+                            chunk.material, 
+                            metadata.wetness || new Uint8Array(0), 
+                            metadata.mossiness || new Uint8Array(0)
+                        );
 
                         workerRef.current!.postMessage({
                             type: 'REMESH',
@@ -469,7 +498,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 setTimeout(() => setParticleState(prev => ({...prev, active: false})), 50);
             }
         }
-    }, [isInteracting, action, camera, world, rapier]);
+    });
 
     return (
         <group>
