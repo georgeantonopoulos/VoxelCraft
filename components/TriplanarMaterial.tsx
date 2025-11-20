@@ -31,15 +31,8 @@ const TerrainShaderMaterial = shaderMaterial(
   },
   `
     precision highp float;
-    in vec3 position;
-    in vec3 normal;
     in float aMaterial;
     
-    uniform mat4 modelMatrix;
-    uniform mat4 modelViewMatrix;
-    uniform mat4 projectionMatrix;
-    uniform mat3 normalMatrix;
-
     out vec3 vNormal;
     out vec3 vPosition;
     out vec3 vWorldNormal;
@@ -63,7 +56,6 @@ const TerrainShaderMaterial = shaderMaterial(
     precision highp float;
     precision highp sampler3D;
 
-    uniform vec3 cameraPosition;
     uniform float uTime;
     uniform vec3 uSunDir;
     uniform vec3 uSunColor;
