@@ -5,6 +5,47 @@ import { MaterialType } from '../types';
 
 export class TerrainService {
   // Generate density and material for a specific chunk coordinate (cx, cz)
+  // Helper to find surface height at specific world coordinates
+  static getHeightAt(wx: number, wz: number): number {
+      // Scan from high up down to find the surface
+      for (let y = 100; y > -40; y--) {
+
+          const warpScale = 0.008;
+          const warpStr = 15.0;
+          const qx = noise(wx * warpScale, 0, wz * warpScale) * warpStr;
+          const qz = noise(wx * warpScale + 5.2, 0, wz * warpScale + 1.3) * warpStr;
+
+          const px = wx + qx;
+          const pz = wz + qz;
+
+          const continental = noise(px * 0.01, 0, pz * 0.01) * 8;
+          let mountains = noise(px * 0.05, 0, pz * 0.05) * 4;
+          mountains += noise(px * 0.15, 0, pz * 0.15) * 1.5;
+
+          const cliffNoise = noise(wx * 0.06, y * 0.08, wz * 0.06);
+          const overhang = cliffNoise * 6;
+
+          const surfaceHeight = 14 + continental + mountains;
+          let d = surfaceHeight - y + overhang;
+
+          if (y < surfaceHeight - 4 && y > -20) {
+             const caveFreq = 0.08;
+             const c1 = noise(wx * caveFreq, y * caveFreq, wz * caveFreq);
+             if (Math.abs(c1) < 0.12) {
+                 d -= 20.0;
+             }
+          }
+
+          // Hard floor
+          if (y < -4) d += 50.0;
+
+          if (d > ISO_LEVEL) {
+              return y;
+          }
+      }
+      return 20; // Fallback
+  }
+
   static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array } {
     const size = TOTAL_SIZE;
     const density = new Float32Array(size * size * size);
