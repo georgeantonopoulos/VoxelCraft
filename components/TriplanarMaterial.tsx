@@ -126,7 +126,10 @@ const TerrainShaderMaterial = shaderMaterial(
       // Use texture sampling for cheap perturbation
       // We sample the high freq channel (Blue or Alpha) for bumps
 
-      float scale = 1.5;
+      // Add variation in texture size using world position
+      float variationScale = 0.5 + 0.5 * getNoise(pos * 0.02, 1.0); // Low frequency variation
+      float scale = 7.5 * variationScale; // Scale between 3.75 and 11.25
+      
       float dX = texture(uNoiseTexture, (pos + vec3(eps, 0, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(eps, 0, 0)) * scale * 0.1).b;
       float dY = texture(uNoiseTexture, (pos + vec3(0, eps, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(0, eps, 0)) * scale * 0.1).b;
       float dZ = texture(uNoiseTexture, (pos + vec3(0, 0, eps)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(0, 0, eps)) * scale * 0.1).b;
