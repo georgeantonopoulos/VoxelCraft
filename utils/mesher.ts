@@ -80,8 +80,21 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
              avgX /= edgeCount;
              avgY /= edgeCount;
              avgZ /= edgeCount;
+
+             // Snap boundary vertices to chunk edges so adjacent chunks share the
+             // exact same boundary coordinates (avoids hairline cracks).
+             const snapBoundary = (v: number) => {
+               const snapped = Math.round(v * 1000) / 1000; // minor dedupe to reduce T-junctions
+               if (snapped <= PAD + 1e-4) return PAD;
+               if (snapped >= PAD + CHUNK_SIZE - 1e-4) return PAD + CHUNK_SIZE;
+               return snapped;
+             };
+
+             const px = snapBoundary(avgX) - PAD;
+             const py = snapBoundary(avgY) - PAD;
+             const pz = snapBoundary(avgZ) - PAD;
              
-             vertices.push(avgX - PAD, avgY - PAD, avgZ - PAD);
+             vertices.push(px, py, pz);
              
              // --- Material Selection ---
              // We pick the material from the "surface-most" solid voxel.

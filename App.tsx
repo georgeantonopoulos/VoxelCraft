@@ -1,5 +1,5 @@
 
-import React, { useState, Suspense, useEffect, useCallback } from 'react';
+import React, { useState, Suspense, useEffect, useCallback, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Sky, PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
@@ -33,6 +33,10 @@ const keyboardMap = [
 const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
+  const sunDirection = useMemo(
+    () => new THREE.Vector3(-50, -80, -30).normalize(),
+    []
+  );
 
   const handleUnlock = useCallback(() => {
     setIsInteracting(false);
@@ -42,29 +46,46 @@ const App: React.FC = () => {
   return (
     <div className="w-full h-full relative bg-sky-300">
       <KeyboardControls map={keyboardMap}>
-        <Canvas shadows camera={{ fov: 65, far: 150 }}>
-          <color attach="background" args={['#b3d8f5']} />
-          <fogExp2 attach="fog" args={[new THREE.Color('#b3d8f5'), 0.015]} />
+        <Canvas 
+          shadows 
+          dpr={[1, 2]}
+          gl={{ 
+            antialias: true,
+            outputColorSpace: THREE.SRGBColorSpace,
+            toneMapping: THREE.ACESFilmicToneMapping 
+          }}
+          camera={{ fov: 60, near: 0.1, far: 240 }}
+        >
+          <color attach="background" args={['#bed9f4']} />
+          <fog attach="fog" args={['#c3d8ee', 55, 230]} />
           
-          <Sky sunPosition={[50, 60, 50]} turbidity={0.6} rayleigh={0.5} mieCoefficient={0.005} mieDirectionalG={0.8} />
+          <Sky 
+            sunPosition={[50, 70, 30]} 
+            turbidity={1.2} 
+            rayleigh={0.7} 
+            mieCoefficient={0.009} 
+            mieDirectionalG={0.84} 
+            inclination={0.45}
+            azimuth={0.15}
+          />
           
-          <ambientLight intensity={0.6} color="#dbeaff" />
-          <hemisphereLight args={['#ffffff', '#554433', 0.6]} />
+          <ambientLight intensity={0.45} color="#dbeaff" />
+          <hemisphereLight args={['#d7e6ff', '#523521', 0.5]} />
           
           <directionalLight 
             position={[50, 80, 30]} 
-            intensity={1.6} 
-            color="#fffce0"
+            intensity={1.45} 
+            color="#fff7d1"
             castShadow 
             shadow-mapSize={[2048, 2048]}
-            shadow-bias={-0.0005} 
-            shadow-normalBias={0.05}
+            shadow-bias={-0.0003} 
+            shadow-normalBias={0.03}
             shadow-camera-near={1}
-            shadow-camera-far={150}
-            shadow-camera-left={-60}
-            shadow-camera-right={60}
-            shadow-camera-top={60}
-            shadow-camera-bottom={-60}
+            shadow-camera-far={220}
+            shadow-camera-left={-90}
+            shadow-camera-right={90}
+            shadow-camera-top={90}
+            shadow-camera-bottom={-90}
           />
 
           <Suspense fallback={null}>
@@ -72,7 +93,8 @@ const App: React.FC = () => {
               <Player />
               <VoxelTerrain 
                 action={action}
-                isInteracting={isInteracting} 
+                isInteracting={isInteracting}
+                sunDirection={sunDirection}
               />
               <Water />
             </Physics>

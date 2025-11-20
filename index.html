@@ -19,20 +19,22 @@
         position: absolute;
         top: 50%;
         left: 50%;
-        width: 20px;
-        height: 20px;
+        width: 14px;
+        height: 14px;
         transform: translate(-50%, -50%);
         pointer-events: none;
-        mix-blend-mode: difference;
+        mix-blend-mode: screen;
         z-index: 50;
+        opacity: 0.65;
       }
       .crosshair::before, .crosshair::after {
         content: '';
         position: absolute;
-        background: white;
+        background: rgba(255,255,255,0.85);
+        border-radius: 1px;
       }
-      .crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
-      .crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+      .crosshair::before { top: 6px; left: 0; width: 14px; height: 2px; }
+      .crosshair::after { top: 0; left: 6px; width: 2px; height: 14px; }
     </style>
   <script type="importmap">
 {

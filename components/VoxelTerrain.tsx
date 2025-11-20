@@ -26,6 +26,7 @@ interface ChunkState {
 interface VoxelTerrainProps {
     action: 'DIG' | 'BUILD' | null;
     isInteracting: boolean;
+    sunDirection?: THREE.Vector3;
 }
 
 // --- HELPER ---
@@ -43,7 +44,7 @@ const getMaterialColor = (matId: number) => {
 
 // --- COMPONENTS ---
 
-const ChunkMesh: React.FC<{ chunk: ChunkState }> = React.memo(({ chunk }) => {
+const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
     // Pre-calculate geometry to ensure it exists before RigidBody mounts
     const geometry = useMemo(() => {
         // Safety check for empty arrays
@@ -91,7 +92,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState }> = React.memo(({ chunk }) => {
                 frustumCulled={true}
                 geometry={geometry}
             >
-                <TriplanarMaterial />
+                <TriplanarMaterial sunDirection={sunDirection} />
             </mesh>
         </RigidBody>
     );
@@ -171,7 +172,7 @@ const Particles = ({ active, position, color }: { active: boolean, position: THR
 
 // --- MAIN COMPONENT ---
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting }) => {
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection }) => {
     const { camera } = useThree();
     const { world, rapier } = useRapier();
     
@@ -326,7 +327,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     return (
         <group>
             {Object.values(chunks).map(chunk => (
-                <ChunkMesh key={chunk.key} chunk={chunk} />
+                <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} />
             ))}
             
             <Particles 
