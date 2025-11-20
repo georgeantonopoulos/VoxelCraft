@@ -17,6 +17,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
   const vertices: number[] = [];
   const indices: number[] = [];
   const mats: number[] = []; 
+  const norms: number[] = [];
   
   const vertexIndices = new Int32Array(size * size * size).fill(-1);
   
@@ -82,12 +83,13 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
              avgZ /= edgeCount;
 
              // Snap boundary vertices to chunk edges so adjacent chunks share the
-             // exact same boundary coordinates (avoids hairline cracks).
+             // exact same boundary coordinates.
+             // Improved Snapping: Use a small epsilon range to catch vertices that are *near* the boundary.
+             const snapEpsilon = 0.02;
              const snapBoundary = (v: number) => {
-               const snapped = Math.round(v * 1000) / 1000; // minor dedupe to reduce T-junctions
-               if (snapped <= PAD + 1e-4) return PAD;
-               if (snapped >= PAD + CHUNK_SIZE - 1e-4) return PAD + CHUNK_SIZE;
-               return snapped;
+               if (Math.abs(v - PAD) < snapEpsilon) return PAD;
+               if (Math.abs(v - (PAD + CHUNK_SIZE)) < snapEpsilon) return PAD + CHUNK_SIZE;
+               return v;
              };
 
              const px = snapBoundary(avgX) - PAD;
@@ -95,19 +97,38 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
              const pz = snapBoundary(avgZ) - PAD;
              
              vertices.push(px, py, pz);
+
+             // --- Analytic Normals ---
+             // Calculate normal based on density gradient at the vertex position
+             // Since avgX/Y/Z are local to the grid (0..size), we can sample density neighbors.
+             // Note: avgX/Y/Z are non-integer, so we sample the nearest grid points or just use the rounded cell index
+             // For Surface Nets/Dual Contouring, the gradient at the *center of the cell* (x+0.5, y+0.5, z+0.5)
+             // or at the vertex position gives the normal.
+
+             const nx = getVal(density, Math.round(avgX) - 1, Math.round(avgY), Math.round(avgZ), size) -
+                        getVal(density, Math.round(avgX) + 1, Math.round(avgY), Math.round(avgZ), size);
+
+             const ny = getVal(density, Math.round(avgX), Math.round(avgY) - 1, Math.round(avgZ), size) -
+                        getVal(density, Math.round(avgX), Math.round(avgY) + 1, Math.round(avgZ), size);
+
+             const nz = getVal(density, Math.round(avgX), Math.round(avgY), Math.round(avgZ) - 1, size) -
+                        getVal(density, Math.round(avgX), Math.round(avgY), Math.round(avgZ) + 1, size);
+
+             const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
+             if (len > 0.0001) {
+                 norms.push(nx/len, ny/len, nz/len);
+             } else {
+                 norms.push(0, 1, 0); // Fallback
+             }
              
              // --- Material Selection ---
-             // We pick the material from the "surface-most" solid voxel.
-             // High density = deep underground. Low density (> ISO) = surface.
-             // We want the lowest solid density to get the surface material (Grass/Dirt)
              let bestMat = MaterialType.DIRT; 
              let minSolidVal = 99999.0; 
              
              const check = (val: number, mx: number, my: number, mz: number) => {
                  if (val > ISO_LEVEL) {
                     const m = getMat(material, mx, my, mz, size);
-                    if (m !== 0) { // Check against 0 (AIR)
-                        // Pick the solid voxel that is closest to the ISO surface (lowest density value above ISO)
+                    if (m !== 0) {
                         if (val < minSolidVal) {
                             minSolidVal = val;
                             bestMat = m;
@@ -183,7 +204,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
   return {
     positions: new Float32Array(vertices),
     indices: new Uint32Array(indices),
-    normals: new Float32Array(vertices.length), 
+    normals: new Float32Array(norms),
     materials: new Float32Array(mats)
   };
 }

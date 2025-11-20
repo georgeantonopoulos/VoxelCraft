@@ -1,17 +1,24 @@
-// A simple, self-contained noise implementation to avoid external dependencies in this snippet.
-// Based on standard permutation table noise algorithms.
+// A simple, self-contained noise implementation.
+// Using a fixed permutation table ensures determinism across all chunks and sessions.
 
 const PERM = new Uint8Array(512);
 const p = new Uint8Array(256);
 
-// Initialize with a seed
+// seededRandom allows us to have a deterministic shuffle
+let seedVal = 1337;
+function seededRandom() {
+    const x = Math.sin(seedVal++) * 10000;
+    return x - Math.floor(x);
+}
+
+// Initialize with a deterministic sequence
 for (let i = 0; i < 256; i++) {
   p[i] = i;
 }
 
-// Shuffle
+// Shuffle deterministically
 for (let i = 255; i > 0; i--) {
-  const n = Math.floor(Math.random() * (i + 1));
+  const n = Math.floor(seededRandom() * (i + 1));
   const q = p[i];
   p[i] = p[n];
   p[n] = q;
