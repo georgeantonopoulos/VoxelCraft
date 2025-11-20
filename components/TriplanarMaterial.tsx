@@ -4,7 +4,7 @@ import React, { useRef, useMemo } from 'react';
 import { extend, useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import { WATER_LEVEL } from '../constants';
-import { createNoiseTexture } from '../utils/textureGenerator';
+import { noiseTexture } from '../utils/sharedResources';
 
 const TerrainShaderMaterial = shaderMaterial(
   {
@@ -199,9 +199,6 @@ const TerrainShaderMaterial = shaderMaterial(
 );
 
 extend({ TerrainShaderMaterial });
-
-// Singleton texture to avoid duplication per chunk
-const noiseTexture = createNoiseTexture(64);
 
 export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity?: number }> = ({ sunDirection, opacity = 1 }) => {
   const ref = useRef<any>(null);

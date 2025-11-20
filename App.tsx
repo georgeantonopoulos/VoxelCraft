@@ -7,6 +7,7 @@ import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { UI } from './components/UI';
 import { Water } from './components/Water';
+import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 import * as THREE from 'three';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
@@ -189,6 +190,7 @@ const App: React.FC = () => {
                 sunDirection={sunDirection}
               />
               <Water />
+              <BedrockPlane />
             </Physics>
           </Suspense>
 
