@@ -1,0 +1,5 @@
+{
+  "name": "Organic Voxel Engine",
+  "description": "A smooth, organic terrain engine using Surface Nets and Scalar Fields. Features real-time sculpting, triplanar mapping, and physics.",
+  "requestFramePermissions": []
+}
