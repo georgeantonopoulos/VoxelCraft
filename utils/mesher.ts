@@ -147,34 +147,62 @@ export function generateMesh(density: Float32Array, material: Uint8Array): MeshD
     }
  };
 
-  for (let z = start; z < end; z++) {
-    for (let y = start; y < end; y++) {
-      for (let x = start; x < end; x++) {
-         const val = getVal(density, x, y, z, size);
-         const vX = getVal(density, x + 1, y, z, size);
-         const vY = getVal(density, x, y + 1, z, size);
-         const vZ = getVal(density, x, y, z + 1, size);
+  // We iterate strictly over the range needed to cover the chunk interior (x,y,z < end)
+  // AND the connections to the boundary (x,y,z == end).
+  //
+  // - X-Faces (Normal X): Generated at `x` (between `x` and `x+1`).
+  //   We want faces from `start` up to `end-1` (inclusive).
+  //   This covers the range from local coordinate 2 to 33.
+  //   Face 34 (boundary) is skipped here because the neighbor chunk (at its start) generates it.
+  //
+  // - Y/Z-Faces (Along X): Generated at `x`.
+  //   We need to connect vertices `x-1` and `x`.
+  //   Valid range for `x` is `start+1` to `end`.
+  //   `x=start+1` (3) connects 2 and 3.
+  //   `x=end` (34) connects 33 and 34 (closing the gap to boundary).
+  //
+  // To handle this in one loop, we iterate `x` from `start` to `end`,
+  // and gate the face generation with conditionals.
 
-         if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
-             pushQuad(
-                 vertexIndices[bufIdx(x, y-1, z-1)], vertexIndices[bufIdx(x, y-1, z)],
-                 vertexIndices[bufIdx(x, y, z-1)], vertexIndices[bufIdx(x, y, z)],
-                 val > ISO_LEVEL
-             );
+  for (let z = start; z <= end; z++) {
+    for (let y = start; y <= end; y++) {
+      for (let x = start; x <= end; x++) {
+         const val = getVal(density, x, y, z, size);
+
+         // X Face check
+         if (x < end && y > start && z > start) {
+             const vX = getVal(density, x + 1, y, z, size);
+             if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
+                 pushQuad(
+                     vertexIndices[bufIdx(x, y-1, z-1)], vertexIndices[bufIdx(x, y-1, z)],
+                     vertexIndices[bufIdx(x, y, z-1)], vertexIndices[bufIdx(x, y, z)],
+                     val > ISO_LEVEL
+                 );
+             }
          }
-         if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
-             pushQuad(
-                 vertexIndices[bufIdx(x-1, y, z-1)], vertexIndices[bufIdx(x, y, z-1)],
-                 vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
-                 val > ISO_LEVEL
-             );
+
+         // Y Face check
+         if (y < end && x > start && z > start) {
+             const vY = getVal(density, x, y + 1, z, size);
+             if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
+                 pushQuad(
+                     vertexIndices[bufIdx(x-1, y, z-1)], vertexIndices[bufIdx(x, y, z-1)],
+                     vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
+                     val > ISO_LEVEL
+                 );
+             }
          }
-         if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
-             pushQuad(
-                 vertexIndices[bufIdx(x-1, y-1, z)], vertexIndices[bufIdx(x, y-1, z)],
-                 vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
-                 val > ISO_LEVEL
-             );
+
+         // Z Face check
+         if (z < end && x > start && y > start) {
+             const vZ = getVal(density, x, y, z + 1, size);
+             if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
+                 pushQuad(
+                     vertexIndices[bufIdx(x-1, y-1, z)], vertexIndices[bufIdx(x, y-1, z)],
+                     vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
+                     val > ISO_LEVEL
+                 );
+             }
          }
       }
     }

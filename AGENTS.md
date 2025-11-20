@@ -11,4 +11,4 @@
   - Keep edits focused on the user’s immediate request; suggest larger refactors before doing them.
   - Add docstrings / JSDoc-style comments to new functions or components you introduce.
   - Do not edit build artifacts in `dist/`; change source files instead.
-- **2025-03-xx seam fix**: Boundary snapping is enabled in `utils/mesher.ts` so adjacent chunks share exact edge vertices. A later attempt to rewire face construction caused exploded geometry; we reverted to the original quad assembly (with snapping retained). If cracks reappear, re-check face winding vs. normal direction before changing index wiring.
+- **2025-03-xx seam fix**: Boundary snapping is enabled in `utils/mesher.ts` so adjacent chunks share exact edge vertices. We use a single-loop approach with carefully gated face generation: X-faces run `start` to `end-1` (skipping boundary wall), while Y/Z-faces run `start+1` to `end` (connecting to the boundary vertex).
