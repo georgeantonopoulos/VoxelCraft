@@ -3,13 +3,12 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
-import { QueryFilterFlags } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager } from '../services/SimulationManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
-import { MaterialType, ChunkMetadata } from '@/types';
+import { MaterialType, ChunkMetadata } from '../types';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -252,14 +251,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 metadataDB.initChunk(key, metadata);
 
                 // Register with SimulationManager (send initial data to worker)
-                simulationManager.addChunk(
-                    key, 
-                    payload.cx, 
-                    payload.cz, 
-                    material, 
-                    metadata.wetness || new Uint8Array(0), 
-                    metadata.mossiness || new Uint8Array(0)
-                );
+                simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
 
                 // Add to local state
                 const newChunk = { ...payload, version: 0 };
@@ -362,101 +354,83 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
     });
 
-    // 2. Interaction Logic (Continuous via useFrame)
-    const lastInteractionTime = useRef(0);
-    
-    useFrame((state) => {
+    // 2. Interaction Logic
+    useEffect(() => {
         if (!isInteracting || !action) return;
-
-        // Cooldown check (0.15s = ~6.6 blocks/sec)
-        if (state.clock.elapsedTime - lastInteractionTime.current < 0.15) return;
-        
-        lastInteractionTime.current = state.clock.elapsedTime;
 
         const origin = camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         
         const ray = new rapier.Ray(origin, direction);
-        const hit = world.castRay(ray, 40.0, true, QueryFilterFlags.EXCLUDE_DYNAMIC);
+        const hit = world.castRay(ray, 8.0, true);
         
         if (hit) {
             const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
             const dist = origin.distanceTo(rapierHitPoint);
 
-            const MAX_INTERACTION_DISTANCE = 16.0;
-            if (dist > MAX_INTERACTION_DISTANCE) {
-                return;
-            }
-
-            // Direction is normalized camera forward vector.
-            // DIG: Move point INTO the block (positive direction) so we carve the hit voxel.
-            // BUILD: Move point OUT of the block (negative direction) so we place onto the hit face.
-            const offset = action === 'DIG' ? 0.1 : -0.1;
+            const offset = action === 'DIG' ? -0.1 : 0.1;
             const hitPoint = new THREE.Vector3(
                 rapierHitPoint.x + direction.x * offset, 
                 rapierHitPoint.y + direction.y * offset, 
                 rapierHitPoint.z + direction.z * offset
             );
             
-            // Use strong delta to ensure block breaking/placing even at depth
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
 
             // Precision digging/building check
-            const PRECISION_RADIUS = 0.9;
-            const radius = PRECISION_RADIUS;
+            const radius = (dist < 3.0) ? 0.5 : DIG_RADIUS;
 
-            const baseCx = Math.floor(hitPoint.x / CHUNK_SIZE);
-            const baseCz = Math.floor(hitPoint.z / CHUNK_SIZE);
+            const minWx = hitPoint.x - (radius + 2);
+            const maxWx = hitPoint.x + (radius + 2);
+            const minWz = hitPoint.z - (radius + 2);
+            const maxWz = hitPoint.z + (radius + 2);
 
-            const candidateChunks = new Set<string>();
-            const pushChunk = (cx: number, cz: number) => candidateChunks.add(`${cx},${cz}`);
-
-            pushChunk(baseCx, baseCz);
-
-            const localXInBase = hitPoint.x - baseCx * CHUNK_SIZE;
-            const localZInBase = hitPoint.z - baseCz * CHUNK_SIZE;
-            const edgeThreshold = radius + 0.5;
-
-            if (localXInBase < edgeThreshold) pushChunk(baseCx - 1, baseCz);
-            if (localXInBase > CHUNK_SIZE - edgeThreshold) pushChunk(baseCx + 1, baseCz);
-            if (localZInBase < edgeThreshold) pushChunk(baseCx, baseCz - 1);
-            if (localZInBase > CHUNK_SIZE - edgeThreshold) pushChunk(baseCx, baseCz + 1);
-            if (localXInBase < edgeThreshold && localZInBase < edgeThreshold) pushChunk(baseCx - 1, baseCz - 1);
-            if (localXInBase < edgeThreshold && localZInBase > CHUNK_SIZE - edgeThreshold) pushChunk(baseCx - 1, baseCz + 1);
-            if (localXInBase > CHUNK_SIZE - edgeThreshold && localZInBase < edgeThreshold) pushChunk(baseCx + 1, baseCz - 1);
-            if (localXInBase > CHUNK_SIZE - edgeThreshold && localZInBase > CHUNK_SIZE - edgeThreshold) pushChunk(baseCx + 1, baseCz + 1);
+            const minCx = Math.floor(minWx / CHUNK_SIZE);
+            const maxCx = Math.floor(maxWx / CHUNK_SIZE);
+            const minCz = Math.floor(minWz / CHUNK_SIZE);
+            const maxCz = Math.floor(maxWz / CHUNK_SIZE);
 
             let anyModified = false;
             let primaryMat = MaterialType.DIRT;
 
             const affectedChunks: string[] = [];
 
-            candidateChunks.forEach((key) => {
-                const chunk = chunksRef.current[key];
-                if (!chunk) return;
-
-                const [cx, cz] = key.split(',').map(Number);
-                const localX = hitPoint.x - (cx * CHUNK_SIZE);
-                const localY = hitPoint.y;
-                const localZ = hitPoint.z - (cz * CHUNK_SIZE);
-
-                const modified = TerrainService.modifyChunk(
-                    chunk.density,
-                    chunk.material,
-                    { x: localX, y: localY, z: localZ },
-                    radius,
-                    delta,
-                    buildMat
-                );
-
-                if (modified) {
-                    anyModified = true;
-                    affectedChunks.push(key);
+            for (let cx = minCx; cx <= maxCx; cx++) {
+                for (let cz = minCz; cz <= maxCz; cz++) {
+                    const key = `${cx},${cz}`;
+                    const chunk = chunksRef.current[key];
                     
-                    // Capture center material
-                    primaryMat = action === 'BUILD' ? buildMat : (chunk.material[0] || MaterialType.DIRT);
+                    if (chunk) {
+                        const localX = hitPoint.x - (cx * CHUNK_SIZE);
+                        const localY = hitPoint.y;
+                        const localZ = hitPoint.z - (cz * CHUNK_SIZE);
+
+                        const modified = TerrainService.modifyChunk(
+                            chunk.density,
+                            chunk.material,
+                            { x: localX, y: localY, z: localZ },
+                            radius,
+                            delta,
+                            buildMat
+                        );
+
+                        if (modified) {
+                            anyModified = true;
+                            affectedChunks.push(key);
+
+                            // Capture center material
+                            if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE)) < CHUNK_SIZE/2 &&
+                                Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE)) < CHUNK_SIZE/2) {
+                                // Best guess without meshing yet
+                                primaryMat = chunk.material[0] || MaterialType.DIRT;
+                                // Or just use the brush material/stone for particles
+                                if (action === 'BUILD') primaryMat = buildMat;
+                                else primaryMat = MaterialType.DIRT; // Approximate
+                            }
+                        }
+                    }
                 }
-            });
+            }
 
             if (anyModified && workerRef.current) {
                 // Trigger remeshing for all affected chunks
@@ -467,14 +441,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     // Also update simulation worker with new materials!
                     // We should ideally send an UPDATE_CHUNK message, but ADD_CHUNK overwrites it in our simple worker implementation.
                     if (chunk && metadata) {
-                        simulationManager.addChunk(
-                            key, 
-                            chunk.cx, 
-                            chunk.cz, 
-                            chunk.material, 
-                            metadata.wetness || new Uint8Array(0), 
-                            metadata.mossiness || new Uint8Array(0)
-                        );
+                        simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
 
                         workerRef.current!.postMessage({
                             type: 'REMESH',
@@ -502,7 +469,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 setTimeout(() => setParticleState(prev => ({...prev, active: false})), 50);
             }
         }
-    });
+    }, [isInteracting, action, camera, world, rapier]);
 
     return (
         <group>
