@@ -383,6 +383,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
             const dist = origin.distanceTo(rapierHitPoint);
 
+            const MAX_INTERACTION_DISTANCE = 16.0;
+            if (dist > MAX_INTERACTION_DISTANCE) {
+                return;
+            }
+
             // Direction is normalized camera forward vector.
             // DIG: Move point INTO the block (positive direction) so we carve the hit voxel.
             // BUILD: Move point OUT of the block (negative direction) so we place onto the hit face.
@@ -397,9 +402,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
 
             // Precision digging/building check
-            const PRECISION_REACH = 12.0;
             const PRECISION_RADIUS = 0.9;
-            const radius = (dist < PRECISION_REACH) ? PRECISION_RADIUS : Math.max(DIG_RADIUS, PRECISION_RADIUS);
+            const radius = PRECISION_RADIUS;
 
             const baseCx = Math.floor(hitPoint.x / CHUNK_SIZE);
             const baseCz = Math.floor(hitPoint.z / CHUNK_SIZE);
