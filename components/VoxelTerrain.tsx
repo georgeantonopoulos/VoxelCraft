@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
+import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager } from '../services/SimulationManager';
@@ -48,6 +49,15 @@ const getMaterialColor = (matId: number) => {
         case MaterialType.MOSSY_STONE: return '#5c8a3c';
         default: return '#888888';
     }
+};
+
+/**
+ * Returns true when the provided collider belongs to a terrain rigid body.
+ */
+const isTerrainCollider = (collider: Collider): boolean => {
+    const parent = collider.parent();
+    const userData = parent?.userData as { type?: string } | undefined;
+    return userData?.type === 'terrain';
 };
 
 // --- COMPONENTS ---
@@ -362,19 +372,25 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         
         const ray = new rapier.Ray(origin, direction);
-        const hit = world.castRay(ray, 8.0, true);
+        const terrainHit = world.castRay(
+            ray,
+            8.0,
+            true,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            isTerrainCollider
+        );
         
-        if (hit) {
-            const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
-            const dist = origin.distanceTo(rapierHitPoint);
+        if (terrainHit) {
+            const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
+            const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
+            const dist = origin.distanceTo(impactPoint);
 
             // Correction: DIG moves INTO the block (positive), BUILD moves OUT (negative)
             const offset = action === 'DIG' ? 0.1 : -0.1;
-            const hitPoint = new THREE.Vector3(
-                rapierHitPoint.x + direction.x * offset, 
-                rapierHitPoint.y + direction.y * offset, 
-                rapierHitPoint.z + direction.z * offset
-            );
+            const hitPoint = impactPoint.addScaledVector(direction, offset);
             
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
 
