@@ -2,7 +2,7 @@
 import { MATERIAL_PROPS, TOTAL_SIZE, CHUNK_SIZE, PAD } from '../constants';
 import { MaterialType } from '../types';
 
-// We duplicate the minimal types needed for the worker to avoid heavy imports if any
+// Minimal types for worker
 interface WorkerChunkData {
     key: string;
     cx: number;
@@ -15,143 +15,185 @@ interface WorkerChunkData {
 const chunks: Map<string, WorkerChunkData> = new Map();
 let activeKeys: Set<string> = new Set();
 
-// Helper: Get neighbor value from global map if needed
-// Optimization: We only use this for chunk borders
-function getGlobalWetness(wx: number, wy: number, wz: number): number {
-    const cx = Math.floor(wx / CHUNK_SIZE);
-    const cz = Math.floor(wz / CHUNK_SIZE);
-    const key = `${cx},${cz}`;
-
-    const chunk = chunks.get(key);
-    if (!chunk) return 0;
-
-    // Map global to local padded index
-    const localX = Math.floor(wx - cx * CHUNK_SIZE) + PAD;
-    const localY = Math.floor(wy) + PAD;
-    const localZ = Math.floor(wz - cz * CHUNK_SIZE) + PAD;
-
-    if (localY < 0 || localY >= TOTAL_SIZE) return 0;
-
-    const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_SIZE;
-    return chunk.wetness[idx];
+// BFS Queue Item
+// Pack x,y,z,val into a single object or use parallel arrays for perf?
+// Objects are fine for "Slow Tick" with limited spread radius.
+interface QueueItem {
+    wx: number;
+    wy: number;
+    wz: number;
+    val: number;
 }
 
-function simulateChunk(chunk: WorkerChunkData): boolean {
-    const { material, wetness, mossiness, cx, cz } = chunk;
-    const size = TOTAL_SIZE;
-    let anyChanged = false;
+// Global BFS Propagation
+function propagateWetness() {
+    const queue: QueueItem[] = [];
+    const changedChunks = new Set<string>();
 
-    const newWetness = new Uint8Array(wetness);
-    const newMossiness = new Uint8Array(mossiness);
+    // 1. Reset Phase & Source Collection
+    // We iterate all chunks to clear old wetness and find sources.
+    // This ensures consistency: if a source was removed, the water dries up.
 
-    const start = PAD;
-    const end = size - PAD;
+    for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (!chunk) continue;
 
-    const worldOffsetX = cx * CHUNK_SIZE;
-    const worldOffsetZ = cz * CHUNK_SIZE;
+        const { material, wetness, cx, cz } = chunk;
+        const size = TOTAL_SIZE;
+        let chunkChanged = false;
 
-    for (let z = start; z < end; z++) {
-        for (let y = start; y < end; y++) {
-            for (let x = start; x < end; x++) {
-                const idx = x + y * size + z * size * size;
-                const mat = material[idx];
+        const start = PAD;
+        const end = size - PAD;
+        const worldOffsetX = cx * CHUNK_SIZE;
+        const worldOffsetZ = cz * CHUNK_SIZE;
 
-                if (mat === MaterialType.AIR) {
-                    if (newWetness[idx] !== 0) {
-                        newWetness[idx] = 0;
-                        anyChanged = true;
+        for (let z = start; z < end; z++) {
+            for (let y = start; y < end; y++) {
+                for (let x = start; x < end; x++) {
+                    const idx = x + y * size + z * size * size;
+                    const mat = material[idx];
+
+                    if (mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
+                        // Ensure source is max wetness
+                        if (wetness[idx] !== 255) {
+                            wetness[idx] = 255;
+                            chunkChanged = true;
+                        }
+                        // Add to queue
+                        queue.push({
+                            wx: (x - PAD) + worldOffsetX,
+                            wy: (y - PAD),
+                            wz: (z - PAD) + worldOffsetZ,
+                            val: 255
+                        });
+                    } else if (wetness[idx] > 0) {
+                        // Reset non-source blocks to 0
+                        // They will be re-wetted if near a source
+                        wetness[idx] = 0;
+                        chunkChanged = true;
                     }
-                    continue;
                 }
+            }
+        }
+        if (chunkChanged) changedChunks.add(key);
+    }
 
-                const props = MATERIAL_PROPS[mat] || MATERIAL_PROPS[MaterialType.DIRT];
+    // 2. BFS Propagation Phase
+    // Decay Factor: Controls spread radius.
+    // 0.4 -> ~4 blocks. 0.7 -> ~15 blocks.
+    const DECAY_FACTOR = 0.4;
+    const THRESHOLD = 5;
 
-                // --- Neighbor Wetness Check ---
-                let maxNeighborWetness = 0;
+    // Neighbors offsets
+    const offsets = [
+        [1,0,0], [-1,0,0],
+        [0,1,0], [0,-1,0],
+        [0,0,1], [0,0,-1]
+    ];
 
-                // Helper to read neighbor
-                const check = (dx: number, dy: number, dz: number) => {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    const nz = z + dz;
+    let head = 0;
+    while (head < queue.length) {
+        const { wx, wy, wz, val } = queue[head++];
 
-                    let val = 0;
-                    const isCrossChunk = (nx < PAD || nx >= size - PAD || nz < PAD || nz >= size - PAD);
+        const nextVal = Math.floor(val * DECAY_FACTOR);
+        if (nextVal < THRESHOLD) continue;
 
-                    if (isCrossChunk) {
-                        const wx = (nx - PAD) + worldOffsetX;
-                        const wy = (ny - PAD);
-                        const wz = (nz - PAD) + worldOffsetZ;
-                        val = getGlobalWetness(wx, wy, wz);
-                    } else {
-                        val = wetness[nx + ny * size + nz * size * size];
-                    }
+        for (const [dx, dy, dz] of offsets) {
+            const nwx = wx + dx;
+            const nwy = wy + dy;
+            const nwz = wz + dz;
 
-                    if (val > maxNeighborWetness) maxNeighborWetness = val;
-                };
+            // Resolve Chunk
+            const ncx = Math.floor(nwx / CHUNK_SIZE);
+            const ncz = Math.floor(nwz / CHUNK_SIZE);
+            const key = `${ncx},${ncz}`;
 
-                check(1,0,0);
-                check(-1,0,0);
-                check(0,1,0);
-                check(0,-1,0);
-                check(0,0,1);
-                check(0,0,-1);
+            const chunk = chunks.get(key);
+            if (!chunk) continue; // Skip unloaded chunks
 
-                // --- Simulation Logic ---
-                let currentWet = wetness[idx];
-                let currentMoss = mossiness[idx];
+            // Resolve Local Index
+            // Note: TerrainService uses PAD=2.
+            const localX = Math.floor(nwx - ncx * CHUNK_SIZE) + PAD;
+            const localY = Math.floor(nwy) + PAD;
+            const localZ = Math.floor(nwz - ncz * CHUNK_SIZE) + PAD;
 
-                if (mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
-                    newWetness[idx] = 255;
-                } else {
-                    // Exponential decay instead of linear subtraction
-                    // This mimics 1/n^2 drop-off (strong reaction near source, weak further away)
-                    // Decay factor 0.7 means 30% loss per step.
-                    // 255 -> 178 -> 125 -> 87 -> 61 -> 42 -> 30 -> 21...
+            if (localY < 0 || localY >= TOTAL_SIZE) continue;
 
-                    const decayFactor = 0.7;
-                    const targetWet = Math.floor(maxNeighborWetness * decayFactor);
+            const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_SIZE;
 
-                    // Also apply absorption rate logic
-                    if (targetWet > currentWet) {
-                        currentWet += props.absorptionRate;
-                    } else {
-                        currentWet -= props.dryingRate;
-                    }
-                    newWetness[idx] = Math.min(255, Math.max(0, currentWet));
-                }
+            // Check Material
+            const mat = chunk.material[idx];
+            if (mat === MaterialType.AIR || mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
+                continue; // Don't propagate into air or existing sources
+            }
+            // Optional: Check absorptionRate? If 0 (Bedrock?), maybe don't spread?
+            // For now, assume all solid blocks can get wet surface.
 
-                // Moss Logic
-                if (mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE) {
-                    const mossThresh = 50;
-                    if (newWetness[idx] > mossThresh) {
-                        currentMoss += props.mossGrowthRate;
-                    } else {
-                        currentMoss -= props.mossDecayRate;
-                    }
-                    newMossiness[idx] = Math.min(255, Math.max(0, currentMoss));
-                } else {
-                    currentMoss -= 5;
-                    newMossiness[idx] = Math.max(0, currentMoss);
-                }
+            // Update Wetness
+            // We use standard max logic: only update if new value is higher
+            if (chunk.wetness[idx] < nextVal) {
+                chunk.wetness[idx] = nextVal;
+                changedChunks.add(key);
+
+                // Add to queue for further spread
+                queue.push({ wx: nwx, wy: nwy, wz: nwz, val: nextVal });
             }
         }
     }
 
-    // Check changes
-    for (let i = 0; i < wetness.length; i++) {
-        if (wetness[i] !== newWetness[i] || mossiness[i] !== newMossiness[i]) {
-            anyChanged = true;
-            break;
+    // 3. Moss Phase (Local)
+    // Now that wetness is stable, update mossiness locally.
+    // We only need to check chunks that are "active" or involved in simulation.
+    // Iterating all active chunks is safer.
+    for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (!chunk) continue;
+
+        const { material, wetness, mossiness } = chunk;
+        const size = TOTAL_SIZE;
+        let chunkChanged = changedChunks.has(key);
+
+        const start = PAD;
+        const end = size - PAD;
+
+        for (let z = start; z < end; z++) {
+            for (let y = start; y < end; y++) {
+                for (let x = start; x < end; x++) {
+                    const idx = x + y * size + z * size * size;
+                    const mat = material[idx];
+
+                    if (mat === MaterialType.AIR) continue;
+
+                    const props = MATERIAL_PROPS[mat] || MATERIAL_PROPS[MaterialType.DIRT];
+                    let currentMoss = mossiness[idx];
+                    const currentWet = wetness[idx];
+
+                    if (mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE) {
+                        const mossThresh = 50;
+                        if (currentWet > mossThresh) {
+                            currentMoss += props.mossGrowthRate;
+                        } else {
+                            currentMoss -= props.mossDecayRate;
+                        }
+                        currentMoss = Math.min(255, Math.max(0, currentMoss));
+                    } else {
+                         // Decay moss on dirt (grass logic handles green)
+                        currentMoss -= 5;
+                        currentMoss = Math.max(0, currentMoss);
+                    }
+
+                    if (currentMoss !== mossiness[idx]) {
+                        mossiness[idx] = currentMoss;
+                        chunkChanged = true;
+                    }
+                }
+            }
         }
+
+        if (chunkChanged) changedChunks.add(key);
     }
 
-    if (anyChanged) {
-        chunk.wetness = newWetness;
-        chunk.mossiness = newMossiness;
-        return true;
-    }
-    return false;
+    return Array.from(changedChunks);
 }
 
 self.onmessage = (e: MessageEvent) => {
@@ -172,26 +214,19 @@ self.onmessage = (e: MessageEvent) => {
     else if (type === 'START_LOOP') {
         // Start the interval
         setInterval(() => {
-            const updates: any[] = [];
+            const changedKeys = propagateWetness();
 
-            for (const key of activeKeys) {
-                const chunk = chunks.get(key);
-                if (chunk) {
-                    const changed = simulateChunk(chunk);
-                    if (changed) {
-                        updates.push({
-                            key: chunk.key,
-                            wetness: chunk.wetness,
-                            mossiness: chunk.mossiness
-                        });
-                    }
-                }
-            }
-
-            if (updates.length > 0) {
+            if (changedKeys.length > 0) {
+                const updates = changedKeys.map(key => {
+                    const chunk = chunks.get(key);
+                    return {
+                        key: chunk!.key,
+                        wetness: chunk!.wetness,
+                        mossiness: chunk!.mossiness
+                    };
+                });
                 self.postMessage({ type: 'CHUNKS_UPDATED', payload: updates });
             }
-
         }, 1000); // 1 second tick
     }
 };

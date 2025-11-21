@@ -18,8 +18,8 @@ export const PLAYER_SPEED = 6;
 export const JUMP_FORCE = 9;
 
 // Tool Settings
-export const DIG_RADIUS = 30.0; 
-export const DIG_STRENGTH = 3; 
+export const DIG_RADIUS = 3.0;
+export const DIG_STRENGTH = 1.5;
 
 // Material Physics Properties
 import { MaterialType, MaterialProperties } from './types';
@@ -41,7 +41,7 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
   },
   [MaterialType.GRASS]: {
     absorptionRate: 30,
-    dryingRate: 1,
+    dryingRate: 15,
     mossGrowthRate: 0,
     mossDecayRate: 0
   },
