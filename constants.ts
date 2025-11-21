@@ -4,8 +4,8 @@ export const CHUNK_SIZE = 32;
 export const CHUNK_HEIGHT = 64; // Increased height for deep caverns
 export const PAD = 2;
 
-export const TOTAL_SIZE = CHUNK_SIZE + PAD * 2;
-export const TOTAL_HEIGHT = CHUNK_HEIGHT + PAD * 2;
+export const TOTAL_SIZE: number = CHUNK_SIZE + PAD * 2;
+export const TOTAL_HEIGHT: number = CHUNK_HEIGHT + PAD * 2;
 
 export const ISO_LEVEL = 0.5; 
 export const VOXEL_SCALE = 1.0;
