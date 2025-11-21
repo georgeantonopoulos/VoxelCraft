@@ -6,6 +6,7 @@
 - **HTML entry**: `index.html` must include a `<script type="module" src="/index.tsx"></script>` tag so Vite can load the React app. If the page is pure black with no UI, check that this tag is present.
 - **Styling**: Tailwind is loaded via CDN in `index.html` (not via a local config). Utility classes in React components rely on that `<script src="https://cdn.tailwindcss.com"></script>` in the HTML.
 - **Pointer lock / controls**: The app uses `PointerLockControls` and keyboard controls; clicking into the canvas captures the pointer, and `InteractionLayer` handles mouse events for dig/build actions.
+- **Terrain raycasts**: `VoxelTerrain` now filters Rapier ray hits to colliders whose rigid body `userData.type` equals `'terrain'`. Keep that userData shape intact when touching chunk bodies or interactions will stop working.
 - **Environment variables**: `vite.config.ts` maps `GEMINI_API_KEY` from `.env.local` into `process.env.*` for use by the app.
 - **User preferences**: 
   - Keep edits focused on the user’s immediate request; suggest larger refactors before doing them.
