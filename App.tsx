@@ -117,18 +117,16 @@ const App: React.FC = () => {
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
 
+  // FIX: Sun direction must point TO the sun (UP), not AWAY (DOWN).
   const sunDirection = useMemo(
-    () => new THREE.Vector3(-50, -80, -30).normalize(),
+    () => new THREE.Vector3(50, 80, 30).normalize(),
     []
   );
 
   useEffect(() => {
       // Find safe spawn height
       const h = TerrainService.getHeightAt(16, 16);
-      console.log("Calculated Spawn Height (Surface):", h);
-
       // Spawn slightly above surface
-      // NOTE: h is World Y.
       setSpawnPos([16, h + 5, 16]);
   }, []);
 

@@ -1,5 +1,5 @@
 
-import { TOTAL_SIZE, TOTAL_HEIGHT, ISO_LEVEL, PAD, CHUNK_SIZE } from '../constants';
+import { TOTAL_SIZE, TOTAL_HEIGHT, ISO_LEVEL, PAD, CHUNK_SIZE, CHUNK_HEIGHT } from '../constants';
 import { MeshData, MaterialType } from '../types';
 
 const sizeXZ = TOTAL_SIZE;
@@ -103,15 +103,34 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
     }
   }
 
-  // 2. Direct Output (DISABLE SMOOTHING FOR DEBUG)
-  for (let z = 0; z < sizeXZ; z++) {
-    for (let y = 0; y < sizeY; y++) {
-      for (let x = 0; x < sizeXZ; x++) {
+  // 2. Smoothing Pass (Re-enabled)
+  for (let z = 1; z < sizeXZ - 2; z++) {
+    for (let y = 1; y < sizeY - 2; y++) {
+      for (let x = 1; x < sizeXZ - 2; x++) {
          const cIdx = getIdx(x,y,z);
          if (vertexIndices[cIdx] !== -1) {
-             const px = cellPositions[cIdx * 3];
-             const py = cellPositions[cIdx * 3 + 1];
-             const pz = cellPositions[cIdx * 3 + 2];
+             let sx = cellPositions[cIdx * 3];
+             let sy = cellPositions[cIdx * 3 + 1];
+             let sz = cellPositions[cIdx * 3 + 2];
+             let count = 1;
+
+             const check = (nx: number, ny: number, nz: number) => {
+                 const nIdx = getIdx(nx, ny, nz);
+                 if (vertexIndices[nIdx] !== -1) {
+                     sx += cellPositions[nIdx * 3];
+                     sy += cellPositions[nIdx * 3 + 1];
+                     sz += cellPositions[nIdx * 3 + 2];
+                     count++;
+                 }
+             };
+
+             check(x+1, y, z); check(x-1, y, z);
+             check(x, y+1, z); check(x, y-1, z);
+             check(x, y, z+1); check(x, y, z-1);
+
+             const px = sx / count;
+             const py = sy / count;
+             const pz = sz / count;
 
              const snapEpsilon = 0.02;
              const snapBoundary = (v: number, max: number) => {
@@ -138,7 +157,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
              if (len > 0.0001) norms.push(nx/len, ny/len, nz/len);
              else norms.push(0, 1, 0);
 
-             // Materials (Sample center of cell)
+             // Materials
              let bestMat = MaterialType.DIRT; 
              let minSolidVal = 99999.0;
              let bestWet = 0;
@@ -156,9 +175,11 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
                     }
                  }
              };
-             checkMat(x,y,z);
-             checkMat(x+1,y,z);
-             checkMat(x,y+1,z); // etc... simplified for debug
+             // Check 8 corners
+             checkMat(x,y,z); checkMat(x+1,y,z);
+             checkMat(x,y+1,z); checkMat(x+1,y+1,z);
+             checkMat(x,y,z+1); checkMat(x+1,y,z+1);
+             checkMat(x,y+1,z+1); checkMat(x+1,y+1,z+1);
 
              mats.push(bestMat);
              wets.push(bestWet / 255.0);

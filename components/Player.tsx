@@ -13,14 +13,6 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const { rapier, world } = useRapier();
   const [currentFriction, setCurrentFriction] = useState(0);
 
-  // DEBUG: Tilt camera down on mount
-  useFrame((state) => {
-      // Simple hack to force look down once
-      if (state.camera.rotation.x === 0) {
-          state.camera.rotation.x = -0.5; // Look down ~30 degrees
-      }
-  });
-
   useFrame((state, delta) => {
     if (!body.current) return;
 
@@ -39,8 +31,8 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
         const direction = new THREE.Vector3();
 
         direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(PLAYER_SPEED);
-        // Apply rotation but keep Y independent?
-        // We usually want movement relative to view azimuth.
+
+        // Apply rotation around Y axis
         const euler = new THREE.Euler(0, camera.rotation.y, 0);
         direction.applyEuler(euler);
 
