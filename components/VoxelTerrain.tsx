@@ -368,7 +368,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const rapierHitPoint = ray.pointAt(hit.timeOfImpact);
             const dist = origin.distanceTo(rapierHitPoint);
 
-            const offset = action === 'DIG' ? -0.1 : 0.1;
+            // Correction: DIG moves INTO the block (positive), BUILD moves OUT (negative)
+            const offset = action === 'DIG' ? 0.1 : -0.1;
             const hitPoint = new THREE.Vector3(
                 rapierHitPoint.x + direction.x * offset, 
                 rapierHitPoint.y + direction.y * offset, 
@@ -378,7 +379,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
 
             // Precision digging/building check
-            const radius = (dist < 3.0) ? 0.5 : DIG_RADIUS;
+            // Increased to 1.1 to ensure we capture the voxel center even at angles
+            const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
             const minWx = hitPoint.x - (radius + 2);
             const maxWx = hitPoint.x + (radius + 2);
@@ -443,6 +445,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     if (chunk && metadata) {
                         simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
 
+                        // Force immediate remesh for user interaction, bypassing the queue for responsiveness
                         workerRef.current!.postMessage({
                             type: 'REMESH',
                             payload: {
