@@ -27,10 +27,10 @@ const TerrainShaderMaterial = shaderMaterial(
     uFogHeightFalloff: 0.02,
     uDetailStrength: 0.4,
     uMacroVariation: 0.35,
-    uAOIntensity: 0.45,
+    uAOIntensity: 0.65, // Increased from 0.45
     uWaterLevel: WATER_LEVEL,
     uOpacity: 1.0,
-    uNoiseTexture: null // Will be set via prop
+    uNoiseTexture: null
   },
   `
     precision highp float;
@@ -101,31 +101,18 @@ const TerrainShaderMaterial = shaderMaterial(
 
     out vec4 fragColor;
 
-    // Sample 3D noise from texture
-    // Channels: R=Base, G=x2, B=x4, A=x8
     float getNoise(vec3 pos, float scale) {
-        vec4 n = texture(uNoiseTexture, pos * scale * 0.05); // Scale factor to map world units to texture
-        // Reconstruct FBM-like signal
+        vec4 n = texture(uNoiseTexture, pos * scale * 0.05);
         return n.r + n.g * 0.5 + n.b * 0.25 + n.a * 0.125;
     }
 
-    // Helper for detailing
-    float getDetailNoise(vec3 pos, float scale) {
-        vec4 n = texture(uNoiseTexture, pos * scale * 0.1);
-        return n.r * 2.0 - 1.0; // Simple signed noise
-    }
-
     vec3 triSampleColor(vec3 pos, vec3 normal, vec3 color, float scale) {
-      // Simple blending using noise to break uniformity
       float n = getNoise(pos, scale);
-      return color * (0.85 + 0.3 * n); // Modulate brightness
+      return color * (0.85 + 0.3 * n);
     }
 
     vec3 calcDetailNormal(vec3 pos, vec3 normal) {
       float eps = 0.1;
-      // Use texture sampling for cheap perturbation
-      // We sample the high freq channel (Blue or Alpha) for bumps
-
       float scale = 1.5;
       float dX = texture(uNoiseTexture, (pos + vec3(eps, 0, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(eps, 0, 0)) * scale * 0.1).b;
       float dY = texture(uNoiseTexture, (pos + vec3(0, eps, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(0, eps, 0)) * scale * 0.1).b;
@@ -142,13 +129,11 @@ const TerrainShaderMaterial = shaderMaterial(
       float height = vHeight;
 
       // Macro variation
-      float macroNoise = getNoise(vPosition, 0.05) * uMacroVariation; // Low freq
+      float macroNoise = getNoise(vPosition, 0.05) * uMacroVariation;
 
-      // Increased texture frequency (smaller noise) for more detail
       vec3 c_stone = triSampleColor(vPosition, worldNormal, uColorStone, 0.3);
       vec3 c_grass = triSampleColor(vPosition, worldNormal, uColorGrass, 0.25);
 
-      // Modulate grass
       c_grass = mix(c_grass, c_grass * 0.8 + vec3(0.1, 0.1, 0.0), macroNoise * 0.5);
 
       vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.35);
@@ -164,19 +149,6 @@ const TerrainShaderMaterial = shaderMaterial(
       float snowLine = smoothstep(18.0, 28.0, height);
       float beach = smoothstep(uWaterLevel - 1.5, uWaterLevel + 2.0, height);
       float dirtBand = smoothstep(0.2, 0.65, slope);
-
-      // Material Blending
-      // 0: Air
-      // 1: Bedrock
-      // 2: Stone
-      // 3: Dirt
-      // 4: Grass
-      // 5: Sand
-      // 6: Snow
-      // 7: Clay
-      // 8: Water Source
-      // 9: Water Flowing
-      // 10: Mossy Stone (Explicit)
 
       if (m < 2.0) {
          baseColor = mix(uColorBedrock, c_stone, clamp(m, 0.0, 1.0));
@@ -197,12 +169,10 @@ const TerrainShaderMaterial = shaderMaterial(
          baseColor = mix(c_clay, c_water, clamp(m - 7.0, 0.0, 1.0));
          specular = 0.8;
       } else {
-         // Water/Mossy
          baseColor = c_water;
          specular = 0.9;
       }
 
-      // Explicit Mossy Stone Override (approx m=10)
       if (abs(m - 10.0) < 0.5) {
           baseColor = c_moss;
           specular = 0.05;
@@ -214,31 +184,35 @@ const TerrainShaderMaterial = shaderMaterial(
       baseColor = mix(baseColor, mix(baseColor, c_sand, 0.7), beach * (1.0 - snowLine));
       baseColor = mix(baseColor, c_dirt, dirtBand * 0.35);
 
-      // --- Alive World Effects ---
-
-      // 1. Wetness (Muddy/Dark/Specular)
-      // S-Curve for wetness visual
+      // Alive World Effects
       float wetFactor = smoothstep(0.05, 0.6, vWetness);
-      baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7); // Darken
-      specular = mix(specular, 0.6, wetFactor * 0.8); // Make shiny
+      baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7);
+      specular = mix(specular, 0.6, wetFactor * 0.8);
 
-      // 2. Moss Growth (Overlay)
-      // Use noise to create patches
       float mossNoise = getNoise(vPosition, 0.5);
       float mossThreshold = smoothstep(0.2, 0.5, vMossiness + mossNoise * 0.2);
 
-      // Only apply moss where it makes sense (not on water or snow usually, but let's assume simulation handles that)
       baseColor = mix(baseColor, c_moss, mossThreshold);
-      specular = mix(specular, 0.02, mossThreshold); // Moss is matte
+      specular = mix(specular, 0.02, mossThreshold);
 
-      float ao = clamp(1.0 - (1.0 - slope) * uAOIntensity - macroNoise * 0.25, 0.55, 1.0);
+      // Height-based ambient darkening (Deep caves are darker)
+      // Map height from -35 (dark) to 0 (normal)
+      float heightDarkening = smoothstep(-35.0, 0.0, vHeight);
+      // Keep minimum brightness
+      heightDarkening = 0.3 + 0.7 * heightDarkening;
+
+      float ao = clamp(1.0 - (1.0 - slope) * uAOIntensity - macroNoise * 0.25, 0.4, 1.0);
 
       vec3 normal = calcDetailNormal(vPosition, worldNormal);
       vec3 lightDir = normalize(uSunDir);
       vec3 viewDir = normalize(cameraPosition - vPosition);
 
       float NdotL = max(dot(normal, lightDir), 0.0);
-      vec3 diffuse = uSunColor * NdotL;
+
+      // Fake GI / Bounce light
+      // Light up upward facing surfaces slightly more
+      float upFactor = max(dot(normal, vec3(0,1,0)), 0.0);
+      vec3 diffuse = uSunColor * (NdotL + upFactor * 0.15);
 
       vec3 halfVec = normalize(lightDir + viewDir);
       float NdotH = max(dot(normal, halfVec), 0.0);
@@ -246,7 +220,9 @@ const TerrainShaderMaterial = shaderMaterial(
 
       float rim = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0) * 0.15;
 
-      vec3 ambient = uAmbientColor * (0.55 + 0.45 * ao);
+      // Ambient affected by height (caves) and AO
+      vec3 ambient = uAmbientColor * (0.55 + 0.45 * ao) * heightDarkening;
+
       vec3 lit = baseColor * (ambient + diffuse) + spec * uSunColor + rim * baseColor;
 
       float distFog = 1.0 - exp2(-uFogDensity * uFogDensity * vDepth * vDepth * 1.2);
@@ -255,6 +231,11 @@ const TerrainShaderMaterial = shaderMaterial(
 
       vec3 fogColor = mix(uFogColorNear, uFogColorFar, clamp((height + 20.0) / 80.0, 0.0, 1.0));
       vec3 finalColor = mix(lit, fogColor, fogFactor);
+
+      // Color Grading / Tonemap
+      // Slight contrast curve
+      finalColor = pow(finalColor, vec3(1.1));
+      finalColor = finalColor * 1.1; // Slight exposure boost
 
       fragColor = vec4(finalColor, uOpacity);
       fragColor.rgb = pow(fragColor.rgb, vec3(1.0 / 2.2));

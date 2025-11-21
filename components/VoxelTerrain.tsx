@@ -7,7 +7,7 @@ import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager } from '../services/SimulationManager';
-import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
+import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE, BEDROCK_LEVEL } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
 import { MaterialType, ChunkMetadata } from '../types';
 
@@ -59,6 +59,12 @@ const isTerrainCollider = (collider: Collider): boolean => {
     const userData = parent?.userData as { type?: string } | undefined;
     return userData?.type === 'terrain';
 };
+
+// Offset mesh to align logical y=0 with world BEDROCK_LEVEL (roughly)
+// Based on calculation: wy = (y - PAD) - 33.
+// Mesher produces py = y - PAD.
+// worldY = py - 33.
+const MESH_Y_OFFSET = -33;
 
 // --- COMPONENTS ---
 
@@ -116,7 +122,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         >
             <mesh 
                 ref={meshRef}
-                position={[chunk.cx * CHUNK_SIZE, 0, chunk.cz * CHUNK_SIZE]}
+                position={[chunk.cx * CHUNK_SIZE, MESH_Y_OFFSET, chunk.cz * CHUNK_SIZE]}
                 scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
                 castShadow 
                 receiveShadow
@@ -420,7 +426,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     
                     if (chunk) {
                         const localX = hitPoint.x - (cx * CHUNK_SIZE);
-                        const localY = hitPoint.y;
+                        // CORRECT LOCAL Y FOR OFFSET MESH
+                        const localY = hitPoint.y - MESH_Y_OFFSET;
                         const localZ = hitPoint.z - (cz * CHUNK_SIZE);
 
                         const modified = TerrainService.modifyChunk(

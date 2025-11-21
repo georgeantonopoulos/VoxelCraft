@@ -1,9 +1,10 @@
 import { ChunkMetadata, MetadataLayer } from '../types';
-import { TOTAL_SIZE, CHUNK_SIZE } from '../constants';
+import { TOTAL_SIZE, TOTAL_HEIGHT, CHUNK_SIZE, PAD, BEDROCK_LEVEL } from '../constants';
 
 export class MetadataDB {
   private chunks: Map<string, ChunkMetadata> = new Map();
   private defaultValues: Map<string, number> = new Map();
+  private MESH_Y_OFFSET = -33; // Must match VoxelTerrain and TerrainService logic
 
   constructor() {
     // Register default layers and their default values
@@ -27,7 +28,7 @@ export class MetadataDB {
 
   // Create a new empty layer
   createLayer(): MetadataLayer {
-    return new Uint8Array(TOTAL_SIZE * TOTAL_SIZE * TOTAL_SIZE);
+    return new Uint8Array(TOTAL_SIZE * TOTAL_HEIGHT * TOTAL_SIZE);
   }
 
   // Get value from a specific chunk
@@ -47,40 +48,33 @@ export class MetadataDB {
 
   // Global coordinate lookup (handles neighbors)
   // Returns the value and whether it was found
+  // wx, wy, wz are World Coordinates (where player is)
   getGlobal(wx: number, wy: number, wz: number, layer: string): number {
     const cx = Math.floor(wx / CHUNK_SIZE);
     const cz = Math.floor(wz / CHUNK_SIZE);
     const key = `${cx},${cz}`;
 
-    // Local coordinates within the chunk (including padding logic if we used padding in global coords)
-    // Note: The system assumes standard "world space" to "chunk space" conversion.
-    // wx, wz are absolute world coordinates.
+    // Convert World Coordinate to Local Array Coordinate
+    // World X = (x - PAD) + cx*SIZE => x = WorldX - cx*SIZE + PAD
+    const localX = Math.floor(wx - cx * CHUNK_SIZE) + PAD;
 
-    const lx = wx - (cx * CHUNK_SIZE);
-    // y is global since we only chunk in X/Z (column chunks)?
-    // Wait, VoxelTerrain.tsx uses "cx * CHUNK_SIZE".
-    // However, the internal data arrays (TOTAL_SIZE) include padding (PAD = 2).
-    // We need to map global coordinate to the specific index in the padded array.
+    // World Y. Mesh is offset by MESH_Y_OFFSET (-33).
+    // Array index y corresponds to world Y = (y - PAD) + MESH_Y_OFFSET
+    // So y = WorldY - MESH_Y_OFFSET + PAD
+    const localY = Math.floor(wy - this.MESH_Y_OFFSET) + PAD;
 
-    // The voxel at (wx, wy, wz) corresponds to:
-    // index = (lx + PAD) + (ly + PAD) * SIZE + (lz + PAD) * SIZE * SIZE?
-    // Wait, 'y' is vertical. 'TerrainService' uses:
-    // wx = (x - PAD) + worldOffsetX => x = wx - worldOffsetX + PAD
+    const localZ = Math.floor(wz - cz * CHUNK_SIZE) + PAD;
 
-    const localX = Math.floor(wx - cx * CHUNK_SIZE) + 2; // PAD
-    const localY = Math.floor(wy) + 2; // PAD
-    const localZ = Math.floor(wz - cz * CHUNK_SIZE) + 2; // PAD
+    if (localY < 0 || localY >= TOTAL_HEIGHT) return this.defaultValues.get(layer) || 0;
+    if (localX < 0 || localX >= TOTAL_SIZE) return this.defaultValues.get(layer) || 0;
+    if (localZ < 0 || localZ >= TOTAL_SIZE) return this.defaultValues.get(layer) || 0;
 
-    if (localY < 0 || localY >= TOTAL_SIZE) return this.defaultValues.get(layer) || 0;
+    const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_HEIGHT;
+    // Wait, index logic in TerrainService is:
+    // x + y * sizeXZ + z * sizeXZ * sizeY
+    const realIdx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_HEIGHT;
 
-    // Check bounds for X/Z just in case, though floor should handle it if we picked right chunk
-    // But wait, if wx is exactly on border?
-    // logic: cx = floor(wx / 32). wx = 31 -> cx=0. localX = 31 - 0 + 2 = 33.
-    // wx = 32 -> cx=1. localX = 32 - 32 + 2 = 2.
-
-    const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_SIZE;
-
-    return this.getValue(key, layer, idx);
+    return this.getValue(key, layer, realIdx);
   }
 }
 

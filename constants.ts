@@ -1,19 +1,22 @@
 
 // Grid Settings
 export const CHUNK_SIZE = 32;
-// We use 2 padding to ensure we have enough data for neighbors (-1) and normal calculations
-export const PAD = 2; 
+export const CHUNK_HEIGHT = 64; // Increased height for deep caverns
+export const PAD = 2;
+
 export const TOTAL_SIZE = CHUNK_SIZE + PAD * 2;
+export const TOTAL_HEIGHT = CHUNK_HEIGHT + PAD * 2;
+
 export const ISO_LEVEL = 0.5; 
 export const VOXEL_SCALE = 1.0;
 
 // World Generation
 export const RENDER_DISTANCE = 2; 
-export const CHUNK_HEIGHT = 64;
 export const WATER_LEVEL = 4.5;
+export const BEDROCK_LEVEL = -35; // Align with BedrockPlane
 
 // Physics
-export const GRAVITY = -15.0; 
+export const GRAVITY = -25.0; // Stronger gravity for better sliding feel
 export const PLAYER_SPEED = 6;
 export const JUMP_FORCE = 9;
 
@@ -28,14 +31,14 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
   [MaterialType.AIR]: { absorptionRate: 0, dryingRate: 0, mossGrowthRate: 0, mossDecayRate: 0 },
   [MaterialType.BEDROCK]: { absorptionRate: 0, dryingRate: 0, mossGrowthRate: 0, mossDecayRate: 0 },
   [MaterialType.STONE]: {
-    absorptionRate: 15, // Gets wet moderately fast
-    dryingRate: 25,     // Dries fast on surface
-    mossGrowthRate: 8,  // Grows moss slowly if wet
-    mossDecayRate: 5    // Moss dies slowly if dry
+    absorptionRate: 15,
+    dryingRate: 25,
+    mossGrowthRate: 8,
+    mossDecayRate: 5
   },
   [MaterialType.DIRT]: {
-    absorptionRate: 40, // Gets wet very fast (Mud)
-    dryingRate: 10,     // Dries slower (holds water)
+    absorptionRate: 40,
+    dryingRate: 10,
     mossGrowthRate: 0,
     mossDecayRate: 0
   },
@@ -46,15 +49,15 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
     mossDecayRate: 0
   },
   [MaterialType.SAND]: {
-    absorptionRate: 60, // Very porous
-    dryingRate: 40,     // Dries very fast
+    absorptionRate: 60,
+    dryingRate: 40,
     mossGrowthRate: 0,
     mossDecayRate: 0
   },
   [MaterialType.SNOW]: { absorptionRate: 5, dryingRate: 5, mossGrowthRate: 0, mossDecayRate: 0 },
   [MaterialType.CLAY]: {
-    absorptionRate: 10, // Impermeable
-    dryingRate: 5,      // Holds water very long
+    absorptionRate: 10,
+    dryingRate: 5,
     mossGrowthRate: 1,
     mossDecayRate: 1
   },
@@ -63,7 +66,7 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
   [MaterialType.MOSSY_STONE]: {
     absorptionRate: 20,
     dryingRate: 15,
-    mossGrowthRate: 0, // Already moss
+    mossGrowthRate: 0,
     mossDecayRate: 0
   }
 };

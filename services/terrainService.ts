@@ -1,14 +1,13 @@
 
-import { CHUNK_SIZE, PAD, TOTAL_SIZE, WATER_LEVEL, ISO_LEVEL } from '../constants';
+import { CHUNK_SIZE, PAD, TOTAL_SIZE, TOTAL_HEIGHT, WATER_LEVEL, ISO_LEVEL, BEDROCK_LEVEL } from '../constants';
 import { noise } from '../utils/noise';
 import { MaterialType, ChunkMetadata } from '../types';
 
 export class TerrainService {
-  // Generate density and material for a specific chunk coordinate (cx, cz)
   // Helper to find surface height at specific world coordinates
   static getHeightAt(wx: number, wz: number): number {
       // Scan from high up down to find the surface
-      for (let y = 100; y > -40; y--) {
+      for (let y = 100; y > BEDROCK_LEVEL - 5; y--) {
 
           const warpScale = 0.008;
           const warpStr = 15.0;
@@ -28,16 +27,25 @@ export class TerrainService {
           const surfaceHeight = 14 + continental + mountains;
           let d = surfaceHeight - y + overhang;
 
-          if (y < surfaceHeight - 4 && y > -20) {
+          // Extended Cave Logic
+          if (y < surfaceHeight - 4 && y > BEDROCK_LEVEL + 4) {
              const caveFreq = 0.08;
-             const c1 = noise(wx * caveFreq, y * caveFreq, wz * caveFreq);
-             if (Math.abs(c1) < 0.12) {
+             // Add warp to caves for more natural look
+             const cx = wx + noise(wx*0.2, y*0.2, wz*0.2)*2;
+             const cz = wz + noise(wx*0.15, y*0.15, wz*0.15)*2;
+             const c1 = noise(cx * caveFreq, y * caveFreq, cz * caveFreq);
+
+             // Larger caves deep down
+             let threshold = 0.12;
+             if (y < -10) threshold = 0.15;
+
+             if (Math.abs(c1) < threshold) {
                  d -= 20.0;
              }
           }
 
-          // Hard floor
-          if (y < -4) d += 50.0;
+          // Hard floor at bedrock
+          if (y < BEDROCK_LEVEL + 2) d += 50.0;
 
           if (d > ISO_LEVEL) {
               return y;
@@ -47,26 +55,34 @@ export class TerrainService {
   }
 
   static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, metadata: ChunkMetadata } {
-    const size = TOTAL_SIZE;
-    const density = new Float32Array(size * size * size);
-    const material = new Uint8Array(size * size * size);
+    const sizeXZ = TOTAL_SIZE;
+    const sizeY = TOTAL_HEIGHT;
+    const density = new Float32Array(sizeXZ * sizeY * sizeXZ);
+    const material = new Uint8Array(sizeXZ * sizeY * sizeXZ);
 
     // Initialize flexible metadata
-    const wetness = new Uint8Array(size * size * size);
-    const mossiness = new Uint8Array(size * size * size);
+    const wetness = new Uint8Array(sizeXZ * sizeY * sizeXZ);
+    const mossiness = new Uint8Array(sizeXZ * sizeY * sizeXZ);
 
     const worldOffsetX = cx * CHUNK_SIZE;
     const worldOffsetZ = cz * CHUNK_SIZE;
 
-    for (let z = 0; z < size; z++) {
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
+    // Vertical Offset to align mesh 0 with BEDROCK_LEVEL roughly
+    // y index 0 is -PAD. We want that to be BEDROCK_LEVEL.
+    // But we also want surface at ~14.
+    // We map: wy = (y - PAD) + OFFSET.
+    // Use OFFSET = -33 as calculated to align with BedrockPlane at -35.
+    const VERTICAL_OFFSET = -33;
+
+    for (let z = 0; z < sizeXZ; z++) {
+      for (let y = 0; y < sizeY; y++) {
+        for (let x = 0; x < sizeXZ; x++) {
           
-          const idx = x + y * size + z * size * size;
+          const idx = x + y * sizeXZ + z * sizeXZ * sizeY;
           
           // World Coordinates
           const wx = (x - PAD) + worldOffsetX;
-          const wy = (y - PAD); 
+          const wy = (y - PAD) + VERTICAL_OFFSET;
           const wz = (z - PAD) + worldOffsetZ;
           
           // --- 1. Domain Warping (Organic Shapes) ---
@@ -95,45 +111,58 @@ export class TerrainService {
           // Density: Positive = solid (underground), Negative = air
           let d = surfaceHeight - wy + overhang;
 
-          // Caves
-          if (wy < surfaceHeight - 4 && wy > -20) {
+          // Extended Caves
+          if (wy < surfaceHeight - 4 && wy > BEDROCK_LEVEL + 4) {
              const caveFreq = 0.08;
-             const c1 = noise(wx * caveFreq, wy * caveFreq, wz * caveFreq);
-             if (Math.abs(c1) < 0.12) {
+             // Warp cave coords
+             const cx = wx + noise(wx*0.2, wy*0.2, wz*0.2)*2;
+             const cz = wz + noise(wx*0.15, wy*0.15, wz*0.15)*2;
+
+             const c1 = noise(cx * caveFreq, wy * caveFreq, cz * caveFreq);
+
+             let threshold = 0.12;
+             // Bigger caves deep down
+             if (wy < -10) threshold = 0.16;
+
+             if (Math.abs(c1) < threshold) {
                  d -= 20.0; 
              }
           }
 
-          // Hard floor
-          if (wy < -4) d += 50.0;
+          // Hard floor near bedrock
+          if (wy < BEDROCK_LEVEL + 2) d += 50.0;
 
           density[idx] = d;
 
           // --- 3. Material Generation ---
           
           if (d > ISO_LEVEL) { // If solid
-            // Soil Depth: How deep the dirt goes before hitting stone
-            // Increased depth to avoid stone appearing on slight variations
             const soilNoise = noise(wx * 0.1, wy * 0.1, wz * 0.1);
             const soilDepth = 8.0 + soilNoise * 4.0; 
             
             const depth = (surfaceHeight + overhang) - wy;
 
             // Bedrock bottom
-            if (wy < -8) {
+            if (wy < BEDROCK_LEVEL + 4) {
                 material[idx] = MaterialType.BEDROCK;
             } 
-            // Deep Stone or Steep Cliffs (handled by shader, but set here for digging consistency)
             else if (depth > soilDepth) {
+                // Deep Stone Variation
                 material[idx] = MaterialType.STONE;
+
+                // Add Clay veins
+                if (noise(wx * 0.15, wy * 0.15, wz * 0.15) > 0.6) {
+                    material[idx] = MaterialType.CLAY;
+                }
+                // Add Mossy Stone patches deep underground (ancient ruins look)
+                else if (wy < -15 && noise(wx * 0.08, wy * 0.08, wz * 0.08) > 0.7) {
+                     material[idx] = MaterialType.MOSSY_STONE;
+                }
             } else {
                 // Surface Layers
-                
-                // Peaks get Snow
                 if (wy > 24 + noise(wx*0.1, 0, wz*0.1)*4) {
                     material[idx] = MaterialType.SNOW;
                 } 
-                // Water level gets Sand
                 else if (wy < WATER_LEVEL + 2.0) {
                      if (wy < WATER_LEVEL + 1.0) material[idx] = MaterialType.SAND;
                      else material[idx] = (noise(wx*0.5, 0, wz*0.5) > 0) ? MaterialType.SAND : MaterialType.DIRT;
@@ -150,15 +179,11 @@ export class TerrainService {
             // --- Water Generation ---
             if (wy <= WATER_LEVEL) {
                 material[idx] = MaterialType.WATER_SOURCE;
-                // Initially set water blocks to full wetness
                 wetness[idx] = 255;
             } else {
                 material[idx] = MaterialType.AIR;
             }
           }
-
-          // Initial Wetness/Mossiness (Could be procedural, currently clean)
-          // Already initialized to 0
         }
       }
     }
@@ -179,18 +204,29 @@ export class TerrainService {
     delta: number,
     brushMaterial: MaterialType = MaterialType.DIRT
   ): boolean {
-    const size = TOTAL_SIZE;
+    const sizeXZ = TOTAL_SIZE;
+    const sizeY = TOTAL_HEIGHT;
     const hx = localPoint.x + PAD;
-    const hy = localPoint.y + PAD;
+    const hy = localPoint.y + PAD; // Note: localPoint.y coming from raycast will be relative to mesh origin?
+    // VoxelTerrain passes `hitPoint.y`. Mesh is offset by VERTICAL_OFFSET?
+    // Wait, modifyChunk uses indices. We need to ensure localPoint maps to array index.
+    // In VoxelTerrain, hitPoint is World Coordinate.
+    // localY = hitPoint.y - meshPosition.y?
+    // Currently VoxelTerrain passes `hitPoint.y`.
+    // If we shift mesh by -33, then mesh starts at -33.
+    // If hit is at 0, localY should be 33.
+    // We need to handle this in VoxelTerrain.tsx or here.
+    // Assuming VoxelTerrain passes correct local coordinate relative to the array origin (y=0).
+
     const hz = localPoint.z + PAD;
     const rSq = radius * radius;
     const iRad = Math.ceil(radius);
     const minX = Math.max(0, Math.floor(hx - iRad));
-    const maxX = Math.min(size - 1, Math.ceil(hx + iRad));
+    const maxX = Math.min(sizeXZ - 1, Math.ceil(hx + iRad));
     const minY = Math.max(0, Math.floor(hy - iRad));
-    const maxY = Math.min(size - 1, Math.ceil(hy + iRad));
+    const maxY = Math.min(sizeY - 1, Math.ceil(hy + iRad));
     const minZ = Math.max(0, Math.floor(hz - iRad));
-    const maxZ = Math.min(size - 1, Math.ceil(hz + iRad));
+    const maxZ = Math.min(sizeXZ - 1, Math.ceil(hz + iRad));
 
     let modified = false;
 
@@ -203,7 +239,7 @@ export class TerrainService {
             const distSq = dx*dx + dy*dy + dz*dz;
 
             if (distSq < rSq) {
-                const idx = x + y * size + z * size * size;
+                const idx = x + y * sizeXZ + z * sizeXZ * sizeY;
                 const dist = Math.sqrt(distSq);
                 const t = dist / radius;
                 const falloff = Math.pow(1.0 - t, 2); 
@@ -212,13 +248,11 @@ export class TerrainService {
                 
                 density[idx] += strength;
                 
-                // Apply material when building
                 if (delta > 0 && density[idx] > ISO_LEVEL) {
                      if (oldDensity <= ISO_LEVEL) {
                         materialData[idx] = brushMaterial;
                      }
                 }
-                // Clear material when digging
                 if (delta < 0 && density[idx] <= ISO_LEVEL) {
                     materialData[idx] = MaterialType.AIR;
                 }
