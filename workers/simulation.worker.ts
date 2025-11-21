@@ -1,5 +1,5 @@
 
-import { MATERIAL_PROPS, TOTAL_SIZE, CHUNK_SIZE, PAD } from '../constants';
+import { MATERIAL_PROPS, TOTAL_SIZE, TOTAL_HEIGHT, CHUNK_SIZE, PAD } from '../constants';
 import { MaterialType } from '../types';
 
 // Minimal types for worker
@@ -39,18 +39,20 @@ function propagateWetness() {
         if (!chunk) continue;
 
         const { material, wetness, cx, cz } = chunk;
-        const size = TOTAL_SIZE;
+        const sizeXZ = TOTAL_SIZE;
+        const sizeY = TOTAL_HEIGHT;
         let chunkChanged = false;
 
         const start = PAD;
-        const end = size - PAD;
+        const endY = sizeY - PAD;
+        const endXZ = sizeXZ - PAD;
         const worldOffsetX = cx * CHUNK_SIZE;
         const worldOffsetZ = cz * CHUNK_SIZE;
 
-        for (let z = start; z < end; z++) {
-            for (let y = start; y < end; y++) {
-                for (let x = start; x < end; x++) {
-                    const idx = x + y * size + z * size * size;
+        for (let z = start; z < endXZ; z++) {
+            for (let y = start; y < endY; y++) {
+                for (let x = start; x < endXZ; x++) {
+                    const idx = x + y * sizeXZ + z * sizeXZ * sizeY;
                     const mat = material[idx];
 
                     if (mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
@@ -117,9 +119,9 @@ function propagateWetness() {
             const localY = Math.floor(nwy) + PAD;
             const localZ = Math.floor(nwz - ncz * CHUNK_SIZE) + PAD;
 
-            if (localY < 0 || localY >= TOTAL_SIZE) continue;
+            if (localY < 0 || localY >= TOTAL_HEIGHT) continue;
 
-            const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_SIZE;
+            const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_HEIGHT;
 
             // Check Material
             const mat = chunk.material[idx];
@@ -150,16 +152,18 @@ function propagateWetness() {
         if (!chunk) continue;
 
         const { material, wetness, mossiness } = chunk;
-        const size = TOTAL_SIZE;
+        const sizeXZ = TOTAL_SIZE;
+        const sizeY = TOTAL_HEIGHT;
         let chunkChanged = changedChunks.has(key);
 
         const start = PAD;
-        const end = size - PAD;
+        const endY = sizeY - PAD;
+        const endXZ = sizeXZ - PAD;
 
-        for (let z = start; z < end; z++) {
-            for (let y = start; y < end; y++) {
-                for (let x = start; x < end; x++) {
-                    const idx = x + y * size + z * size * size;
+        for (let z = start; z < endXZ; z++) {
+            for (let y = start; y < endY; y++) {
+                for (let x = start; x < endXZ; x++) {
+                    const idx = x + y * sizeXZ + z * sizeXZ * sizeY;
                     const mat = material[idx];
 
                     if (mat === MaterialType.AIR) continue;
