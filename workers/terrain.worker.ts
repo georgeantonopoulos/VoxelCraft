@@ -141,7 +141,13 @@ self.onmessage = (e: MessageEvent) => {
     else if (type === 'SIMULATE') {
         const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
 
-        const changed = simulate(density, material, wetness, mossiness);
+        // 1. Run Physics Simulation (Gravity, Collapse)
+        const physResult = TerrainService.simulatePhysics(density, material, wetness, mossiness);
+
+        // 2. Run Environmental Simulation (Wetness, Moss)
+        const envChanged = simulate(density, material, wetness, mossiness);
+
+        const changed = physResult.modified || envChanged;
 
         if (changed) {
             const mesh = generateMesh(density, material, wetness, mossiness);
@@ -149,6 +155,7 @@ self.onmessage = (e: MessageEvent) => {
             const response = {
                 key, cx, cz,
                 density, material, wetness, mossiness,
+                transfers: physResult.transfers,
                 version: version + 1,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,

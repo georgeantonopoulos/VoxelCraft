@@ -25,6 +25,8 @@ export interface MaterialProperties {
   dryingRate: number;     // How fast it loses wetness
   mossGrowthRate: number; // How fast mossiness increases if wet
   mossDecayRate: number;  // How fast mossiness decreases if dry
+  isGranular?: boolean;   // Affected by gravity, flows (Sand)
+  requiresSupport?: boolean; // Collapses if unsupported (Dirt)
 }
 
 export interface ChunkData {
@@ -50,4 +52,14 @@ export enum ToolMode {
   DIG = 'DIG',
   BUILD = 'BUILD',
   PAINT = 'PAINT'
+}
+
+export interface VoxelTransfer {
+  x: number;
+  y: number;
+  z: number;
+  material: number;
+  density: number;
+  wetness: number;
+  mossiness: number;
 }

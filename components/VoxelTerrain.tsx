@@ -4,9 +4,9 @@ import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
 import { TerrainService } from '../services/terrainService';
-import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
+import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE, PAD } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
-import { MaterialType } from '../types';
+import { MaterialType, VoxelTransfer } from '../types';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -25,6 +25,9 @@ interface ChunkState {
     meshNormals: Float32Array;
     meshWetness: Float32Array;
     meshMossiness: Float32Array;
+    awakeUntil?: number;
+    isSimulating?: boolean;
+    pendingTransfers: VoxelTransfer[];
 }
 
 interface VoxelTerrainProps {
@@ -230,6 +233,56 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
         workerRef.current = worker;
 
+        const processTransfers = (transfers: VoxelTransfer[], cxSource: number, czSource: number) => {
+            const transfersByChunk: Record<string, VoxelTransfer[]> = {};
+
+            transfers.forEach(t => {
+                const gx = cxSource * CHUNK_SIZE + t.x;
+                const gy = t.y;
+                const gz = czSource * CHUNK_SIZE + t.z;
+
+                const targetCx = Math.floor(gx / CHUNK_SIZE);
+                const targetCz = Math.floor(gz / CHUNK_SIZE);
+                const key = `${targetCx},${targetCz}`;
+
+                const targetChunk = chunksRef.current[key];
+                if (targetChunk) {
+                     const lx = gx - targetCx * CHUNK_SIZE;
+                     const lz = gz - targetCz * CHUNK_SIZE;
+                     const ly = gy;
+
+                     // Store Resolved Local Transfer
+                     if (!transfersByChunk[key]) transfersByChunk[key] = [];
+                     transfersByChunk[key].push({
+                         ...t,
+                         x: lx,
+                         y: ly,
+                         z: lz
+                     });
+                }
+            });
+
+            Object.entries(transfersByChunk).forEach(([key, localTransfers]) => {
+                const chunk = chunksRef.current[key];
+                if (chunk) {
+                    if (chunk.isSimulating) {
+                        // Queue
+                        chunk.pendingTransfers.push(...localTransfers);
+                    } else {
+                        // Apply Immediately
+                        localTransfers.forEach(t => {
+                            TerrainService.setVoxel(
+                                chunk.density, chunk.material, chunk.wetness, chunk.mossiness,
+                                t.x + PAD, t.y + PAD, t.z + PAD,
+                                t.material, t.density, t.wetness, t.mossiness
+                            );
+                        });
+                        chunk.awakeUntil = Date.now() + 2000;
+                    }
+                }
+            });
+        };
+
         worker.onmessage = (e) => {
             const { type, payload } = e.data;
 
@@ -238,28 +291,84 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 pendingChunks.current.delete(key);
 
                 // Add to local state
-                const newChunk = { ...payload, version: 0 };
+                const newChunk = {
+                    ...payload,
+                    version: 0,
+                    pendingTransfers: [],
+                    isSimulating: false
+                };
                 chunksRef.current[key] = newChunk;
                 setChunks(prev => ({ ...prev, [key]: newChunk }));
             }
             else if (type === 'REMESHED') {
-                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, wetness, mossiness } = payload;
+                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, density, material, wetness, mossiness, transfers } = payload;
                 const current = chunksRef.current[key];
                 if (current) {
+                    // Apply Pending Transfers to New State
+                    const pending = current.pendingTransfers || [];
+
+                    // Ensure we use the latest data from worker
+                    const nextDensity = density || current.density;
+                    const nextMaterial = material || current.material;
+                    const nextWetness = wetness || current.wetness;
+                    const nextMossiness = mossiness || current.mossiness;
+
+                    if (pending.length > 0) {
+                        pending.forEach(t => {
+                            TerrainService.setVoxel(
+                                nextDensity, nextMaterial, nextWetness, nextMossiness,
+                                t.x + PAD, t.y + PAD, t.z + PAD,
+                                t.material, t.density, t.wetness, t.mossiness
+                            );
+                        });
+                    }
+
                     const updatedChunk = {
                         ...current,
                         version,
+                        density: nextDensity,
+                        material: nextMaterial,
                         meshPositions,
                         meshIndices,
                         meshMaterials,
                         meshNormals,
                         meshWetness,
                         meshMossiness,
-                        wetness: wetness || current.wetness, // Update physics data if returned
-                        mossiness: mossiness || current.mossiness
+                        wetness: nextWetness,
+                        mossiness: nextMossiness,
+                        awakeUntil: (transfers?.length > 0 || pending.length > 0) ? Date.now() + 2000 : current.awakeUntil,
+                        isSimulating: false,
+                        pendingTransfers: [] // Clear
                     };
+
+                    // If we applied pending transfers, the mesh is technically stale, but physics data is fresh.
+                    // The extended awakeUntil will trigger another SIMULATE next frame.
+
                     chunksRef.current[key] = updatedChunk;
                     setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+
+                    if (transfers && transfers.length > 0) {
+                        processTransfers(transfers, current.cx, current.cz);
+                    }
+                }
+            }
+            else if (type === 'SIMULATE_SKIPPED') {
+                const { key } = payload;
+                const current = chunksRef.current[key];
+                if (current) {
+                    const pending = current.pendingTransfers || [];
+                    if (pending.length > 0) {
+                         pending.forEach(t => {
+                            TerrainService.setVoxel(
+                                current.density, current.material, current.wetness, current.mossiness,
+                                t.x + PAD, t.y + PAD, t.z + PAD,
+                                t.material, t.density, t.wetness, t.mossiness
+                            );
+                        });
+                        current.awakeUntil = Date.now() + 2000;
+                    }
+                    current.isSimulating = false;
+                    current.pendingTransfers = [];
                 }
             }
         };
@@ -390,6 +499,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 // Trigger remeshing for all affected chunks
                 affectedChunks.forEach(key => {
                     const chunk = chunksRef.current[key];
+                    // Wake up physics
+                    chunk.awakeUntil = Date.now() + 3000;
+
                     workerRef.current!.postMessage({
                         type: 'REMESH',
                         payload: {
@@ -440,7 +552,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             if (!key) continue;
 
             const chunk = chunksRef.current[key];
-            if (chunk) {
+            if (chunk && chunk.awakeUntil && Date.now() < chunk.awakeUntil && !chunk.isSimulating) {
+                chunk.isSimulating = true;
                 workerRef.current.postMessage({
                     type: 'SIMULATE',
                     payload: {

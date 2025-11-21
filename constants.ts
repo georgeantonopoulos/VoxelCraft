@@ -37,7 +37,8 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
     absorptionRate: 40, // Gets wet very fast (Mud)
     dryingRate: 10,     // Dries slower (holds water)
     mossGrowthRate: 0,
-    mossDecayRate: 0
+    mossDecayRate: 0,
+    requiresSupport: true
   },
   [MaterialType.GRASS]: {
     absorptionRate: 30,
@@ -49,7 +50,8 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
     absorptionRate: 60, // Very porous
     dryingRate: 40,     // Dries very fast
     mossGrowthRate: 0,
-    mossDecayRate: 0
+    mossDecayRate: 0,
+    isGranular: true
   },
   [MaterialType.SNOW]: { absorptionRate: 5, dryingRate: 5, mossGrowthRate: 0, mossDecayRate: 0 },
   [MaterialType.CLAY]: {

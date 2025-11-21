@@ -1,7 +1,7 @@
 
-import { CHUNK_SIZE, PAD, TOTAL_SIZE, WATER_LEVEL, ISO_LEVEL } from '../constants';
+import { CHUNK_SIZE, PAD, TOTAL_SIZE, WATER_LEVEL, ISO_LEVEL, MATERIAL_PROPS } from '../constants';
 import { noise } from '../utils/noise';
-import { MaterialType } from '../types';
+import { MaterialType, VoxelTransfer } from '../types';
 
 export class TerrainService {
   // Generate density and material for a specific chunk coordinate (cx, cz)
@@ -218,5 +218,193 @@ export class TerrainService {
       }
     }
     return modified;
+  }
+
+  static setVoxel(
+    density: Float32Array, material: Uint8Array, wetness: Uint8Array, mossiness: Uint8Array,
+    x: number, y: number, z: number,
+    mat: number, den: number, wet: number, moss: number
+  ) {
+    const size = TOTAL_SIZE;
+    if (x < 0 || x >= size || y < 0 || y >= size || z < 0 || z >= size) return;
+    const idx = x + y * size + z * size * size;
+    density[idx] = den;
+    material[idx] = mat;
+    wetness[idx] = wet;
+    mossiness[idx] = moss;
+  }
+
+  static simulatePhysics(
+    density: Float32Array,
+    material: Uint8Array,
+    wetness: Uint8Array,
+    mossiness: Uint8Array
+  ): { modified: boolean, transfers: VoxelTransfer[] } {
+    const size = TOTAL_SIZE;
+    let modified = false;
+    const transfers: VoxelTransfer[] = [];
+
+    const min = PAD;
+    const max = size - PAD;
+
+    for (let y = min; y < max; y++) {
+      for (let z = min; z < max; z++) {
+        for (let x = min; x < max; x++) {
+          const idx = x + y * size + z * size * size;
+          const mat = material[idx];
+
+          if (mat === MaterialType.AIR || mat === MaterialType.BEDROCK) continue;
+
+          const props = MATERIAL_PROPS[mat];
+          if (!props) continue;
+
+          // --- GRANULAR PHYSICS (SAND) ---
+          if (props.isGranular) {
+            const belowIdx = x + (y - 1) * size + z * size * size;
+            const belowDen = density[belowIdx];
+
+            // Fall straight down if possible
+            if (belowDen <= ISO_LEVEL) {
+              // Check Floor (Bedrock at bottom of world)
+              if (y - 1 < PAD) {
+                  continue;
+              }
+
+              const myDen = density[idx];
+              const myWet = wetness[idx];
+              const myMoss = mossiness[idx];
+
+              density[belowIdx] = myDen;
+              material[belowIdx] = mat;
+              wetness[belowIdx] = myWet;
+              mossiness[belowIdx] = myMoss;
+
+              density[idx] = belowDen;
+              material[idx] = MaterialType.AIR;
+              wetness[idx] = 0; // Reset
+              mossiness[idx] = 0;
+
+              modified = true;
+            } else {
+              // Try diagonals (slide)
+              const offsets = [[1,0], [-1,0], [0,1], [0,-1]];
+              // Shuffle
+              for (let i = offsets.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [offsets[i], offsets[j]] = [offsets[j], offsets[i]];
+              }
+
+              for (const [ox, oz] of offsets) {
+                const nx = x + ox;
+                const nz = z + oz;
+                const ny = y - 1;
+
+                // Check Floor
+                if (ny < PAD) continue;
+
+                if (nx < 0 || nx >= size || nz < 0 || nz >= size) continue;
+
+                // Check if diagonal spot is open
+                const nIdx = nx + ny * size + nz * size * size;
+                if (density[nIdx] <= ISO_LEVEL) {
+                   // Check if we are crossing boundary
+                   if (nx < PAD || nx >= size - PAD || nz < PAD || nz >= size - PAD) {
+                     transfers.push({
+                       x: nx - PAD, // Local relative to chunk origin
+                       y: ny - PAD,
+                       z: nz - PAD,
+                       material: mat,
+                       density: density[idx],
+                       wetness: wetness[idx],
+                       mossiness: mossiness[idx]
+                     });
+
+                     material[idx] = MaterialType.AIR;
+                     density[idx] = -10.0;
+                     wetness[idx] = 0;
+                     mossiness[idx] = 0;
+                     modified = true;
+                     break;
+                   } else {
+                     // Local move
+                     const nDen = density[nIdx];
+                     const nWet = wetness[nIdx];
+                     const nMoss = mossiness[nIdx];
+
+                     density[nIdx] = density[idx];
+                     material[nIdx] = mat;
+                     wetness[nIdx] = wetness[idx];
+                     mossiness[nIdx] = mossiness[idx];
+
+                     density[idx] = nDen;
+                     material[idx] = MaterialType.AIR;
+                     wetness[idx] = nWet; // Swap air properties back?
+                     mossiness[idx] = nMoss;
+                     modified = true;
+                     break;
+                   }
+                }
+              }
+            }
+          }
+          // --- STRUCTURAL PHYSICS (DIRT) ---
+          else if (props.requiresSupport) {
+             // Check below
+             const belowIdx = x + (y - 1) * size + z * size * size;
+             if (density[belowIdx] > ISO_LEVEL) continue;
+
+             // Check Horizontal Support (Range 2)
+             let supported = false;
+             const range = 2;
+
+             searchLoop:
+             for (let dx = -range; dx <= range; dx++) {
+               for (let dz = -range; dz <= range; dz++) {
+                 if (dx === 0 && dz === 0) continue;
+                 if (Math.abs(dx) + Math.abs(dz) > range) continue;
+
+                 const nx = x + dx;
+                 const nz = z + dz;
+
+                 // Assume boundary is supported (simple assumption for now)
+                 if (nx < PAD || nx >= size - PAD || nz < PAD || nz >= size - PAD) {
+                   supported = true;
+                   break searchLoop;
+                 }
+
+                 const nIdx = nx + y * size + nz * size * size;
+                 if (density[nIdx] > ISO_LEVEL) {
+                   const nBelow = nx + (y - 1) * size + nz * size * size;
+                   if (density[nBelow] > ISO_LEVEL) {
+                     supported = true;
+                     break searchLoop;
+                   }
+                 }
+               }
+             }
+
+             if (!supported) {
+               // Collapse / Fall
+               const belowDen = density[belowIdx];
+               const belowWet = wetness[belowIdx];
+               const belowMoss = mossiness[belowIdx];
+
+               density[belowIdx] = density[idx];
+               material[belowIdx] = mat;
+               wetness[belowIdx] = wetness[idx];
+               mossiness[belowIdx] = mossiness[idx];
+
+               density[idx] = belowDen;
+               material[idx] = MaterialType.AIR;
+               wetness[idx] = belowWet;
+               mossiness[idx] = belowMoss;
+
+               modified = true;
+             }
+          }
+        }
+      }
+    }
+    return { modified, transfers };
   }
 }
