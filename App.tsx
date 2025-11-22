@@ -9,6 +9,7 @@ import { UI } from './components/UI';
 import { Water } from './components/Water';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
+import { GRAVITY } from './constants';
 import * as THREE from 'three';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 
@@ -116,8 +117,9 @@ const App: React.FC = () => {
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
 
+  // FIX: Sun direction must point TO the sun (UP), not AWAY (DOWN).
   const sunDirection = useMemo(
-    () => new THREE.Vector3(-50, -80, -30).normalize(),
+    () => new THREE.Vector3(50, 80, 30).normalize(),
     []
   );
 
@@ -162,12 +164,12 @@ const App: React.FC = () => {
 
           <Sun />
           
-          <ambientLight intensity={0.35} color="#dbeaff" />
-          <hemisphereLight args={['#d7e6ff', '#523521', 0.5]} />
+          <ambientLight intensity={0.2} color="#dbeaff" />
+          <hemisphereLight args={['#d7e6ff', '#332211', 0.4]} />
           
           <directionalLight 
             position={[150, 240, 90]}
-            intensity={1.5}
+            intensity={1.8}
             color="#fff7d1"
             castShadow 
             shadow-mapSize={[2048, 2048]}
@@ -182,7 +184,7 @@ const App: React.FC = () => {
           />
 
           <Suspense fallback={null}>
-            <Physics gravity={[0, -20, 0]}>
+            <Physics gravity={[0, GRAVITY, 0]}>
               {spawnPos && <Player position={spawnPos} />}
               <VoxelTerrain 
                 action={action}
