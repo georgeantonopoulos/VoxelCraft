@@ -217,7 +217,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     const { world, rapier } = useRapier();
     
     const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
-    const remeshQueue = useRef<string[]>([]);
+    const remeshQueue = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -250,9 +250,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     // Critical: Update the local material state so next remesh uses it
                     chunk.material.set(update.material);
 
-                    if (!remeshQueue.current.includes(update.key)) {
-                        remeshQueue.current.push(update.key);
-                    }
+                    remeshQueue.current.add(update.key);
                 }
             });
         });
@@ -330,11 +328,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         }
 
         // Remesh queue (increased throttle for fluids)
-        if (remeshQueue.current.length > 0) {
-             const maxPerFrame = 4; // Higher throughput for water updates
+        if (remeshQueue.current.size > 0) {
+             const maxPerFrame = 8; // Higher throughput and set-based queue
+             const iterator = remeshQueue.current.values();
              for (let i=0; i<maxPerFrame; i++) {
-                 const key = remeshQueue.current.shift();
+                 const key = iterator.next().value as string | undefined;
                  if (!key) break;
+                 remeshQueue.current.delete(key);
 
                  const chunk = chunksRef.current[key];
                  const metadata = metadataDB.getChunk(key);
@@ -427,6 +427,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                     const metadata = metadataDB.getChunk(key);
                     if (chunk && metadata) {
                         simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
+                        remeshQueue.current.add(key);
                         workerRef.current!.postMessage({
                             type: 'REMESH',
                             payload: {

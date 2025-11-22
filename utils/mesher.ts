@@ -271,7 +271,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          };
 
          // --- X Face ---
-         if (x < endX && y > start && y <= endY && z >= start && z <= endX) {
+         // X faces: start .. end-1 (skip outer wall), Y/Z include boundary to stitch with neighbor
+         if (x < endX && y >= start + 1 && y <= endY && z >= start + 1 && z <= endX) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vX = getVal(density, x + 1, y, z);
@@ -289,7 +290,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          }
 
          // --- Y Face ---
-         if (y <= endY && y > start && x >= start && x <= endX && z >= start && z <= endX) {
+         // Y faces: start+1 .. end (touch boundary), X/Z skip outer wall to prevent double walls
+         if (y < endY && y >= start && x >= start + 1 && x <= endX && z >= start + 1 && z <= endX) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vY = getVal(density, x, y + 1, z);
@@ -307,7 +309,8 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          }
 
          // --- Z Face ---
-         if (z <= endX && z > start && x >= start && x <= endX && y >= start && y < endY) {
+         // Z faces: start+1 .. end (touch boundary), X/Y skip outer wall to prevent double walls
+         if (z < endX && z >= start && x >= start + 1 && x <= endX && y >= start + 1 && y <= endY) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vZ = getVal(density, x, y, z + 1);
