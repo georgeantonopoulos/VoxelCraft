@@ -1,15 +1,20 @@
 
 // Grid Settings
-export const CHUNK_SIZE = 32;
-// We use 2 padding to ensure we have enough data for neighbors (-1) and normal calculations
-export const PAD = 2; 
-export const TOTAL_SIZE = CHUNK_SIZE + PAD * 2;
+export const CHUNK_SIZE_XZ = 32;
+export const CHUNK_SIZE = CHUNK_SIZE_XZ; // Alias for compatibility with XZ grid logic
+export const CHUNK_SIZE_Y = 80; // Taller chunks
+export const PAD = 2;
+
+export const TOTAL_SIZE_XZ = CHUNK_SIZE_XZ + PAD * 2;
+export const TOTAL_SIZE_Y = CHUNK_SIZE_Y + PAD * 2;
+
+export const MESH_Y_OFFSET = -35; // Vertical offset to align with Bedrock
+
 export const ISO_LEVEL = 0.5; 
 export const VOXEL_SCALE = 1.0;
 
 // World Generation
 export const RENDER_DISTANCE = 2; 
-export const CHUNK_HEIGHT = 64;
 export const WATER_LEVEL = 4.5;
 
 // Physics
@@ -58,8 +63,7 @@ export const MATERIAL_PROPS: Record<number, MaterialProperties> = {
     mossGrowthRate: 1,
     mossDecayRate: 1
   },
-  [MaterialType.WATER_SOURCE]: { absorptionRate: 255, dryingRate: 0, mossGrowthRate: 0, mossDecayRate: 0 },
-  [MaterialType.WATER_FLOWING]: { absorptionRate: 255, dryingRate: 0, mossGrowthRate: 0, mossDecayRate: 0 },
+  [MaterialType.WATER]: { absorptionRate: 255, dryingRate: 0, mossGrowthRate: 0, mossDecayRate: 0 },
   [MaterialType.MOSSY_STONE]: {
     absorptionRate: 20,
     dryingRate: 15,

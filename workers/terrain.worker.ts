@@ -1,6 +1,5 @@
 import { TerrainService } from '../services/terrainService';
 import { generateMesh } from '../utils/mesher';
-import { MATERIAL_PROPS, TOTAL_SIZE } from '../constants';
 import { MaterialType } from '../types';
 
 self.onmessage = (e: MessageEvent) => {
@@ -29,7 +28,12 @@ self.onmessage = (e: MessageEvent) => {
             meshMaterials: mesh.materials,
             meshNormals: mesh.normals,
             meshWetness: mesh.wetness,
-            meshMossiness: mesh.mossiness
+            meshMossiness: mesh.mossiness,
+
+            // Water
+            meshWaterPositions: mesh.waterPositions,
+            meshWaterIndices: mesh.waterIndices,
+            meshWaterNormals: mesh.waterNormals
         };
 
         self.postMessage({ type: 'GENERATED', payload: response }, [
@@ -42,7 +46,10 @@ self.onmessage = (e: MessageEvent) => {
             mesh.materials.buffer,
             mesh.normals.buffer,
             mesh.wetness.buffer,
-            mesh.mossiness.buffer
+            mesh.mossiness.buffer,
+            mesh.waterPositions.buffer,
+            mesh.waterIndices.buffer,
+            mesh.waterNormals.buffer
         ]);
     }
     else if (type === 'REMESH') {
@@ -60,7 +67,11 @@ self.onmessage = (e: MessageEvent) => {
             meshMaterials: mesh.materials,
             meshNormals: mesh.normals,
             meshWetness: mesh.wetness,
-            meshMossiness: mesh.mossiness
+            meshMossiness: mesh.mossiness,
+
+            meshWaterPositions: mesh.waterPositions,
+            meshWaterIndices: mesh.waterIndices,
+            meshWaterNormals: mesh.waterNormals
         };
 
         self.postMessage({ type: 'REMESHED', payload: response }, [
@@ -69,10 +80,12 @@ self.onmessage = (e: MessageEvent) => {
             mesh.materials.buffer,
             mesh.normals.buffer,
             mesh.wetness.buffer,
-            mesh.mossiness.buffer
+            mesh.mossiness.buffer,
+            mesh.waterPositions.buffer,
+            mesh.waterIndices.buffer,
+            mesh.waterNormals.buffer
         ]);
     }
-    // SIMULATE is now handled on main thread via SimulationManager, so we removed it here.
   } catch (error) {
       console.error('Worker Error:', error);
   }

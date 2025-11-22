@@ -15,8 +15,7 @@ export enum MaterialType {
   SAND = 5,
   SNOW = 6,
   CLAY = 7,
-  WATER_SOURCE = 8,
-  WATER_FLOWING = 9,
+  WATER = 8,
   MOSSY_STONE = 10
 }
 
@@ -39,7 +38,9 @@ export interface ChunkData {
   density: Float32Array;
   material: Uint8Array; // Stores material ID per voxel
   metadata: ChunkMetadata; // Flexible metadata storage
-  size: number;
+  sizeX: number;
+  sizeY: number;
+  sizeZ: number;
   position: Vector3;
 }
 
@@ -50,6 +51,11 @@ export interface MeshData {
   materials: Float32Array; // Attribute to pass to shader
   wetness: Float32Array;   // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
+
+  // Water Mesh Data
+  waterPositions: Float32Array;
+  waterIndices: Uint32Array;
+  waterNormals: Float32Array;
 }
 
 export enum ToolMode {

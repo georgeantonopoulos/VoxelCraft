@@ -1,34 +1,37 @@
 
 import { metadataDB } from './MetadataDB';
 
+export interface SimUpdate {
+    key: string;
+    material: Uint8Array;
+    wetness: Uint8Array;
+    mossiness: Uint8Array;
+}
+
 export class SimulationManager {
     private worker: Worker;
-    private onChunksUpdated?: (keys: string[]) => void;
+    private onChunksUpdated?: (updates: SimUpdate[]) => void;
 
     constructor() {
-        // Initialize the simulation worker
         this.worker = new Worker(new URL('../workers/simulation.worker.ts', import.meta.url), { type: 'module' });
 
         this.worker.onmessage = (e) => {
             const { type, payload } = e.data;
             if (type === 'CHUNKS_UPDATED') {
-                // Payload is an array of { key, wetness, mossiness }
-                const keys: string[] = [];
+                const updates = payload as SimUpdate[];
 
-                payload.forEach((update: any) => {
+                // Update MetadataDB
+                updates.forEach(update => {
                     const chunk = metadataDB.getChunk(update.key);
                     if (chunk) {
-                        // Update the DB
-                        // Direct Set is fast for typed arrays
-                        chunk.wetness.set(update.wetness);
-                        chunk.mossiness.set(update.mossiness);
-                        keys.push(update.key);
+                        if (chunk.wetness) chunk.wetness.set(update.wetness);
+                        if (chunk.mossiness) chunk.mossiness.set(update.mossiness);
                     }
                 });
 
-                // Trigger React update with batch
-                if (this.onChunksUpdated && keys.length > 0) {
-                    this.onChunksUpdated(keys);
+                // Notify UI/Terrain
+                if (this.onChunksUpdated) {
+                    this.onChunksUpdated(updates);
                 }
             }
         };
@@ -38,7 +41,7 @@ export class SimulationManager {
         this.worker.postMessage({ type: 'START_LOOP' });
     }
 
-    setCallback(callback: (keys: string[]) => void) {
+    setCallback(callback: (updates: SimUpdate[]) => void) {
         this.onChunksUpdated = callback;
     }
 

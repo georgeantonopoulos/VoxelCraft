@@ -6,7 +6,6 @@ import { Physics } from '@react-three/rapier';
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { UI } from './components/UI';
-import { Water } from './components/Water';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 import * as THREE from 'three';
@@ -189,7 +188,6 @@ const App: React.FC = () => {
                 isInteracting={isInteracting}
                 sunDirection={sunDirection}
               />
-              <Water />
               <BedrockPlane />
             </Physics>
           </Suspense>
