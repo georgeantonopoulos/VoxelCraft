@@ -6,43 +6,25 @@ import { MaterialType, ChunkMetadata } from '../types';
 export class TerrainService {
   // Helper to find surface height at specific world coordinates
   static getHeightAt(wx: number, wz: number): number {
-      // Scan from high up down to find the surface
-      for (let y = 100; y > MESH_Y_OFFSET; y--) {
+      // Directly compute the analytic surface (no cave carving) so we always get the true top
+      const warpScale = 0.008;
+      const warpStr = 15.0;
+      const qx = noise(wx * warpScale, 0, wz * warpScale) * warpStr;
+      const qz = noise(wx * warpScale + 5.2, 0, wz * warpScale + 1.3) * warpStr;
 
-          const warpScale = 0.008;
-          const warpStr = 15.0;
-          const qx = noise(wx * warpScale, 0, wz * warpScale) * warpStr;
-          const qz = noise(wx * warpScale + 5.2, 0, wz * warpScale + 1.3) * warpStr;
+      const px = wx + qx;
+      const pz = wz + qz;
 
-          const px = wx + qx;
-          const pz = wz + qz;
+      const continental = noise(px * 0.01, 0, pz * 0.01) * 8;
+      let mountains = noise(px * 0.05, 0, pz * 0.05) * 4;
+      mountains += noise(px * 0.15, 0, pz * 0.15) * 1.5;
 
-          const continental = noise(px * 0.01, 0, pz * 0.01) * 8;
-          let mountains = noise(px * 0.05, 0, pz * 0.05) * 4;
-          mountains += noise(px * 0.15, 0, pz * 0.15) * 1.5;
+      const surfaceHeight = 14 + continental + mountains;
+      // Sample cliff overhang at the surface height
+      const cliffNoise = noise(wx * 0.06, surfaceHeight * 0.08, wz * 0.06);
+      const overhang = cliffNoise * 6;
 
-          const cliffNoise = noise(wx * 0.06, y * 0.08, wz * 0.06);
-          const overhang = cliffNoise * 6;
-
-          const surfaceHeight = 14 + continental + mountains;
-          let d = surfaceHeight - y + overhang;
-
-          if (y < surfaceHeight - 4 && y > -20) {
-             const caveFreq = 0.08;
-             const c1 = noise(wx * caveFreq, y * caveFreq, wz * caveFreq);
-             if (Math.abs(c1) < 0.12) {
-                 d -= 20.0;
-             }
-          }
-
-          // Hard floor
-          if (y <= MESH_Y_OFFSET + 2) d += 50.0;
-
-          if (d > ISO_LEVEL) {
-              return y;
-          }
-      }
-      return 20; // Fallback
+      return surfaceHeight + overhang;
   }
 
   static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, metadata: ChunkMetadata } {
@@ -93,16 +75,19 @@ export class TerrainService {
           let d = surfaceHeight - wy + overhang;
 
           // Caves
-          if (wy < surfaceHeight - 4 && wy > -20) {
+          if (wy < surfaceHeight - 4) {
              const caveFreq = 0.08;
              const c1 = noise(wx * caveFreq, wy * caveFreq, wz * caveFreq);
              if (Math.abs(c1) < 0.12) {
-                 d -= 20.0; 
+                 d -= 20.0;
+                 // Let deep caves reach near bedrock; carve a bit more in the lowest band
+                 if (wy < MESH_Y_OFFSET + 8) d -= 6.0;
              }
           }
 
-          // Hard floor (Bedrock)
-          if (wy <= MESH_Y_OFFSET + 2) d += 50.0;
+          // Hard floor (Bedrock) — thin but solid
+          if (wy <= MESH_Y_OFFSET) d += 100.0;
+          else if (wy <= MESH_Y_OFFSET + 3) d += 20.0;
 
           density[idx] = d;
 

@@ -117,10 +117,13 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
 
     if (!terrainGeometry && !waterGeometry) return null;
 
+    const colliderKey = `${chunk.key}-${chunk.version}`;
+
     return (
         <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
             {terrainGeometry && (
                 <RigidBody
+                    key={colliderKey}
                     type="fixed"
                     colliders="trimesh"
                     userData={{ type: 'terrain', key: chunk.key }}
@@ -361,9 +364,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
         const origin = camera.position.clone();
         const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const maxRayDistance = 16.0;
         
         const ray = new rapier.Ray(origin, direction);
-        const terrainHit = world.castRay(ray, 8.0, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+        const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
         
         if (terrainHit) {
             const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);

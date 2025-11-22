@@ -232,17 +232,12 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
   // --- QUAD GENERATION ---
   const start = PAD;
   const endX = PAD + CHUNK_SIZE_XZ;
-  const endY = PAD + CHUNK_SIZE_Y; // Wait, loop limits?
-  // Use SIZE constants for loops, but strict constraints for faces.
-  // We want faces from `start` to `end`.
-  // X range: start to endX.
-  // Y range: start to endY? Wait. Chunk Height is SIZE_Y - 2*PAD.
-  // Yes.
+  const endY = PAD + CHUNK_SIZE_Y;
 
   const bufIdx = (x: number, y: number, z: number) => x + y * SIZE_X + z * SIZE_X * SIZE_Y;
 
   for (let z = start; z <= endX; z++) {
-    for (let y = start; y <= endY; y++) { // Correct height limit
+    for (let y = start; y <= endY; y++) {
       for (let x = start; x <= endX; x++) {
 
          const idxCurrent = bufIdx(x, y, z);
@@ -276,7 +271,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          };
 
          // --- X Face ---
-         if (x < endX && y > start && z > start && y < endY) { // Check height bounds
+         if (x < endX && y > start && y <= endY && z >= start && z <= endX) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vX = getVal(density, x + 1, y, z);
@@ -294,7 +289,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          }
 
          // --- Y Face ---
-         if (y < endY && x > start && z > start && x < endX) {
+         if (y <= endY && y > start && x >= start && x <= endX && z >= start && z <= endX) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vY = getVal(density, x, y + 1, z);
@@ -312,7 +307,7 @@ export function generateMesh(density: Float32Array, material: Uint8Array, wetnes
          }
 
          // --- Z Face ---
-         if (z < endX && x > start && y > start && y < endY) {
+         if (z <= endX && z > start && x >= start && x <= endX && y >= start && y < endY) {
              // Terrain
              const val = getVal(density, x, y, z);
              const vZ = getVal(density, x, y, z + 1);
