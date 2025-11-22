@@ -1,10 +1,11 @@
 
 import * as THREE from 'three';
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import { WATER_LEVEL } from '../constants';
 import { noiseTexture } from '../utils/sharedResources';
+import type CSM from 'three-csm';
 
 const WaterShaderMaterial = shaderMaterial(
   {
@@ -97,7 +98,7 @@ const WaterShaderMaterial = shaderMaterial(
         vec3 lightDir = normalize(uSunDir);
         vec3 halfVec = normalize(lightDir + viewDir);
         float NdotH = max(dot(normal, halfVec), 0.0);
-        float specular = pow(NdotH, 200.0) * 1.5; // Sharp, bright sun
+        float specular = pow(NdotH, 200.0) * 0.6; // Reduced specular intensity
 
         // Fresnel
         float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 4.0);
@@ -113,41 +114,74 @@ const WaterShaderMaterial = shaderMaterial(
         float alpha = 0.9 + fresnel * 0.1;
 
         fragColor = vec4(finalColor, alpha);
-        // Tone mapping
-        fragColor.rgb = pow(fragColor.rgb, vec3(1.0 / 2.2));
+        // Tone mapping handled by renderer
     }
   `
 );
 
 extend({ WaterShaderMaterial });
 
-export const Water: React.FC = () => {
-  const ref = useRef<any>(null);
+const useWaterUniforms = (ref: React.RefObject<any>, sunDirection?: THREE.Vector3, csm?: CSM | null) => {
   const { camera } = useThree();
 
-  useFrame(({ clock }) => {
-    if (ref.current) {
-        ref.current.uTime = clock.getElapsedTime();
-        ref.current.uCamPos = camera.position;
-        // Sun direction matching App.tsx
-        ref.current.uSunDir = new THREE.Vector3(50, 80, 30).normalize();
+  useEffect(() => {
+    if (ref.current && csm) {
+      csm.setupMaterial(ref.current);
+    }
+  }, [csm, ref]);
 
-        // Ensure texture is set
-        if (ref.current.uNoiseTexture !== noiseTexture) {
-            ref.current.uNoiseTexture = noiseTexture;
-        }
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    ref.current.uTime = clock.getElapsedTime();
+    ref.current.uCamPos = camera.position;
+    if (sunDirection) {
+      ref.current.uSunDir = sunDirection;
+    }
+
+    if (ref.current.uNoiseTexture !== noiseTexture) {
+      ref.current.uNoiseTexture = noiseTexture;
     }
   });
+};
+
+export interface WaterMaterialProps {
+  sunDirection?: THREE.Vector3;
+  csm?: CSM | null;
+}
+
+export const WaterMaterial = ({ sunDirection, csm }: WaterMaterialProps) => {
+  const ref = useRef<any>(null);
+  useWaterUniforms(ref, sunDirection, csm);
+
+  return (
+    // @ts-ignore
+    <waterShaderMaterial
+      ref={ref}
+      transparent
+      side={THREE.DoubleSide}
+      glslVersion={THREE.GLSL3}
+    />
+  );
+};
+
+export interface WaterProps {
+  sunDirection: THREE.Vector3;
+  csm?: CSM | null;
+}
+
+export const Water = ({ sunDirection, csm }: WaterProps) => {
+  const ref = useRef<any>(null);
+  useWaterUniforms(ref, sunDirection, csm);
 
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, WATER_LEVEL, 0]} receiveShadow>
       <planeGeometry args={[1000, 1000, 128, 128]} />
       {/* @ts-ignore */}
       <waterShaderMaterial
-          ref={ref}
-          transparent
-          side={THREE.DoubleSide}
-          glslVersion={THREE.GLSL3}
+        ref={ref}
+        transparent
+        side={THREE.DoubleSide}
+        glslVersion={THREE.GLSL3}
       />
     </mesh>
   );

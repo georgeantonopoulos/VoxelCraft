@@ -1,5 +1,9 @@
 ## Agent Notes for `VoxelCraft`
 
+ALWAYS DEBUG YOUR OUTPUT. 
+Run visual tests to confirm results. Becareful not to break dependent files
+Update this md everytime with your findings. 
+
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
 - **Physics**: `@react-three/rapier`.

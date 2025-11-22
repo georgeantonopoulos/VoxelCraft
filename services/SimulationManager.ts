@@ -1,9 +1,16 @@
 
 import { metadataDB } from './MetadataDB';
 
+export interface SimUpdate {
+    key: string;
+    wetness: Uint8Array;
+    mossiness: Uint8Array;
+    material: Uint8Array;
+}
+
 export class SimulationManager {
     private worker: Worker;
-    private onChunksUpdated?: (keys: string[]) => void;
+    private onChunksUpdated?: (updates: SimUpdate[]) => void;
 
     constructor() {
         // Initialize the simulation worker
@@ -12,8 +19,8 @@ export class SimulationManager {
         this.worker.onmessage = (e) => {
             const { type, payload } = e.data;
             if (type === 'CHUNKS_UPDATED') {
-                // Payload is an array of { key, wetness, mossiness }
-                const keys: string[] = [];
+                // Payload is an array of { key, wetness, mossiness, material }
+                const updates: SimUpdate[] = [];
 
                 payload.forEach((update: any) => {
                     const chunk = metadataDB.getChunk(update.key);
@@ -22,13 +29,19 @@ export class SimulationManager {
                         // Direct Set is fast for typed arrays
                         chunk.wetness.set(update.wetness);
                         chunk.mossiness.set(update.mossiness);
-                        keys.push(update.key);
+                        
+                        updates.push({
+                            key: update.key,
+                            wetness: update.wetness,
+                            mossiness: update.mossiness,
+                            material: update.material
+                        });
                     }
                 });
 
                 // Trigger React update with batch
-                if (this.onChunksUpdated && keys.length > 0) {
-                    this.onChunksUpdated(keys);
+                if (this.onChunksUpdated && updates.length > 0) {
+                    this.onChunksUpdated(updates);
                 }
             }
         };
@@ -38,7 +51,7 @@ export class SimulationManager {
         this.worker.postMessage({ type: 'START_LOOP' });
     }
 
-    setCallback(callback: (keys: string[]) => void) {
+    setCallback(callback: (updates: SimUpdate[]) => void) {
         this.onChunksUpdated = callback;
     }
 

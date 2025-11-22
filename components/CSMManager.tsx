@@ -25,11 +25,9 @@ export const CSMManager: React.FC<CSMManagerProps> = ({ lightDirection, onCSMCre
       shadowMapSize: 2048,
       lightDirection: direction,
       camera: camera,
-      lightIntensity: 2.5,
+      lightIntensity: 0.5,
       lightColor: new THREE.Color('#fff7d1'),
       shadowBias: -0.00001, // Very slight negative bias
-      lightNear: 1,
-      lightFar: 1000,
       lightMargin: 100
     });
 
@@ -37,7 +35,6 @@ export const CSMManager: React.FC<CSMManagerProps> = ({ lightDirection, onCSMCre
     onCSMCreated(csm);
 
     return () => {
-      csm.remove();
       csm.dispose();
       csmRef.current = null;
     };

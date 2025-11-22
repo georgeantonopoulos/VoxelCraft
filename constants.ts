@@ -1,6 +1,7 @@
 
 // Grid Settings
 export const CHUNK_SIZE = 32;
+export const CHUNK_SIZE_XZ = CHUNK_SIZE;
 // We use 2 padding to ensure we have enough data for neighbors (-1) and normal calculations
 export const PAD = 2; 
 export const TOTAL_SIZE = CHUNK_SIZE + PAD * 2;
