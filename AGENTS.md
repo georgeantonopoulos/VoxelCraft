@@ -1,5 +1,8 @@
 ## Agent Notes for `VoxelCraft`
 
+ALWAYS INSPECT CHANGES MAKE SURE NO BUGS SLIP. 
+If doing a visual inspection always wait 10 seconds and use the controls to take 4 separate screenshots and analyse what changed. Update this doc (AGENTS.md) with your findings. 
+
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
 - **Physics**: `@react-three/rapier`.
