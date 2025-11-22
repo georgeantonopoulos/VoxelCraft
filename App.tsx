@@ -1,4 +1,3 @@
-
 import React, { useState, Suspense, useEffect, useCallback, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Sky, PointerLockControls, KeyboardControls } from '@react-three/drei';
@@ -10,7 +9,9 @@ import { Water } from './components/Water';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 import * as THREE from 'three';
-import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
+import { CSMManager } from './components/CSMManager';
+import { EffectComposer, Bloom, ToneMapping } from '@react-three/postprocessing';
+import { N8AOPostPass } from 'n8ao';
 
 declare global {
   namespace JSX {
@@ -34,49 +35,32 @@ const keyboardMap = [
 ];
 
 const Sun = () => {
-  const { scene } = useThree();
-
-  const flareTexture = useMemo(() => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 64;
-      canvas.height = 64;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-          // Simple glow
-          const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-          gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-          gradient.addColorStop(0.2, 'rgba(255, 240, 200, 0.4)');
-          gradient.addColorStop(0.5, 'rgba(255, 200, 150, 0.1)');
-          gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-          ctx.fillStyle = gradient;
-          ctx.fillRect(0, 0, 64, 64);
-      }
-      return new THREE.CanvasTexture(canvas);
-  }, []);
-
-  useEffect(() => {
-      const flare = new Lensflare();
-      flare.position.set(500, 800, 300);
-
-      flare.addElement(new LensflareElement(flareTexture, 500, 0, new THREE.Color(1,1,1)));
-      flare.addElement(new LensflareElement(flareTexture, 200, 0.4, new THREE.Color(1,1,0.9)));
-      flare.addElement(new LensflareElement(flareTexture, 120, 0.6, new THREE.Color(0.8,1,0.6)));
-      flare.addElement(new LensflareElement(flareTexture, 80, 0.8, new THREE.Color(1,0.8,0.6)));
-
-      scene.add(flare);
-
-      return () => {
-          scene.remove(flare);
-          flare.dispose();
-      };
-  }, [flareTexture, scene]);
-
   return (
       <mesh position={[500, 800, 300]}>
           <sphereGeometry args={[40, 16, 16]} />
-          <meshBasicMaterial color="#fff7d1" toneMapped={false} />
+          <meshBasicMaterial color={[10, 10, 10]} toneMapped={false} />
       </mesh>
   );
+};
+
+const PostProcessing = () => {
+    const { scene, camera } = useThree();
+    const n8ao = useMemo(() => {
+        const p = new N8AOPostPass(scene, camera);
+        p.configuration.aoRadius = 2.5;
+        p.configuration.intensity = 3.0;
+        p.configuration.color = new THREE.Color(0, 0, 0);
+        p.setQualityMode('High');
+        return p;
+    }, [scene, camera]);
+
+    return (
+        <EffectComposer disableNormalPass>
+            <primitive object={n8ao} />
+            <Bloom luminanceThreshold={1} mipmapBlur intensity={0.5} />
+            <ToneMapping />
+        </EffectComposer>
+    );
 };
 
 const InteractionLayer: React.FC<{
@@ -115,6 +99,7 @@ const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
+  const [csm, setCsm] = useState<any>(null);
 
   const sunDirection = useMemo(
     () => new THREE.Vector3(-50, -80, -30).normalize(),
@@ -142,13 +127,12 @@ const App: React.FC = () => {
           gl={{ 
             antialias: true,
             outputColorSpace: THREE.SRGBColorSpace,
-            toneMapping: THREE.ACESFilmicToneMapping,
+            toneMapping: THREE.NoToneMapping,
             powerPreference: "high-performance"
           }}
           camera={{ fov: 60, near: 0.1, far: 240 }}
         >
           <color attach="background" args={['#bed9f4']} />
-          <fog attach="fog" args={['#c3d8ee', 35, 180]} />
           
           <Sky 
             sunPosition={[500, 800, 300]}
@@ -165,21 +149,10 @@ const App: React.FC = () => {
           <ambientLight intensity={0.35} color="#dbeaff" />
           <hemisphereLight args={['#d7e6ff', '#523521', 0.5]} />
           
-          <directionalLight 
-            position={[150, 240, 90]}
-            intensity={1.5}
-            color="#fff7d1"
-            castShadow 
-            shadow-mapSize={[2048, 2048]}
-            shadow-bias={-0.0005}
-            shadow-normalBias={0.04}
-            shadow-camera-near={10}
-            shadow-camera-far={400}
-            shadow-camera-left={-100}
-            shadow-camera-right={100}
-            shadow-camera-top={100}
-            shadow-camera-bottom={-100}
-          />
+          {/* CSM Manager handles shadows and directional light */}
+          <CSMManager lightDirection={sunDirection} onCSMCreated={setCsm} />
+
+          <PostProcessing />
 
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
@@ -188,6 +161,7 @@ const App: React.FC = () => {
                 action={action}
                 isInteracting={isInteracting}
                 sunDirection={sunDirection}
+                csm={csm}
               />
               <Water />
               <BedrockPlane />
