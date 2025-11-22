@@ -1,8 +1,7 @@
 
-import { MATERIAL_PROPS, TOTAL_SIZE, CHUNK_SIZE, PAD } from '../constants';
+import { MATERIAL_PROPS, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, PAD } from '../constants';
 import { MaterialType } from '../types';
 
-// Minimal types for worker
 interface WorkerChunkData {
     key: string;
     cx: number;
@@ -10,189 +9,199 @@ interface WorkerChunkData {
     material: Uint8Array;
     wetness: Uint8Array;
     mossiness: Uint8Array;
+    nextMaterial?: Uint8Array; // Double buffer
 }
 
 const chunks: Map<string, WorkerChunkData> = new Map();
 let activeKeys: Set<string> = new Set();
+let tickCount = 0;
 
-// BFS Queue Item
-// Pack x,y,z,val into a single object or use parallel arrays for perf?
-// Objects are fine for "Slow Tick" with limited spread radius.
-interface QueueItem {
-    wx: number;
-    wy: number;
-    wz: number;
-    val: number;
-}
+// Dimensions
+const SIZE_X = TOTAL_SIZE_XZ;
+const SIZE_Y = TOTAL_SIZE_Y;
+const SIZE_Z = TOTAL_SIZE_XZ;
+const STRIDE_Y = SIZE_X;
+const STRIDE_Z = SIZE_X * SIZE_Y;
 
-// Global BFS Propagation
-function propagateWetness() {
-    const queue: QueueItem[] = [];
+const getIdx = (x: number, y: number, z: number) => x + y * STRIDE_Y + z * STRIDE_Z;
+
+// Helper to get chunk and local coords from global
+const getGlobalBlock = (gx: number, gy: number, gz: number) => {
+    const cx = Math.floor(gx / CHUNK_SIZE_XZ);
+    const cz = Math.floor(gz / CHUNK_SIZE_XZ);
+    const key = `${cx},${cz}`;
+    const chunk = chunks.get(key);
+    if (!chunk) return null;
+
+    const lx = gx - cx * CHUNK_SIZE_XZ + PAD;
+    const lz = gz - cz * CHUNK_SIZE_XZ + PAD;
+    const ly = gy + PAD; // assuming gy is local grid Y (0..83)
+
+    // Check bounds
+    if (lx < 0 || lx >= SIZE_X || ly < 0 || ly >= SIZE_Y || lz < 0 || lz >= SIZE_Z) return null;
+
+    return { chunk, idx: getIdx(lx, ly, lz) };
+};
+
+function simulateWater() {
     const changedChunks = new Set<string>();
 
-    // 1. Reset Phase & Source Collection
-    // We iterate all chunks to clear old wetness and find sources.
-    // This ensures consistency: if a source was removed, the water dries up.
+    // 1. Initialize Next Buffer
+    for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (!chunk) continue;
+        if (!chunk.nextMaterial) {
+            chunk.nextMaterial = new Uint8Array(chunk.material.length);
+        }
+        chunk.nextMaterial.set(chunk.material);
+    }
+
+    // 2. Process Water Flow
+    for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (!chunk || !chunk.nextMaterial) continue;
+
+        let chunkModified = false;
+
+        // Scan bounds (excluding pad neighbors if possible to avoid double processing?
+        // No, we process all, but only move FROM this chunk)
+        const start = PAD;
+        const endX = SIZE_X - PAD;
+        const endY = SIZE_Y - PAD;
+        const endZ = SIZE_Z - PAD;
+
+        // Bottom-Up Iteration to prevent instant falling
+        for (let y = start; y < endY; y++) {
+            for (let z = start; z < endZ; z++) {
+                for (let x = start; x < endX; x++) {
+                    const idx = getIdx(x, y, z);
+
+                    if (chunk.material[idx] === MaterialType.WATER) {
+                        // Check logic
+                        // Need Global Coords to handle neighbors
+                        const gx = (x - PAD) + chunk.cx * CHUNK_SIZE_XZ;
+                        const gy = (y - PAD); // 0-based grid Y
+                        const gz = (z - PAD) + chunk.cz * CHUNK_SIZE_XZ;
+
+                        let moved = false;
+
+                        // Rule 1: Gravity (Down)
+                        // Down is y-1
+                        const down = getGlobalBlock(gx, gy - 1, gz);
+                        if (down && down.chunk.nextMaterial) {
+                             if (down.chunk.material[down.idx] === MaterialType.AIR &&
+                                 down.chunk.nextMaterial[down.idx] === MaterialType.AIR) {
+
+                                 // Move
+                                 chunk.nextMaterial[idx] = MaterialType.AIR;
+                                 down.chunk.nextMaterial[down.idx] = MaterialType.WATER;
+
+                                 changedChunks.add(chunk.key);
+                                 changedChunks.add(down.chunk.key);
+                                 moved = true;
+                             }
+                        }
+
+                        // Rule 2: Spread
+                        if (!moved) {
+                             const neighbors = [
+                                 { dx: 1, dz: 0 }, { dx: -1, dz: 0 },
+                                 { dx: 0, dz: 1 }, { dx: 0, dz: -1 }
+                             ];
+                             // Shuffle
+                             for (let i = neighbors.length - 1; i > 0; i--) {
+                                 const j = Math.floor(Math.random() * (i + 1));
+                                 [neighbors[i], neighbors[j]] = [neighbors[j], neighbors[i]];
+                             }
+
+                             for (const n of neighbors) {
+                                 const target = getGlobalBlock(gx + n.dx, gy, gz + n.dz);
+                                 if (target && target.chunk.nextMaterial) {
+                                     // Check if AIR
+                                     // Also check if BELOW target is solid (don't spread into mid-air like Wile E. Coyote)
+                                     // Standard liquid spread requires support or it falls.
+                                     // But if it falls next tick, that's fine.
+                                     // However, usually water spreads only if it can't fall.
+                                     // We already checked Gravity for 'current'.
+
+                                     if (target.chunk.material[target.idx] === MaterialType.AIR &&
+                                         target.chunk.nextMaterial[target.idx] === MaterialType.AIR) {
+
+                                         // Move
+                                         chunk.nextMaterial[idx] = MaterialType.AIR;
+                                         target.chunk.nextMaterial[target.idx] = MaterialType.WATER;
+
+                                         changedChunks.add(chunk.key);
+                                         changedChunks.add(target.chunk.key);
+                                         moved = true;
+                                         break; // Only move to one
+                                     }
+                                 }
+                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Apply Changes
+    for (const key of changedChunks) {
+        const chunk = chunks.get(key);
+        if (chunk && chunk.nextMaterial) {
+            chunk.material.set(chunk.nextMaterial);
+        }
+    }
+
+    return Array.from(changedChunks);
+}
+
+// Minimal wetness propagation
+function propagateWetness() {
+    // Only run occasionally
+    const changedChunks = new Set<string>();
 
     for (const key of activeKeys) {
         const chunk = chunks.get(key);
         if (!chunk) continue;
 
-        const { material, wetness, cx, cz } = chunk;
-        const size = TOTAL_SIZE;
-        let chunkChanged = false;
+        let modified = false;
+        // Simple local wetness: If next to WATER, wetness = 255. Else decay.
+        // Full BFS is expensive. Let's do a simple neighbor check.
+        // Actually, for Moss, we need wet stone.
 
         const start = PAD;
-        const end = size - PAD;
-        const worldOffsetX = cx * CHUNK_SIZE;
-        const worldOffsetZ = cz * CHUNK_SIZE;
+        const endX = SIZE_X - PAD;
+        const endY = SIZE_Y - PAD;
+        const endZ = SIZE_Z - PAD;
 
-        for (let z = start; z < end; z++) {
-            for (let y = start; y < end; y++) {
-                for (let x = start; x < end; x++) {
-                    const idx = x + y * size + z * size * size;
-                    const mat = material[idx];
+        for (let z = start; z < endZ; z++) {
+            for (let y = start; y < endY; y++) {
+                for (let x = start; x < endX; x++) {
+                    const idx = getIdx(x, y, z);
+                    const mat = chunk.material[idx];
 
-                    if (mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
-                        // Ensure source is max wetness
-                        if (wetness[idx] !== 255) {
-                            wetness[idx] = 255;
-                            chunkChanged = true;
+                    if (mat === MaterialType.WATER) {
+                        if (chunk.wetness[idx] !== 255) {
+                            chunk.wetness[idx] = 255;
+                            modified = true;
                         }
-                        // Add to queue
-                        queue.push({
-                            wx: (x - PAD) + worldOffsetX,
-                            wy: (y - PAD),
-                            wz: (z - PAD) + worldOffsetZ,
-                            val: 255
-                        });
-                    } else if (wetness[idx] > 0) {
-                        // Reset non-source blocks to 0
-                        // They will be re-wetted if near a source
-                        wetness[idx] = 0;
-                        chunkChanged = true;
+                    } else if (mat !== MaterialType.AIR) {
+                        // Check neighbors for water
+                        // This is a slow "seeping" effect
+                        if (Math.random() < 0.01) { // 1% chance per tick to update wetness to save perf
+                             // ... logic omitted for speed, just decay for now
+                             if (chunk.wetness[idx] > 0) {
+                                 chunk.wetness[idx] = Math.max(0, chunk.wetness[idx] - 2);
+                                 modified = true;
+                             }
+                        }
                     }
                 }
             }
         }
-        if (chunkChanged) changedChunks.add(key);
+        if (modified) changedChunks.add(key);
     }
-
-    // 2. BFS Propagation Phase
-    // Decay Factor: Controls spread radius.
-    // 0.4 -> ~4 blocks. 0.7 -> ~15 blocks.
-    const DECAY_FACTOR = 0.4;
-    const THRESHOLD = 5;
-
-    // Neighbors offsets
-    const offsets = [
-        [1,0,0], [-1,0,0],
-        [0,1,0], [0,-1,0],
-        [0,0,1], [0,0,-1]
-    ];
-
-    let head = 0;
-    while (head < queue.length) {
-        const { wx, wy, wz, val } = queue[head++];
-
-        const nextVal = Math.floor(val * DECAY_FACTOR);
-        if (nextVal < THRESHOLD) continue;
-
-        for (const [dx, dy, dz] of offsets) {
-            const nwx = wx + dx;
-            const nwy = wy + dy;
-            const nwz = wz + dz;
-
-            // Resolve Chunk
-            const ncx = Math.floor(nwx / CHUNK_SIZE);
-            const ncz = Math.floor(nwz / CHUNK_SIZE);
-            const key = `${ncx},${ncz}`;
-
-            const chunk = chunks.get(key);
-            if (!chunk) continue; // Skip unloaded chunks
-
-            // Resolve Local Index
-            // Note: TerrainService uses PAD=2.
-            const localX = Math.floor(nwx - ncx * CHUNK_SIZE) + PAD;
-            const localY = Math.floor(nwy) + PAD;
-            const localZ = Math.floor(nwz - ncz * CHUNK_SIZE) + PAD;
-
-            if (localY < 0 || localY >= TOTAL_SIZE) continue;
-
-            const idx = localX + localY * TOTAL_SIZE + localZ * TOTAL_SIZE * TOTAL_SIZE;
-
-            // Check Material
-            const mat = chunk.material[idx];
-            if (mat === MaterialType.AIR || mat === MaterialType.WATER_SOURCE || mat === MaterialType.WATER_FLOWING) {
-                continue; // Don't propagate into air or existing sources
-            }
-            // Optional: Check absorptionRate? If 0 (Bedrock?), maybe don't spread?
-            // For now, assume all solid blocks can get wet surface.
-
-            // Update Wetness
-            // We use standard max logic: only update if new value is higher
-            if (chunk.wetness[idx] < nextVal) {
-                chunk.wetness[idx] = nextVal;
-                changedChunks.add(key);
-
-                // Add to queue for further spread
-                queue.push({ wx: nwx, wy: nwy, wz: nwz, val: nextVal });
-            }
-        }
-    }
-
-    // 3. Moss Phase (Local)
-    // Now that wetness is stable, update mossiness locally.
-    // We only need to check chunks that are "active" or involved in simulation.
-    // Iterating all active chunks is safer.
-    for (const key of activeKeys) {
-        const chunk = chunks.get(key);
-        if (!chunk) continue;
-
-        const { material, wetness, mossiness } = chunk;
-        const size = TOTAL_SIZE;
-        let chunkChanged = changedChunks.has(key);
-
-        const start = PAD;
-        const end = size - PAD;
-
-        for (let z = start; z < end; z++) {
-            for (let y = start; y < end; y++) {
-                for (let x = start; x < end; x++) {
-                    const idx = x + y * size + z * size * size;
-                    const mat = material[idx];
-
-                    if (mat === MaterialType.AIR) continue;
-
-                    const props = MATERIAL_PROPS[mat] || MATERIAL_PROPS[MaterialType.DIRT];
-                    let currentMoss = mossiness[idx];
-                    const currentWet = wetness[idx];
-
-                    if (mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE) {
-                        const mossThresh = 50;
-                        if (currentWet > mossThresh) {
-                            currentMoss += props.mossGrowthRate;
-                        } else {
-                            currentMoss -= props.mossDecayRate;
-                        }
-                        currentMoss = Math.min(255, Math.max(0, currentMoss));
-                    } else {
-                         // Decay moss on dirt (grass logic handles green)
-                        currentMoss -= 5;
-                        currentMoss = Math.max(0, currentMoss);
-                    }
-
-                    if (currentMoss !== mossiness[idx]) {
-                        mossiness[idx] = currentMoss;
-                        chunkChanged = true;
-                    }
-                }
-            }
-        }
-
-        if (chunkChanged) changedChunks.add(key);
-    }
-
     return Array.from(changedChunks);
 }
 
@@ -201,9 +210,7 @@ self.onmessage = (e: MessageEvent) => {
 
     if (type === 'ADD_CHUNK') {
         const { key, cx, cz, material, wetness, mossiness } = payload;
-        chunks.set(key, {
-            key, cx, cz, material, wetness, mossiness
-        });
+        chunks.set(key, { key, cx, cz, material, wetness, mossiness });
         activeKeys.add(key);
     }
     else if (type === 'REMOVE_CHUNK') {
@@ -212,21 +219,31 @@ self.onmessage = (e: MessageEvent) => {
         activeKeys.delete(key);
     }
     else if (type === 'START_LOOP') {
-        // Start the interval
         setInterval(() => {
-            const changedKeys = propagateWetness();
+            const start = performance.now();
+            const waterUpdates = simulateWater();
 
-            if (changedKeys.length > 0) {
-                const updates = changedKeys.map(key => {
+            // Only update wetness occasionally
+            // tickCount++;
+            // if (tickCount % 10 === 0) propagateWetness();
+
+            if (waterUpdates.length > 0) {
+                const updates = waterUpdates.map(key => {
                     const chunk = chunks.get(key);
                     return {
                         key: chunk!.key,
+                        material: chunk!.material, // Send material back!
                         wetness: chunk!.wetness,
                         mossiness: chunk!.mossiness
                     };
                 });
                 self.postMessage({ type: 'CHUNKS_UPDATED', payload: updates });
             }
-        }, 1000); // 1 second tick
+
+            // Debug perf
+            // const dur = performance.now() - start;
+            // if (dur > 20) console.log('Sim took', dur);
+
+        }, 100); // 100ms = 10fps
     }
 };
