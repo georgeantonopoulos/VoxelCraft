@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
@@ -10,6 +9,7 @@ import { simulationManager } from '../services/SimulationManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
 import { MaterialType, ChunkMetadata } from '../types';
+import CSM from 'three-csm';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -32,6 +32,7 @@ interface VoxelTerrainProps {
     action: 'DIG' | 'BUILD' | null;
     isInteracting: boolean;
     sunDirection?: THREE.Vector3;
+    csm?: CSM;
 }
 
 // --- HELPER ---
@@ -62,7 +63,7 @@ const isTerrainCollider = (collider: Collider): boolean => {
 
 // --- COMPONENTS ---
 
-const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
+const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3; csm?: CSM }> = React.memo(({ chunk, sunDirection, csm }) => {
     const meshRef = useRef<THREE.Mesh>(null);
     const [opacity, setOpacity] = useState(0);
 
@@ -123,7 +124,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
                 frustumCulled={true}
                 geometry={geometry}
             >
-                <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
+                <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} csm={csm} />
             </mesh>
         </RigidBody>
     );
@@ -203,7 +204,7 @@ const Particles = ({ active, position, color }: { active: boolean, position: THR
 
 // --- MAIN COMPONENT ---
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection }) => {
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, csm }) => {
     const { camera } = useThree();
     const { world, rapier } = useRapier();
     
@@ -493,7 +494,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     return (
         <group>
             {Object.values(chunks).map(chunk => (
-                <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} />
+                <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} csm={csm} />
             ))}
             
             <Particles 

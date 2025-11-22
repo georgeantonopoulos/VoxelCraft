@@ -1,211 +1,164 @@
-
 import * as THREE from 'three';
-import React, { useRef, useMemo } from 'react';
-import { extend, useFrame } from '@react-three/fiber';
-import { shaderMaterial } from '@react-three/drei';
-import { WATER_LEVEL } from '../constants';
+import React, { useRef, useEffect, useMemo } from 'react';
+import CustomShaderMaterial from 'three-custom-shader-material';
+import { useFrame } from '@react-three/fiber';
 import { noiseTexture } from '../utils/sharedResources';
+import { WATER_LEVEL } from '../constants';
+import CSM from 'three-csm';
 
-const TerrainShaderMaterial = shaderMaterial(
-  {
-    uTime: 0,
-    uSunDir: new THREE.Vector3(0.5, 0.85, 0.35).normalize(),
-    uSunColor: new THREE.Color('#fff7d1'),
-    uAmbientColor: new THREE.Color('#4f6f8d'),
-    uColorBedrock: new THREE.Color('#2a2a2a'),
-    uColorStone: new THREE.Color('#7a8288'),
-    uColorDirt: new THREE.Color('#5d4037'),
-    uColorGrass: new THREE.Color('#3d9a24'),
-    uColorSand: new THREE.Color('#e6dcab'),
-    uColorSnow: new THREE.Color('#ffffff'),
-    uColorClay: new THREE.Color('#a67b5b'),
-    uColorWater: new THREE.Color('#3b85d1'),
-    uColorMoss: new THREE.Color('#5c8a3c'),
-    uFogColorNear: new THREE.Color('#bcd5f1'),
-    uFogColorFar: new THREE.Color('#e3eef8'),
-    uFogDensity: 0.015,
-    uFogHeightFalloff: 0.02,
-    uDetailStrength: 0.4,
-    uMacroVariation: 0.35,
-    uAOIntensity: 0.45,
-    uWaterLevel: WATER_LEVEL,
-    uOpacity: 1.0,
-    uNoiseTexture: null // Will be set via prop
-  },
-  `
-    precision highp float;
-    in float aMaterial;
-    in float aWetness;
-    in float aMossiness;
+export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity?: number, csm?: CSM }> = ({ opacity = 1, csm }) => {
+  const materialRef = useRef<any>(null);
+
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uNoiseTexture: { value: noiseTexture },
+    uColorBedrock: { value: new THREE.Color('#2a2a2a') },
+    uColorStone: { value: new THREE.Color('#7a8288') },
+    uColorDirt: { value: new THREE.Color('#5d4037') },
+    uColorGrass: { value: new THREE.Color('#3d9a24') },
+    uColorSand: { value: new THREE.Color('#e6dcab') },
+    uColorSnow: { value: new THREE.Color('#ffffff') },
+    uColorClay: { value: new THREE.Color('#a67b5b') },
+    uColorWater: { value: new THREE.Color('#3b85d1') },
+    uColorMoss: { value: new THREE.Color('#5c8a3c') },
+    uWaterLevel: { value: WATER_LEVEL },
+    uMacroVariation: { value: 0.35 },
+    uFogColorNear: { value: new THREE.Color('#bcd5f1') },
+    uFogColorFar: { value: new THREE.Color('#e3eef8') },
+    uFogHeightFalloff: { value: 0.02 },
+  }), []);
+
+  // CSM Handshake: Register material with CSM instance
+  useEffect(() => {
+      if (csm && materialRef.current) {
+          csm.setupMaterial(materialRef.current);
+      }
+  }, [csm]);
+
+  useFrame(({ clock }) => {
+      if (materialRef.current) {
+          materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+
+          // Ensure noise texture reference is fresh
+          if (materialRef.current.uniforms.uNoiseTexture.value !== noiseTexture) {
+              materialRef.current.uniforms.uNoiseTexture.value = noiseTexture;
+          }
+      }
+  });
+
+  const vertexHeader = `
+    attribute float aMaterial;
+    attribute float aWetness;
+    attribute float aMossiness;
     
-    out vec3 vNormal;
-    out vec3 vPosition;
-    out vec3 vWorldNormal;
-    out float vMaterial;
-    out float vDepth;
-    out float vHeight;
-    out float vWetness;
-    out float vMossiness;
+    varying float vMaterial;
+    varying float vWetness;
+    varying float vMossiness;
+    varying float vHeight;
+    varying vec3 vWorldNormal;
+    varying vec3 vPos;
+  `;
+
+  const vertexMain = `
+    vMaterial = aMaterial;
+    vWetness = aWetness;
+    vMossiness = aMossiness;
+    vHeight = position.y;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vPos = (modelMatrix * vec4(position, 1.0)).xyz;
     
-    void main() {
-      vNormal = normalize(normalMatrix * normal);
-      vWorldNormal = normalize(mat3(modelMatrix) * normal);
-      vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-      vMaterial = aMaterial;
-      vWetness = aWetness;
-      vMossiness = aMossiness;
-      vHeight = vPosition.y;
-      
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      vDepth = -mvPosition.z;
-      gl_Position = projectionMatrix * mvPosition;
-    }
-  `,
-  `
-    precision highp float;
+    // Pass position to CSM if needed, though it usually uses world pos
+    csm_Position = position;
+  `;
+
+  const fragmentHeader = `
     precision highp sampler3D;
 
-    uniform float uTime;
-    uniform vec3 uSunDir;
-    uniform vec3 uSunColor;
-    uniform vec3 uAmbientColor;
-    uniform sampler3D uNoiseTexture;
+    varying float vMaterial;
+    varying float vWetness;
+    varying float vMossiness;
+    varying float vHeight;
+    varying vec3 vWorldNormal;
+    varying vec3 vPos;
 
-    uniform vec3 uColorGrass;
+    uniform sampler3D uNoiseTexture;
+    uniform float uTime;
+
+    uniform vec3 uColorBedrock;
     uniform vec3 uColorStone;
     uniform vec3 uColorDirt;
+    uniform vec3 uColorGrass;
     uniform vec3 uColorSand;
     uniform vec3 uColorSnow;
     uniform vec3 uColorClay;
     uniform vec3 uColorWater;
     uniform vec3 uColorMoss;
-    uniform vec3 uColorBedrock;
+
+    uniform float uWaterLevel;
+    uniform float uMacroVariation;
+
     uniform vec3 uFogColorNear;
     uniform vec3 uFogColorFar;
-    uniform float uFogDensity;
     uniform float uFogHeightFalloff;
-    uniform float uDetailStrength;
-    uniform float uMacroVariation;
-    uniform float uAOIntensity;
-    uniform float uWaterLevel;
-    uniform float uOpacity;
-    
-    in vec3 vNormal;
-    in vec3 vPosition;
-    in vec3 vWorldNormal;
-    in float vMaterial;
-    in float vDepth;
-    in float vHeight;
-    in float vWetness;
-    in float vMossiness;
 
-    out vec4 fragColor;
-
-    // Sample 3D noise from texture
-    // Channels: R=Base, G=x2, B=x4, A=x8
     float getNoise(vec3 pos, float scale) {
-        vec4 n = texture(uNoiseTexture, pos * scale * 0.05); // Scale factor to map world units to texture
-        // Reconstruct FBM-like signal
+        vec4 n = texture(uNoiseTexture, pos * scale * 0.05);
         return n.r + n.g * 0.5 + n.b * 0.25 + n.a * 0.125;
     }
 
-    // Helper for detailing
-    float getDetailNoise(vec3 pos, float scale) {
-        vec4 n = texture(uNoiseTexture, pos * scale * 0.1);
-        return n.r * 2.0 - 1.0; // Simple signed noise
-    }
-
     vec3 triSampleColor(vec3 pos, vec3 normal, vec3 color, float scale) {
-      // Simple blending using noise to break uniformity
       float n = getNoise(pos, scale);
-      return color * (0.85 + 0.3 * n); // Modulate brightness
+      return color * (0.85 + 0.3 * n);
     }
+  `;
 
-    vec3 calcDetailNormal(vec3 pos, vec3 normal) {
-      float eps = 0.1;
-      // Use texture sampling for cheap perturbation
-      // We sample the high freq channel (Blue or Alpha) for bumps
-
-      float scale = 1.5;
-      float dX = texture(uNoiseTexture, (pos + vec3(eps, 0, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(eps, 0, 0)) * scale * 0.1).b;
-      float dY = texture(uNoiseTexture, (pos + vec3(0, eps, 0)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(0, eps, 0)) * scale * 0.1).b;
-      float dZ = texture(uNoiseTexture, (pos + vec3(0, 0, eps)) * scale * 0.1).b - texture(uNoiseTexture, (pos - vec3(0, 0, eps)) * scale * 0.1).b;
-
-      vec3 bump = vec3(dX, dY, dZ);
-      return normalize(normal + bump * uDetailStrength * 2.0);
-    }
-
-    void main() {
+  const fragmentMain = `
       vec3 worldNormal = normalize(vWorldNormal);
       float slope = clamp(dot(worldNormal, vec3(0.0, 1.0, 0.0)), -1.0, 1.0);
       float m = vMaterial;
       float height = vHeight;
 
-      // Macro variation
-      float macroNoise = getNoise(vPosition, 0.05) * uMacroVariation; // Low freq
+      // Macro Variation
+      float macroNoise = getNoise(vPos, 0.05) * uMacroVariation;
 
-      // Increased texture frequency (smaller noise) for more detail
-      vec3 c_stone = triSampleColor(vPosition, worldNormal, uColorStone, 0.3);
-      vec3 c_grass = triSampleColor(vPosition, worldNormal, uColorGrass, 0.25);
-
-      // Modulate grass
+      // Textures
+      vec3 c_stone = triSampleColor(vPos, worldNormal, uColorStone, 0.3);
+      vec3 c_grass = triSampleColor(vPos, worldNormal, uColorGrass, 0.25);
       c_grass = mix(c_grass, c_grass * 0.8 + vec3(0.1, 0.1, 0.0), macroNoise * 0.5);
 
-      vec3 c_dirt = triSampleColor(vPosition, worldNormal, uColorDirt, 0.35);
-      vec3 c_sand = triSampleColor(vPosition, worldNormal, uColorSand, 0.4);
-      vec3 c_clay = triSampleColor(vPosition, worldNormal, uColorClay, 0.3);
+      vec3 c_dirt = triSampleColor(vPos, worldNormal, uColorDirt, 0.35);
+      vec3 c_sand = triSampleColor(vPos, worldNormal, uColorSand, 0.4);
+      vec3 c_clay = triSampleColor(vPos, worldNormal, uColorClay, 0.3);
       vec3 c_water = uColorWater;
-      vec3 c_moss = triSampleColor(vPosition, worldNormal, uColorMoss, 0.3);
+      vec3 c_moss = triSampleColor(vPos, worldNormal, uColorMoss, 0.3);
 
       vec3 baseColor = c_stone;
-      float specular = 0.08;
-      float roughness = 0.8;
 
       float snowLine = smoothstep(18.0, 28.0, height);
       float beach = smoothstep(uWaterLevel - 1.5, uWaterLevel + 2.0, height);
       float dirtBand = smoothstep(0.2, 0.65, slope);
 
-      // Material Blending
-      // 0: Air
-      // 1: Bedrock
-      // 2: Stone
-      // 3: Dirt
-      // 4: Grass
-      // 5: Sand
-      // 6: Snow
-      // 7: Clay
-      // 8: Water Source
-      // 9: Water Flowing
-      // 10: Mossy Stone (Explicit)
-
+      // Blending Logic
       if (m < 2.0) {
          baseColor = mix(uColorBedrock, c_stone, clamp(m, 0.0, 1.0));
       } else if (m < 3.0) {
          baseColor = mix(c_stone, c_dirt, clamp(m - 2.0, 0.0, 1.0));
-         specular = 0.04;
       } else if (m < 4.0) {
          baseColor = mix(c_dirt, c_grass, clamp(m - 3.0, 0.0, 1.0));
-         specular = 0.03;
       } else if (m < 5.0) {
          baseColor = mix(c_grass, c_sand, clamp(m - 4.0, 0.0, 1.0));
       } else if (m < 6.0) {
          baseColor = mix(c_sand, uColorSnow, clamp(m - 5.0, 0.0, 1.0));
-         specular = 0.35;
       } else if (m < 7.0) {
          baseColor = mix(uColorSnow, c_clay, clamp(m - 6.0, 0.0, 1.0));
       } else if (m < 8.0) {
          baseColor = mix(c_clay, c_water, clamp(m - 7.0, 0.0, 1.0));
-         specular = 0.8;
       } else {
-         // Water/Mossy
          baseColor = c_water;
-         specular = 0.9;
       }
 
-      // Explicit Mossy Stone Override (approx m=10)
       if (abs(m - 10.0) < 0.5) {
           baseColor = c_moss;
-          specular = 0.05;
       }
 
       float rockThreshold = 1.0 - smoothstep(0.55, 0.8, slope);
@@ -214,81 +167,56 @@ const TerrainShaderMaterial = shaderMaterial(
       baseColor = mix(baseColor, mix(baseColor, c_sand, 0.7), beach * (1.0 - snowLine));
       baseColor = mix(baseColor, c_dirt, dirtBand * 0.35);
 
-      // --- Alive World Effects ---
-
-      // 1. Wetness (Muddy/Dark/Specular)
-      // S-Curve for wetness visual
+      // Wetness
       float wetFactor = smoothstep(0.05, 0.6, vWetness);
-      baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7); // Darken
-      specular = mix(specular, 0.6, wetFactor * 0.8); // Make shiny
+      baseColor = mix(baseColor, baseColor * 0.4, wetFactor * 0.7);
 
-      // 2. Moss Growth (Overlay)
-      // Use noise to create patches
-      float mossNoise = getNoise(vPosition, 0.5);
+      // Moss Overlay
+      float mossNoise = getNoise(vPos, 0.5);
       float mossThreshold = smoothstep(0.2, 0.5, vMossiness + mossNoise * 0.2);
-
-      // Only apply moss where it makes sense (not on water or snow usually, but let's assume simulation handles that)
       baseColor = mix(baseColor, c_moss, mossThreshold);
-      specular = mix(specular, 0.02, mossThreshold); // Moss is matte
 
-      float ao = clamp(1.0 - (1.0 - slope) * uAOIntensity - macroNoise * 0.25, 0.55, 1.0);
+      // PBR Injection
+      csm_DiffuseColor = vec4(baseColor, 1.0);
 
-      vec3 normal = calcDetailNormal(vPosition, worldNormal);
-      vec3 lightDir = normalize(uSunDir);
-      vec3 viewDir = normalize(cameraPosition - vPosition);
+      // Roughness Logic
+      float rough = 0.9;
+      if (m >= 5.0 && m < 6.0) rough = 0.4; // Snow
+      if (m >= 8.0) rough = 0.1; // Water
 
-      float NdotL = max(dot(normal, lightDir), 0.0);
-      vec3 diffuse = uSunColor * NdotL;
+      // Wetness makes it smooth
+      rough = mix(rough, 0.1, wetFactor);
+      csm_Roughness = rough;
+      csm_Metalness = 0.0; // Non-metallic generally
 
-      vec3 halfVec = normalize(lightDir + viewDir);
-      float NdotH = max(dot(normal, halfVec), 0.0);
-      float spec = pow(NdotH, 48.0) * specular;
+      // --- Custom Art Direction ---
 
-      float rim = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0) * 0.15;
-
-      vec3 ambient = uAmbientColor * (0.55 + 0.45 * ao);
-      vec3 lit = baseColor * (ambient + diffuse) + spec * uSunColor + rim * baseColor;
-
-      float distFog = 1.0 - exp2(-uFogDensity * uFogDensity * vDepth * vDepth * 1.2);
+      // 1. Height Fog
       float heightFog = clamp(exp(-max(height - uWaterLevel, 0.0) * uFogHeightFalloff), 0.0, 1.0);
-      float fogFactor = clamp(distFog * (0.35 + 0.65 * heightFog), 0.0, 1.0);
-
       vec3 fogColor = mix(uFogColorNear, uFogColorFar, clamp((height + 20.0) / 80.0, 0.0, 1.0));
-      vec3 finalColor = mix(lit, fogColor, fogFactor);
 
-      fragColor = vec4(finalColor, uOpacity);
-      fragColor.rgb = pow(fragColor.rgb, vec3(1.0 / 2.2));
-    }
-  `
-);
+      // Mix Fog into Diffuse (Darken/Tint)
+      csm_DiffuseColor.rgb = mix(csm_DiffuseColor.rgb, fogColor, heightFog * 0.5);
 
-extend({ TerrainShaderMaterial });
+      // 2. Rim Light
+      vec3 viewDir = normalize(cameraPosition - vPos);
+      float rim = pow(1.0 - max(dot(viewDir, worldNormal), 0.0), 3.0);
+      vec3 rimColor = baseColor * 2.0;
 
-export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity?: number }> = ({ sunDirection, opacity = 1 }) => {
-  const ref = useRef<any>(null);
-
-  useFrame(({ clock }) => {
-    if(ref.current) {
-        ref.current.uTime = clock.getElapsedTime();
-        if (sunDirection) {
-          ref.current.uSunDir = sunDirection;
-        }
-        ref.current.uOpacity = opacity;
-
-        if (ref.current.uNoiseTexture !== noiseTexture) {
-             ref.current.uNoiseTexture = noiseTexture;
-        }
-    }
-  });
+      csm_Emissive = rim * rimColor * 0.2;
+  `;
 
   return (
-    // @ts-ignore
-    <terrainShaderMaterial 
-      ref={ref}
-      uNoiseTexture={noiseTexture}
-      side={THREE.DoubleSide} 
-      transparent={opacity < 1}
-      glslVersion={THREE.GLSL3}
-    />
+      <CustomShaderMaterial
+        ref={materialRef}
+        baseMaterial={THREE.MeshStandardMaterial}
+        vertexShader={vertexHeader + vertexMain}
+        fragmentShader={fragmentHeader + fragmentMain}
+        uniforms={uniforms}
+        transparent={opacity < 1}
+        opacity={opacity}
+        side={THREE.DoubleSide}
+        silent
+      />
   );
 };
