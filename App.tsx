@@ -134,6 +134,44 @@ const SunFollower: React.FC = () => {
   );
 };
 
+const MagicalLights: React.FC = () => {
+  const { camera } = useThree();
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      const t = clock.getElapsedTime();
+      // Snap to player general area but float around
+      const px = camera.position.x;
+      const py = camera.position.y;
+      const pz = camera.position.z;
+      
+      // Light 1: Cyan/Purple Essence (Slow float)
+      groupRef.current.children[0].position.set(
+        px + Math.sin(t * 0.3) * 30,
+        py + 20 + Math.sin(t * 0.5) * 5,
+        pz + Math.cos(t * 0.3) * 30
+      );
+      
+      // Light 2: Warm/Golden Wisp (Faster swirl)
+      groupRef.current.children[1].position.set(
+        px + Math.cos(t * 0.7) * 20,
+        py + 15 + Math.cos(t * 1.0) * 5,
+        pz + Math.sin(t * 0.7) * 20
+      );
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      {/* Mystical Purple-Cyan Light */}
+      <pointLight color="#00ffff" intensity={4.0} distance={60} decay={2} />
+      {/* Warm Golden Light */}
+      <pointLight color="#ffaa00" intensity={3.0} distance={50} decay={2} />
+    </group>
+  );
+};
+
 const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
@@ -172,24 +210,25 @@ const App: React.FC = () => {
         >
           <DebugGL skipPost={skipPost} />
 
-          {/* --- 1. ATMOSPHERE & LIGHTING (Vibrant) --- */}
+          {/* --- 1. ATMOSPHERE & LIGHTING (Aetherial & Immersive) --- */}
           
-          {/* Sky Color: Bright Blue */}
+          {/* Sky Color: Slightly more dreamlike blue */}
           <color attach="background" args={['#87CEEB']} />
           
-          {/* Fog: Subtle, far distance, matches sky */}
-          <fog attach="fog" args={['#87CEEB', 50, 350]} />
+          {/* Fog: Start closer for depth, fade to sky color */}
+          <fog attach="fog" args={['#87CEEB', 30, 300]} />
           
-          {/* Ambient: Bright base level */}
-          <ambientLight intensity={0.6} color="#ffffff" />
+          {/* Ambient: Softer base to let point lights shine */}
+          <ambientLight intensity={0.3} color="#ccccff" />
 
-          {/* Hemisphere: The "Secret" to outdoor lighting.
-              Sky Color (Blue) vs Ground Color (Greenish)
-          */}
-          <hemisphereLight args={['#87CEEB', '#e3f0d5', 0.8]} />
+          {/* Hemisphere: Purple/Blue tint for shadows to give magical feel */}
+          <hemisphereLight args={['#87CEEB', '#2a2a4a', 0.5]} />
 
           {/* Sun: Strong directional light */}
           <SunFollower />
+          
+          {/* Magical floating lights for immersion */}
+          <MagicalLights />
 
           {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
@@ -223,7 +262,7 @@ const App: React.FC = () => {
                />
 
                {/* Bloom: Gentle glow for sky and water highlights */}
-               <Bloom luminanceThreshold={1.2} mipmapBlur intensity={0.4} />
+               <Bloom luminanceThreshold={0.8} mipmapBlur intensity={0.6} />
 
                {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
                <ToneMapping />

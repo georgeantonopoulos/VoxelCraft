@@ -16,8 +16,10 @@
   - Uses `CustomShaderMaterial` (CSM) with `Three.js`.
   - `vMaterial` must be `flat varying` in shaders to avoid interpolation artifacts (rainbow gradients) when using float IDs.
   - Materials should be opaque (`transparent={false}`) to support `N8AO` and proper depth writing.
+  - **Texture System**: Uses a procedural 3D noise texture where RGBA channels contain different noise frequencies. The fragment shader mixes these based on material ID to simulate grass grain, stone cracks, etc.
 
 - **Rendering Stability**:
   - **Post-Processing**: Always use `halfRes` and `distanceFalloff` for `N8AO` to prevent artifacts on high-DPI screens and at the sky horizon.
   - **Shader Safety**: Explicitly `clamp` final colors (e.g., 0.0 to 10.0) and guard against NaNs in fragment shaders before outputting. Unclamped values cause Bloom/ToneMapping to crash the frame into black.
   - **Shadows**: Ensure `shadow-camera` frustum covers the entire `far` clip plane. Use `useMemo` for light targets to prevent frame-by-frame recreation/jitter.
+  - **Lighting**: Includes dynamic point lights (`MagicalLights`) for aetherial effects and stronger Bloom/Contrast settings.
