@@ -1,5 +1,4 @@
 import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
-import ReactDOM from 'react-dom/client';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
@@ -10,7 +9,6 @@ import * as THREE from 'three';
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { UI } from './components/UI';
-import { Water } from './components/Water';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 
@@ -232,7 +230,6 @@ const App: React.FC = () => {
                 isInteracting={isInteracting}
                 sunDirection={sunDirection}
               />
-              <Water />
               <BedrockPlane />
             </Physics>
           </Suspense>

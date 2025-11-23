@@ -1,290 +1,259 @@
-import { TOTAL_SIZE, ISO_LEVEL, PAD, CHUNK_SIZE } from '../constants';
+import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET } from '../constants';
 import { MeshData, MaterialType } from '../types';
 
-// Helper to safely get density
-const getVal = (density: Float32Array, x: number, y: number, z: number, size: number) => {
-  if (x < 0 || y < 0 || z < 0 || x >= size || y >= size || z >= size) return -1.0; 
-  return density[x + y * size + z * size * size];
+const SIZE_X = TOTAL_SIZE_XZ;
+const SIZE_Y = TOTAL_SIZE_Y;
+const SIZE_Z = TOTAL_SIZE_XZ;
+
+const bufIdx = (x: number, y: number, z: number) => x + y * SIZE_X + z * SIZE_X * SIZE_Y;
+
+// Helpers
+const getVal = (density: Float32Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return -1.0;
+  return density[bufIdx(x, y, z)];
 };
 
-// Helper to safely get material
-const getMat = (material: Uint8Array, x: number, y: number, z: number, size: number) => {
-    if (x < 0 || y < 0 || z < 0 || x >= size || y >= size || z >= size) return 0; 
-    return material[x + y * size + z * size * size];
+const getMat = (material: Uint8Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return 0;
+  return material[bufIdx(x, y, z)];
+};
+
+const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return 0;
+  return arr[bufIdx(x, y, z)];
 };
 
 export function generateMesh(
-    density: Float32Array,
-    material: Uint8Array,
-    // Accept optional arrays so we don't break if worker sends partial data,
-    // but we will generate defaults if missing.
-    wetness?: Uint8Array,
-    mossiness?: Uint8Array
+  density: Float32Array,
+  material: Uint8Array,
+  wetness?: Uint8Array,
+  mossiness?: Uint8Array
 ): MeshData {
-  const t0 = performance.now();
-  const size = TOTAL_SIZE;
-  const vertices: number[] = [];
-  const indices: number[] = [];
-  const mats: number[] = []; 
-  const norms: number[] = [];
-  const wets: number[] = []; // Restore these
-  const moss: number[] = []; // Restore these
+  const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
+  const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
+
+  // --- Buffers ---
+  const tVerts: number[] = [];
+  const tInds: number[] = [];
+  const tMats: number[] = [];
+  const tNorms: number[] = [];
+  const tWets: number[] = [];
+  const tMoss: number[] = [];
   
-  const vertexIndices = new Int32Array(size * size * size).fill(-1);
-  
-  // 1. Generate Vertices
-  for (let z = 0; z < size - 1; z++) {
-    for (let y = 0; y < size - 1; y++) {
-      for (let x = 0; x < size - 1; x++) {
-        
-        // Sample corners
-        const v000 = getVal(density, x, y, z, size);
-        const v100 = getVal(density, x + 1, y, z, size);
-        const v010 = getVal(density, x, y + 1, z, size);
-        const v110 = getVal(density, x + 1, y + 1, z, size);
-        const v001 = getVal(density, x, y, z + 1, size);
-        const v101 = getVal(density, x + 1, y, z + 1, size);
-        const v011 = getVal(density, x, y + 1, z + 1, size);
-        const v111 = getVal(density, x + 1, y + 1, z + 1, size);
-        
-        let mask = 0;
-        if (v000 > ISO_LEVEL) mask |= 1;
-        if (v100 > ISO_LEVEL) mask |= 2;
-        if (v010 > ISO_LEVEL) mask |= 4;
-        if (v110 > ISO_LEVEL) mask |= 8;
-        if (v001 > ISO_LEVEL) mask |= 16;
-        if (v101 > ISO_LEVEL) mask |= 32;
-        if (v011 > ISO_LEVEL) mask |= 64;
-        if (v111 > ISO_LEVEL) mask |= 128;
-        
-        if (mask === 0 || mask === 255) continue;
-        
-        let edgeCount = 0;
-        let avgX = 0, avgY = 0, avgZ = 0;
-        
-        // Standard Surface Nets Edge Intersection
-        const addInter = (valA: number, valB: number, axis: 'x'|'y'|'z', offX: number, offY: number, offZ: number) => {
-             if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
-                 const mu = (ISO_LEVEL - valA) / (valB - valA);
-                 if (axis === 'x') { avgX += x + mu; avgY += y + offY; avgZ += z + offZ; }
-                 if (axis === 'y') { avgX += x + offX; avgY += y + mu; avgZ += z + offZ; }
-                 if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + mu; }
-                 edgeCount++;
-             }
-        };
+  const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
-        addInter(v000, v100, 'x', 0,0,0);
-        addInter(v010, v110, 'x', 0,1,0);
-        addInter(v001, v101, 'x', 0,0,1);
-        addInter(v011, v111, 'x', 0,1,1);
-        addInter(v000, v010, 'y', 0,0,0);
-        addInter(v100, v110, 'y', 1,0,0);
-        addInter(v001, v011, 'y', 0,0,1);
-        addInter(v101, v111, 'y', 1,0,1);
-        addInter(v000, v001, 'z', 0,0,0);
-        addInter(v100, v101, 'z', 1,0,0); 
-        addInter(v010, v011, 'z', 0,1,0);
-        addInter(v110, v111, 'z', 1,1,0);
+  const snapEpsilon = 0.02;
+  const snapBoundary = (v: number, limit: number) => {
+    if (Math.abs(v - PAD) < snapEpsilon) return PAD;
+    if (Math.abs(v - (PAD + limit)) < snapEpsilon) return PAD + limit;
+    return v;
+  };
 
-        if (edgeCount > 0) {
-             avgX /= edgeCount;
-             avgY /= edgeCount;
-             avgZ /= edgeCount;
+  // 1. Vertex Generation
+  for (let z = 0; z < SIZE_Z - 1; z++) {
+    for (let y = 0; y < SIZE_Y - 1; y++) {
+      for (let x = 0; x < SIZE_X - 1; x++) {
+          
+          const v000 = getVal(density, x, y, z);
+          const v100 = getVal(density, x + 1, y, z);
+          const v010 = getVal(density, x, y + 1, z);
+          const v110 = getVal(density, x + 1, y + 1, z);
+          const v001 = getVal(density, x, y, z + 1);
+          const v101 = getVal(density, x + 1, y, z + 1);
+          const v011 = getVal(density, x, y + 1, z + 1);
+          const v111 = getVal(density, x + 1, y + 1, z + 1);
 
-             const snapEpsilon = 0.02;
-             const snapBoundary = (v: number) => {
-               if (Math.abs(v - PAD) < snapEpsilon) return PAD;
-               if (Math.abs(v - (PAD + CHUNK_SIZE)) < snapEpsilon) return PAD + CHUNK_SIZE;
-               return v;
-             };
+          let mask = 0;
+          if (v000 > ISO_LEVEL) mask |= 1;
+          if (v100 > ISO_LEVEL) mask |= 2;
+          if (v010 > ISO_LEVEL) mask |= 4;
+          if (v110 > ISO_LEVEL) mask |= 8;
+          if (v001 > ISO_LEVEL) mask |= 16;
+          if (v101 > ISO_LEVEL) mask |= 32;
+          if (v011 > ISO_LEVEL) mask |= 64;
+          if (v111 > ISO_LEVEL) mask |= 128;
 
-             const px = snapBoundary(avgX) - PAD;
-             const py = snapBoundary(avgY) - PAD;
-             const pz = snapBoundary(avgZ) - PAD;
-             
-             vertices.push(px, py, pz);
+          if (mask !== 0 && mask !== 255) {
+            let edgeCount = 0;
+            let avgX = 0;
+            let avgY = 0;
+            let avgZ = 0;
 
-             // Trilinear Gradient Normal Calculation
-             // Use the 8 corner values (v000...v111) to estimate the gradient at the exact vertex position.
-             // This is smoother and more robust than central differences on integer coordinates.
-             
-             const fx = avgX - x;
-             const fy = avgY - y;
-             const fz = avgZ - z;
+            const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
+              if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
+                const mu = (ISO_LEVEL - valA) / (valB - valA);
+                if (axis === 'x') { avgX += x + mu; avgY += y + offY; avgZ += z + offZ; }
+                if (axis === 'y') { avgX += x + offX; avgY += y + mu; avgZ += z + offZ; }
+                if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + mu; }
+                edgeCount++;
+              }
+            };
 
-             const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+            addInter(v000, v100, 'x', 0, 0, 0);
+            addInter(v010, v110, 'x', 0, 1, 0);
+            addInter(v001, v101, 'x', 0, 0, 1);
+            addInter(v011, v111, 'x', 0, 1, 1);
+            addInter(v000, v010, 'y', 0, 0, 0);
+            addInter(v100, v110, 'y', 1, 0, 0);
+            addInter(v001, v011, 'y', 0, 0, 1);
+            addInter(v101, v111, 'y', 1, 0, 1);
+            addInter(v000, v001, 'z', 0, 0, 0);
+            addInter(v100, v101, 'z', 1, 0, 0);
+            addInter(v010, v011, 'z', 0, 1, 0);
+            addInter(v110, v111, 'z', 1, 1, 0);
 
-             // X Gradient (change along X, averaged over Y and Z)
-             // Normal points towards decreasing density (Solid -> Air)
-             // So we calculate (Left - Right) instead of (Right - Left)
-             // x=0 plane
-             const x00 = lerp(v000, v010, fy);
-             const x01 = lerp(v001, v011, fy);
-             const val_x0 = lerp(x00, x01, fz);
-             // x=1 plane
-             const x10 = lerp(v100, v110, fy);
-             const x11 = lerp(v101, v111, fy);
-             const val_x1 = lerp(x10, x11, fz);
-             const nx = val_x0 - val_x1;
+            if (edgeCount > 0) {
+              avgX /= edgeCount;
+              avgY /= edgeCount;
+              avgZ /= edgeCount;
 
-             // Y Gradient (change along Y, averaged over X and Z)
-             // y=0 plane
-             const y00 = lerp(v000, v100, fx);
-             const y01 = lerp(v001, v101, fx);
-             const val_y0 = lerp(y00, y01, fz);
-             // y=1 plane
-             const y10 = lerp(v010, v110, fx);
-             const y11 = lerp(v011, v111, fx);
-             const val_y1 = lerp(y10, y11, fz);
-             const ny = val_y0 - val_y1;
+              const px = snapBoundary(avgX, CHUNK_SIZE_XZ) - PAD;
+              const py = snapBoundary(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
+              const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
 
-             // Z Gradient (change along Z, averaged over X and Y)
-             // z=0 plane
-             const z00 = lerp(v000, v100, fx);
-             const z01 = lerp(v010, v110, fx);
-             const val_z0 = lerp(z00, z01, fy);
-             // z=1 plane
-             const z10 = lerp(v001, v101, fx);
-             const z11 = lerp(v011, v111, fx);
-             const val_z1 = lerp(z10, z11, fy);
-             const nz = val_z0 - val_z1;
+              tVerts.push(px, py, pz);
 
-             const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
-             if (len > 0.00001) {
-                 norms.push(nx/len, ny/len, nz/len);
-             } else {
-                 norms.push(0, 1, 0);
-             }
-             
-             // Material Selection
-             // Prioritize sampling the solid voxel material.
-             // Since the vertex is on the boundary, one neighbor is Air (0) and one is Solid (>0).
-             // We want the Solid one.
-             let matVal = 0;
-             const ix = Math.floor(avgX);
-             const iy = Math.floor(avgY);
-             const iz = Math.floor(avgZ);
+              // Trilinear Gradient Normal
+              const fx = avgX - x;
+              const fy = avgY - y;
+              const fz = avgZ - z;
+              const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-             // Restore mx, my, mz for downstream usage
-             const mx = Math.round(avgX);
-             const my = Math.round(avgY);
-             const mz = Math.round(avgZ);
+              const x00 = lerp(v000, v010, fy);
+              const x01 = lerp(v001, v011, fy);
+              const val_x0 = lerp(x00, x01, fz);
+              const x10 = lerp(v100, v110, fy);
+              const x11 = lerp(v101, v111, fy);
+              const val_x1 = lerp(x10, x11, fz);
+              const nx = val_x0 - val_x1;
 
-             // Check immediate neighbors (2x2x2 block around the point)
-             // We can optimize this, but this ensures we hit the solid block.
-             const candidates = [
-                [ix, iy, iz],
-                [ix+1, iy, iz],
-                [ix, iy+1, iz],
-                [ix, iy, iz+1],
-                [ix+1, iy+1, iz],
-                [ix+1, iy, iz+1],
-                [ix, iy+1, iz+1],
-                [ix+1, iy+1, iz+1]
-             ];
+              const y00 = lerp(v000, v100, fx);
+              const y01 = lerp(v001, v101, fx);
+              const val_y0 = lerp(y00, y01, fz);
+              const y10 = lerp(v010, v110, fx);
+              const y11 = lerp(v011, v111, fx);
+              const val_y1 = lerp(y10, y11, fz);
+              const ny = val_y0 - val_y1;
 
-             for (const [cx, cy, cz] of candidates) {
-                 const m = getMat(material, cx, cy, cz, size);
-                 if (m > 0) {
-                     matVal = m;
-                     break; // Found a solid material, use it
+              const z00 = lerp(v000, v100, fx);
+              const z01 = lerp(v010, v110, fx);
+              const val_z0 = lerp(z00, z01, fy);
+              const z10 = lerp(v001, v101, fx);
+              const z11 = lerp(v011, v111, fx);
+              const val_z1 = lerp(z10, z11, fy);
+              const nz = val_z0 - val_z1;
+
+              const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+              if (len > 0.00001) tNorms.push(nx / len, ny / len, nz / len);
+              else tNorms.push(0, 1, 0);
+
+              // Material Selection
+              let bestMat = MaterialType.DIRT;
+              let bestWet = 0;
+              let bestMoss = 0;
+              let bestVal = -Infinity;
+
+              const candidates: Array<[number, number, number, number]> = [
+                [v000, x, y, z], [v100, x+1, y, z], [v010, x, y+1, z], [v110, x+1, y+1, z],
+                [v001, x, y, z+1], [v101, x+1, y, z+1], [v011, x, y+1, z+1], [v111, x+1, y+1, z+1]
+              ];
+
+              for (const [val, cx, cy, cz] of candidates) {
+                 const mat = getMat(material, cx, cy, cz);
+                 if (val > ISO_LEVEL && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
+                     if (val > bestVal) {
+                         bestVal = val;
+                         bestMat = mat;
+                         bestWet = getByte(wetData, cx, cy, cz);
+                         bestMoss = getByte(mossData, cx, cy, cz);
+                     }
                  }
-             }
-             
-             // Fallback to simple round if we somehow missed (shouldn't happen if surface exists)
-             if (matVal === 0) {
-                 matVal = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ), size);
-             }
+              }
+              
+              if (bestVal === -Infinity) {
+                 const mat = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ));
+                 bestMat = mat || bestMat;
+              }
 
-             mats.push(matVal);
-
-             // Safety: Ensure we push values for wetness/mossiness even if input arrays are missing
-             // 0-255 mapped to 0.0-1.0
-             if (wetness) {
-                 wets.push((wetness[mx + my * size + mz * size * size] || 0) / 255.0);
-             } else {
-                 wets.push(0);
-             }
-
-             if (mossiness) {
-                 moss.push((mossiness[mx + my * size + mz * size * size] || 0) / 255.0);
-             } else {
-                 moss.push(0);
-             }
-
-             vertexIndices[x + y * size + z * size * size] = (vertices.length / 3) - 1;
-        }
+              tMats.push(bestMat);
+              tWets.push(bestWet / 255.0);
+              tMoss.push(bestMoss / 255.0);
+              tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
+            }
+          }
       }
     }
   }
-  
-  // 2. Generate Quads (Simplified for brevity, logic remains same)
+
+  // 2. Quad Generation
   const start = PAD;
-  const end = PAD + CHUNK_SIZE; 
-  const bufIdx = (x: number, y: number, z: number) => x + y * size + z * size * size;
+  const endX = PAD + CHUNK_SIZE_XZ;
+  const endY = PAD + CHUNK_SIZE_Y;
 
-  const pushQuad = (c0: number, c1: number, c2: number, c3: number, flipped: boolean) => {
-    if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
-        if (!flipped) indices.push(c0, c1, c2, c2, c1, c3);
-        else indices.push(c2, c1, c0, c3, c1, c2);
-    }
- };
+  const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
+      const c0 = tVertIdx[i0];
+      const c1 = tVertIdx[i1];
+      const c2 = tVertIdx[i2];
+      const c3 = tVertIdx[i3];
+      
+      if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
+          if (!flipped) tInds.push(c0, c1, c2, c2, c1, c3);
+          else tInds.push(c2, c1, c0, c3, c1, c2);
+      }
+  };
 
-  for (let z = start; z <= end; z++) {
-    for (let y = start; y <= end; y++) {
-      for (let x = start; x <= end; x++) {
-         const val = getVal(density, x, y, z, size);
-         if (x < end) {
-             const vX = getVal(density, x + 1, y, z, size);
-             if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
-                 pushQuad(
-                     vertexIndices[bufIdx(x, y-1, z-1)], vertexIndices[bufIdx(x, y-1, z)],
-                     vertexIndices[bufIdx(x, y, z-1)], vertexIndices[bufIdx(x, y, z)],
-                     val > ISO_LEVEL
-                 );
-             }
-         }
-         if (y < end) {
-             const vY = getVal(density, x, y + 1, z, size);
-             if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
-                 pushQuad(
-                     vertexIndices[bufIdx(x-1, y, z-1)], vertexIndices[bufIdx(x, y, z-1)],
-                     vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
-                     val > ISO_LEVEL
-                 );
-             }
-         }
-         if (z < end) {
-             const vZ = getVal(density, x, y, z + 1, size);
-             if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
-                 // Swapped c1 and c2 to correct Z-face winding
-                 pushQuad(
-                     vertexIndices[bufIdx(x-1, y-1, z)], vertexIndices[bufIdx(x-1, y, z)],
-                     vertexIndices[bufIdx(x, y-1, z)], vertexIndices[bufIdx(x, y, z)],
-                     val > ISO_LEVEL
-                 );
-             }
-         }
+  for (let z = start; z <= endX; z++) {
+    for (let y = start; y <= endY; y++) {
+      for (let x = start; x <= endX; x++) {
+          const val = getVal(density, x, y, z);
+          
+          if (x < endX) {
+              const vX = getVal(density, x + 1, y, z);
+              if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
+                  pushQuad(
+                      bufIdx(x, y - 1, z - 1), bufIdx(x, y - 1, z),
+                      bufIdx(x, y, z - 1), bufIdx(x, y, z),
+                      val > ISO_LEVEL
+                  );
+              }
+          }
+          
+          if (y < endY) {
+              const vY = getVal(density, x, y + 1, z);
+              if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
+                  pushQuad(
+                      bufIdx(x - 1, y, z - 1), bufIdx(x, y, z - 1),
+                      bufIdx(x - 1, y, z), bufIdx(x, y, z),
+                      val > ISO_LEVEL
+                  );
+              }
+          }
+
+          if (z < endX) {
+              const vZ = getVal(density, x, y, z + 1);
+              if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
+                  // Swapped indices 1 and 2 for Z-face winding
+                  pushQuad(
+                      bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z),
+                      bufIdx(x, y - 1, z), bufIdx(x, y, z),
+                      val > ISO_LEVEL
+                  );
+              }
+          }
       }
     }
   }
-
-  console.debug('[mesher] Mesh generated', {
-    positions: vertices.length,
-    indices: indices.length,
-    normals: norms.length,
-    mats: mats.length,
-    wetness: wets.length,
-    moss: moss.length,
-    ms: Math.round(performance.now() - t0)
-  });
 
   return {
-    positions: new Float32Array(vertices),
-    indices: new Uint32Array(indices),
-    normals: new Float32Array(norms),
-    materials: new Float32Array(mats),
-    wetness: new Float32Array(wets),
-    mossiness: new Float32Array(moss)
+    positions: new Float32Array(tVerts),
+    indices: new Uint32Array(tInds),
+    normals: new Float32Array(tNorms),
+    materials: new Float32Array(tMats),
+    wetness: new Float32Array(tWets),
+    mossiness: new Float32Array(tMoss),
+    // Return empty arrays for water to satisfy types without generating bad mesh
+    waterPositions: new Float32Array(0),
+    waterIndices: new Uint32Array(0),
+    waterNormals: new Float32Array(0),
   };
 }

@@ -6,9 +6,7 @@ import { noiseTexture } from '../utils/sharedResources';
 
 let loggedRendererInfo = false;
 
-// 1. Vertex Shader
-// We must declare attributes exactly as Three.js expects them if we override.
-// CSM handles position/normal, we handle the custom data.
+// Vertex shader for CustomShaderMaterial
 const vertexShader = `
   attribute float aVoxelMat;
   attribute float aVoxelWetness;
@@ -25,145 +23,116 @@ const vertexShader = `
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     
-    // Calculate world position manually for noise lookup
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-
-    // Standard normal matrix calc
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
 
-    // CSM specific output.
-    // CRITICAL: Do not transform 'position' here, CSM does that later.
-    // We just pass the local position through.
+    // Let CSM handle position transform
     csm_Position = position;
   }
 `;
 
-  // 2. Fragment Shader
-  const fragmentShader = `
-    uniform sampler3D uNoiseTexture;
-    uniform vec3 uColorStone;
-    uniform vec3 uColorGrass;
-    uniform vec3 uColorDirt;
-    uniform vec3 uColorSand;
-    uniform vec3 uColorSnow;
-    uniform vec3 uColorWater;
+// Fragment shader (uses 3D procedural noise)
+const fragmentShader = `
+  uniform sampler3D uNoiseTexture;
+  uniform vec3 uColorStone;
+  uniform vec3 uColorGrass;
+  uniform vec3 uColorDirt;
+  uniform vec3 uColorSand;
+  uniform vec3 uColorSnow;
+  uniform vec3 uColorWater;
+  uniform vec3 uColorClay;
+  uniform vec3 uColorMoss;
+  uniform vec3 uColorBedrock;
 
-    flat varying float vMaterial;
-    varying float vWetness;
-    varying float vMossiness;
-    varying vec3 vWorldPosition;
-    varying vec3 vWorldNormal;
+  flat varying float vMaterial;
+  varying float vWetness;
+  varying float vMossiness;
+  varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
 
-    // Helper to get noise at a specific scale
-    vec4 getNoise(float scale) {
-        return texture(uNoiseTexture, vWorldPosition * scale);
+  vec4 getNoise(float scale) {
+      return texture(uNoiseTexture, vWorldPosition * scale);
+  }
+
+  void main() {
+    vec3 N = normalize(vWorldNormal);
+    float m = floor(vMaterial + 0.5);
+
+    // Base palette per material
+    vec3 baseCol = uColorStone;
+    if (m < 1.5) baseCol = uColorBedrock;
+    else if (m < 2.5) baseCol = uColorStone;
+    else if (m < 3.5) baseCol = uColorDirt;
+    else if (m < 4.5) baseCol = uColorGrass;
+    else if (m < 5.5) baseCol = uColorSand;
+    else if (m < 6.5) baseCol = uColorSnow;
+    else if (m < 7.5) baseCol = uColorClay;
+    else if (m < 8.5) baseCol = uColorWater;
+    else if (m < 9.5) baseCol = uColorWater;
+    else baseCol = uColorMoss; // Mossy stone
+
+    // Multi-scale noise
+    vec4 nMid = getNoise(0.15);
+    vec4 nHigh = getNoise(0.6);
+
+    float noiseFactor = 0.0;
+
+    if (m >= 4.0 && m < 5.5) {
+      // Grass
+      float bladeNoise = nHigh.a;
+      float patchNoise = nMid.r;
+      noiseFactor = mix(bladeNoise, patchNoise, 0.3);
+      baseCol *= vec3(1.0, 1.1, 1.0);
+    } else if ((m >= 1.0 && m < 3.5) || m >= 9.5) {
+      // Stone + mossy stone
+      float structure = nMid.r;
+      float cracks = nHigh.g;
+      noiseFactor = mix(structure, cracks, 0.5);
+    } else if (m >= 5.0 && m < 6.5) {
+      // Sand
+      noiseFactor = nHigh.a;
+    } else if ((m >= 3.0 && m < 4.5) || (m >= 7.0 && m < 8.0)) {
+      // Dirt / clay
+      noiseFactor = nMid.g;
+    } else if (m >= 6.0 && m < 7.0) {
+      // Snow
+      noiseFactor = nMid.r * 0.5 + 0.5;
+    } else {
+      noiseFactor = nMid.r;
     }
 
-    void main() {
-      // Re-normalize interpolated normals
-      vec3 N = normalize(vWorldNormal);
+    float intensity = 0.6 + 0.6 * noiseFactor;
+    vec3 col = baseCol * intensity;
 
-      // 1. Material ID Snapping
-      float m = floor(vMaterial + 0.5);
-
-      // Base Colors
-      vec3 baseCol = uColorStone;
-      if (m < 2.0) baseCol = uColorStone;       // 1: Stone
-      else if (m < 3.0) baseCol = uColorStone;  // 2: Stone
-      else if (m < 4.0) baseCol = uColorDirt;   // 3: Dirt
-      else if (m < 5.0) baseCol = uColorGrass;  // 4: Grass
-      else if (m < 6.0) baseCol = uColorSand;   // 5: Sand
-      else if (m < 7.0) baseCol = uColorSnow;   // 6: Snow
-      else if (m < 8.0) baseCol = uColorDirt;   // 7: Dirt
-      else baseCol = uColorWater;               // 8+: Water
-
-      // 2. Advanced Noise Sampling
-      // Sample at a medium scale for general texture
-      vec4 nMid = getNoise(0.15);   // Repetitions every ~7 blocks
-      // Sample at high scale for fine grain
-      vec4 nHigh = getNoise(0.6);   // Repetitions every ~1.6 blocks
-
-      float noiseFactor = 0.0;
-
-      // 3. Per-Material Texture Logic
-      if (m >= 4.0 && m < 5.0) {
-        // GRASS: Needs fine grain (A) and some variation (R)
-        // Use high freq grain for "blades" effect
-        float bladeNoise = nHigh.a; 
-        float patchNoise = nMid.r;
-        noiseFactor = mix(bladeNoise, patchNoise, 0.3); 
-        // Make grass slightly vibrant
-        baseCol *= vec3(1.0, 1.1, 1.0); 
-      } 
-      else if (m >= 1.0 && m < 3.0) {
-        // STONE: Craggy look. Use R (structure) and B (cracks)
-        float structure = nMid.r;
-        float cracks = nHigh.g;
-        noiseFactor = mix(structure, cracks, 0.5);
-      }
-      else if (m >= 5.0 && m < 6.0) {
-        // SAND: Very fine grain (A channel of high freq)
-        noiseFactor = nHigh.a;
-      }
-      else if (m >= 3.0 && m < 4.0 || (m >= 7.0 && m < 8.0)) {
-        // DIRT: Clumpy. Low freq structure.
-        noiseFactor = nMid.g;
-      }
-      else if (m >= 6.0 && m < 7.0) {
-        // SNOW: Smooth but with soft drifts
-        noiseFactor = nMid.r * 0.5 + 0.5;
-      }
-      else {
-        // DEFAULT
-        noiseFactor = nMid.r;
-      }
-
-      // Apply Noise to Color (Modulate intensity)
-      // Map noise 0..1 to 0.6..1.2 range for contrast
-      float intensity = 0.6 + 0.6 * noiseFactor;
-      vec3 col = baseCol * intensity;
-
-      // 4. Mossiness (Green overlay on top surfaces)
-      if (vMossiness > 0.1) {
-          vec3 mossColor = vec3(0.2, 0.5, 0.1);
-          // Add noise to moss too
-          float mossNoise = nHigh.g; 
-          mossColor *= (0.8 + 0.4 * mossNoise);
-          col = mix(col, mossColor, vMossiness * 0.9);
-      }
-
-      // 5. Wetness (Darken and smooth)
-      col = mix(col, col * 0.5, vWetness);
-
-      // Safety: NaN Check
-      if (!(col.r >= 0.0)) col.r = 0.0;
-      if (!(col.g >= 0.0)) col.g = 0.0;
-      if (!(col.b >= 0.0)) col.b = 0.0;
-
-      // Clamp for Post-Processing safety
-      col = clamp(col, 0.0, 5.0);
-
-      csm_DiffuseColor = vec4(col, 1.0);
-
-      // Roughness/Metalness
-      // Reduce default roughness so point lights are visible as highlights
-      float roughness = 0.8; 
-      
-      // Add some variation to roughness based on noise
-      roughness -= (nHigh.r * 0.2); // 0.6 to 0.8 range roughly
-
-      // Wet things are shiny
-      roughness = mix(roughness, 0.2, vWetness);
-      
-      // Water is very shiny
-      if (m >= 8.0) roughness = 0.1;
-      // Sand is matte
-      if (m >= 5.0 && m < 6.0) roughness = 1.0;
-
-      csm_Roughness = roughness;
-      csm_Metalness = 0.0;
+    // Moss overlay (also boosts mossy stone)
+    if (vMossiness > 0.1 || m >= 9.5) {
+        vec3 mossColor = uColorMoss;
+        float mossNoise = nHigh.g;
+        mossColor *= (0.8 + 0.4 * mossNoise);
+        float mossAmount = vMossiness;
+        if (m >= 9.5) mossAmount = max(mossAmount, 0.35);
+        col = mix(col, mossColor, mossAmount * 0.9);
     }
-  `;
+
+    // Wetness darkening
+    col = mix(col, col * 0.5, vWetness);
+
+    // Clamp to avoid NaNs/overflows
+    col = clamp(col, 0.0, 5.0);
+
+    csm_DiffuseColor = vec4(col, 1.0);
+
+    // Roughness tweaks
+    float roughness = 0.8;
+    roughness -= (nHigh.r * 0.2);
+    roughness = mix(roughness, 0.2, vWetness);
+    if (m >= 8.0) roughness = 0.1;
+    if (m >= 5.0 && m < 6.5) roughness = 1.0;
+
+    csm_Roughness = roughness;
+    csm_Metalness = 0.0;
+  }
+`;
 
 export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () => {
   const materialRef = useRef<any>(null);
@@ -173,7 +142,7 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () 
 
   useFrame(() => {
     if (materialRef.current) {
-        materialRef.current.uniforms.uNoiseTexture.value = noiseTexture;
+      materialRef.current.uniforms.uNoiseTexture.value = noiseTexture;
     }
   });
 
@@ -199,31 +168,33 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () 
     uColorSand: { value: new THREE.Color('#ebd89f') },
     uColorSnow: { value: new THREE.Color('#ffffff') },
     uColorWater: { value: new THREE.Color('#0099ff') },
+    uColorClay: { value: new THREE.Color('#a67b5b') },
+    uColorMoss: { value: new THREE.Color('#5c8a3c') },
+    uColorBedrock: { value: new THREE.Color('#2a2a2a') },
   }), []);
 
   return (
     <CustomShaderMaterial
-        ref={materialRef}
-        baseMaterial={THREE.MeshStandardMaterial}
-        roughness={0.9}
-        metalness={0.0}
-        // Explicit depth settings to ensure N8AO sees the mesh correctly
-        depthWrite={true}
-        depthTest={true}
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
-        uniforms={uniforms}
-        {...{
-          onBeforeCompile: (shader: any) => {
-            if (!programLoggedRef.current) {
-              console.log('[TriplanarMaterial] onBeforeCompile', {
-                vertexLength: shader.vertexShader?.length ?? 0,
-                fragmentLength: shader.fragmentShader?.length ?? 0
-              });
-              programLoggedRef.current = true;
-            }
+      ref={materialRef}
+      baseMaterial={THREE.MeshStandardMaterial}
+      roughness={0.9}
+      metalness={0.0}
+      depthWrite
+      depthTest
+      vertexShader={vertexShader}
+      fragmentShader={fragmentShader}
+      uniforms={uniforms}
+      {...{
+        onBeforeCompile: (shader: any) => {
+          if (!programLoggedRef.current) {
+            console.log('[TriplanarMaterial] onBeforeCompile', {
+              vertexLength: shader.vertexShader?.length ?? 0,
+              fragmentLength: shader.fragmentShader?.length ?? 0
+            });
+            programLoggedRef.current = true;
           }
-        } as any}
+        }
+      } as any}
     />
   );
 };
