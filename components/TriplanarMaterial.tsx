@@ -146,7 +146,12 @@ const vertexShader = `
       csm_DiffuseColor = vec4(col, 1.0);
 
       // Roughness/Metalness
-      float roughness = 0.9;
+      // Reduce default roughness so point lights are visible as highlights
+      float roughness = 0.8; 
+      
+      // Add some variation to roughness based on noise
+      roughness -= (nHigh.r * 0.2); // 0.6 to 0.8 range roughly
+
       // Wet things are shiny
       roughness = mix(roughness, 0.2, vWetness);
       

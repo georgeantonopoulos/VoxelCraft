@@ -91,23 +91,45 @@ const SunFollower: React.FC = () => {
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const target = useMemo(() => new THREE.Object3D(), []);
 
-  // Sun direction: roughly matches [50, 100, 30] normalized
-  const offset = useMemo(() => new THREE.Vector3(50, 100, 30), []);
-
-  useFrame(() => {
+  useFrame(({ clock }) => {
     if (lightRef.current) {
-        // Snap light to player position (quantized to avoid shadow jitter)
-        // Quantize to e.g. 4 units
+        const t = clock.getElapsedTime();
+        
+        // Slow orbit (Cycle every ~120 seconds or so)
+        // Modify speed here
+        const speed = 0.1; 
+        const angle = t * speed;
+
+        // Radius of orbit relative to player
+        const radius = 150;
+
+        // Circular path: Starts high, goes down, comes back up
+        // We keep it always somewhat lit (clamped Y) or let it go down for "sunset" vibes?
+        // User asked to follow path "around the world".
+        
+        const sx = Math.sin(angle) * radius;
+        const sy = Math.cos(angle) * radius; 
+        const sz = 30; // Slight tilt
+
+        // Snap light center to player
         const q = 4;
         const lx = Math.round(camera.position.x / q) * q;
         const lz = Math.round(camera.position.z / q) * q;
         
-        lightRef.current.position.set(lx + offset.x, offset.y, lz + offset.z);
+        // Ensure Y doesn't go below horizon too much (or we lose light)
+        // For now, let's keep it strictly day-time loop or clamped to not pitch black
+        // Actually, full orbit is cooler.
+        
+        lightRef.current.position.set(lx + sx, sy, lz + sz);
         target.position.set(lx, 0, lz);
         
         lightRef.current.target = target;
         lightRef.current.updateMatrixWorld();
         target.updateMatrixWorld();
+        
+        // Dynamic intensity?
+        // Fade out when below horizon
+        lightRef.current.intensity = Math.max(0, (sy / radius) * 3.5 + 0.5); 
     }
   });
 
@@ -115,13 +137,12 @@ const SunFollower: React.FC = () => {
     <>
       <directionalLight 
         ref={lightRef}
-        intensity={2.2}
         color="#fffcf0" 
         castShadow 
         shadow-mapSize={[2048, 2048]}
         shadow-bias={-0.0005}
         shadow-normalBias={0.04}
-        // Expanded shadow bounds to cover view distance
+        // Expanded shadow bounds
         shadow-camera-near={10}
         shadow-camera-far={500}
         shadow-camera-left={-200}
@@ -131,44 +152,6 @@ const SunFollower: React.FC = () => {
       />
       <primitive object={target} />
     </>
-  );
-};
-
-const MagicalLights: React.FC = () => {
-  const { camera } = useThree();
-  const groupRef = useRef<THREE.Group>(null);
-
-  useFrame(({ clock }) => {
-    if (groupRef.current) {
-      const t = clock.getElapsedTime();
-      // Snap to player general area but float around
-      const px = camera.position.x;
-      const py = camera.position.y;
-      const pz = camera.position.z;
-      
-      // Light 1: Cyan/Purple Essence (Slow float)
-      groupRef.current.children[0].position.set(
-        px + Math.sin(t * 0.3) * 30,
-        py + 20 + Math.sin(t * 0.5) * 5,
-        pz + Math.cos(t * 0.3) * 30
-      );
-      
-      // Light 2: Warm/Golden Wisp (Faster swirl)
-      groupRef.current.children[1].position.set(
-        px + Math.cos(t * 0.7) * 20,
-        py + 15 + Math.cos(t * 1.0) * 5,
-        pz + Math.sin(t * 0.7) * 20
-      );
-    }
-  });
-
-  return (
-    <group ref={groupRef}>
-      {/* Mystical Purple-Cyan Light */}
-      <pointLight color="#00ffff" intensity={4.0} distance={60} decay={2} />
-      {/* Warm Golden Light */}
-      <pointLight color="#ffaa00" intensity={3.0} distance={50} decay={2} />
-    </group>
   );
 };
 
@@ -227,9 +210,6 @@ const App: React.FC = () => {
           {/* Sun: Strong directional light */}
           <SunFollower />
           
-          {/* Magical floating lights for immersion */}
-          <MagicalLights />
-
           {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
