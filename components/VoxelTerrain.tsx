@@ -72,6 +72,11 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
             geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
         }
 
+        // Polyfill missing attributes for Vibrant shader
+        const vertexCount = chunk.meshPositions.length / 3;
+        geom.setAttribute('aWetness', new THREE.BufferAttribute(new Float32Array(vertexCount).fill(0), 1));
+        geom.setAttribute('aMossiness', new THREE.BufferAttribute(new Float32Array(vertexCount).fill(0), 1));
+
         if (chunk.meshNormals && chunk.meshNormals.length > 0) {
             geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
         } else {
