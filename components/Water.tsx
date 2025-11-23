@@ -109,6 +109,9 @@ const WaterShaderMaterial = shaderMaterial(
 
         vec3 finalColor = albedo + vec3(specular);
 
+        // SAFETY: Clamp to avoid NaN/Infinity
+        finalColor = clamp(finalColor, 0.0, 10.0);
+
         // Opacity
         float alpha = 0.9 + fresnel * 0.1;
 

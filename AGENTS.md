@@ -12,3 +12,7 @@
   - Add docstrings / JSDoc-style comments to new functions or components you introduce.
   - Do not edit build artifacts in `dist/`; change source files instead.
 - **2025-03-xx seam fix**: Boundary snapping is enabled in `utils/mesher.ts` so adjacent chunks share exact edge vertices. We use a single-loop approach with carefully gated face generation: X-faces run `start` to `end-1` (skipping boundary wall), while Y/Z-faces run `start+1` to `end` (connecting to the boundary vertex).
+- **Rendering**:
+  - Uses `CustomShaderMaterial` (CSM) with `Three.js`.
+  - `vMaterial` must be `flat varying` in shaders to avoid interpolation artifacts (rainbow gradients) when using float IDs.
+  - Materials should be opaque (`transparent={false}`) to support `N8AO` and proper depth writing.

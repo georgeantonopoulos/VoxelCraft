@@ -4,24 +4,26 @@ import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '../utils/sharedResources';
 
+let loggedRendererInfo = false;
+
 // 1. Vertex Shader
 // We must declare attributes exactly as Three.js expects them if we override.
 // CSM handles position/normal, we handle the custom data.
 const vertexShader = `
-  attribute float aMaterial;
-  attribute float aWetness;
-  attribute float aMossiness;
+  attribute float aVoxelMat;
+  attribute float aVoxelWetness;
+  attribute float aVoxelMossiness;
 
-  varying float vMaterial;
+  flat varying float vMaterial;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
   void main() {
-    vMaterial = aMaterial;
-    vWetness = aWetness;
-    vMossiness = aMossiness;
+    vMaterial = aVoxelMat;
+    vWetness = aVoxelWetness;
+    vMossiness = aVoxelMossiness;
     
     // Calculate world position manually for noise lookup
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -46,16 +48,21 @@ const fragmentShader = `
   uniform vec3 uColorSnow;
   uniform vec3 uColorWater;
 
-  varying float vMaterial;
+  flat varying float vMaterial;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
   void main() {
+    // Re-normalize interpolated normals to prevent artifacts
+    vec3 N = normalize(vWorldNormal);
+
     // Safety: Default color
     vec3 col = uColorStone;
-    float m = vMaterial;
+    
+    // Snap to nearest material ID to avoid "rainbow" gradients between materials
+    float m = floor(vMaterial + 0.5);
 
     if (m < 2.0) col = uColorStone;
     else if (m < 3.0) col = uColorStone;
@@ -66,9 +73,13 @@ const fragmentShader = `
     else if (m < 8.0) col = uColorDirt;
     else col = uColorWater;
 
-    // Triplanar Noise
-    float n = texture(uNoiseTexture, vWorldPosition * 0.05).r;
-    col = col * (0.92 + 0.16 * n);
+    // Triplanar Noise (Macro + Detail)
+    float nMacro = texture(uNoiseTexture, vWorldPosition * 0.04).r;
+    float nDetail = texture(uNoiseTexture, vWorldPosition * 0.4).r;
+    
+    // Combine for visual interest (Contrast Boosted)
+    float nCombined = mix(nMacro, nDetail, 0.5);
+    col = col * (0.7 + 0.6 * nCombined); // Stronger contrast (0.7 to 1.3 multiplier)
 
     // Moss
     if (vMossiness > 0.1) {
@@ -78,8 +89,14 @@ const fragmentShader = `
     // Wetness
     col = mix(col, col * 0.4, vWetness);
 
+    // SAFETY: NaN Check (NaN comparisons return false)
+    if (!(col.r >= 0.0)) col.r = 0.0;
+    if (!(col.g >= 0.0)) col.g = 0.0;
+    if (!(col.b >= 0.0)) col.b = 0.0;
+
     // SAFETY: Clamp colors to prevent HDR infinity crashes in PostProcessing
-    col = clamp(col, 0.0, 10.0);
+    // Cap at 5.0 to avoid Bloom explosions
+    col = clamp(col, 0.0, 5.0);
 
     csm_DiffuseColor = vec4(col, 1.0);
 
@@ -91,10 +108,11 @@ const fragmentShader = `
   }
 `;
 
-export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity?: number }> = ({ opacity = 1 }) => {
+export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () => {
   const materialRef = useRef<any>(null);
   const { gl } = useThree();
   const loggedRef = useRef(false);
+  const programLoggedRef = useRef(false);
 
   useFrame(() => {
     if (materialRef.current) {
@@ -103,7 +121,7 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity
   });
 
   useEffect(() => {
-    if (loggedRef.current) return;
+    if (loggedRef.current || loggedRendererInfo) return;
     const isWebGL2 = (gl as any).isWebGL2 || gl.capabilities?.isWebGL2;
     const max3D = (gl.capabilities as any)?.max3DTextureSize ?? (gl.capabilities as any)?.maxTextureSize;
     console.log('[TriplanarMaterial] Renderer info', {
@@ -113,6 +131,7 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity
       renderer: gl.getContext().constructor?.name
     });
     loggedRef.current = true;
+    loggedRendererInfo = true;
   }, [gl]);
 
   const uniforms = useMemo(() => ({
@@ -131,11 +150,23 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity
         baseMaterial={THREE.MeshStandardMaterial}
         roughness={0.9}
         metalness={0.0}
+        // Explicit depth settings to ensure N8AO sees the mesh correctly
+        depthWrite={true}
+        depthTest={true}
         vertexShader={vertexShader}
         fragmentShader={fragmentShader}
         uniforms={uniforms}
-        transparent={opacity < 1}
-        opacity={opacity}
+        {...{
+          onBeforeCompile: (shader: any) => {
+            if (!programLoggedRef.current) {
+              console.log('[TriplanarMaterial] onBeforeCompile', {
+                vertexLength: shader.vertexShader?.length ?? 0,
+                fragmentLength: shader.fragmentShader?.length ?? 0
+              });
+              programLoggedRef.current = true;
+            }
+          }
+        } as any}
     />
   );
 };

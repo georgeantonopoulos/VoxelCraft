@@ -120,12 +120,45 @@ export function generateMesh(
              }
              
              // Material Selection
-             // We just grab the material at the rounded voxel position
+             // Prioritize sampling the solid voxel material.
+             // Since the vertex is on the boundary, one neighbor is Air (0) and one is Solid (>0).
+             // We want the Solid one.
+             let matVal = 0;
+             const ix = Math.floor(avgX);
+             const iy = Math.floor(avgY);
+             const iz = Math.floor(avgZ);
+
+             // Restore mx, my, mz for downstream usage
              const mx = Math.round(avgX);
              const my = Math.round(avgY);
              const mz = Math.round(avgZ);
+
+             // Check immediate neighbors (2x2x2 block around the point)
+             // We can optimize this, but this ensures we hit the solid block.
+             const candidates = [
+                [ix, iy, iz],
+                [ix+1, iy, iz],
+                [ix, iy+1, iz],
+                [ix, iy, iz+1],
+                [ix+1, iy+1, iz],
+                [ix+1, iy, iz+1],
+                [ix, iy+1, iz+1],
+                [ix+1, iy+1, iz+1]
+             ];
+
+             for (const [cx, cy, cz] of candidates) {
+                 const m = getMat(material, cx, cy, cz, size);
+                 if (m > 0) {
+                     matVal = m;
+                     break; // Found a solid material, use it
+                 }
+             }
              
-             const matVal = getMat(material, mx, my, mz, size);
+             // Fallback to simple round if we somehow missed (shouldn't happen if surface exists)
+             if (matVal === 0) {
+                 matVal = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ), size);
+             }
+
              mats.push(matVal);
 
              // Safety: Ensure we push values for wetness/mossiness even if input arrays are missing
@@ -164,7 +197,7 @@ export function generateMesh(
     for (let y = start; y <= end; y++) {
       for (let x = start; x <= end; x++) {
          const val = getVal(density, x, y, z, size);
-         if (x < end && y > start && z > start) {
+         if (x < end) {
              const vX = getVal(density, x + 1, y, z, size);
              if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
                  pushQuad(
@@ -174,7 +207,7 @@ export function generateMesh(
                  );
              }
          }
-         if (y < end && x > start && z > start) {
+         if (y < end) {
              const vY = getVal(density, x, y + 1, z, size);
              if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
                  pushQuad(
@@ -184,12 +217,13 @@ export function generateMesh(
                  );
              }
          }
-         if (z < end && x > start && y > start) {
+         if (z < end) {
              const vZ = getVal(density, x, y, z + 1, size);
              if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
+                 // Swapped c1 and c2 to correct Z-face winding
                  pushQuad(
-                     vertexIndices[bufIdx(x-1, y-1, z)], vertexIndices[bufIdx(x, y-1, z)],
-                     vertexIndices[bufIdx(x-1, y, z)], vertexIndices[bufIdx(x, y, z)],
+                     vertexIndices[bufIdx(x-1, y-1, z)], vertexIndices[bufIdx(x-1, y, z)],
+                     vertexIndices[bufIdx(x, y-1, z)], vertexIndices[bufIdx(x, y, z)],
                      val > ISO_LEVEL
                  );
              }

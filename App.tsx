@@ -1,6 +1,6 @@
-import React, { useState, Suspense, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { EffectComposer, Bloom, ToneMapping, N8AO } from '@react-three/postprocessing';
@@ -54,10 +54,94 @@ const InteractionLayer: React.FC<{
   return null;
 };
 
+const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
+  const { gl, camera } = useThree();
+  const lastLog = useRef(0);
+
+  useFrame(({ clock }) => {
+    const now = clock.getElapsedTime();
+    if (now - lastLog.current < 2.0) return; // Log every 2s
+    lastLog.current = now;
+
+    const info = gl.info;
+    console.log('[DebugGL] Stats:', {
+       calls: info.render.calls,
+       triangles: info.render.triangles,
+       textures: info.memory.textures,
+       geometries: info.memory.geometries,
+       camPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
+       camRot: camera.rotation.toArray().slice(0, 3).map(v => typeof v === 'number' ? Math.round(v * 100) / 100 : v),
+       skipPost
+    });
+  });
+
+  useEffect(() => {
+    console.log('[DebugGL] skipPostProcessing', skipPost);
+    console.log('[DebugGL] GL Capabilities', {
+        maxTextureSize: gl.capabilities.maxTextureSize,
+        isWebGL2: gl.capabilities.isWebGL2
+    });
+  }, [skipPost, gl]);
+
+  return null;
+};
+
+const SunFollower: React.FC = () => {
+  const { camera } = useThree();
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const target = useMemo(() => new THREE.Object3D(), []);
+
+  // Sun direction: roughly matches [50, 100, 30] normalized
+  const offset = useMemo(() => new THREE.Vector3(50, 100, 30), []);
+
+  useFrame(() => {
+    if (lightRef.current) {
+        // Snap light to player position (quantized to avoid shadow jitter)
+        // Quantize to e.g. 4 units
+        const q = 4;
+        const lx = Math.round(camera.position.x / q) * q;
+        const lz = Math.round(camera.position.z / q) * q;
+        
+        lightRef.current.position.set(lx + offset.x, offset.y, lz + offset.z);
+        target.position.set(lx, 0, lz);
+        
+        lightRef.current.target = target;
+        lightRef.current.updateMatrixWorld();
+        target.updateMatrixWorld();
+    }
+  });
+
+  return (
+    <>
+      <directionalLight 
+        ref={lightRef}
+        intensity={2.2}
+        color="#fffcf0" 
+        castShadow 
+        shadow-mapSize={[2048, 2048]}
+        shadow-bias={-0.0005}
+        shadow-normalBias={0.04}
+        // Expanded shadow bounds to cover view distance
+        shadow-camera-near={10}
+        shadow-camera-far={500}
+        shadow-camera-left={-200}
+        shadow-camera-right={200}
+        shadow-camera-top={200}
+        shadow-camera-bottom={-200}
+      />
+      <primitive object={target} />
+    </>
+  );
+};
+
 const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
+  const skipPost = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('noPP');
+  }, []);
 
   // Sun direction for shadows (High Noon-ish for vibrancy)
   const sunDirection = useMemo(() => new THREE.Vector3(50, 100, 30).normalize(), []);
@@ -84,15 +168,17 @@ const App: React.FC = () => {
             // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
-          camera={{ fov: 60, near: 0.1, far: 240 }}
+          camera={{ fov: 60, near: 0.1, far: 400 }}
         >
+          <DebugGL skipPost={skipPost} />
+
           {/* --- 1. ATMOSPHERE & LIGHTING (Vibrant) --- */}
           
           {/* Sky Color: Bright Blue */}
           <color attach="background" args={['#87CEEB']} />
           
           {/* Fog: Subtle, far distance, matches sky */}
-          <fog attach="fog" args={['#87CEEB', 50, 200]} />
+          <fog attach="fog" args={['#87CEEB', 50, 350]} />
           
           {/* Ambient: Bright base level */}
           <ambientLight intensity={0.6} color="#ffffff" />
@@ -103,21 +189,7 @@ const App: React.FC = () => {
           <hemisphereLight args={['#87CEEB', '#e3f0d5', 0.8]} />
 
           {/* Sun: Strong directional light */}
-          <directionalLight 
-            position={[50, 100, 30]}
-            intensity={2.2}
-            color="#fffcf0" // Warm sunlight
-            castShadow 
-            shadow-mapSize={[2048, 2048]}
-            shadow-bias={-0.0001}
-            shadow-normalBias={0.04}
-            shadow-camera-near={10}
-            shadow-camera-far={400}
-            shadow-camera-left={-100}
-            shadow-camera-right={100}
-            shadow-camera-top={100}
-            shadow-camera-bottom={-100}
-          />
+          <SunFollower />
 
           {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
@@ -134,16 +206,31 @@ const App: React.FC = () => {
           </Suspense>
 
           {/* --- 3. POST-PROCESSING (Vibrant Polish) --- */}
-          <EffectComposer>
-             {/* N8AO: Adds depth to the voxels without darkening the whole screen too much */}
-             <N8AO intensity={2.0} color="black" aoRadius={2.5} />
+          {!skipPost ? (
+            <EffectComposer>
+               {/* N8AO: Adds depth to the voxels without darkening the whole screen too much.
+                   distanceFalloff helps prevent artifacts at sky/infinity. 
+                   halfRes fixes black frame issues on high-DPI/Mac devices.
+               */}
+               <N8AO 
+                 halfRes
+                 quality="performance"
+                 intensity={2.0} 
+                 color="black" 
+                 aoRadius={2.0} 
+                 distanceFalloff={200}
+                 screenSpaceRadius={false}
+               />
 
-             {/* Bloom: Gentle glow for sky and water highlights */}
-             <Bloom luminanceThreshold={1.0} mipmapBlur intensity={0.4} />
+               {/* Bloom: Gentle glow for sky and water highlights */}
+               <Bloom luminanceThreshold={1.2} mipmapBlur intensity={0.4} />
 
-             {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
-             <ToneMapping />
-          </EffectComposer>
+               {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
+               <ToneMapping />
+            </EffectComposer>
+          ) : (
+            <primitive object={null} />
+          )}
 
           <PointerLockControls onUnlock={handleUnlock} />
         </Canvas>

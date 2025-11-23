@@ -48,20 +48,10 @@ const getMaterialColor = (matId: number) => {
 
 const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
     const meshRef = useRef<THREE.Mesh>(null);
-    const [opacity, setOpacity] = useState(0);
-
-    // Fade in effect
-    useFrame((state, delta) => {
-        if (opacity < 1) {
-            setOpacity(prev => Math.min(prev + delta * 2, 1));
-        }
-        if (meshRef.current) {
-             // We can set opacity on the material via ref if needed,
-             // but TriplanarMaterial is custom. We'll assume it handles it or we just rely on pop-in fix being faster generation.
-             // Actually, user asked for smoother generation, not just pop-in.
-             // Opacity fade is a good trick.
-        }
-    });
+    const useBasicMaterial = useMemo(() => {
+        if (typeof window === 'undefined') return false;
+        return new URLSearchParams(window.location.search).has('basicMat');
+    }, []);
 
     const geometry = useMemo(() => {
         if (!chunk.meshPositions || chunk.meshPositions.length === 0) return null;
@@ -71,21 +61,21 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
         
         if (chunk.meshMaterials && chunk.meshMaterials.length > 0) {
-            geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
+            geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(chunk.meshMaterials, 1));
         }
 
         if (chunk.meshWetness && chunk.meshWetness.length > 0) {
-            geom.setAttribute('aWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
+            geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
         } else {
              const count = chunk.meshPositions.length / 3;
-             geom.setAttribute('aWetness', new THREE.BufferAttribute(new Float32Array(count), 1));
+             geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(new Float32Array(count), 1));
         }
 
         if (chunk.meshMossiness && chunk.meshMossiness.length > 0) {
-            geom.setAttribute('aMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
+            geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
         } else {
              const count = chunk.meshPositions.length / 3;
-             geom.setAttribute('aMossiness', new THREE.BufferAttribute(new Float32Array(count), 1));
+             geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(new Float32Array(count), 1));
         }
 
         if (chunk.meshNormals && chunk.meshNormals.length > 0) {
@@ -119,7 +109,11 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
                 frustumCulled={true}
                 geometry={geometry}
             >
-                <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
+                {useBasicMaterial ? (
+                    <meshStandardMaterial color="#ffaa00" />
+                ) : (
+                    <TriplanarMaterial sunDirection={sunDirection} />
+                )}
             </mesh>
         </RigidBody>
     );
