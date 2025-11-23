@@ -1,10 +1,12 @@
 import * as THREE from 'three';
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '../utils/sharedResources';
 
-// 1. Vertex Shader: Pass voxel attributes to the pixel shader
+// 1. Vertex Shader
+// We must declare attributes exactly as Three.js expects them if we override.
+// CSM handles position/normal, we handle the custom data.
 const vertexShader = `
   attribute float aMaterial;
   attribute float aWetness;
@@ -21,15 +23,20 @@ const vertexShader = `
     vWetness = aWetness;
     vMossiness = aMossiness;
     
+    // Calculate world position manually for noise lookup
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+
+    // Standard normal matrix calc
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
 
-    // Required output for CustomShaderMaterial
+    // CSM specific output.
+    // CRITICAL: Do not transform 'position' here, CSM does that later.
+    // We just pass the local position through.
     csm_Position = position;
   }
 `;
 
-// 2. Fragment Shader: Logic for mixing colors
+// 2. Fragment Shader
 const fragmentShader = `
   uniform sampler3D uNoiseTexture;
   uniform vec3 uColorStone;
@@ -46,40 +53,37 @@ const fragmentShader = `
   varying vec3 vWorldNormal;
 
   void main() {
-    // 1. Basic Material Selection
+    // Safety: Default color
     vec3 col = uColorStone;
     float m = vMaterial;
 
-    // Hardcoded material blending matches your engine's IDs
-    if (m < 2.0) col = uColorStone;      // Bedrock
-    else if (m < 3.0) col = uColorStone; // Stone
-    else if (m < 4.0) col = uColorDirt;  // Dirt
-    else if (m < 5.0) col = uColorGrass; // Grass
-    else if (m < 6.0) col = uColorSand;  // Sand
-    else if (m < 7.0) col = uColorSnow;  // Snow
-    else if (m < 8.0) col = uColorDirt;  // Clay
-    else col = uColorWater;              // Water
+    if (m < 2.0) col = uColorStone;
+    else if (m < 3.0) col = uColorStone;
+    else if (m < 4.0) col = uColorDirt;
+    else if (m < 5.0) col = uColorGrass;
+    else if (m < 6.0) col = uColorSand;
+    else if (m < 7.0) col = uColorSnow;
+    else if (m < 8.0) col = uColorDirt;
+    else col = uColorWater;
 
-    // 2. Triplanar Noise (Subtle Detail)
+    // Triplanar Noise
     float n = texture(uNoiseTexture, vWorldPosition * 0.05).r;
-    col = col * (0.92 + 0.16 * n); // Slight contrast boost
+    col = col * (0.92 + 0.16 * n);
 
-    // 3. Moss Overlay (Vibrant Green)
+    // Moss
     if (vMossiness > 0.1) {
         col = mix(col, vec3(0.15, 0.6, 0.1), vMossiness * 0.9);
     }
 
-    // 4. Wetness (Darkening)
+    // Wetness
     col = mix(col, col * 0.4, vWetness);
 
-    // OUTPUT to PBR Engine
+    // SAFETY: Clamp colors to prevent HDR infinity crashes in PostProcessing
+    col = clamp(col, 0.0, 10.0);
+
     csm_DiffuseColor = vec4(col, 1.0);
 
-    // Dynamic PBR Properties
-    // Dry terrain = Matte (0.9), Wet = Shiny (0.2)
     float roughness = mix(0.9, 0.2, vWetness);
-
-    // Water blocks are always polished
     if (m >= 8.0) roughness = 0.05;
 
     csm_Roughness = roughness;
@@ -96,30 +100,28 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity
     }
   });
 
+  const uniforms = useMemo(() => ({
+    uNoiseTexture: { value: noiseTexture },
+    uColorStone: { value: new THREE.Color('#888c8d') },
+    uColorGrass: { value: new THREE.Color('#41a024') },
+    uColorDirt: { value: new THREE.Color('#755339') },
+    uColorSand: { value: new THREE.Color('#ebd89f') },
+    uColorSnow: { value: new THREE.Color('#ffffff') },
+    uColorWater: { value: new THREE.Color('#0099ff') },
+  }), []);
+
   return (
     <CustomShaderMaterial
         ref={materialRef}
         baseMaterial={THREE.MeshStandardMaterial}
-        // Base PBR settings
         roughness={0.9}
         metalness={0.0}
-
         vertexShader={vertexShader}
         fragmentShader={fragmentShader}
-
-        // VIBRANT PALETTE DEFAULTS
-        uniforms={{
-            uNoiseTexture: { value: noiseTexture },
-            uColorStone: { value: new THREE.Color('#888c8d') }, // Lighter neutral grey
-            uColorGrass: { value: new THREE.Color('#41a024') }, // Vibrant, lush green
-            uColorDirt: { value: new THREE.Color('#755339') },  // Warm brown
-            uColorSand: { value: new THREE.Color('#ebd89f') },  // Bright beach sand
-            uColorSnow: { value: new THREE.Color('#ffffff') },
-            uColorWater: { value: new THREE.Color('#0099ff') }, // Tropical blue
-        }}
-
+        uniforms={uniforms}
         transparent={opacity < 1}
-        {...({ silent: true } as any)}
+        opacity={opacity}
+        {...({ silent: false } as any)}
     />
   );
 };
