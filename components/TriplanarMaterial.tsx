@@ -1,6 +1,6 @@
 
 import * as THREE from 'three';
-import React, { useRef, useMemo } from 'react';
+import { useRef } from 'react';
 import { extend, useFrame } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import { WATER_LEVEL } from '../constants';

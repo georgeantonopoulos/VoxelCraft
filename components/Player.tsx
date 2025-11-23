@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls } from '@react-three/drei';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
@@ -10,7 +10,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const [, getKeys] = useKeyboardControls();
   const { rapier, world } = useRapier();
 
-  useFrame((state, delta) => {
+  useFrame((state) => {
     if (!body.current) return;
 
     const { forward, backward, left, right, jump } = getKeys();

@@ -10,7 +10,7 @@ import { simulationManager, SimUpdate } from '../services/SimulationManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
 import { WaterMaterial } from './WaterMaterial';
-import { MaterialType, ChunkMetadata } from '../types';
+import { MaterialType } from '../types';
 
 // --- TYPES ---
 type ChunkKey = string; // "x,z"
@@ -70,7 +70,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     const meshRef = useRef<THREE.Mesh>(null);
     const [opacity, setOpacity] = useState(0);
 
-    useFrame((state, delta) => {
+    useFrame((_, delta) => {
         if (opacity < 1) {
             setOpacity(prev => Math.min(prev + delta * 2, 1));
         }
@@ -182,7 +182,7 @@ const Particles = ({ active, position, color }: { active: boolean, position: THR
         }
     }, [active, position, color, dummy]); 
 
-    useFrame((state, delta) => {
+    useFrame((_, delta) => {
         if (!mesh.current || !mesh.current.visible) return;
         let activeCount = 0;
         for (let i = 0; i < count; i++) {

@@ -1,6 +1,7 @@
+/// <reference lib="webworker" />
+
 import { TerrainService } from '../services/terrainService';
 import { generateMesh } from '../utils/mesher';
-import { MaterialType } from '../types';
 
 self.onmessage = (e: MessageEvent) => {
   const { type, payload } = e.data;
