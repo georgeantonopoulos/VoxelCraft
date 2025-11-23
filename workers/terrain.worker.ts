@@ -18,7 +18,9 @@ self.onmessage = (e: MessageEvent) => {
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
-            meshNormals: mesh.normals
+            meshNormals: mesh.normals,
+            meshWetness: mesh.wetness,
+            meshMossiness: mesh.mossiness
         };
 
         // Transfer buffers to avoid copying
@@ -28,7 +30,9 @@ self.onmessage = (e: MessageEvent) => {
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,
-            mesh.normals.buffer
+            mesh.normals.buffer,
+            mesh.wetness.buffer,
+            mesh.mossiness.buffer
         ]);
     } else if (type === 'REMESH') {
         const { density, material, key, cx, cz, version } = payload;
@@ -41,14 +45,18 @@ self.onmessage = (e: MessageEvent) => {
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
-            meshNormals: mesh.normals
+            meshNormals: mesh.normals,
+            meshWetness: mesh.wetness,
+            meshMossiness: mesh.mossiness
         };
 
         self.postMessage({ type: 'REMESHED', payload: response }, [
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,
-            mesh.normals.buffer
+            mesh.normals.buffer,
+            mesh.wetness.buffer,
+            mesh.mossiness.buffer
         ]);
     }
   } catch (error) {

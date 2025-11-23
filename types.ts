@@ -29,6 +29,8 @@ export interface MeshData {
   indices: Uint32Array;
   normals: Float32Array;
   materials: Float32Array; // New: Attribute to pass to shader
+  wetness: Float32Array;
+  mossiness: Float32Array;
 }
 
 export enum ToolMode {

@@ -21,6 +21,8 @@ interface ChunkState {
     meshIndices: Uint32Array;
     meshMaterials: Float32Array;
     meshNormals: Float32Array;
+    meshWetness: Float32Array;
+    meshMossiness: Float32Array;
 }
 
 interface VoxelTerrainProps {
@@ -70,6 +72,20 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         
         if (chunk.meshMaterials && chunk.meshMaterials.length > 0) {
             geom.setAttribute('aMaterial', new THREE.BufferAttribute(chunk.meshMaterials, 1));
+        }
+
+        if (chunk.meshWetness && chunk.meshWetness.length > 0) {
+            geom.setAttribute('aWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
+        } else {
+             const count = chunk.meshPositions.length / 3;
+             geom.setAttribute('aWetness', new THREE.BufferAttribute(new Float32Array(count), 1));
+        }
+
+        if (chunk.meshMossiness && chunk.meshMossiness.length > 0) {
+            geom.setAttribute('aMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
+        } else {
+             const count = chunk.meshPositions.length / 3;
+             geom.setAttribute('aMossiness', new THREE.BufferAttribute(new Float32Array(count), 1));
         }
 
         if (chunk.meshNormals && chunk.meshNormals.length > 0) {
@@ -214,7 +230,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 setChunks(prev => ({ ...prev, [key]: newChunk }));
             }
             else if (type === 'REMESHED') {
-                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals } = payload;
+                const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness } = payload;
                 const current = chunksRef.current[key];
                 if (current) {
                     // We assume density/material are already updated in the ref by the modification logic
@@ -227,7 +243,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                         meshPositions,
                         meshIndices,
                         meshMaterials,
-                        meshNormals
+                        meshNormals,
+                        meshWetness,
+                        meshMossiness
                     };
                     chunksRef.current[key] = updatedChunk;
                     setChunks(prev => ({ ...prev, [key]: updatedChunk }));
