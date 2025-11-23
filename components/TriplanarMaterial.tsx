@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '../utils/sharedResources';
@@ -42,6 +42,10 @@ const fragmentShader = `
   uniform vec3 uColorClay;
   uniform vec3 uColorMoss;
   uniform vec3 uColorBedrock;
+  uniform vec3 uFogColor;
+  uniform float uFogNear;
+  uniform float uFogFar;
+  uniform float uOpacity;
 
   flat varying float vMaterial;
   varying float vWetness;
@@ -146,7 +150,13 @@ const fragmentShader = `
     col = mix(col, col * 0.5, vWetness * 0.9);
     col = clamp(col, 0.0, 5.0);
 
-    csm_DiffuseColor = vec4(col, 1.0);
+    // Apply gentle distance fog to blend toward the sky color without hiding nearby terrain
+    float fogDist = length(vWorldPosition - cameraPosition);
+    float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
+    fogAmt = pow(fogAmt, 1.25); // keep nearby detail crisp
+    col = mix(col, uFogColor, fogAmt * 0.6);
+
+    csm_DiffuseColor = vec4(col, uOpacity);
 
     roughness -= (nHigh.r * 0.1);
     roughness = mix(roughness, 0.2, vWetness);
@@ -157,13 +167,29 @@ const fragmentShader = `
   }
 `;
 
-export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () => {
+export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity?: number }> = ({ opacity = 1 }) => {
   const materialRef = useRef<any>(null);
-  const { gl } = useThree();
+  const { scene } = useThree();
 
   useFrame(() => {
     if (materialRef.current) {
-      materialRef.current.uniforms.uNoiseTexture.value = noiseTexture;
+      const mat = materialRef.current;
+      mat.uniforms.uNoiseTexture.value = noiseTexture;
+      mat.uniforms.uOpacity.value = opacity;
+      const isTransparent = opacity < 0.999;
+      mat.transparent = isTransparent;
+      mat.depthWrite = !isTransparent;
+
+      const fog = scene.fog as THREE.Fog | undefined;
+      if (fog) {
+        mat.uniforms.uFogColor.value.copy(fog.color);
+        mat.uniforms.uFogNear.value = fog.near;
+        mat.uniforms.uFogFar.value = fog.far;
+      } else {
+        mat.uniforms.uFogColor.value.set('#87CEEB');
+        mat.uniforms.uFogNear.value = 1e6;
+        mat.uniforms.uFogFar.value = 1e6 + 1.0;
+      }
     }
   });
 
@@ -178,6 +204,10 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = () 
     uColorClay: { value: new THREE.Color('#a67b5b') },
     uColorMoss: { value: new THREE.Color('#5c8a3c') },
     uColorBedrock: { value: new THREE.Color('#2a2a2a') },
+    uFogColor: { value: new THREE.Color('#87CEEB') },
+    uFogNear: { value: 30 },
+    uFogFar: { value: 400 },
+    uOpacity: { value: 1 },
   }), []);
 
   return (

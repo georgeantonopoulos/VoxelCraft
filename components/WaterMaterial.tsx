@@ -12,7 +12,11 @@ const WaterMeshShader = shaderMaterial(
     uColorShallow: new THREE.Color('#6ec2f7'),
     uColorDeep: new THREE.Color('#2d688f'),
     uNoiseTexture: noiseTexture,
-    uCamPos: new THREE.Vector3()
+    uCamPos: new THREE.Vector3(),
+    uFogColor: new THREE.Color('#87CEEB'),
+    uFogNear: 30,
+    uFogFar: 300,
+    uFade: 1
   },
   // Vertex
   `
@@ -45,6 +49,10 @@ const WaterMeshShader = shaderMaterial(
     uniform vec3 uColorDeep;
     uniform sampler3D uNoiseTexture;
     uniform vec3 uCamPos;
+    uniform vec3 uFogColor;
+    uniform float uFogNear;
+    uniform float uFogFar;
+    uniform float uFade;
 
     in vec3 vWorldPos;
     in vec3 vNormal;
@@ -82,8 +90,15 @@ const WaterMeshShader = shaderMaterial(
 
         vec3 albedo = mix(uColorDeep, uColorShallow, fresnel * 0.5 + 0.3);
 
-        vec3 finalColor = albedo + vec3(specular);
-        float alpha = 0.75 + fresnel * 0.2;
+        vec3 shaded = albedo + vec3(specular);
+        shaded = mix(uFogColor, shaded, uFade);
+
+        float distanceToCam = distance(uCamPos, vWorldPos);
+        float fogFactor = clamp((distanceToCam - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
+        fogFactor = pow(fogFactor, 1.25);
+
+        vec3 finalColor = mix(shaded, uFogColor, fogFactor * 0.6);
+        float alpha = (0.75 + fresnel * 0.2) * uFade;
 
         fragColor = vec4(finalColor, alpha);
         fragColor.rgb = pow(fragColor.rgb, vec3(1.0 / 2.2));
@@ -93,18 +108,31 @@ const WaterMeshShader = shaderMaterial(
 
 extend({ WaterMeshShader });
 
-export const WaterMaterial: React.FC<{ sunDirection?: THREE.Vector3 }> = ({ sunDirection }) => {
+export const WaterMaterial: React.FC<{ sunDirection?: THREE.Vector3; fade?: number }> = ({ sunDirection, fade = 1 }) => {
   const ref = useRef<any>(null);
-  const { camera } = useThree();
+  const { camera, scene } = useThree();
 
   useFrame(({ clock }) => {
     if (ref.current) {
-        ref.current.uTime = clock.getElapsedTime();
-        ref.current.uCamPos = camera.position;
-        if (sunDirection) ref.current.uSunDir = sunDirection;
-        if (ref.current.uNoiseTexture !== noiseTexture) {
-            ref.current.uNoiseTexture = noiseTexture;
-        }
+      ref.current.uTime = clock.getElapsedTime();
+      ref.current.uCamPos = camera.position;
+      ref.current.uFade = fade;
+
+      const fog = scene.fog as THREE.Fog | undefined;
+      if (fog) {
+        ref.current.uFogColor.copy(fog.color);
+        ref.current.uFogNear = fog.near;
+        ref.current.uFogFar = fog.far;
+      } else {
+        ref.current.uFogColor.set('#87CEEB');
+        ref.current.uFogNear = 1e6;
+        ref.current.uFogFar = 1e6 + 1.0;
+      }
+
+      if (sunDirection) ref.current.uSunDir = sunDirection;
+      if (ref.current.uNoiseTexture !== noiseTexture) {
+        ref.current.uNoiseTexture = noiseTexture;
+      }
     }
   });
 

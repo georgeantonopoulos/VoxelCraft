@@ -147,22 +147,22 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
             castShadow
             receiveShadow
             frustumCulled
-            geometry={terrainGeometry}
-          >
-            {useBasicMaterial ? (
-              <meshStandardMaterial color="#ffaa00" opacity={opacity} transparent />
-            ) : (
-              <TriplanarMaterial sunDirection={sunDirection} />
-            )}
-          </mesh>
-        </RigidBody>
-      )}
-
-      {waterGeometry && (
-        <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
-          <WaterMaterial sunDirection={sunDirection} />
+          geometry={terrainGeometry}
+        >
+          {useBasicMaterial ? (
+            <meshStandardMaterial color="#ffaa00" opacity={opacity} transparent />
+          ) : (
+            <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
+          )}
         </mesh>
-      )}
+      </RigidBody>
+    )}
+
+    {waterGeometry && (
+      <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
+        <WaterMaterial sunDirection={sunDirection} fade={opacity} />
+      </mesh>
+    )}
     </group>
   );
 });
