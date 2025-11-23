@@ -8,7 +8,7 @@ import { Player } from './components/Player';
 import { UI } from './components/UI';
 import { TerrainService } from './services/terrainService';
 import * as THREE from 'three';
-import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
+import { Lensflare, LensflareElement } from 'three-stdlib';
 
 declare global {
   namespace JSX {

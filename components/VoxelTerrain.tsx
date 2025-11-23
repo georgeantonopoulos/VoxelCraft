@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import { RigidBody, useRapier } from '@react-three/rapier';
+import { RigidBody } from '@react-three/rapier';
 import { TerrainService } from '../services/terrainService';
-import { FluidSystem } from '../services/FluidSystem';
 import { createBlockTextureArray } from '../utils/TextureGenerator';
 import { BlockShaderMaterial } from './BlockMaterial';
+import { raycastVoxel } from '../utils/raycast';
 import { CHUNK_SIZE_XZ, RENDER_DISTANCE, BEDROCK_LEVEL, PAD } from '../constants';
 import { BlockType } from '../types';
 
@@ -85,10 +85,10 @@ const ChunkMesh = React.memo(({ chunk, texture }: { chunk: ChunkState, texture: 
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting }) => {
     // ... same as before
     const { camera } = useThree();
-    const { world, rapier } = useRapier();
     const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
     const chunksRef = useRef<Record<string, ChunkState>>({});
     const workerRef = useRef<Worker | null>(null);
+    const fluidWorkerRef = useRef<Worker | null>(null);
     const pendingChunks = useRef<Set<string>>(new Set());
     const [activeBlock, setActiveBlock] = useState<BlockType>(BlockType.STONE);
 
@@ -113,6 +113,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     }, []);
 
     useEffect(() => {
+        // Terrain Worker
         workerRef.current = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
         workerRef.current.onmessage = (e) => {
              const { type, payload } = e.data;
@@ -122,29 +123,57 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                  const chunk = { ...payload, version: payload.version || 0 };
                  chunksRef.current[key] = chunk;
                  setChunks(prev => ({ ...prev, [key]: chunk }));
+
+                 if (type === 'GENERATED') {
+                     fluidWorkerRef.current?.postMessage({
+                         type: 'LOAD',
+                         payload: { key, material: payload.material }
+                     });
+                 }
              }
         };
-        return () => workerRef.current?.terminate();
-    }, []);
 
-    useEffect(() => {
+        // Fluid Worker
+        fluidWorkerRef.current = new Worker(new URL('../workers/fluid.worker.ts', import.meta.url), { type: 'module' });
+        fluidWorkerRef.current.onmessage = (e) => {
+            if (e.data.type === 'FLUID_UPDATE') {
+                const changes = e.data.changes;
+                const remeshKeys = new Set<string>();
+
+                changes.forEach((c: any) => {
+                    const chunk = chunksRef.current[c.key];
+                    if (chunk) {
+                        chunk.material[c.idx] = c.val;
+                        remeshKeys.add(c.key);
+                    }
+                });
+
+                remeshKeys.forEach(key => {
+                    const chunk = chunksRef.current[key];
+                    if (chunk) {
+                        workerRef.current?.postMessage({
+                            type: 'REMESH',
+                            payload: {
+                                material: chunk.material,
+                                key, cx: chunk.cx, cz: chunk.cz,
+                                version: chunk.version + 1
+                            }
+                        });
+                    }
+                });
+            }
+        };
+
+        // Fluid Tick
         const interval = setInterval(() => {
-            const modified = FluidSystem.tick(chunksRef.current);
-            modified.forEach(key => {
-                const chunk = chunksRef.current[key];
-                if (chunk && workerRef.current) {
-                    workerRef.current.postMessage({
-                        type: 'REMESH',
-                        payload: {
-                            material: chunk.material,
-                            key, cx: chunk.cx, cz: chunk.cz,
-                            version: chunk.version + 1
-                        }
-                    });
-                }
-            });
+            fluidWorkerRef.current?.postMessage({ type: 'TICK' });
         }, 100);
-        return () => clearInterval(interval);
+
+        return () => {
+            workerRef.current?.terminate();
+            fluidWorkerRef.current?.terminate();
+            clearInterval(interval);
+        };
     }, []);
 
     useFrame(() => {
@@ -152,17 +181,36 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
         const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
 
+        const neededKeys = new Set<string>();
+
         for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
             for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
                 const cx = px + x;
                 const cz = pz + z;
                 const key = `${cx},${cz}`;
+                neededKeys.add(key);
 
                 if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
                     pendingChunks.current.add(key);
                     workerRef.current.postMessage({ type: 'GENERATE', payload: { cx, cz } });
                 }
             }
+        }
+
+        // Cleanup
+        let chunksRemoved = false;
+        const currentKeys = Object.keys(chunksRef.current);
+
+        for (const key of currentKeys) {
+            if (!neededKeys.has(key)) {
+                delete chunksRef.current[key];
+                chunksRemoved = true;
+                fluidWorkerRef.current?.postMessage({ type: 'UNLOAD', payload: { key } });
+            }
+        }
+
+        if (chunksRemoved) {
+            setChunks({ ...chunksRef.current });
         }
     });
 
@@ -173,18 +221,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const origin = camera.position;
         const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
         
-        const rRay = new rapier.Ray(origin, dir);
-        const hit = world.castRay(rRay, 10, true);
+        const hit = raycastVoxel(origin, dir, 10, chunksRef.current);
 
         if (hit) {
-             const point = rRay.pointAt(hit.toi);
-             const p = new THREE.Vector3(point.x, point.y, point.z);
-             const offset = action === 'DIG' ? 0.05 : -0.05;
-             p.addScaledVector(dir, offset);
+             let wx = hit.position[0];
+             let wy = hit.position[1]; // World Y
+             let wz = hit.position[2];
 
-             const wx = Math.floor(p.x);
-             const wz = Math.floor(p.z);
-             const wy = Math.floor(p.y - BEDROCK_LEVEL);
+             if (action === 'BUILD') {
+                 wx += hit.normal[0];
+                 wy += hit.normal[1];
+                 wz += hit.normal[2];
+             }
+
+             // Convert World to Local
+             const ly = wy - BEDROCK_LEVEL + PAD;
 
              const cx = Math.floor(wx / CHUNK_SIZE_XZ);
              const cz = Math.floor(wz / CHUNK_SIZE_XZ);
@@ -194,11 +245,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
              if (chunk) {
                  const lx = wx - cx * CHUNK_SIZE_XZ + PAD;
                  const lz = wz - cz * CHUNK_SIZE_XZ + PAD;
-                 const ly = wy + PAD;
 
                  const newBlock = action === 'DIG' ? BlockType.AIR : activeBlock;
 
                  if (TerrainService.setBlock(chunk.material, lx, ly, lz, newBlock)) {
+                     fluidWorkerRef.current?.postMessage({
+                         type: 'UPDATE',
+                         payload: { key, lx, ly, lz, val: newBlock }
+                     });
+
                      workerRef.current?.postMessage({
                          type: 'REMESH',
                          payload: {
@@ -210,7 +265,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                  }
              }
         }
-    }, [isInteracting, action, camera, world, rapier]);
+    }, [isInteracting, action, camera, activeBlock]);
 
     return (
         <group>
