@@ -37,10 +37,10 @@ export const createBlockTextureArray = () => {
   fill(TEX_BEDROCK, 30, 30, 30, 40);
 
   // Stone (Grey)
-  fill(TEX_STONE, 100, 100, 105, 30);
+  fill(TEX_STONE, 100, 100, 105, 60);
 
   // Dirt (Brown)
-  fill(TEX_DIRT, 80, 55, 40, 25);
+  fill(TEX_DIRT, 80, 55, 40, 50);
 
   // Grass Top (Green)
   fill(TEX_GRASS_TOP, 50, 120, 40, 30);
@@ -94,6 +94,16 @@ export const createBlockTextureArray = () => {
   // Leaf
   fill(TEX_LEAF, 30, 90, 30, 40);
 
+  // Glass
+  fill(TEX_GLASS, 220, 250, 255, 20);
+  {
+      const layer = TEX_GLASS;
+      const offset = layer * TEX_SIZE * TEX_SIZE * 4;
+      for (let i = 0; i < TEX_SIZE * TEX_SIZE; i++) {
+           data[offset + i*4 + 3] = 100; // Semi-transparent
+      }
+  }
+
   const texture = new THREE.DataArrayTexture(data, TEX_SIZE, TEX_SIZE, LAYERS);
   texture.format = THREE.RGBAFormat;
   texture.type = THREE.UnsignedByteType;
@@ -123,6 +133,7 @@ export const getTextureIndex = (block: BlockType, normal: {x:number, y:number, z
             if (Math.abs(normal.y) > 0.5) return TEX_WOOD_TOP;
             return TEX_WOOD_SIDE;
         case BlockType.LEAF: return TEX_LEAF;
+        case BlockType.GLASS: return TEX_GLASS;
         default: return TEX_STONE;
     }
 };

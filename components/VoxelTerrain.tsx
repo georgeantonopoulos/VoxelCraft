@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
 import { TerrainService } from '../services/terrainService';
+import { FluidSystem } from '../services/FluidSystem';
 import { createBlockTextureArray } from '../utils/TextureGenerator';
 import { BlockShaderMaterial } from './BlockMaterial';
 import { CHUNK_SIZE_XZ, RENDER_DISTANCE, BEDROCK_LEVEL, PAD } from '../constants';
@@ -89,8 +90,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     const chunksRef = useRef<Record<string, ChunkState>>({});
     const workerRef = useRef<Worker | null>(null);
     const pendingChunks = useRef<Set<string>>(new Set());
+    const [activeBlock, setActiveBlock] = useState<BlockType>(BlockType.STONE);
 
     const texture = useMemo(() => createBlockTextureArray(), []);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            switch(e.key) {
+                case '1': setActiveBlock(BlockType.STONE); break;
+                case '2': setActiveBlock(BlockType.DIRT); break;
+                case '3': setActiveBlock(BlockType.GRASS); break;
+                case '4': setActiveBlock(BlockType.WOOD); break;
+                case '5': setActiveBlock(BlockType.LEAF); break;
+                case '6': setActiveBlock(BlockType.SAND); break;
+                case '7': setActiveBlock(BlockType.GLASS); break;
+                case '8': setActiveBlock(BlockType.WATER); break;
+                case '9': setActiveBlock(BlockType.BEDROCK); break;
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
 
     useEffect(() => {
         workerRef.current = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
@@ -105,6 +125,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
              }
         };
         return () => workerRef.current?.terminate();
+    }, []);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const modified = FluidSystem.tick(chunksRef.current);
+            modified.forEach(key => {
+                const chunk = chunksRef.current[key];
+                if (chunk && workerRef.current) {
+                    workerRef.current.postMessage({
+                        type: 'REMESH',
+                        payload: {
+                            material: chunk.material,
+                            key, cx: chunk.cx, cz: chunk.cz,
+                            version: chunk.version + 1
+                        }
+                    });
+                }
+            });
+        }, 100);
+        return () => clearInterval(interval);
     }, []);
 
     useFrame(() => {
@@ -156,7 +196,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                  const lz = wz - cz * CHUNK_SIZE_XZ + PAD;
                  const ly = wy + PAD;
 
-                 const newBlock = action === 'DIG' ? BlockType.AIR : BlockType.STONE;
+                 const newBlock = action === 'DIG' ? BlockType.AIR : activeBlock;
 
                  if (TerrainService.setBlock(chunk.material, lx, ly, lz, newBlock)) {
                      workerRef.current?.postMessage({

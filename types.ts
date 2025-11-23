@@ -9,7 +9,8 @@ export enum BlockType {
   SNOW = 6,
   WATER = 7,
   WOOD = 8,
-  LEAF = 9
+  LEAF = 9,
+  GLASS = 10
 }
 
 export type VoxelData = Uint8Array;
