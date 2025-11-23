@@ -186,10 +186,12 @@ export function generateMesh(
   }
 
   // 2. Quad Generation
+  // OPTIMIZED LOOP: Explicit bounds handling for non-cubic chunks
   const start = PAD;
   const endX = PAD + CHUNK_SIZE_XZ;
   const endY = PAD + CHUNK_SIZE_Y;
 
+  // Helper to push quads using grid indices
   const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
       const c0 = tVertIdx[i0];
       const c1 = tVertIdx[i1];
@@ -202,12 +204,15 @@ export function generateMesh(
       }
   };
 
+  // We iterate up to the boundary (endX/Y) to catch the faces connecting to neighbors
   for (let z = start; z <= endX; z++) {
     for (let y = start; y <= endY; y++) {
       for (let x = start; x <= endX; x++) {
           const val = getVal(density, x, y, z);
           
-          if (x < endX) {
+          // X-Axis Face (Normal pointing X)
+          // Valid X range: start -> endX-1 (interior)
+          if (x < endX && y > start && z > start) {
               const vX = getVal(density, x + 1, y, z);
               if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
                   pushQuad(
@@ -218,7 +223,10 @@ export function generateMesh(
               }
           }
           
-          if (y < endY) {
+          // Y-Axis Face (Normal pointing Y - Top/Bottom)
+          // Valid Y range: start -> endY-1
+          // CRITICAL: Use endY here, not endX
+          if (y < endY && x > start && z > start) {
               const vY = getVal(density, x, y + 1, z);
               if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
                   pushQuad(
@@ -229,10 +237,12 @@ export function generateMesh(
               }
           }
 
-          if (z < endX) {
+          // Z-Axis Face (Normal pointing Z)
+          // Valid Z range: start -> endX-1 (assuming width=depth)
+          if (z < endX && x > start && y > start) {
               const vZ = getVal(density, x, y, z + 1);
               if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
-                  // Swapped indices 1 and 2 for Z-face winding
+                  // Swapped indices 1 and 2 for Z-face winding order
                   pushQuad(
                       bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z),
                       bufIdx(x, y - 1, z), bufIdx(x, y, z),

@@ -44,22 +44,50 @@ const fragmentShader = `
   uniform vec3 uColorMoss;
   uniform vec3 uColorBedrock;
 
+  // Feature Branch Varyings
   flat varying float vMaterial;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
-  vec4 getNoise(float scale) {
-      return texture(uNoiseTexture, vWorldPosition * scale);
+  // --- HELPERS ---
+
+  // 1. Raw Noise Sample
+  float getRawNoise(vec3 pos, float scale) {
+      vec4 n = texture(uNoiseTexture, pos * scale * 0.05);
+      // FBM reconstruction
+      return n.r + n.g * 0.5 + n.b * 0.25 + n.a * 0.125;
   }
+
+  // 2. Blended (Triplanar) Noise Sample
+  // This solves the "texture stretching" on vertical walls
+  float getBlendedNoise(vec3 pos, vec3 normal, float scale) {
+      vec3 blend = abs(normal);
+      // SHARPEN BLENDING: Power of 8.0 tightens the seam
+      blend = normalize(max(blend, 0.00001));
+      blend = pow(blend, vec3(8.0));
+      blend /= dot(blend, vec3(1.0));
+
+      // Offset planes to prevent mirroring artifacts
+      float xN = getRawNoise(pos.zyx, scale);
+      float yN = getRawNoise(pos.xzy + vec3(100.0), scale);
+      float zN = getRawNoise(pos.xyz + vec3(200.0), scale);
+
+      return xN * blend.x + yN * blend.y + zN * blend.z;
+    }
 
   void main() {
     vec3 N = normalize(vWorldNormal);
     float m = floor(vMaterial + 0.5);
 
-    // Base palette per material
+    // Macro Noise for large scale variation
+    float macroNoise = getBlendedNoise(vWorldPosition, N, 0.05);
+
+    // Base Palette Selection
     vec3 baseCol = uColorStone;
+
+    // Material IDs (Manual map to avoid branching hell if possible, but if/else is fine here)
     if (m < 1.5) baseCol = uColorBedrock;
     else if (m < 2.5) baseCol = uColorStone;
     else if (m < 3.5) baseCol = uColorDirt;
@@ -67,67 +95,47 @@ const fragmentShader = `
     else if (m < 5.5) baseCol = uColorSand;
     else if (m < 6.5) baseCol = uColorSnow;
     else if (m < 7.5) baseCol = uColorClay;
-    else if (m < 8.5) baseCol = uColorWater;
-    else if (m < 9.5) baseCol = uColorWater;
-    else baseCol = uColorMoss; // Mossy stone
+    else if (m < 8.5) baseCol = uColorWater; // Water Source
+    else if (m < 9.5) baseCol = uColorWater; // Water Flowing
+    else baseCol = uColorMoss; // Mossy Stone
 
-    // Multi-scale noise
-    vec4 nMid = getNoise(0.15);
-    vec4 nHigh = getNoise(0.6);
+    // Detail Overlay
+    // We modulate the base color with the high-frequency blended noise
+    float detail = getBlendedNoise(vWorldPosition, N, 0.3);
+    float intensity = 0.7 + 0.6 * detail; // Center around 1.0
 
-    float noiseFactor = 0.0;
-
+    // Grass specific logic
     if (m >= 4.0 && m < 5.5) {
-      // Grass
-      float bladeNoise = nHigh.a;
-      float patchNoise = nMid.r;
-      noiseFactor = mix(bladeNoise, patchNoise, 0.3);
-      baseCol *= vec3(1.0, 1.1, 1.0);
-    } else if ((m >= 1.0 && m < 3.5) || m >= 9.5) {
-      // Stone + mossy stone
-      float structure = nMid.r;
-      float cracks = nHigh.g;
-      noiseFactor = mix(structure, cracks, 0.5);
-    } else if (m >= 5.0 && m < 6.5) {
-      // Sand
-      noiseFactor = nHigh.a;
-    } else if ((m >= 3.0 && m < 4.5) || (m >= 7.0 && m < 8.0)) {
-      // Dirt / clay
-      noiseFactor = nMid.g;
-    } else if (m >= 6.0 && m < 7.0) {
-      // Snow
-      noiseFactor = nMid.r * 0.5 + 0.5;
-    } else {
-      noiseFactor = nMid.r;
+        // Mix some macro variation into grass
+        baseCol = mix(baseCol, baseCol * 0.8 + vec3(0.1, 0.1, 0.0), macroNoise * 0.5);
     }
 
-    float intensity = 0.6 + 0.6 * noiseFactor;
     vec3 col = baseCol * intensity;
 
-    // Moss overlay (also boosts mossy stone)
+    // --- ALIVE WORLD LAYERS ---
+
+    // 1. Moss Overlay
     if (vMossiness > 0.1 || m >= 9.5) {
-        vec3 mossColor = uColorMoss;
-        float mossNoise = nHigh.g;
-        mossColor *= (0.8 + 0.4 * mossNoise);
-        float mossAmount = vMossiness;
-        if (m >= 9.5) mossAmount = max(mossAmount, 0.35);
-        col = mix(col, mossColor, mossAmount * 0.9);
+        float mossNoise = getBlendedNoise(vWorldPosition, N, 0.6);
+        // Threshold logic for moss patches
+        if (vMossiness + mossNoise * 0.2 > 0.4) {
+             col = mix(col, uColorMoss * (0.8 + 0.4 * mossNoise), 0.8);
+        }
     }
 
-    // Wetness darkening
-    col = mix(col, col * 0.5, vWetness);
+    // 2. Wetness (Darkening)
+    col = mix(col, col * 0.5, vWetness * 0.8);
 
-    // Clamp to avoid NaNs/overflows
+    // CRITICAL: Clamp to prevent NaNs/overflows
     col = clamp(col, 0.0, 5.0);
 
+    // --- CSM OUTPUTS ---
     csm_DiffuseColor = vec4(col, 1.0);
 
-    // Roughness tweaks
-    float roughness = 0.8;
-    roughness -= (nHigh.r * 0.2);
-    roughness = mix(roughness, 0.2, vWetness);
-    if (m >= 8.0) roughness = 0.1;
-    if (m >= 5.0 && m < 6.5) roughness = 1.0;
+    // Roughness Logic
+    float roughness = 0.9;
+    if (m >= 8.0) roughness = 0.1; // Water is shiny
+    else roughness = mix(roughness, 0.2, vWetness); // Wet things are shiny
 
     csm_Roughness = roughness;
     csm_Metalness = 0.0;
