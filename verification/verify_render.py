@@ -15,11 +15,10 @@ def verify_render():
             page.wait_for_selector("canvas", timeout=30000)
             print("Canvas found. Waiting for terrain generation...")
             # Wait for some time for the workers to generate mesh and it to appear
-            # The terrain generation might take a bit.
-            time.sleep(15)
+            time.sleep(20)
 
             # Take screenshot
-            output_path = "/home/jules/verification/render.png"
+            output_path = "/home/jules/verification/render_fixed.png"
             page.screenshot(path=output_path)
             print(f"Screenshot saved to {output_path}")
 
