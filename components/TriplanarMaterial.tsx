@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import React, { useRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import React, { useRef, useMemo, useEffect } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '../utils/sharedResources';
 
@@ -93,12 +93,27 @@ const fragmentShader = `
 
 export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity?: number }> = ({ opacity = 1 }) => {
   const materialRef = useRef<any>(null);
+  const { gl } = useThree();
+  const loggedRef = useRef(false);
 
   useFrame(() => {
     if (materialRef.current) {
         materialRef.current.uniforms.uNoiseTexture.value = noiseTexture;
     }
   });
+
+  useEffect(() => {
+    if (loggedRef.current) return;
+    const isWebGL2 = (gl as any).isWebGL2 || gl.capabilities?.isWebGL2;
+    const max3D = (gl.capabilities as any)?.max3DTextureSize ?? (gl.capabilities as any)?.maxTextureSize;
+    console.log('[TriplanarMaterial] Renderer info', {
+      isWebGL2,
+      supports3DTexture: Boolean((gl.capabilities as any)?.isWebGL2),
+      max3DTextureSize: max3D,
+      renderer: gl.getContext().constructor?.name
+    });
+    loggedRef.current = true;
+  }, [gl]);
 
   const uniforms = useMemo(() => ({
     uNoiseTexture: { value: noiseTexture },
@@ -121,7 +136,6 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3, opacity
         uniforms={uniforms}
         transparent={opacity < 1}
         opacity={opacity}
-        {...({ silent: false } as any)}
     />
   );
 };

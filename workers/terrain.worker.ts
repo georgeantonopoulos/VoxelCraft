@@ -1,14 +1,23 @@
 import { TerrainService } from '../services/terrainService';
 import { generateMesh } from '../utils/mesher';
 
-self.onmessage = (e: MessageEvent) => {
+const ctx: Worker = self as any;
+
+ctx.onmessage = (e: MessageEvent) => {
   const { type, payload } = e.data;
 
   try {
     if (type === 'GENERATE') {
         const { cx, cz } = payload;
+        const t0 = performance.now();
+        console.log('[terrain.worker] GENERATE start', cx, cz);
         const { density, material } = TerrainService.generateChunk(cx, cz);
         const mesh = generateMesh(density, material);
+        console.log('[terrain.worker] GENERATE done', cx, cz, {
+            positions: mesh.positions.length,
+            indices: mesh.indices.length,
+            ms: Math.round(performance.now() - t0)
+        });
 
         const response = {
             key: `${cx},${cz}`,
@@ -24,7 +33,7 @@ self.onmessage = (e: MessageEvent) => {
         };
 
         // Transfer buffers to avoid copying
-        self.postMessage({ type: 'GENERATED', payload: response }, [
+        ctx.postMessage({ type: 'GENERATED', payload: response }, [
             density.buffer,
             material.buffer,
             mesh.positions.buffer,
@@ -36,7 +45,14 @@ self.onmessage = (e: MessageEvent) => {
         ]);
     } else if (type === 'REMESH') {
         const { density, material, key, cx, cz, version } = payload;
+        const t0 = performance.now();
+        console.log('[terrain.worker] REMESH start', key, 'v', version);
         const mesh = generateMesh(density, material);
+        console.log('[terrain.worker] REMESH done', key, {
+            positions: mesh.positions.length,
+            indices: mesh.indices.length,
+            ms: Math.round(performance.now() - t0)
+        });
 
         const response = {
             key, cx, cz,
@@ -50,7 +66,7 @@ self.onmessage = (e: MessageEvent) => {
             meshMossiness: mesh.mossiness
         };
 
-        self.postMessage({ type: 'REMESHED', payload: response }, [
+        ctx.postMessage({ type: 'REMESHED', payload: response }, [
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,

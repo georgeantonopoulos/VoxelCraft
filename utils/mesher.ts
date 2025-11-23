@@ -21,6 +21,7 @@ export function generateMesh(
     wetness?: Uint8Array,
     mossiness?: Uint8Array
 ): MeshData {
+  const t0 = performance.now();
   const size = TOTAL_SIZE;
   const vertices: number[] = [];
   const indices: number[] = [];
@@ -196,6 +197,16 @@ export function generateMesh(
       }
     }
   }
+
+  console.debug('[mesher] Mesh generated', {
+    positions: vertices.length,
+    indices: indices.length,
+    normals: norms.length,
+    mats: mats.length,
+    wetness: wets.length,
+    moss: moss.length,
+    ms: Math.round(performance.now() - t0)
+  });
 
   return {
     positions: new Float32Array(vertices),

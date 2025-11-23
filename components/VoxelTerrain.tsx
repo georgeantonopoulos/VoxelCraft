@@ -216,6 +216,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     useEffect(() => {
         const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
         workerRef.current = worker;
+        console.log('[VoxelTerrain] Worker started');
 
         worker.onmessage = (e) => {
             const { type, payload } = e.data;
@@ -223,6 +224,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             if (type === 'GENERATED') {
                 const { key } = payload;
                 pendingChunks.current.delete(key);
+                console.log('[VoxelTerrain] Chunk generated', key, {
+                    positions: payload.meshPositions?.length,
+                    indices: payload.meshIndices?.length
+                });
 
                 // Add to local state
                 const newChunk = { ...payload, version: 0 };
@@ -233,6 +238,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness } = payload;
                 const current = chunksRef.current[key];
                 if (current) {
+                    console.log('[VoxelTerrain] Chunk remeshed', key, {
+                        version,
+                        positions: meshPositions?.length,
+                        indices: meshIndices?.length
+                    });
                     // We assume density/material are already updated in the ref by the modification logic
                     // or we can assume the worker sent back what we sent it (but we didn't ask it to echo density).
                     // The main thread modification updated chunksRef density/material in place.
@@ -276,6 +286,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
                 if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
                     pendingChunks.current.add(key);
+                    console.log('[VoxelTerrain] Requesting chunk generate', key);
                     workerRef.current.postMessage({
                         type: 'GENERATE',
                         payload: { cx, cz }
@@ -290,6 +301,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             if (!neededKeys.has(key)) {
                 delete newChunks[key];
                 changed = true;
+                console.log('[VoxelTerrain] Unloading chunk', key);
                 // Note: we don't cancel pending requests in worker, but we ignore them if we don't need them anymore?
                 // Or we just let them finish and get garbage collected next cycle.
             }
@@ -319,6 +331,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 rapierHitPoint.y + direction.y * offset, 
                 rapierHitPoint.z + direction.z * offset
             );
+            console.log('[VoxelTerrain] Interaction hit', {
+                action,
+                hitPoint: hitPoint.toArray(),
+                timeOfImpact: hit.timeOfImpact
+            });
             
             const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
             const radius = DIG_RADIUS;
