@@ -79,12 +79,15 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
 
-    if (chunk.meshMaterials) {
+    const vertexCount = chunk.meshPositions.length / 3;
+
+    if (chunk.meshMaterials && chunk.meshMaterials.length === vertexCount) {
         geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(chunk.meshMaterials, 1));
+    } else {
+        geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
     }
 
     // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
-    const vertexCount = chunk.meshPositions.length / 3;
     
     if (chunk.meshWetness && chunk.meshWetness.length === vertexCount) {
         geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
@@ -302,8 +305,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             meshIndices,
             meshMaterials,
             meshNormals,
-            meshWetness,
-            meshMossiness,
+            meshWetness: meshWetness || current.meshWetness, // Fallback if missing
+            meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing
             meshWaterPositions,
             meshWaterIndices,
             meshWaterNormals
