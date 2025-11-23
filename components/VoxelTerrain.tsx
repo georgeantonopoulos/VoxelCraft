@@ -79,9 +79,24 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
 
-    if (chunk.meshMaterials) geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(chunk.meshMaterials, 1));
-    if (chunk.meshWetness) geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
-    if (chunk.meshMossiness) geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
+    if (chunk.meshMaterials) {
+        geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(chunk.meshMaterials, 1));
+    }
+
+    // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
+    const vertexCount = chunk.meshPositions.length / 3;
+    
+    if (chunk.meshWetness && chunk.meshWetness.length === vertexCount) {
+        geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
+    } else {
+        geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
+    if (chunk.meshMossiness && chunk.meshMossiness.length === vertexCount) {
+        geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
+    } else {
+        geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
 
     if (chunk.meshNormals?.length > 0) {
       geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
@@ -307,6 +322,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
+
+    // Update simulation player position
+    simulationManager.updatePlayerPosition(px, pz);
 
     const neededKeys = new Set<string>();
     let changed = false;

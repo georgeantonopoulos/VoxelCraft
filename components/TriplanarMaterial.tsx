@@ -33,6 +33,7 @@ const vertexShader = `
 
 // Fragment shader (uses 3D procedural noise)
 const fragmentShader = `
+
   precision highp float;
   precision highp sampler3D;
 
@@ -56,127 +57,108 @@ const fragmentShader = `
 
   // --- HELPERS ---
 
-  // Sharp Triplanar Sampler (Returns full vec4 data)
-  vec4 getTriplanarNoise(float scale) {
-      vec3 blend = abs(normalize(vWorldNormal));
-      // Sharpen blending to prevent muddy transitions
+  // Robust normalization to prevent NaNs on degenerate geometry/concave interpolation
+  vec3 safeNormalize(vec3 v) {
+      float len = length(v);
+      if (len < 0.0001) return vec3(0.0, 1.0, 0.0);
+      return v / len;
+  }
+
+  // Sharp Triplanar Sampler
+  // UPDATED: Accepts 'normal' argument to use the safe normal from main()
+  vec4 getTriplanarNoise(vec3 normal, float scale) {
+      vec3 blend = abs(normal);
       blend = normalize(max(blend, 0.00001));
       blend = pow(blend, vec3(8.0));
       blend /= dot(blend, vec3(1.0));
 
-      // Offset planes to avoid mirroring artifacts
       vec3 p = vWorldPosition * scale;
       vec4 xN = texture(uNoiseTexture, p.zyx);
       vec4 yN = texture(uNoiseTexture, p.xzy + vec3(100.0));
       vec4 zN = texture(uNoiseTexture, p.xyz + vec3(200.0));
 
-      // Blend the full 4-channel data
       return xN * blend.x + yN * blend.y + zN * blend.z;
   }
 
   void main() {
-    // Normalize inputs
-    vec3 N = normalize(vWorldNormal);
+    // 1. Calculate Safe Normal immediately
+    vec3 N = safeNormalize(vWorldNormal);
     float m = floor(vMaterial + 0.5);
 
-    // --- RESTORED MULTI-SCALE LOGIC ---
-    // We fetch two scales of noise, just like the original 'feature' branch
-    // 0.15 and 0.6 were your original magic numbers
-    vec4 nMid = getTriplanarNoise(0.15);
-    vec4 nHigh = getTriplanarNoise(0.6);
+    // 2. Pass 'N' to noise functions
+    vec4 nMid = getTriplanarNoise(N, 0.15);
+    vec4 nHigh = getTriplanarNoise(N, 0.6);
 
     vec3 baseCol = uColorStone;
     float roughness = 0.8;
     float noiseFactor = 0.0;
 
-    // --- RESTORED MATERIAL LOGIC ---
-
-    // 1. Bedrock
     if (m < 1.5) {
         baseCol = uColorBedrock;
         noiseFactor = nMid.r;
-    }
-    // 2. Stone (Restoring the "Cracks")
+    } 
     else if (m < 2.5) {
         baseCol = uColorStone;
         float structure = nMid.r;
-        float cracks = nHigh.g; // Green channel = High freq cracks
+        float cracks = nHigh.g;
         noiseFactor = mix(structure, cracks, 0.5);
-    }
-    // 3. Dirt
+    } 
     else if (m < 3.5) {
         baseCol = uColorDirt;
         noiseFactor = nMid.g;
-    }
-    // 4. Grass (Restoring the "Blades")
+    } 
     else if (m < 4.5) {
         baseCol = uColorGrass;
-        float bladeNoise = nHigh.a; // Alpha channel = Fine blades
+        float bladeNoise = nHigh.a;
         float patchNoise = nMid.r;
         noiseFactor = mix(bladeNoise, patchNoise, 0.3);
-        // Boost grass vibrance slightly
         baseCol *= vec3(1.0, 1.1, 1.0);
-    }
-    // 5. Sand
+    } 
     else if (m < 5.5) {
         baseCol = uColorSand;
-        noiseFactor = nHigh.a; // Grain
-    }
-    // 6. Snow
+        noiseFactor = nHigh.a;
+    } 
     else if (m < 6.5) {
         baseCol = uColorSnow;
         noiseFactor = nMid.r * 0.5 + 0.5;
-    }
-    // 7. Clay
+    } 
     else if (m < 7.5) {
         baseCol = uColorClay;
         noiseFactor = nMid.g;
-    }
-    // 8/9. Water
+    } 
     else if (m < 9.5) {
         baseCol = uColorWater;
         roughness = 0.1;
-    }
-    // 10. Mossy Stone
+    } 
     else {
         baseCol = uColorMoss;
         noiseFactor = nMid.r;
     }
 
-    // Apply the noise intensity
     float intensity = 0.6 + 0.6 * noiseFactor;
     vec3 col = baseCol * intensity;
 
-    // --- OVERLAYS (Wetness/Moss) ---
-
-    // Moss Overlay logic (Restored)
     if (vMossiness > 0.1 || m >= 9.5) {
         vec3 mossColor = uColorMoss;
         float mossNoise = nHigh.g;
         mossColor *= (0.8 + 0.4 * mossNoise);
-
+        
         float mossAmount = vMossiness;
-        if (m >= 9.5) mossAmount = max(mossAmount, 0.35); // Base level for mossy stone block
-
-        // Threshold blending for sharp moss patches
+        if (m >= 9.5) mossAmount = max(mossAmount, 0.35);
+        
         float mossMix = smoothstep(0.3, 0.6, mossAmount + mossNoise * 0.2);
         col = mix(col, mossColor, mossMix);
     }
 
-    // Wetness Darkening
     col = mix(col, col * 0.5, vWetness * 0.9);
-
-    // Clamp output
     col = clamp(col, 0.0, 5.0);
 
-    // Output to CSM
     csm_DiffuseColor = vec4(col, 1.0);
 
-    // Roughness adjustments
-    roughness -= (nHigh.r * 0.1); // Micro-surface detail
-    roughness = mix(roughness, 0.2, vWetness); // Wet looks polished
-    if (m >= 8.0 && m < 9.5) roughness = 0.1; // Force water shiny
-
+    roughness -= (nHigh.r * 0.1);
+    roughness = mix(roughness, 0.2, vWetness);
+    if (m >= 8.0 && m < 9.5) roughness = 0.1;
+    
     csm_Roughness = roughness;
     csm_Metalness = 0.0;
   }

@@ -14,6 +14,8 @@ interface WorkerChunkData {
 
 const chunks: Map<string, WorkerChunkData> = new Map();
 let activeKeys: Set<string> = new Set();
+let playerCx = 0;
+let playerCz = 0;
 // @ts-ignore
 let tickCount = 0;
 
@@ -23,6 +25,8 @@ const SIZE_Y = TOTAL_SIZE_Y;
 const SIZE_Z = TOTAL_SIZE_XZ;
 const STRIDE_Y = SIZE_X;
 const STRIDE_Z = SIZE_X * SIZE_Y;
+
+const SIMULATION_DISTANCE = 2; // Only simulate chunks within 2 units of player
 
 const getIdx = (x: number, y: number, z: number) => x + y * STRIDE_Y + z * STRIDE_Z;
 
@@ -47,8 +51,20 @@ const getGlobalBlock = (gx: number, gy: number, gz: number) => {
 function simulateWater() {
     const changedChunks = new Set<string>();
 
-    // 1. Initialize Next Buffer
+    // Filter active keys based on player distance
+    const simulationKeys: string[] = [];
     for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (chunk) {
+            if (Math.abs(chunk.cx - playerCx) <= SIMULATION_DISTANCE && 
+                Math.abs(chunk.cz - playerCz) <= SIMULATION_DISTANCE) {
+                simulationKeys.push(key);
+            }
+        }
+    }
+
+    // 1. Initialize Next Buffer
+    for (const key of simulationKeys) {
         const chunk = chunks.get(key);
         if (!chunk) continue;
         if (!chunk.nextMaterial) {
@@ -58,7 +74,7 @@ function simulateWater() {
     }
 
     // 2. Process Water Flow
-    for (const key of activeKeys) {
+    for (const key of simulationKeys) {
         const chunk = chunks.get(key);
         if (!chunk || !chunk.nextMaterial) continue;
 
@@ -221,6 +237,11 @@ self.onmessage = (e: MessageEvent) => {
         chunks.delete(key);
         activeKeys.delete(key);
     }
+    else if (type === 'PLAYER_POSITION') {
+        const { cx, cz } = payload;
+        playerCx = cx;
+        playerCz = cz;
+    }
     else if (type === 'START_LOOP') {
         setInterval(() => {
             // @ts-ignore
@@ -248,6 +269,6 @@ self.onmessage = (e: MessageEvent) => {
             // const dur = performance.now() - start;
             // if (dur > 20) console.log('Sim took', dur);
 
-        }, 100); // 100ms = 10fps
+        }, 1000); // 1000ms = 1fps (Slowed down from 10fps to fix flashing)
     }
 };

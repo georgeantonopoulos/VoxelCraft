@@ -35,7 +35,8 @@ If doing a visual inspection always wait 10 seconds and use the controls to take
   - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
 - **Meshing**: `utils/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
   - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
-- **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 16) and projected noise sampling to avoid muddy transitions.
+- **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
+  - **Shader Stability**: Implements `safeNormalize` to prevent NaNs on degenerate geometry (e.g., sharp concave features from digging) which prevents flashing artifacts.
 
 #### Simulation System
 - **Metadata**: `MetadataDB` stores `wetness` and `mossiness` layers globally.
@@ -55,6 +56,7 @@ If doing a visual inspection always wait 10 seconds and use the controls to take
   - **UserData**: Keep `userData: { type: 'terrain' }` on chunk RigidBodies for interaction raycasting.
   - **Worker Messages**: Follow the `type` / `payload` pattern in workers.
 - **Performance**:
+  - **Mesher Optimization**: Loop bounds are strictly controlled to avoid checking unnecessary voxels while ensuring seams are closed.
   - Use `ref` for high-frequency updates (Player movement, Particles).
   - Avoid blocking the main thread; offload heavy math to workers.
 - **Conventions**:

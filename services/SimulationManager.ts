@@ -55,6 +55,10 @@ export class SimulationManager {
     removeChunk(key: string) {
         this.worker.postMessage({ type: 'REMOVE_CHUNK', payload: { key } });
     }
+
+    updatePlayerPosition(cx: number, cz: number) {
+        this.worker.postMessage({ type: 'PLAYER_POSITION', payload: { cx, cz } });
+    }
 }
 
 export const simulationManager = new SimulationManager();
