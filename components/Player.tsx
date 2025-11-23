@@ -36,7 +36,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       const hit = world.castRay(ray, 1.5, true);
       
       // Check Time of Impact (toi / timeOfImpact)
-      if (hit && hit.timeOfImpact < 1.2) {
+      if (hit && hit.toi < 1.2) {
          body.current.setLinvel({ x: velocity.x, y: JUMP_FORCE, z: velocity.z }, true);
       }
     }

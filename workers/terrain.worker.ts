@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { TerrainService } from '../services/terrainService';
-import { generateMesh } from '../utils/mesher';
+import { meshChunk } from '../utils/GreedyMesher';
 
 self.onmessage = (e: MessageEvent) => {
   const { type, payload } = e.data;
@@ -9,83 +9,69 @@ self.onmessage = (e: MessageEvent) => {
   try {
     if (type === 'GENERATE') {
         const { cx, cz } = payload;
-        // Returns density, material, metadata (wetness, mossiness inside)
         const chunkData = TerrainService.generateChunk(cx, cz);
 
-        // Mesher still expects flat arrays, so we extract them
-        const wetness = chunkData.metadata.wetness;
-        const mossiness = chunkData.metadata.mossiness;
-
-        const mesh = generateMesh(chunkData.density, chunkData.material, wetness, mossiness);
+        const mesh = meshChunk(chunkData.material);
 
         const response = {
             key: `${cx},${cz}`,
             cx, cz,
-            density: chunkData.density,
             material: chunkData.material,
-            metadata: chunkData.metadata, // Send back the new structure
-            meshPositions: mesh.positions,
-            meshIndices: mesh.indices,
-            meshMaterials: mesh.materials,
-            meshNormals: mesh.normals,
-            meshWetness: mesh.wetness,
-            meshMossiness: mesh.mossiness,
 
-            // Water
-            meshWaterPositions: mesh.waterPositions,
-            meshWaterIndices: mesh.waterIndices,
-            meshWaterNormals: mesh.waterNormals
+            positions: mesh.positions,
+            indices: mesh.indices,
+            normals: mesh.normals,
+            uvs: mesh.uvs,
+            textureIndices: mesh.textureIndices,
+            ao: mesh.ao,
+
+            tPositions: mesh.transparentPositions,
+            tIndices: mesh.transparentIndices,
+            tNormals: mesh.transparentNormals,
+            tUvs: mesh.transparentUvs,
+            tTextureIndices: mesh.transparentTextureIndices,
+            tAo: mesh.transparentAo
         };
 
-        self.postMessage({ type: 'GENERATED', payload: response }, [
-            chunkData.density.buffer,
+        const buffers = [
             chunkData.material.buffer,
-            wetness.buffer,
-            mossiness.buffer,
-            mesh.positions.buffer,
-            mesh.indices.buffer,
-            mesh.materials.buffer,
-            mesh.normals.buffer,
-            mesh.wetness.buffer,
-            mesh.mossiness.buffer,
-            mesh.waterPositions.buffer,
-            mesh.waterIndices.buffer,
-            mesh.waterNormals.buffer
-        ]);
+            mesh.positions.buffer, mesh.indices.buffer, mesh.normals.buffer, mesh.uvs.buffer, mesh.textureIndices.buffer, mesh.ao.buffer,
+            mesh.transparentPositions.buffer, mesh.transparentIndices.buffer, mesh.transparentNormals.buffer, mesh.transparentUvs.buffer, mesh.transparentTextureIndices.buffer, mesh.transparentAo.buffer
+        ].filter(b => b.byteLength > 0);
+
+        self.postMessage({ type: 'GENERATED', payload: response }, buffers);
     }
     else if (type === 'REMESH') {
-        const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
-        // We assume main thread passes the current state of wetness/mossiness
+        const { material, key, cx, cz, version } = payload;
 
-        const mesh = generateMesh(density, material, wetness, mossiness);
+        const mesh = meshChunk(material);
 
         const response = {
-            key, cx, cz,
-            density, material, wetness, mossiness,
-            version,
-            meshPositions: mesh.positions,
-            meshIndices: mesh.indices,
-            meshMaterials: mesh.materials,
-            meshNormals: mesh.normals,
-            meshWetness: mesh.wetness,
-            meshMossiness: mesh.mossiness,
+            key, cx, cz, version,
+            material,
 
-            meshWaterPositions: mesh.waterPositions,
-            meshWaterIndices: mesh.waterIndices,
-            meshWaterNormals: mesh.waterNormals
+            positions: mesh.positions,
+            indices: mesh.indices,
+            normals: mesh.normals,
+            uvs: mesh.uvs,
+            textureIndices: mesh.textureIndices,
+            ao: mesh.ao,
+
+            tPositions: mesh.transparentPositions,
+            tIndices: mesh.transparentIndices,
+            tNormals: mesh.transparentNormals,
+            tUvs: mesh.transparentUvs,
+            tTextureIndices: mesh.transparentTextureIndices,
+            tAo: mesh.transparentAo
         };
 
-        self.postMessage({ type: 'REMESHED', payload: response }, [
-            mesh.positions.buffer,
-            mesh.indices.buffer,
-            mesh.materials.buffer,
-            mesh.normals.buffer,
-            mesh.wetness.buffer,
-            mesh.mossiness.buffer,
-            mesh.waterPositions.buffer,
-            mesh.waterIndices.buffer,
-            mesh.waterNormals.buffer
-        ]);
+        const buffers = [
+            material.buffer,
+            mesh.positions.buffer, mesh.indices.buffer, mesh.normals.buffer, mesh.uvs.buffer, mesh.textureIndices.buffer, mesh.ao.buffer,
+            mesh.transparentPositions.buffer, mesh.transparentIndices.buffer, mesh.transparentNormals.buffer, mesh.transparentUvs.buffer, mesh.transparentTextureIndices.buffer, mesh.transparentAo.buffer
+        ].filter(b => b.byteLength > 0);
+
+        self.postMessage({ type: 'REMESHED', payload: response }, buffers);
     }
   } catch (error) {
       console.error('Worker Error:', error);

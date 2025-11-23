@@ -1,12 +1,11 @@
-
 import React, { useState, Suspense, useEffect, useCallback, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { Sky, PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
+import { EffectComposer, N8AO, Bloom, ToneMapping } from '@react-three/postprocessing';
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { UI } from './components/UI';
-import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 import * as THREE from 'three';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
@@ -41,7 +40,6 @@ const Sun = () => {
       canvas.height = 64;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-          // Simple glow
           const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
           gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
           gradient.addColorStop(0.2, 'rgba(255, 240, 200, 0.4)');
@@ -115,16 +113,9 @@ const App: React.FC = () => {
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
 
-  const sunDirection = useMemo(
-    () => new THREE.Vector3(-50, -80, -30).normalize(),
-    []
-  );
-
   useEffect(() => {
-      // Find safe spawn height
       const h = TerrainService.getHeightAt(16, 16);
-      // Spawn slightly above surface
-      setSpawnPos([16, h + 5, 16]);
+      setSpawnPos([16, h + 30, 16]);
   }, []);
 
   const handleUnlock = useCallback(() => {
@@ -139,10 +130,9 @@ const App: React.FC = () => {
           shadows 
           dpr={[1, 2]}
           gl={{ 
-            antialias: true,
+            antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
-            toneMapping: THREE.ACESFilmicToneMapping,
-            powerPreference: "high-performance"
+            toneMapping: THREE.NoToneMapping,
           }}
           camera={{ fov: 60, near: 0.1, far: 240 }}
         >
@@ -180,15 +170,29 @@ const App: React.FC = () => {
             shadow-camera-bottom={-100}
           />
 
+          <EffectComposer disableNormalPass={false}>
+            <N8AO
+                aoRadius={2}
+                intensity={1}
+                distanceFalloff={1}
+                screenSpaceRadius={true}
+                halfRes={false}
+            />
+            <Bloom
+                luminanceThreshold={1.0}
+                intensity={0.5}
+                mipmapBlur
+            />
+            <ToneMapping />
+          </EffectComposer>
+
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
               {spawnPos && <Player position={spawnPos} />}
               <VoxelTerrain 
                 action={action}
                 isInteracting={isInteracting}
-                sunDirection={sunDirection}
               />
-              <BedrockPlane />
             </Physics>
           </Suspense>
 

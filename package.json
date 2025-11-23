@@ -9,12 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.4.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "@react-three/rapier": "^2.2.0",
+    "n8ao": "^1.10.1",
+    "postprocessing": "^6.38.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "three": "^0.181.2",
-    "@react-three/fiber": "^9.4.0",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/rapier": "^2.2.0"
+    "three-stdlib": "^2.36.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
