@@ -104,16 +104,53 @@ export function generateMesh(
              
              vertices.push(px, py, pz);
 
-             // Analytic Normals
-             const nx = getVal(density, Math.round(avgX) - 1, Math.round(avgY), Math.round(avgZ), size) -
-                        getVal(density, Math.round(avgX) + 1, Math.round(avgY), Math.round(avgZ), size);
-             const ny = getVal(density, Math.round(avgX), Math.round(avgY) - 1, Math.round(avgZ), size) -
-                        getVal(density, Math.round(avgX), Math.round(avgY) + 1, Math.round(avgZ), size);
-             const nz = getVal(density, Math.round(avgX), Math.round(avgY), Math.round(avgZ) - 1, size) -
-                        getVal(density, Math.round(avgX), Math.round(avgY), Math.round(avgZ) + 1, size);
+             // Trilinear Gradient Normal Calculation
+             // Use the 8 corner values (v000...v111) to estimate the gradient at the exact vertex position.
+             // This is smoother and more robust than central differences on integer coordinates.
+             
+             const fx = avgX - x;
+             const fy = avgY - y;
+             const fz = avgZ - z;
+
+             const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+             // X Gradient (change along X, averaged over Y and Z)
+             // Normal points towards decreasing density (Solid -> Air)
+             // So we calculate (Left - Right) instead of (Right - Left)
+             // x=0 plane
+             const x00 = lerp(v000, v010, fy);
+             const x01 = lerp(v001, v011, fy);
+             const val_x0 = lerp(x00, x01, fz);
+             // x=1 plane
+             const x10 = lerp(v100, v110, fy);
+             const x11 = lerp(v101, v111, fy);
+             const val_x1 = lerp(x10, x11, fz);
+             const nx = val_x0 - val_x1;
+
+             // Y Gradient (change along Y, averaged over X and Z)
+             // y=0 plane
+             const y00 = lerp(v000, v100, fx);
+             const y01 = lerp(v001, v101, fx);
+             const val_y0 = lerp(y00, y01, fz);
+             // y=1 plane
+             const y10 = lerp(v010, v110, fx);
+             const y11 = lerp(v011, v111, fx);
+             const val_y1 = lerp(y10, y11, fz);
+             const ny = val_y0 - val_y1;
+
+             // Z Gradient (change along Z, averaged over X and Y)
+             // z=0 plane
+             const z00 = lerp(v000, v100, fx);
+             const z01 = lerp(v010, v110, fx);
+             const val_z0 = lerp(z00, z01, fy);
+             // z=1 plane
+             const z10 = lerp(v001, v101, fx);
+             const z11 = lerp(v011, v111, fx);
+             const val_z1 = lerp(z10, z11, fy);
+             const nz = val_z0 - val_z1;
 
              const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
-             if (len > 0.0001) {
+             if (len > 0.00001) {
                  norms.push(nx/len, ny/len, nz/len);
              } else {
                  norms.push(0, 1, 0);

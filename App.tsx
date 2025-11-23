@@ -89,47 +89,55 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
 const SunFollower: React.FC = () => {
   const { camera } = useThree();
   const lightRef = useRef<THREE.DirectionalLight>(null);
+  const sunMeshRef = useRef<THREE.Mesh>(null);
   const target = useMemo(() => new THREE.Object3D(), []);
 
   useFrame(({ clock }) => {
     if (lightRef.current) {
         const t = clock.getElapsedTime();
         
-        // Slow orbit (Cycle every ~120 seconds or so)
-        // Modify speed here
-        const speed = 0.1; 
+        // Slow orbit (Cycle every ~8-10 minutes)
+        const speed = 0.025; // 1/4th of previous 0.1
         const angle = t * speed;
 
         // Radius of orbit relative to player
-        const radius = 150;
+        const radius = 300; // Farther away for scale
 
-        // Circular path: Starts high, goes down, comes back up
-        // We keep it always somewhat lit (clamped Y) or let it go down for "sunset" vibes?
-        // User asked to follow path "around the world".
-        
         const sx = Math.sin(angle) * radius;
         const sy = Math.cos(angle) * radius; 
-        const sz = 30; // Slight tilt
+        const sz = 30; 
 
         // Snap light center to player
         const q = 4;
         const lx = Math.round(camera.position.x / q) * q;
         const lz = Math.round(camera.position.z / q) * q;
         
-        // Ensure Y doesn't go below horizon too much (or we lose light)
-        // For now, let's keep it strictly day-time loop or clamped to not pitch black
-        // Actually, full orbit is cooler.
-        
-        lightRef.current.position.set(lx + sx, sy, lz + sz);
+        const px = lx + sx;
+        const py = sy;
+        const pz = lz + sz;
+
+        lightRef.current.position.set(px, py, pz);
         target.position.set(lx, 0, lz);
         
         lightRef.current.target = target;
         lightRef.current.updateMatrixWorld();
         target.updateMatrixWorld();
         
-        // Dynamic intensity?
         // Fade out when below horizon
         lightRef.current.intensity = Math.max(0, (sy / radius) * 3.5 + 0.5); 
+
+        // Update Visual Sun
+        if (sunMeshRef.current) {
+           // Place sun mesh far away but in same direction
+           // Use a fixed distance so it doesn't clip into terrain
+           const sunDist = 350; 
+           sunMeshRef.current.position.set(
+              lx + Math.sin(angle) * sunDist, 
+              Math.cos(angle) * sunDist, 
+              lz + sz
+           );
+           sunMeshRef.current.lookAt(camera.position);
+        }
     }
   });
 
@@ -142,7 +150,6 @@ const SunFollower: React.FC = () => {
         shadow-mapSize={[2048, 2048]}
         shadow-bias={-0.0005}
         shadow-normalBias={0.04}
-        // Expanded shadow bounds
         shadow-camera-near={10}
         shadow-camera-far={500}
         shadow-camera-left={-200}
@@ -151,6 +158,12 @@ const SunFollower: React.FC = () => {
         shadow-camera-bottom={-200}
       />
       <primitive object={target} />
+      
+      {/* Physical Sun Mesh with Glow - Disable fog so it's always visible */}
+      <mesh ref={sunMeshRef}>
+         <sphereGeometry args={[15, 32, 32]} />
+         <meshBasicMaterial color="#fffee0" toneMapped={false} fog={false} />
+      </mesh>
     </>
   );
 };
