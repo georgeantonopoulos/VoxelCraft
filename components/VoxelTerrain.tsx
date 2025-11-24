@@ -24,6 +24,9 @@ interface ChunkState {
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
   meshMaterials: Float32Array;
+  meshMaterials2: Float32Array;
+  meshMaterials3: Float32Array;
+  meshWeights: Float32Array;
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
@@ -89,6 +92,24 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
     }
 
+    if (chunk.meshMaterials2 && chunk.meshMaterials2.length === vertexCount) {
+        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(chunk.meshMaterials2, 1));
+    } else {
+        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
+    if (chunk.meshMaterials3 && chunk.meshMaterials3.length === vertexCount) {
+        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(chunk.meshMaterials3, 1));
+    } else {
+        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
+    if (chunk.meshWeights && chunk.meshWeights.length === vertexCount * 3) {
+        geom.setAttribute('aWeight', new THREE.BufferAttribute(chunk.meshWeights, 3));
+    } else {
+        geom.setAttribute('aWeight', new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
+    }
+
     // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
     
     if (chunk.meshWetness && chunk.meshWetness.length === vertexCount) {
@@ -114,7 +135,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     geom.computeBoundingSphere();
 
     return geom;
-  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
+  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshMaterials2, chunk.meshMaterials3, chunk.meshWeights, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -175,8 +196,7 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const count = 20;
   const lifetimes = useRef<number[]>(new Array(count).fill(0));
-  // Fix: Initialize each element with a NEW Vector3 instance to avoid shared references
-  const velocities = useRef<THREE.Vector3[]>(Array.from({ length: count }, () => new THREE.Vector3()));
+  const velocities = useRef<THREE.Vector3[]>(new Array(count).fill(new THREE.Vector3()));
   const meshMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   useEffect(() => {
@@ -194,8 +214,7 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
         dummy.updateMatrix();
         mesh.current.setMatrixAt(i, dummy.matrix);
         lifetimes.current[i] = 0.3 + Math.random() * 0.4;
-        // Fix: Set velocity values directly instead of creating new Vector3 (reusing existing instances)
-        velocities.current[i].set(
+        velocities.current[i] = new THREE.Vector3(
           (Math.random() - 0.5) * 8,
           Math.random() * 8 + 4,
           (Math.random() - 0.5) * 8
@@ -203,37 +222,28 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
       }
       mesh.current.instanceMatrix.needsUpdate = true;
     }
-  }, [active, position.x, position.y, position.z, color, dummy]);
+  }, [active, position, color, dummy]);
 
   useFrame((_, delta) => {
-    if (!mesh.current) return;
-    
-    // Only update if mesh is visible (particles are active)
-    if (mesh.current.visible) {
-      let activeCount = 0;
-      for (let i = 0; i < count; i++) {
-        if (lifetimes.current[i] > 0) {
-          lifetimes.current[i] -= delta;
-          mesh.current.getMatrixAt(i, dummy.matrix);
-          dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
-          velocities.current[i].y -= 25.0 * delta;
-          dummy.position.addScaledVector(velocities.current[i], delta);
-          dummy.rotation.x += delta * 10;
-          dummy.rotation.z += delta * 5;
-          dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
-          dummy.updateMatrix();
-          mesh.current.setMatrixAt(i, dummy.matrix);
-          activeCount++;
-        }
-      }
-      mesh.current.instanceMatrix.needsUpdate = true;
-      
-      // Only hide if all particles are dead AND we're not in an active state
-      // This prevents premature hiding during rapid clicks
-      if (activeCount === 0 && !active) {
-        mesh.current.visible = false;
+    if (!mesh.current || !mesh.current.visible) return;
+    let activeCount = 0;
+    for (let i = 0; i < count; i++) {
+      if (lifetimes.current[i] > 0) {
+        lifetimes.current[i] -= delta;
+        mesh.current.getMatrixAt(i, dummy.matrix);
+        dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+        velocities.current[i].y -= 25.0 * delta;
+        dummy.position.addScaledVector(velocities.current[i], delta);
+        dummy.rotation.x += delta * 10;
+        dummy.rotation.z += delta * 5;
+        dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
+        dummy.updateMatrix();
+        mesh.current.setMatrixAt(i, dummy.matrix);
+        activeCount++;
       }
     }
+    mesh.current.instanceMatrix.needsUpdate = true;
+    if (activeCount === 0 && !active) mesh.current.visible = false;
   });
 
   return (
@@ -268,14 +278,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
   const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
 
-  const [particleState, setParticleState] = useState<{ active: boolean; pos: THREE.Vector3; color: string; key: number }>({
+  const [particleState, setParticleState] = useState<{ active: boolean; pos: THREE.Vector3; color: string }>({
     active: false,
     pos: new THREE.Vector3(),
-    color: '#fff',
-    key: 0
+    color: '#fff'
   });
-  const particleTimeoutRef = useRef<number | null>(null);
-  const particleKeyRef = useRef<number>(0);
 
   useEffect(() => {
     simulationManager.start();
@@ -317,7 +324,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const { key, meshPositions, meshIndices, meshMaterials, meshMaterials2, meshMaterials3, meshWeights, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
@@ -327,6 +334,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             meshPositions,
             meshIndices,
             meshMaterials,
+            meshMaterials2,
+            meshMaterials3,
+            meshWeights,
             meshNormals,
             meshWetness: meshWetness || current.meshWetness, // Fallback if missing
             meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing
@@ -340,14 +350,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       }
     };
 
-    return () => {
-      worker.terminate();
-      // Cleanup particle timeout on unmount
-      if (particleTimeoutRef.current !== null) {
-        clearTimeout(particleTimeoutRef.current);
-        particleTimeoutRef.current = null;
-      }
-    };
+    return () => worker.terminate();
   }, []);
 
   useEffect(() => {
@@ -454,8 +457,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const dist = origin.distanceTo(impactPoint);
 
       const offset = action === 'DIG' ? 0.1 : -0.1;
-      // Fix: Clone hitPoint to avoid mutating the same Vector3 reference
-      const hitPoint = impactPoint.clone().addScaledVector(direction, offset);
+      const hitPoint = impactPoint.addScaledVector(direction, offset);
       const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
@@ -527,28 +529,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           }
         });
 
-        // Clear any pending particle deactivation timeout to prevent race conditions
-        if (particleTimeoutRef.current !== null) {
-          clearTimeout(particleTimeoutRef.current);
-          particleTimeoutRef.current = null;
-        }
-        
-        // Clone hitPoint to ensure a new Vector3 reference for React state updates
-        // Increment key to force Particles component to reset even if position is similar
-        particleKeyRef.current += 1;
-        setParticleState({ 
-          active: true, 
-          pos: hitPoint.clone(), 
-          color: getMaterialColor(primaryMat),
-          key: particleKeyRef.current
-        });
-        
-        // Set timeout to deactivate after particles have had time to spawn
-        // Note: Particles have lifetimes of 0.3-0.7s, so this just marks them as "not newly active"
-        particleTimeoutRef.current = window.setTimeout(() => {
-          setParticleState(prev => ({ ...prev, active: false }));
-          particleTimeoutRef.current = null;
-        }, 100);
+        setParticleState({ active: true, pos: hitPoint, color: getMaterialColor(primaryMat) });
+        setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
       }
     }
   }, [isInteracting, action, camera, world, rapier, buildMat]);
@@ -558,7 +540,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       {Object.values(chunks).map(chunk => (
         <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} />
       ))}
-      <Particles key={particleState.key} active={particleState.active} position={particleState.pos} color={particleState.color} />
+      <Particles active={particleState.active} position={particleState.pos} color={particleState.color} />
     </group>
   );
 };

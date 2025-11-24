@@ -79,10 +79,15 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - **Conventions**:
   - Add JSDoc to new functions.
   - Use `constants.ts` for magic numbers (Gravity, Speed, Chunk Size).
-- **Particle System**:
-  - **Critical Bug Fix**: Always initialize arrays of objects with individual instances (e.g., `Array.from({ length: n }, () => new Vector3())` instead of `Array(n).fill(new Vector3())`). Using `fill()` creates shared references causing all particles to share the same velocity/state.
-  - **Timeout Management**: Use refs to track `setTimeout` IDs and clear them before setting new ones to prevent race conditions when rapid interactions occur.
 
 ### 5. Environment
 - **Env Vars**: `vite.config.ts` maps `.env.local` vars (like `GEMINI_API_KEY`) to `process.env`.
 - **Dev Server**: `npm run dev` on port 3000.
+
+### 6. Visual Artifacts & Solutions
+- **Triangle Artifacts**: Terrain previously used `flat` shading, causing hard triangle edges.
+- **Solution (Phase 2 - Blend Weights)**:
+  - **Dual Material Data**: The mesher (`mesher.ts`) now calculates the two most frequent materials in a voxel cell (`materials` and `materials2`) and a blend weight.
+  - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight`.
+  - **Mixing**: The fragment shader samples material properties for both IDs and mixes them using the interpolated weight, creating smooth transitions between distinct material types (e.g., Stone to Grass).
+  - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.

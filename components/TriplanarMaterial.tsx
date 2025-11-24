@@ -4,20 +4,28 @@ import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '../utils/sharedResources';
 
-// 1. Revert to GLSL 1.0 / Three.js Standard Syntax (attribute/varying)
 const vertexShader = `
   attribute float aVoxelMat;
+  attribute float aVoxelMat2;
+  attribute float aVoxelMat3;
+  attribute vec3 aWeight;
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
-  flat varying float vMaterial;
+  varying float vMaterial1;
+  varying float vMaterial2;
+  varying float vMaterial3;
+  varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
   void main() {
-    vMaterial = aVoxelMat;
+    vMaterial1 = aVoxelMat;
+    vMaterial2 = aVoxelMat2;
+    vMaterial3 = aVoxelMat3;
+    vW = aWeight;
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     
@@ -47,7 +55,10 @@ const fragmentShader = `
   uniform float uFogFar;
   uniform float uOpacity;
 
-  flat varying float vMaterial;
+  varying float vMaterial1;
+  varying float vMaterial2;
+  varying float vMaterial3;
+  varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -78,71 +89,117 @@ const fragmentShader = `
       return xN * blend.x + yN * blend.y + zN * blend.z;
   }
 
+  struct MatInfo {
+      vec3 baseCol;
+      float roughness;
+      float noiseFactor;
+  };
+
+  MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
+      // Organic Thresholding (Scale 0.12 for larger, less shardy shapes)
+      float noise = texture(uNoiseTexture, vWorldPosition * 0.12).r;
+      float m = floor(rawM + (noise - 0.5) * 0.9 + 0.5);
+      m = clamp(m, 0.0, 15.0);
+
+      vec3 baseCol = uColorStone;
+      float roughness = 0.8;
+      float noiseFactor = 0.0;
+
+      if (m < 1.5) {
+          baseCol = uColorBedrock;
+          noiseFactor = nMid.r;
+      }
+      else if (m < 2.5) {
+          baseCol = uColorStone;
+          float cracks = nHigh.g;
+          noiseFactor = mix(nMid.r, cracks, 0.5);
+      }
+      else if (m < 3.5) {
+          baseCol = uColorDirt;
+          noiseFactor = nMid.g;
+      }
+      else if (m < 4.5) {
+          baseCol = uColorGrass;
+          float bladeNoise = nHigh.a;
+          float patchNoise = nMid.r;
+          noiseFactor = mix(bladeNoise, patchNoise, 0.3);
+          baseCol *= vec3(1.0, 1.1, 1.0);
+      }
+      else if (m < 5.5) {
+          baseCol = uColorSand;
+          noiseFactor = nHigh.a;
+      }
+      else if (m < 6.5) {
+          baseCol = uColorSnow;
+          noiseFactor = nMid.r * 0.5 + 0.5;
+      }
+      else if (m < 7.5) {
+          baseCol = uColorClay;
+          noiseFactor = nMid.g;
+      }
+      else if (m < 9.5) {
+          baseCol = uColorWater;
+          roughness = 0.1;
+      }
+      else {
+          baseCol = uColorMoss;
+          noiseFactor = nMid.r;
+      }
+      return MatInfo(baseCol, roughness, noiseFactor);
+  }
+
   void main() {
     // 1. Apply Safe Normalization immediately
     vec3 N = safeNormalize(vWorldNormal);
-    float m = floor(vMaterial + 0.5);
 
     // 2. Use the safe normal for sampling
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    vec3 baseCol = uColorStone;
-    float roughness = 0.8;
-    float noiseFactor = 0.0;
+    // 1. Sample Low-Frequency "Warp" Noise
+    float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
 
-    // --- Material Logic (Restored) ---
-    if (m < 1.5) {
-        baseCol = uColorBedrock;
-        noiseFactor = nMid.r;
-    } 
-    else if (m < 2.5) {
-        baseCol = uColorStone;
-        float cracks = nHigh.g;
-        noiseFactor = mix(nMid.r, cracks, 0.5);
-    } 
-    else if (m < 3.5) {
-        baseCol = uColorDirt;
-        noiseFactor = nMid.g;
-    } 
-    else if (m < 4.5) {
-        baseCol = uColorGrass;
-        float bladeNoise = nHigh.a;
-        float patchNoise = nMid.r;
-        noiseFactor = mix(bladeNoise, patchNoise, 0.3);
-        baseCol *= vec3(1.0, 1.1, 1.0);
-    } 
-    else if (m < 5.5) {
-        baseCol = uColorSand;
-        noiseFactor = nHigh.a;
-    } 
-    else if (m < 6.5) {
-        baseCol = uColorSnow;
-        noiseFactor = nMid.r * 0.5 + 0.5;
-    } 
-    else if (m < 7.5) {
-        baseCol = uColorClay;
-        noiseFactor = nMid.g;
-    } 
-    else if (m < 9.5) {
-        baseCol = uColorWater;
-        roughness = 0.1;
-    } 
-    else {
-        baseCol = uColorMoss;
-        noiseFactor = nMid.r;
+    // 2. Distort the Linear Weights
+    vec3 warpedW = vW + (warp - 0.5) * 0.3;
+
+    // 3. Soft-Max Blending
+    vec3 softW = pow(max(warpedW, 0.0), vec3(4.0));
+
+    // 4. Renormalize
+    softW /= (softW.x + softW.y + softW.z + 0.0001);
+
+    // 5. Conditional Sampling & Blending
+    MatInfo m1 = getMaterialInfo(vMaterial1, nMid, nHigh);
+
+    vec3 finalBaseCol = m1.baseCol * softW.x;
+    float finalRoughness = m1.roughness * softW.x;
+    float finalNoiseFactor = m1.noiseFactor * softW.x;
+
+    if (softW.y > 0.001) {
+        MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
+        finalBaseCol += m2.baseCol * softW.y;
+        finalRoughness += m2.roughness * softW.y;
+        finalNoiseFactor += m2.noiseFactor * softW.y;
     }
 
-    float intensity = 0.6 + 0.6 * noiseFactor;
-    vec3 col = baseCol * intensity;
+    if (softW.z > 0.001) {
+        MatInfo m3 = getMaterialInfo(vMaterial3, nMid, nHigh);
+        finalBaseCol += m3.baseCol * softW.z;
+        finalRoughness += m3.roughness * softW.z;
+        finalNoiseFactor += m3.noiseFactor * softW.z;
+    }
+
+    float intensity = 0.6 + 0.6 * finalNoiseFactor;
+    vec3 col = finalBaseCol * intensity;
 
     // --- Overlays ---
-    if (vMossiness > 0.1 || m >= 9.5) {
+    // Use dominant material (m1) for moss logic trigger
+    if (vMossiness > 0.1 || vMaterial1 >= 9.5) {
         vec3 mossColor = uColorMoss;
         float mossNoise = nHigh.g;
         mossColor *= (0.8 + 0.4 * mossNoise);
         float mossAmount = vMossiness;
-        if (m >= 9.5) mossAmount = max(mossAmount, 0.35);
+        if (vMaterial1 >= 9.5) mossAmount = max(mossAmount, 0.35);
         float mossMix = smoothstep(0.3, 0.6, mossAmount + mossNoise * 0.2);
         col = mix(col, mossColor, mossMix);
     }
@@ -158,11 +215,13 @@ const fragmentShader = `
 
     csm_DiffuseColor = vec4(col, uOpacity);
 
-    roughness -= (nHigh.r * 0.1);
-    roughness = mix(roughness, 0.2, vWetness);
-    if (m >= 8.0 && m < 9.5) roughness = 0.1;
+    // Adjust roughness
+    finalRoughness -= (nHigh.r * 0.1);
+    finalRoughness = mix(finalRoughness, 0.2, vWetness);
+    // Force roughness for water-like (if exists)
+    if (vMaterial1 >= 8.0 && vMaterial1 < 9.5) finalRoughness = 0.1;
     
-    csm_Roughness = roughness;
+    csm_Roughness = finalRoughness;
     csm_Metalness = 0.0;
   }
 `;
