@@ -108,7 +108,15 @@ const WaterMeshShader = shaderMaterial(
 
 extend({ WaterMeshShader });
 
-export const WaterMaterial: React.FC<{ sunDirection?: THREE.Vector3; fade?: number }> = ({ sunDirection, fade = 1 }) => {
+export interface WaterMaterialProps {
+  sunDirection?: THREE.Vector3;
+  fade?: number;
+}
+
+/**
+ * Water material component with fade support for chunk opacity transitions.
+ */
+export const WaterMaterial: React.FC<WaterMaterialProps> = ({ sunDirection, fade = 1 }) => {
   const ref = useRef<any>(null);
   const { camera, scene } = useThree();
 
