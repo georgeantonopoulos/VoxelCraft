@@ -12,9 +12,9 @@ const vertexShader = `
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
-  flat varying float vMaterial1;
-  flat varying float vMaterial2;
-  flat varying float vMaterial3;
+  varying float vMaterial1;
+  varying float vMaterial2;
+  varying float vMaterial3;
   varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
@@ -55,9 +55,9 @@ const fragmentShader = `
   uniform float uFogFar;
   uniform float uOpacity;
 
-  flat varying float vMaterial1;
-  flat varying float vMaterial2;
-  flat varying float vMaterial3;
+  varying float vMaterial1;
+  varying float vMaterial2;
+  varying float vMaterial3;
   varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
@@ -95,7 +95,12 @@ const fragmentShader = `
       float noiseFactor;
   };
 
-  MatInfo getMaterialInfo(float m, vec4 nMid, vec4 nHigh) {
+  MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
+      // Organic Thresholding (Scale 0.12 for larger, less shardy shapes)
+      float noise = texture(uNoiseTexture, vWorldPosition * 0.12).r;
+      float m = floor(rawM + (noise - 0.5) * 0.9 + 0.5);
+      m = clamp(m, 0.0, 15.0);
+
       vec3 baseCol = uColorStone;
       float roughness = 0.8;
       float noiseFactor = 0.0;
