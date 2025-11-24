@@ -58,6 +58,23 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
   - Raycast via Rapier (`world.castRay`) filters for `userData.type === 'terrain'`.
   - `TerrainService.modifyChunk` applies a radial density falloff to smooth/carve terrain.
 
+#### Lighting System
+- **Sun Follower**: `SunFollower` component manages both the directional light and visual sun mesh.
+  - **Orbit**: Sun orbits slowly (cycle every ~8-10 minutes) following the player's position.
+  - **Time-Based Colors**: Sun color transitions smoothly based on sun height:
+    - **Night** (sun below horizon): Blue (`#4a5a7a`), darker intensity (0.3)
+    - **Sunrise/Sunset** (sun near horizon): Orange/pink (`#ff8c5a`), moderate intensity
+    - **Day** (sun high): White/yellow (`#fffcf0`), full intensity
+  - **Smooth Transitions**: Uses `THREE.Color.lerpColors()` for smooth color interpolation between phases.
+  - **Dual Updates**: Both directional light color and sun mesh material color update together for visual consistency.
+- **Atmosphere Controller**: `AtmosphereController` component manages fog, background, and hemisphere light colors.
+  - **Dynamic Sky Colors**: Sky/fog colors transition smoothly based on sun position:
+    - **Night** (sun below horizon): Dark blue/purple (`#2a2a4a`)
+    - **Sunrise/Sunset** (sun near horizon): Warm orange/pink (`#ffb380`)
+    - **Day** (sun high): Light blue (`#87CEEB`)
+  - **Synchronized Updates**: Background color, fog color, and hemisphere light sky color all update together to maintain visual consistency.
+  - **Ground Colors**: Hemisphere light ground color also adjusts for time of day (darker at night, warmer during sunrise/sunset).
+
 #### Startup & UI
 - **Startup Flow**:
   - `StartupScreen` displays logo and waits for `VoxelTerrain` to load initial chunks (3x3 around spawn).
@@ -79,6 +96,9 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - **Conventions**:
   - Add JSDoc to new functions.
   - Use `constants.ts` for magic numbers (Gravity, Speed, Chunk Size).
+- **Particle System**:
+  - **Critical Bug Fix**: Always initialize arrays of objects with individual instances (e.g., `Array.from({ length: n }, () => new Vector3())` instead of `Array(n).fill(new Vector3())`). Using `fill()` creates shared references causing all particles to share the same velocity/state.
+  - **Timeout Management**: Use refs to track `setTimeout` IDs and clear them before setting new ones to prevent race conditions when rapid interactions occur.
 
 ### 5. Environment
 - **Env Vars**: `vite.config.ts` maps `.env.local` vars (like `GEMINI_API_KEY`) to `process.env`.

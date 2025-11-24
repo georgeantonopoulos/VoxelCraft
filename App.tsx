@@ -86,10 +86,89 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
   return null;
 };
 
+/**
+ * Calculates sun color based on sun height (Y position).
+ * Returns a color that transitions smoothly between:
+ * - Night (sun below horizon): blue and darker
+ * - Sunrise/sunset (sun near horizon): orange/pink
+ * - Day (sun high): white/yellow
+ */
+const getSunColor = (sunY: number, radius: number): THREE.Color => {
+  // Normalize sun height: -1 (fully below) to 1 (noon)
+  const normalizedHeight = sunY / radius;
+  
+  // Define color states
+  const nightColor = new THREE.Color(0x4a5a7a); // Blue, darker
+  const sunriseSunsetColor = new THREE.Color(0xff8c5a); // Orange/pink
+  const dayColor = new THREE.Color(0xfffcf0); // White/yellow
+  
+  // Determine which phase we're in
+  if (normalizedHeight < -0.1) {
+    // Night: sun is below horizon
+    return nightColor;
+  } else if (normalizedHeight < 0.2) {
+    // Sunrise/sunset: sun is near horizon
+    // Smooth transition from night to sunrise/sunset
+    const t = (normalizedHeight + 0.1) / 0.3; // 0 to 1 as sun rises
+    const color = new THREE.Color();
+    color.lerpColors(nightColor, sunriseSunsetColor, t);
+    return color;
+  } else if (normalizedHeight < 0.5) {
+    // Transition from sunrise/sunset to day
+    const t = (normalizedHeight - 0.2) / 0.3; // 0 to 1 as sun gets higher
+    const color = new THREE.Color();
+    color.lerpColors(sunriseSunsetColor, dayColor, t);
+    return color;
+  } else {
+    // Day: sun is high
+    return dayColor;
+  }
+};
+
+/**
+ * Calculates sky/fog color based on sun height (Y position).
+ * Returns a color that transitions smoothly between:
+ * - Night (sun below horizon): dark blue/purple
+ * - Sunrise/sunset (sun near horizon): warm orange/pink
+ * - Day (sun high): light blue
+ */
+const getSkyColor = (sunY: number, radius: number): THREE.Color => {
+  // Normalize sun height: -1 (fully below) to 1 (noon)
+  const normalizedHeight = sunY / radius;
+  
+  // Define sky color states (softer and more atmospheric than sun colors)
+  const nightSkyColor = new THREE.Color(0x2a2a4a); // Dark blue/purple
+  const sunriseSunsetSkyColor = new THREE.Color(0xffb380); // Warm orange/pink (lighter than sun)
+  const daySkyColor = new THREE.Color(0x87CEEB); // Light blue (sky blue)
+  
+  // Determine which phase we're in
+  if (normalizedHeight < -0.1) {
+    // Night: sun is below horizon
+    return nightSkyColor;
+  } else if (normalizedHeight < 0.2) {
+    // Sunrise/sunset: sun is near horizon
+    // Smooth transition from night to sunrise/sunset
+    const t = (normalizedHeight + 0.1) / 0.3; // 0 to 1 as sun rises
+    const color = new THREE.Color();
+    color.lerpColors(nightSkyColor, sunriseSunsetSkyColor, t);
+    return color;
+  } else if (normalizedHeight < 0.5) {
+    // Transition from sunrise/sunset to day
+    const t = (normalizedHeight - 0.2) / 0.3; // 0 to 1 as sun gets higher
+    const color = new THREE.Color();
+    color.lerpColors(sunriseSunsetSkyColor, daySkyColor, t);
+    return color;
+  } else {
+    // Day: sun is high
+    return daySkyColor;
+  }
+};
+
 const SunFollower: React.FC = () => {
   const { camera } = useThree();
   const lightRef = useRef<THREE.DirectionalLight>(null);
   const sunMeshRef = useRef<THREE.Mesh>(null);
+  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const target = useMemo(() => new THREE.Object3D(), []);
 
   useFrame(({ clock }) => {
@@ -123,10 +202,26 @@ const SunFollower: React.FC = () => {
         lightRef.current.updateMatrixWorld();
         target.updateMatrixWorld();
         
-        // Fade out when below horizon
-        lightRef.current.intensity = Math.max(0, (sy / radius) * 3.5 + 0.5); 
+        // Calculate sun color based on height
+        const sunColor = getSunColor(sy, radius);
+        
+        // Update light color
+        lightRef.current.color.copy(sunColor);
+        
+        // Adjust intensity: fade out when below horizon, slightly dimmer at night
+        const normalizedHeight = sy / radius;
+        if (normalizedHeight < -0.1) {
+          // Night: darker
+          lightRef.current.intensity = 0.3;
+        } else if (normalizedHeight < 0.2) {
+          // Sunrise/sunset: moderate intensity
+          lightRef.current.intensity = Math.max(0.4, (normalizedHeight + 0.1) / 0.3 * 0.8 + 0.4);
+        } else {
+          // Day: full intensity
+          lightRef.current.intensity = Math.max(0.5, (normalizedHeight / radius) * 3.5 + 0.5);
+        }
 
-        // Update Visual Sun
+        // Update Visual Sun color
         if (sunMeshRef.current) {
            // Place sun mesh far away but in same direction
            // Use a fixed distance so it doesn't clip into terrain
@@ -137,6 +232,22 @@ const SunFollower: React.FC = () => {
               lz + sz
            );
            sunMeshRef.current.lookAt(camera.position);
+           
+           // Update sun mesh color (slightly brighter than light for visibility)
+           const sunMeshColor = sunColor.clone();
+           if (normalizedHeight < -0.1) {
+             // Night: make sun mesh slightly visible but dim
+             sunMeshColor.multiplyScalar(0.5);
+           } else {
+             // Day/sunrise: bright sun
+             sunMeshColor.multiplyScalar(1.2);
+           }
+           
+           // Access material via ref or mesh
+           const material = sunMaterialRef.current || (sunMeshRef.current.material as THREE.MeshBasicMaterial);
+           if (material) {
+             material.color.copy(sunMeshColor);
+           }
         }
     }
   });
@@ -162,9 +273,75 @@ const SunFollower: React.FC = () => {
       {/* Physical Sun Mesh with Glow - Disable fog so it's always visible */}
       <mesh ref={sunMeshRef}>
          <sphereGeometry args={[15, 32, 32]} />
-         <meshBasicMaterial color="#fffee0" toneMapped={false} fog={false} />
+         <meshBasicMaterial 
+           ref={sunMaterialRef}
+           color="#fffee0" 
+           toneMapped={false} 
+           fog={false} 
+         />
       </mesh>
     </>
+  );
+};
+
+/**
+ * Controls fog, background, and hemisphere light colors based on sun position.
+ * Updates both the scene fog and canvas background to match the time of day.
+ */
+const AtmosphereController: React.FC = () => {
+  const { scene } = useThree();
+  const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    
+    // Use the same orbit calculation as SunFollower
+    const speed = 0.025;
+    const angle = t * speed;
+    const radius = 300;
+    const sy = Math.cos(angle) * radius;
+    
+    // Calculate sky color based on sun position
+    const skyColor = getSkyColor(sy, radius);
+    
+    // Update background color
+    if (!scene.background) {
+      scene.background = new THREE.Color();
+    }
+    if (scene.background instanceof THREE.Color) {
+      scene.background.copy(skyColor);
+    }
+    
+    // Update fog color
+    const fog = scene.fog as THREE.Fog | undefined;
+    if (fog) {
+      fog.color.copy(skyColor);
+    }
+    
+    // Update hemisphere light colors to match atmosphere
+    if (hemisphereLightRef.current) {
+      const normalizedHeight = sy / radius;
+      if (normalizedHeight < -0.1) {
+        // Night: darker sky, darker ground
+        hemisphereLightRef.current.color.copy(skyColor);
+        hemisphereLightRef.current.groundColor.set(0x1a1a2a);
+      } else if (normalizedHeight < 0.2) {
+        // Sunrise/sunset: warm sky, darker ground
+        hemisphereLightRef.current.color.copy(skyColor);
+        hemisphereLightRef.current.groundColor.set(0x3a2a2a);
+      } else {
+        // Day: bright sky, darker ground for contrast
+        hemisphereLightRef.current.color.copy(skyColor);
+        hemisphereLightRef.current.groundColor.set(0x2a2a4a);
+      }
+    }
+  });
+
+  return (
+    <hemisphereLight 
+      ref={hemisphereLightRef}
+      args={['#87CEEB', '#2a2a4a', 0.5]} 
+    />
   );
 };
 
@@ -239,17 +416,17 @@ const App: React.FC = () => {
 
           {/* --- 1. ATMOSPHERE & LIGHTING (Aetherial & Immersive) --- */}
           
-          {/* Sky Color: Slightly more dreamlike blue */}
+          {/* Sky Color: Initial value, will be updated by AtmosphereController */}
           <color attach="background" args={['#87CEEB']} />
           
-          {/* Fog: Start closer for depth, fade to sky color */}
+          {/* Fog: Start closer for depth, fade to sky color - color updated by AtmosphereController */}
           <fog attach="fog" args={['#87CEEB', 30, 300]} />
           
           {/* Ambient: Softer base to let point lights shine */}
           <ambientLight intensity={0.3} color="#ccccff" />
 
-          {/* Hemisphere: Purple/Blue tint for shadows to give magical feel */}
-          <hemisphereLight args={['#87CEEB', '#2a2a4a', 0.5]} />
+          {/* Atmosphere Controller: Updates fog, background, and hemisphere light colors */}
+          <AtmosphereController />
 
           {/* Sun: Strong directional light */}
           <SunFollower />
