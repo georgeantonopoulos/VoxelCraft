@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { UI } from './components/UI';
+import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 
@@ -167,7 +168,32 @@ const SunFollower: React.FC = () => {
   );
 };
 
+const CinematicCamera: React.FC<{ spawnPos: [number, number, number] | null }> = ({ spawnPos }) => {
+  const { camera } = useThree();
+  const angle = useRef(0);
+
+  useFrame((state, delta) => {
+     angle.current += delta * 0.05; // Slow rotation
+     const radius = 60;
+     const centerX = 16;
+     const centerZ = 16;
+     
+     const targetY = spawnPos ? spawnPos[1] : 20;
+     const camY = targetY + 40; // Fly above
+
+     const x = centerX + Math.sin(angle.current) * radius;
+     const z = centerZ + Math.cos(angle.current) * radius;
+     
+     camera.position.lerp(new THREE.Vector3(x, camY, z), 0.1);
+     camera.lookAt(centerX, targetY, centerZ);
+  });
+
+  return null;
+};
+
 const App: React.FC = () => {
+  const [gameStarted, setGameStarted] = useState(false);
+  const [terrainLoaded, setTerrainLoaded] = useState(false);
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
@@ -191,6 +217,12 @@ const App: React.FC = () => {
 
   return (
     <div className="w-full h-full relative bg-sky-300">
+      {!gameStarted && (
+        <StartupScreen 
+           loaded={terrainLoaded} 
+           onEnter={() => setGameStarted(true)} 
+        />
+      )}
       <KeyboardControls map={keyboardMap}>
         <Canvas 
           shadows 
@@ -225,11 +257,14 @@ const App: React.FC = () => {
           {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
-              {spawnPos && <Player position={spawnPos} />}
+              {gameStarted && spawnPos && <Player position={spawnPos} />}
+              {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
+              
               <VoxelTerrain 
                 action={action}
                 isInteracting={isInteracting}
                 sunDirection={sunDirection}
+                onInitialLoad={() => setTerrainLoaded(true)}
               />
               <BedrockPlane />
             </Physics>
@@ -262,11 +297,15 @@ const App: React.FC = () => {
             <primitive object={null} />
           )}
 
-          <PointerLockControls onUnlock={handleUnlock} />
+          {gameStarted && <PointerLockControls onUnlock={handleUnlock} />}
         </Canvas>
 
-        <InteractionLayer setInteracting={setIsInteracting} setAction={setAction} />
-        <UI />
+        {gameStarted && (
+          <>
+            <InteractionLayer setInteracting={setIsInteracting} setAction={setAction} />
+            <UI />
+          </>
+        )}
       </KeyboardControls>
     </div>
   );

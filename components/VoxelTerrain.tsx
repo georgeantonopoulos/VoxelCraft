@@ -37,6 +37,7 @@ interface VoxelTerrainProps {
   action: 'DIG' | 'BUILD' | null;
   isInteracting: boolean;
   sunDirection?: THREE.Vector3;
+  onInitialLoad?: () => void;
 }
 
 const getMaterialColor = (matId: number) => {
@@ -232,12 +233,13 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
   );
 };
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection }) => {
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
 
   const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
   const remeshQueue = useRef<Set<string>>(new Set());
+  const initialLoadTriggered = useRef(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -326,6 +328,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     return () => worker.terminate();
   }, []);
+
+  useEffect(() => {
+    if (initialLoadTriggered.current || !onInitialLoad) return;
+
+    // Check if central chunks are ready (3x3 grid around 0,0)
+    // 3x3 is enough to cover the immediate view so player doesn't see void
+    const essentialKeys = [
+        '0,0', '0,1', '0,-1', '1,0', '-1,0', 
+        '1,1', '1,-1', '-1,1', '-1,-1'
+    ];
+    
+    const allLoaded = essentialKeys.every(key => chunks[key]);
+    
+    if (allLoaded) {
+        initialLoadTriggered.current = true;
+        onInitialLoad();
+    }
+  }, [chunks, onInitialLoad]);
 
   useFrame(() => {
     if (!camera || !workerRef.current) return;

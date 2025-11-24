@@ -14,7 +14,7 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 2. Core Architecture
 
 #### File Structure
-- `components/`: React components (Terrain, Player, UI).
+- `components/`: React components (Terrain, Player, UI, StartupScreen).
 - `services/`: Singletons for logic (Terrain generation, Simulation, Metadata).
 - `workers/`: Web Workers for heavy computation (Terrain generation, Simulation loop).
 - `utils/`: Math helpers, Noise functions, Meshing algorithms.
@@ -57,6 +57,15 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - **Dig/Build**:
   - Raycast via Rapier (`world.castRay`) filters for `userData.type === 'terrain'`.
   - `TerrainService.modifyChunk` applies a radial density falloff to smooth/carve terrain.
+
+#### Startup & UI
+- **Startup Flow**:
+  - `StartupScreen` displays logo and waits for `VoxelTerrain` to load initial chunks (3x3 around spawn).
+  - `CinematicCamera` orbits the spawn point while loading.
+  - "Enter" button activates `Player` and `PointerLockControls`.
+- **UI**:
+  - `UI` component handles HUD (Crosshair, controls).
+  - `StartupScreen` handles entry.
 
 ### 4. Developer Guidelines
 - **Do Not Break**:
