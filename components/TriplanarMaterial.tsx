@@ -10,7 +10,7 @@ const vertexShader = `
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
-  flat varying float vMaterial;
+  varying float vMaterial;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -47,7 +47,7 @@ const fragmentShader = `
   uniform float uFogFar;
   uniform float uOpacity;
 
-  flat varying float vMaterial;
+  varying float vMaterial;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -81,7 +81,20 @@ const fragmentShader = `
   void main() {
     // 1. Apply Safe Normalization immediately
     vec3 N = safeNormalize(vWorldNormal);
-    float m = floor(vMaterial + 0.5);
+
+    // --- Phase 1: Noise Thresholding ---
+    // 1. Get interpolation noise (fixed in world space)
+    float noise = texture(uNoiseTexture, vWorldPosition * 0.2).r;
+
+    // 2. Distort the material value
+    // (noise - 0.5) * 0.8 makes the transition border "wiggly"
+    float noisyMat = vMaterial + (noise - 0.5) * 0.8;
+
+    // 3. Snap to nearest integer (Hard Cut, but Organic Shape)
+    float m = floor(noisyMat + 0.5);
+
+    // 4. Clamp to prevent out-of-bounds errors
+    m = clamp(m, 0.0, 10.0);
 
     // 2. Use the safe normal for sampling
     vec4 nMid = getTriplanarNoise(N, 0.15);

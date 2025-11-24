@@ -83,3 +83,10 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 5. Environment
 - **Env Vars**: `vite.config.ts` maps `.env.local` vars (like `GEMINI_API_KEY`) to `process.env`.
 - **Dev Server**: `npm run dev` on port 3000.
+
+### 6. Visual Artifacts & Solutions
+- **Triangle Artifacts**: Terrain previously used `flat` shading, causing hard triangle edges.
+- **Solution**:
+  - **Interpolation**: Removed `flat` keyword from `vMaterial` in `TriplanarMaterial.tsx` to enable smooth gradient transitions between materials.
+  - **Noise Thresholding**: Applied world-space noise distortion in the fragment shader to create organic, jagged transition lines instead of straight linear blends.
+  - **Safe Normalization**: `safeNormalize` is used in the fragment shader to prevent NaNs from degenerate normals (zero-length), avoiding black flash artifacts.
