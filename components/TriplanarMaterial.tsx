@@ -155,9 +155,25 @@ const fragmentShader = `
 
     if (vBlend > 0.01) {
         MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
-        finalBaseCol = mix(m1.baseCol, m2.baseCol, vBlend);
-        finalRoughness = mix(m1.roughness, m2.roughness, vBlend);
-        finalNoiseFactor = mix(m1.noiseFactor, m2.noiseFactor, vBlend);
+
+        // --- GOLDEN COMMIT LOGIC RESTORED ---
+        // Sample noise for the edge transition (using world position)
+        // High-frequency noise makes the edge jagged
+        float edgeNoise = texture(uNoiseTexture, vWorldPosition * 0.2).r;
+
+        // 1. Center blend around 0
+        float centeredBlend = vBlend - 0.5;
+
+        // 2. Add noise distortion (0.8 is the "Jaggedness" factor)
+        float distortion = (edgeNoise - 0.5) * 0.8;
+
+        // 3. Smoothstep for a sharp but organic cut
+        // This effectively "pushes" the blend to 0 or 1 based on the noise
+        float organicBlend = smoothstep(-0.05, 0.05, centeredBlend + distortion);
+
+        finalBaseCol = mix(m1.baseCol, m2.baseCol, organicBlend);
+        finalRoughness = mix(m1.roughness, m2.roughness, organicBlend);
+        finalNoiseFactor = mix(m1.noiseFactor, m2.noiseFactor, organicBlend);
     }
 
     float intensity = 0.6 + 0.6 * finalNoiseFactor;
