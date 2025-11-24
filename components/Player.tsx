@@ -1,19 +1,32 @@
 import * as THREE from 'three';
-import { useRef } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls } from '@react-three/drei';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '../constants';
 
+const FLY_SPEED = 8; // Vertical speed when flying
+const DOUBLE_TAP_TIME = 300; // Milliseconds between taps to count as double-tap
+
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
   const [, getKeys] = useKeyboardControls();
   const { rapier, world } = useRapier();
+  const [isFlying, setIsFlying] = useState(false);
+  const lastSpacePress = useRef<number>(0);
+  const wasJumpPressed = useRef<boolean>(false);
+  const spacePressHandled = useRef<boolean>(false);
+
+  // Update gravity scale when flying mode changes
+  useEffect(() => {
+    if (!body.current) return;
+    body.current.setGravityScale(isFlying ? 0 : 1, true);
+  }, [isFlying]);
 
   useFrame((state) => {
     if (!body.current) return;
 
-    const { forward, backward, left, right, jump } = getKeys();
+    const { forward, backward, left, right, jump, shift } = getKeys();
     
     const velocity = body.current.linvel();
     const camera = state.camera;
@@ -26,20 +39,56 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(PLAYER_SPEED);
     direction.applyEuler(camera.rotation);
     
-    body.current.setLinvel({ x: direction.x, y: velocity.y, z: direction.z }, true);
+    let yVelocity = velocity.y;
 
-    // Jump (Very basic check)
-    if (jump) {
-      // Simple raycast down to check if grounded
-      const ray = new rapier.Ray(body.current.translation(), { x: 0, y: -1, z: 0 });
-      // Use world directly (it is the Rapier World instance)
-      const hit = world.castRay(ray, 1.5, true);
+    // Detect double-tap Space to toggle flying mode
+    const isDoubleTap = jump && !wasJumpPressed.current;
+    if (isDoubleTap) {
+      const now = Date.now();
+      const timeSinceLastPress = now - lastSpacePress.current;
       
-      // Check Time of Impact (toi / timeOfImpact)
-      if (hit && hit.timeOfImpact < 1.2) {
-         body.current.setLinvel({ x: velocity.x, y: JUMP_FORCE, z: velocity.z }, true);
+      if (timeSinceLastPress < DOUBLE_TAP_TIME && timeSinceLastPress > 0) {
+        // Double-tap detected - toggle flying mode
+        setIsFlying(prev => !prev);
+        lastSpacePress.current = 0; // Reset to prevent triple-tap issues
+        spacePressHandled.current = true; // Mark as handled to prevent jump/fly on this tap
+      } else {
+        lastSpacePress.current = now;
       }
     }
+
+    if (isFlying) {
+      // Flying mode: Space to go up, Shift to go down, hover otherwise
+      if (jump && !spacePressHandled.current) {
+        yVelocity = FLY_SPEED; // Fly up
+      } else if (shift) {
+        yVelocity = -FLY_SPEED; // Fly down
+      } else {
+        yVelocity = 0; // Hover (maintain current Y)
+      }
+    } else {
+      // Normal mode: Jump when grounded (only if not handling double-tap)
+      if (jump && !wasJumpPressed.current && !spacePressHandled.current) {
+        // Simple raycast down to check if grounded
+        const ray = new rapier.Ray(body.current.translation(), { x: 0, y: -1, z: 0 });
+        const hit = world.castRay(ray, 1.5, true);
+        
+        // Check Time of Impact (toi / timeOfImpact)
+        if (hit && hit.timeOfImpact < 1.2) {
+          yVelocity = JUMP_FORCE;
+        }
+      }
+    }
+
+    // Reset spacePressHandled when jump is released
+    if (!jump && wasJumpPressed.current) {
+      spacePressHandled.current = false;
+    }
+
+    // Track jump key state for single-press detection
+    wasJumpPressed.current = jump;
+    
+    body.current.setLinvel({ x: direction.x, y: yVelocity, z: direction.z }, true);
 
     // Sync camera to body
     const translation = body.current.translation();

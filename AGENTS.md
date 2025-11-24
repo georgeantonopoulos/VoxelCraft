@@ -48,6 +48,12 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 #### Interaction & Physics
 - **Physics**: Chunks are `fixed` rigid bodies with `trimesh` colliders. Player is a `dynamic` capsule.
 - **Controls**: `PointerLockControls` for view. `KeyboardControls` for input.
+- **Player Movement**:
+  - **Normal Mode**: Space jumps when grounded (raycast check).
+  - **Flying Mode**: Double-tap Space to toggle flying mode.
+    - In flying mode: Gravity disabled (`gravityScale = 0`), Space to fly up, Shift to fly down, hover when neither pressed.
+    - Double-tap Space again to exit flying mode.
+    - Double-tap detection uses 300ms window to prevent accidental activation.
 - **Dig/Build**:
   - Raycast via Rapier (`world.castRay`) filters for `userData.type === 'terrain'`.
   - `TerrainService.modifyChunk` applies a radial density falloff to smooth/carve terrain.
@@ -68,9 +74,3 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 5. Environment
 - **Env Vars**: `vite.config.ts` maps `.env.local` vars (like `GEMINI_API_KEY`) to `process.env`.
 - **Dev Server**: `npm run dev` on port 3000.
-
-### Agent Findings
-- Added shader-driven distance fog for terrain and water using scene fog settings (sky color `#87CEEB`, near 30, far 300); falls back to a safe default if fog is missing.
-- Restored chunk fade-in by driving opacity through `TriplanarMaterial` and water shaders so new chunks ramp from transparent to opaque instead of popping.
-- No GLSL version forcing added; custom materials keep existing versions.
-- Fixed shader compilation by relying on built-in `cameraPosition` and renaming fog factor to avoid collisions with MeshStandardMaterial fog chunk.
