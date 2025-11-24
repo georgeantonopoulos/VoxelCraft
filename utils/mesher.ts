@@ -217,6 +217,15 @@ export function generateMesh(
                  bestMat = mat || bestMat;
               }
 
+              // Canonical Sorting: Ensure smaller ID is always first to prevent interpolation flip-flops
+              // If bestMat (Slot 1) > secMat (Slot 2), swap them and invert the weight.
+              if (bestMat > secMat) {
+                  const tmp = bestMat;
+                  bestMat = secMat;
+                  secMat = tmp;
+                  blendWeight = 1.0 - blendWeight;
+              }
+
               tMats.push(bestMat);
               tMats2.push(secMat);
               tWeights.push(blendWeight);

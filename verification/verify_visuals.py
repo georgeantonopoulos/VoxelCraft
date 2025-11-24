@@ -5,23 +5,27 @@ import os
 def verify_visuals():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+        # Use a reasonable viewport
         page = browser.new_page(viewport={'width': 1280, 'height': 720})
 
         print("Navigating to http://localhost:3000/")
-        # Ensure we don't have existing query params messing things up, but user said verify, so standard URL.
         page.goto("http://localhost:3000/")
 
         try:
-            # Wait for the "Enter The Grove" button to appear (indicates loaded=true)
-            # The StartupScreen shows "Growing World..." until loaded.
             print("Waiting for terrain to load (Enter button)...")
-            # Increase timeout to 120s just to be safe (user mentioned 1 minute)
+            # Wait up to 2 minutes for initial generation
             page.wait_for_selector("text=Enter The Grove", timeout=120000)
 
             print("Terrain loaded. Entering world...")
-            page.click("text=Enter The Grove")
+            # Click and do NOT wait for navigation (since it's a client-side state change)
+            # force=True bypasses actionability checks (like animation stability)
+            page.click("text=Enter The Grove", force=True)
 
-            # Wait for transition
+            print("Waiting for UI (Game Start)...")
+            # Wait for the UI HUD to appear
+            page.wait_for_selector("text=Organic Voxel Engine", timeout=30000)
+
+            print("Game started. Waiting for settle...")
             time.sleep(5)
 
             # Take screenshot
