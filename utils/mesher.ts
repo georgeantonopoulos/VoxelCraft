@@ -36,11 +36,14 @@ export function generateMesh(
   const tVerts: number[] = [];
   const tInds: number[] = [];
   const tMats: number[] = [];
+  const tMats2: number[] = [];
+  const tWeights: number[] = [];
   const tNorms: number[] = [];
   const tWets: number[] = [];
   const tMoss: number[] = [];
   
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
+  const matCounts = new Uint8Array(16);
 
   const snapEpsilon = 0.02;
   const snapBoundary = (v: number, limit: number) => {
@@ -147,11 +150,16 @@ export function generateMesh(
               if (len > 0.00001) tNorms.push(nx / len, ny / len, nz / len);
               else tNorms.push(0, 1, 0);
 
-              // Material Selection
+              // Material Selection (Histogram Analysis)
               let bestMat = MaterialType.DIRT;
+              let secMat = MaterialType.AIR;
+              let blendWeight = 0.0;
+
               let bestWet = 0;
               let bestMoss = 0;
-              let bestVal = -Infinity;
+              let bestVal = -Infinity; // Used for wetness/mossiness selection
+
+              matCounts.fill(0);
 
               const candidates: Array<[number, number, number, number]> = [
                 [v000, x, y, z], [v100, x+1, y, z], [v010, x, y+1, z], [v110, x+1, y+1, z],
@@ -161,21 +169,57 @@ export function generateMesh(
               for (const [val, cx, cy, cz] of candidates) {
                  const mat = getMat(material, cx, cy, cz);
                  if (val > ISO_LEVEL && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
-                     if (val > bestVal) {
+                     matCounts[mat]++;
+                 }
+              }
+
+              // Identify Top 2 Materials
+              let maxCount = 0;
+              let secCount = 0;
+              let matA = 0;
+              let matB = 0;
+
+              for (let m = 1; m < 16; m++) {
+                  const c = matCounts[m];
+                  if (c > maxCount) {
+                      // Demote current max to second
+                      secCount = maxCount;
+                      matB = matA;
+
+                      maxCount = c;
+                      matA = m;
+                  } else if (c > secCount) {
+                      secCount = c;
+                      matB = m;
+                  }
+              }
+
+              if (matA !== 0) {
+                  bestMat = matA;
+                  if (matB !== 0) {
+                      secMat = matB;
+                      const total = maxCount + secCount;
+                      if (total > 0) blendWeight = secCount / total;
+                  }
+
+                  // Find wetness/mossiness for the dominant material
+                  for (const [val, cx, cy, cz] of candidates) {
+                     const mat = getMat(material, cx, cy, cz);
+                     if (mat === bestMat && val > bestVal) {
                          bestVal = val;
-                         bestMat = mat;
                          bestWet = getByte(wetData, cx, cy, cz);
                          bestMoss = getByte(mossData, cx, cy, cz);
                      }
-                 }
-              }
-              
-              if (bestVal === -Infinity) {
+                  }
+              } else {
+                 // Fallback if no valid materials found (rare)
                  const mat = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ));
                  bestMat = mat || bestMat;
               }
 
               tMats.push(bestMat);
+              tMats2.push(secMat);
+              tWeights.push(blendWeight);
               tWets.push(bestWet / 255.0);
               tMoss.push(bestMoss / 255.0);
               tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
@@ -259,6 +303,8 @@ export function generateMesh(
     indices: new Uint32Array(tInds),
     normals: new Float32Array(tNorms),
     materials: new Float32Array(tMats),
+    materials2: new Float32Array(tMats2),
+    blendWeights: new Float32Array(tWeights),
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     // Return empty arrays for water to satisfy types without generating bad mesh

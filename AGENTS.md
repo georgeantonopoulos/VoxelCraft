@@ -86,7 +86,8 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 
 ### 6. Visual Artifacts & Solutions
 - **Triangle Artifacts**: Terrain previously used `flat` shading, causing hard triangle edges.
-- **Solution**:
-  - **Interpolation**: Removed `flat` keyword from `vMaterial` in `TriplanarMaterial.tsx` to enable smooth gradient transitions between materials.
-  - **Noise Thresholding**: Applied world-space noise distortion in the fragment shader to create organic, jagged transition lines instead of straight linear blends.
-  - **Safe Normalization**: `safeNormalize` is used in the fragment shader to prevent NaNs from degenerate normals (zero-length), avoiding black flash artifacts.
+- **Solution (Phase 2 - Blend Weights)**:
+  - **Dual Material Data**: The mesher (`mesher.ts`) now calculates the two most frequent materials in a voxel cell (`materials` and `materials2`) and a blend weight.
+  - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight`.
+  - **Mixing**: The fragment shader samples material properties for both IDs and mixes them using the interpolated weight, creating smooth transitions between distinct material types (e.g., Stone to Grass).
+  - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.

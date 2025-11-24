@@ -24,6 +24,8 @@ interface ChunkState {
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
   meshMaterials: Float32Array;
+  meshMaterials2: Float32Array;
+  meshBlendWeights: Float32Array;
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
@@ -89,6 +91,18 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
     }
 
+    if (chunk.meshMaterials2 && chunk.meshMaterials2.length === vertexCount) {
+        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(chunk.meshMaterials2, 1));
+    } else {
+        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
+    if (chunk.meshBlendWeights && chunk.meshBlendWeights.length === vertexCount) {
+        geom.setAttribute('aBlend', new THREE.BufferAttribute(chunk.meshBlendWeights, 1));
+    } else {
+        geom.setAttribute('aBlend', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
     // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
     
     if (chunk.meshWetness && chunk.meshWetness.length === vertexCount) {
@@ -114,7 +128,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     geom.computeBoundingSphere();
 
     return geom;
-  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
+  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshMaterials2, chunk.meshBlendWeights, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -303,7 +317,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const { key, meshPositions, meshIndices, meshMaterials, meshMaterials2, meshBlendWeights, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
@@ -313,6 +327,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             meshPositions,
             meshIndices,
             meshMaterials,
+            meshMaterials2,
+            meshBlendWeights,
             meshNormals,
             meshWetness: meshWetness || current.meshWetness, // Fallback if missing
             meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing

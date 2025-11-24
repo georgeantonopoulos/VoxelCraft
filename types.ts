@@ -50,6 +50,8 @@ export interface MeshData {
   indices: Uint32Array;
   normals: Float32Array;
   materials: Float32Array; // Attribute to pass to shader
+  materials2: Float32Array; // Secondary Material ID (Sub-dominant)
+  blendWeights: Float32Array; // 0.0 to 1.0 factor (Amount of Secondary)
   wetness: Float32Array;   // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
 
