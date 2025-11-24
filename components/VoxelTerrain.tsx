@@ -18,7 +18,8 @@ interface ChunkState {
   cz: number;
   density: Float32Array;
   material: Uint8Array;
-  version: number;
+  terrainVersion: number; // Triggers Physics Rebuild
+  visualVersion: number;  // Triggers Visual Update Only
 
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
@@ -112,7 +113,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     geom.computeBoundingSphere();
 
     return geom;
-  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.version]);
+  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -126,11 +127,12 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     }
     geom.setIndex(new THREE.BufferAttribute(chunk.meshWaterIndices, 1));
     return geom;
-  }, [chunk.meshWaterPositions, chunk.meshWaterIndices, chunk.meshWaterNormals, chunk.version]);
+  }, [chunk.meshWaterPositions, chunk.meshWaterIndices, chunk.meshWaterNormals, chunk.visualVersion]);
 
   if (!terrainGeometry && !waterGeometry) return null;
 
-  const colliderKey = `${chunk.key}-${chunk.version}`;
+  // CRITICAL: Only change key if terrain geometry changes (Physics firewall)
+  const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
@@ -291,16 +293,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             console.warn('[VoxelTerrain] Received chunk without metadata', key);
         }
 
-        const newChunk = { ...payload, version: 0 };
+        const newChunk = {
+            ...payload,
+            terrainVersion: 0,
+            visualVersion: 0
+        };
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, version, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const { key, meshPositions, meshIndices, meshMaterials, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
             ...current,
-            version,
+            terrainVersion: current.terrainVersion + 1, // Assume geometry change for remesh
+            visualVersion: current.visualVersion + 1,
             meshPositions,
             meshIndices,
             meshMaterials,
@@ -382,7 +389,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               material: chunk.material,
               wetness: metadata['wetness'],
               mossiness: metadata['mossiness'],
-              version: chunk.version + 1
+              version: chunk.terrainVersion // Pass current version (will be echoed but we ignore it)
             }
           });
         }
@@ -472,7 +479,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 material: chunk.material,
                 wetness: metadata.wetness,
                 mossiness: metadata.mossiness,
-                version: chunk.version + 1
+                version: chunk.terrainVersion // Pass version (ignored on return)
               }
             });
           }

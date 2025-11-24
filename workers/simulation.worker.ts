@@ -243,6 +243,9 @@ self.onmessage = (e: MessageEvent) => {
         playerCz = cz;
     }
     else if (type === 'START_LOOP') {
+        console.log('[Simulation] Loop paused for performance optimization.');
+        // Loop disabled to prevent unnecessary remeshing
+        /*
         setInterval(() => {
             // @ts-ignore
             const start = performance.now();
@@ -270,5 +273,6 @@ self.onmessage = (e: MessageEvent) => {
             // if (dur > 20) console.log('Sim took', dur);
 
         }, 1000); // 1000ms = 1fps (Slowed down from 10fps to fix flashing)
+        */
     }
 };
