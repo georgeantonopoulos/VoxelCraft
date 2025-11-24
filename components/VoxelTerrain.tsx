@@ -189,7 +189,8 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const count = 20;
   const lifetimes = useRef<number[]>(new Array(count).fill(0));
-  const velocities = useRef<THREE.Vector3[]>(new Array(count).fill(new THREE.Vector3()));
+  // Fix: Initialize each element with a NEW Vector3 instance to avoid shared references
+  const velocities = useRef<THREE.Vector3[]>(Array.from({ length: count }, () => new THREE.Vector3()));
   const meshMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   useEffect(() => {
@@ -207,7 +208,8 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
         dummy.updateMatrix();
         mesh.current.setMatrixAt(i, dummy.matrix);
         lifetimes.current[i] = 0.3 + Math.random() * 0.4;
-        velocities.current[i] = new THREE.Vector3(
+        // Fix: Set velocity values directly instead of creating new Vector3 (reusing existing instances)
+        velocities.current[i].set(
           (Math.random() - 0.5) * 8,
           Math.random() * 8 + 4,
           (Math.random() - 0.5) * 8
@@ -215,28 +217,37 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
       }
       mesh.current.instanceMatrix.needsUpdate = true;
     }
-  }, [active, position, color, dummy]);
+  }, [active, position.x, position.y, position.z, color, dummy]);
 
   useFrame((_, delta) => {
-    if (!mesh.current || !mesh.current.visible) return;
-    let activeCount = 0;
-    for (let i = 0; i < count; i++) {
-      if (lifetimes.current[i] > 0) {
-        lifetimes.current[i] -= delta;
-        mesh.current.getMatrixAt(i, dummy.matrix);
-        dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
-        velocities.current[i].y -= 25.0 * delta;
-        dummy.position.addScaledVector(velocities.current[i], delta);
-        dummy.rotation.x += delta * 10;
-        dummy.rotation.z += delta * 5;
-        dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
-        dummy.updateMatrix();
-        mesh.current.setMatrixAt(i, dummy.matrix);
-        activeCount++;
+    if (!mesh.current) return;
+    
+    // Only update if mesh is visible (particles are active)
+    if (mesh.current.visible) {
+      let activeCount = 0;
+      for (let i = 0; i < count; i++) {
+        if (lifetimes.current[i] > 0) {
+          lifetimes.current[i] -= delta;
+          mesh.current.getMatrixAt(i, dummy.matrix);
+          dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+          velocities.current[i].y -= 25.0 * delta;
+          dummy.position.addScaledVector(velocities.current[i], delta);
+          dummy.rotation.x += delta * 10;
+          dummy.rotation.z += delta * 5;
+          dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
+          dummy.updateMatrix();
+          mesh.current.setMatrixAt(i, dummy.matrix);
+          activeCount++;
+        }
+      }
+      mesh.current.instanceMatrix.needsUpdate = true;
+      
+      // Only hide if all particles are dead AND we're not in an active state
+      // This prevents premature hiding during rapid clicks
+      if (activeCount === 0 && !active) {
+        mesh.current.visible = false;
       }
     }
-    mesh.current.instanceMatrix.needsUpdate = true;
-    if (activeCount === 0 && !active) mesh.current.visible = false;
   });
 
   return (
@@ -271,11 +282,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
   const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
 
-  const [particleState, setParticleState] = useState<{ active: boolean; pos: THREE.Vector3; color: string }>({
+  const [particleState, setParticleState] = useState<{ active: boolean; pos: THREE.Vector3; color: string; key: number }>({
     active: false,
     pos: new THREE.Vector3(),
-    color: '#fff'
+    color: '#fff',
+    key: 0
   });
+  const particleTimeoutRef = useRef<number | null>(null);
+  const particleKeyRef = useRef<number>(0);
 
   useEffect(() => {
     simulationManager.start();
@@ -342,7 +356,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       }
     };
 
-    return () => worker.terminate();
+    return () => {
+      worker.terminate();
+      // Cleanup particle timeout on unmount
+      if (particleTimeoutRef.current !== null) {
+        clearTimeout(particleTimeoutRef.current);
+        particleTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -449,7 +470,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const dist = origin.distanceTo(impactPoint);
 
       const offset = action === 'DIG' ? 0.1 : -0.1;
-      const hitPoint = impactPoint.addScaledVector(direction, offset);
+      // Fix: Clone hitPoint to avoid mutating the same Vector3 reference
+      const hitPoint = impactPoint.clone().addScaledVector(direction, offset);
       const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
@@ -521,8 +543,28 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           }
         });
 
-        setParticleState({ active: true, pos: hitPoint, color: getMaterialColor(primaryMat) });
-        setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
+        // Clear any pending particle deactivation timeout to prevent race conditions
+        if (particleTimeoutRef.current !== null) {
+          clearTimeout(particleTimeoutRef.current);
+          particleTimeoutRef.current = null;
+        }
+        
+        // Clone hitPoint to ensure a new Vector3 reference for React state updates
+        // Increment key to force Particles component to reset even if position is similar
+        particleKeyRef.current += 1;
+        setParticleState({ 
+          active: true, 
+          pos: hitPoint.clone(), 
+          color: getMaterialColor(primaryMat),
+          key: particleKeyRef.current
+        });
+        
+        // Set timeout to deactivate after particles have had time to spawn
+        // Note: Particles have lifetimes of 0.3-0.7s, so this just marks them as "not newly active"
+        particleTimeoutRef.current = window.setTimeout(() => {
+          setParticleState(prev => ({ ...prev, active: false }));
+          particleTimeoutRef.current = null;
+        }, 100);
       }
     }
   }, [isInteracting, action, camera, world, rapier, buildMat]);
@@ -532,7 +574,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       {Object.values(chunks).map(chunk => (
         <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} />
       ))}
-      <Particles active={particleState.active} position={particleState.pos} color={particleState.color} />
+      <Particles key={particleState.key} active={particleState.active} position={particleState.pos} color={particleState.color} />
     </group>
   );
 };

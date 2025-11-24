@@ -79,6 +79,9 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - **Conventions**:
   - Add JSDoc to new functions.
   - Use `constants.ts` for magic numbers (Gravity, Speed, Chunk Size).
+- **Particle System**:
+  - **Critical Bug Fix**: Always initialize arrays of objects with individual instances (e.g., `Array.from({ length: n }, () => new Vector3())` instead of `Array(n).fill(new Vector3())`). Using `fill()` creates shared references causing all particles to share the same velocity/state.
+  - **Timeout Management**: Use refs to track `setTimeout` IDs and clear them before setting new ones to prevent race conditions when rapid interactions occur.
 
 ### 5. Environment
 - **Env Vars**: `vite.config.ts` maps `.env.local` vars (like `GEMINI_API_KEY`) to `process.env`.
