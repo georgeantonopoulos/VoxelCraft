@@ -118,3 +118,8 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
   - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight`.
   - **Mixing**: The fragment shader samples material properties for both IDs and mixes them using the interpolated weight, creating smooth transitions between distinct material types (e.g., Stone to Grass).
   - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.
+
+### 7. Recent Findings
+- 2025-11-24: Sunset color briefly flashed back to orange because `getSunColor` interpolated in the wrong direction when the sun dipped below the horizon (<0 normalized height). Added clamped interpolation that keeps fading the warm tones into night and remapped the sunrise band (0–0.2) to blend from sunset to day.
+- 2025-11-24: Sun halo used a separate color ramp that could drift into cyan during midday. Added `getSunGlowColor` so the glow now derives from the actual sun color and only applies gentle warm/cool adjustments per phase.
+- 2025-11-24: Fixed bouncing colors during sunset/sunrise. Previous logic in `getSkyGradient` and `getSunColor` had inconsistent ranges (some expecting 0.0 to be night, others sunset) causing visual jumps. Unified logic so: h < -0.15 is Night, -0.15 to 0.0 blends Night->Sunset, 0.0 to 0.3 blends Sunset->Day, >0.3 is Day.

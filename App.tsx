@@ -90,7 +90,7 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
  * Calculates sun color based on sun height (Y position).
  * Returns a color that transitions smoothly between:
  * - Night (sun below horizon): blue and darker
- * - Sunrise/sunset (sun near horizon): orange/pink
+ * - Sunrise/sunset (sun near horizon): orange (not pink)
  * - Day (sun high): white/yellow
  */
 const getSunColor = (sunY: number, radius: number): THREE.Color => {
@@ -99,30 +99,55 @@ const getSunColor = (sunY: number, radius: number): THREE.Color => {
   
   // Define color states
   const nightColor = new THREE.Color(0x4a5a7a); // Blue, darker
-  const sunriseSunsetColor = new THREE.Color(0xff8c5a); // Orange/pink
+  const sunriseSunsetColor = new THREE.Color(0xff7f42); // Orange (more orange, less pink)
   const dayColor = new THREE.Color(0xfffcf0); // White/yellow
   
   // Determine which phase we're in
-  if (normalizedHeight < -0.1) {
-    // Night: sun is below horizon
+  if (normalizedHeight < -0.15) {
+    // Deep night: sun is well below horizon
     return nightColor;
-  } else if (normalizedHeight < 0.2) {
-    // Sunrise/sunset: sun is near horizon
-    // Smooth transition from night to sunrise/sunset
-    const t = (normalizedHeight + 0.1) / 0.3; // 0 to 1 as sun rises
-    const color = new THREE.Color();
-    color.lerpColors(nightColor, sunriseSunsetColor, t);
-    return color;
-  } else if (normalizedHeight < 0.5) {
-    // Transition from sunrise/sunset to day
-    const t = (normalizedHeight - 0.2) / 0.3; // 0 to 1 as sun gets higher
-    const color = new THREE.Color();
-    color.lerpColors(sunriseSunsetColor, dayColor, t);
-    return color;
+  } else if (normalizedHeight < 0.0) {
+    // Transition from Night to Sunset
+    const t = (normalizedHeight + 0.15) / 0.15; // 0 at -0.15, 1 at 0.0
+    return new THREE.Color().lerpColors(nightColor, sunriseSunsetColor, t);
+  } else if (normalizedHeight < 0.3) {
+    // Transition from Sunset to Day
+    const t = normalizedHeight / 0.3; // 0 at 0.0, 1 at 0.3
+    return new THREE.Color().lerpColors(sunriseSunsetColor, dayColor, t);
   } else {
     // Day: sun is high
     return dayColor;
   }
+};
+
+/**
+ * Generates the halo color for the sun billboard so it remains tonally synced
+ * with the main sun color while still allowing subtle warmth/cool adjustments
+ * for different times of day.
+ */
+const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE.Color => {
+  const glowColor = sunColor.clone();
+  const nightGlow = new THREE.Color(0x4a5a7a);
+  const warmGlow = new THREE.Color(0xff9b4a);
+  const dayHighlight = new THREE.Color(0xfff4d6);
+
+  if (normalizedHeight < -0.15) {
+    glowColor.lerp(nightGlow, 0.7).multiplyScalar(0.45);
+    return glowColor;
+  }
+
+  if (normalizedHeight < 0.0) {
+    const t = THREE.MathUtils.clamp((normalizedHeight + 0.15) / 0.15, 0, 1);
+    glowColor.lerp(nightGlow, 1 - t).multiplyScalar(0.5 + 0.4 * t);
+    return glowColor;
+  }
+
+  if (normalizedHeight < 0.3) {
+    glowColor.lerp(warmGlow, 0.35).multiplyScalar(1.15);
+    return glowColor;
+  }
+
+  return glowColor.lerp(dayHighlight, 0.2).multiplyScalar(1.05);
 };
 
 /**
@@ -136,26 +161,30 @@ const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, botto
   const nightTop = new THREE.Color(0x020210); 
   const nightBottom = new THREE.Color(0x101025);
 
-  // Sunrise/Sunset: Deep blue at top, vibrant orange/pink at horizon
+  // Sunrise/Sunset: Deep blue at top, vibrant orange at horizon (less pink)
   const sunsetTop = new THREE.Color(0x2c3e50);
-  const sunsetBottom = new THREE.Color(0xff6b6b);
+  const sunsetBottom = new THREE.Color(0xff8c42);
 
   // Day: Rich sky blue at top, pale blue at horizon
   const dayTop = new THREE.Color(0x1e90ff);
   const dayBottom = new THREE.Color(0x87CEEB);
 
-  if (normalizedHeight < -0.1) {
+  if (normalizedHeight < -0.15) {
     return { top: nightTop, bottom: nightBottom };
-  } else if (normalizedHeight < 0.2) {
-    const t = (normalizedHeight + 0.1) / 0.3; 
-    const top = new THREE.Color().lerpColors(nightTop, sunsetTop, t);
-    const bottom = new THREE.Color().lerpColors(nightBottom, sunsetBottom, t);
-    return { top, bottom };
-  } else if (normalizedHeight < 0.5) {
-    const t = (normalizedHeight - 0.2) / 0.3;
-    const top = new THREE.Color().lerpColors(sunsetTop, dayTop, t);
-    const bottom = new THREE.Color().lerpColors(sunsetBottom, dayBottom, t);
-    return { top, bottom };
+  } else if (normalizedHeight < 0.0) {
+    // Transition from Night to Sunset
+    const t = (normalizedHeight + 0.15) / 0.15; // 0 at -0.15, 1 at 0.0
+    return {
+      top: new THREE.Color().lerpColors(nightTop, sunsetTop, t),
+      bottom: new THREE.Color().lerpColors(nightBottom, sunsetBottom, t)
+    };
+  } else if (normalizedHeight < 0.3) {
+    // Transition from Sunset to Day
+    const t = normalizedHeight / 0.3; // 0 at 0.0, 1 at 0.3
+    return {
+      top: new THREE.Color().lerpColors(sunsetTop, dayTop, t),
+      bottom: new THREE.Color().lerpColors(sunsetBottom, dayBottom, t)
+    };
   } else {
     return { top: dayTop, bottom: dayBottom };
   }
@@ -228,6 +257,16 @@ const SunFollower: React.FC = () => {
   const glowMeshRef = useRef<THREE.Mesh>(null);
   const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
   const target = useMemo(() => new THREE.Object3D(), []);
+  
+  // Smooth position tracking to prevent choppy updates
+  const smoothSunPos = useRef(new THREE.Vector3());
+  const lastCameraPos = useRef(new THREE.Vector3());
+
+  // Initialize smooth position tracking
+  useEffect(() => {
+    lastCameraPos.current.copy(camera.position);
+    smoothSunPos.current.set(0, 0, 0);
+  }, [camera]);
 
   useFrame(({ clock }) => {
     if (lightRef.current) {
@@ -244,16 +283,25 @@ const SunFollower: React.FC = () => {
         const sy = Math.cos(angle) * radius; 
         const sz = 30; 
 
-        // Snap light center to player
+        // Smooth sun position relative to camera to prevent choppy updates
+        const cameraDelta = camera.position.clone().sub(lastCameraPos.current);
+        smoothSunPos.current.add(cameraDelta);
+        lastCameraPos.current.copy(camera.position);
+        
+        // Calculate smooth sun position (only for visual sun, light stays snapped for performance)
+        const sunDist = 350;
+        const targetSunPos = new THREE.Vector3(
+          smoothSunPos.current.x + Math.sin(angle) * sunDist,
+          Math.cos(angle) * sunDist,
+          smoothSunPos.current.z + sz
+        );
+
+        // Light position: snap to grid for performance (shadows don't need smooth movement)
         const q = 4;
         const lx = Math.round(camera.position.x / q) * q;
         const lz = Math.round(camera.position.z / q) * q;
         
-        const px = lx + sx;
-        const py = sy;
-        const pz = lz + sz;
-
-        lightRef.current.position.set(px, py, pz);
+        lightRef.current.position.set(lx + sx, sy, lz + sz);
         target.position.set(lx, 0, lz);
         
         lightRef.current.target = target;
@@ -266,73 +314,67 @@ const SunFollower: React.FC = () => {
         // Update light color
         lightRef.current.color.copy(sunColor);
         
-        // Adjust intensity: fade out when below horizon, slightly dimmer at night
+        // Adjust intensity: fade out smoothly when below horizon
         const normalizedHeight = sy / radius;
-        if (normalizedHeight < -0.1) {
-          // Night: darker
-          lightRef.current.intensity = 0.3;
-        } else if (normalizedHeight < 0.2) {
-          // Sunrise/sunset: moderate intensity
-          lightRef.current.intensity = Math.max(0.4, (normalizedHeight + 0.1) / 0.3 * 0.8 + 0.4);
+        if (normalizedHeight < -0.15) {
+          // Deep night: darker
+          lightRef.current.intensity = 0.1;
+        } else if (normalizedHeight < 0.0) {
+          // Transition from Night to Sunset
+          const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
+          lightRef.current.intensity = 0.1 + (0.4 - 0.1) * t; 
+        } else if (normalizedHeight < 0.3) {
+          // Sunset to Day
+          const t = normalizedHeight / 0.3; // 0 to 1
+          lightRef.current.intensity = 0.4 + (1.0 - 0.4) * t;
         } else {
           // Day: full intensity
-          lightRef.current.intensity = Math.max(0.5, (normalizedHeight / radius) * 3.5 + 0.5);
+          lightRef.current.intensity = 1.0;
         }
 
         // Update Visual Sun color and glow
         if (sunMeshRef.current) {
-           // Place sun mesh far away but in same direction
-           // Use a fixed distance so it doesn't clip into terrain
-           const sunDist = 350; 
-           sunMeshRef.current.position.set(
-              lx + Math.sin(angle) * sunDist, 
-              Math.cos(angle) * sunDist, 
-              lz + sz
-           );
+           // Use smooth position for visual sun to prevent choppy updates
+           sunMeshRef.current.position.copy(targetSunPos);
            sunMeshRef.current.lookAt(camera.position);
            
-           // Update sun mesh color (slightly brighter than light for visibility)
-           const sunMeshColor = sunColor.clone();
-           if (normalizedHeight < -0.1) {
-             // Night: make sun mesh slightly visible but dim
-             sunMeshColor.multiplyScalar(0.5);
-           } else {
-             // Day/sunrise: bright sun
-             sunMeshColor.multiplyScalar(1.2);
-           }
-           
-           // Access material via ref or mesh
-           const material = sunMaterialRef.current || (sunMeshRef.current.material as THREE.MeshBasicMaterial);
-           if (material) {
-             material.color.copy(sunMeshColor);
+           // Update sun material color
+           if (sunMaterialRef.current) {
+             const sunMeshColor = sunColor.clone();
+             if (normalizedHeight < -0.15) {
+               // Deep night: make sun mesh dim
+               sunMeshColor.multiplyScalar(0.4);
+             } else if (normalizedHeight < 0.0) {
+               // Transition from sunset to night - fade smoothly
+               const t = (normalizedHeight + 0.15) / 0.15;
+               sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
+             } else {
+               // Day/sunrise: bright sun core
+               sunMeshColor.multiplyScalar(1.5);
+             }
+             
+             sunMaterialRef.current.color.copy(sunMeshColor);
            }
            
            // Update glow - make it more visible during sunset
-           if (glowMeshRef.current && glowMaterialRef.current) {
-             // Position glow at sun location
-             glowMeshRef.current.position.copy(sunMeshRef.current.position);
-             
-             // Make glow always face camera
-             glowMeshRef.current.lookAt(camera.position);
-             
-             // Calculate glow intensity and size based on sun position
-             const isSunset = normalizedHeight > -0.1 && normalizedHeight < 0.3;
-             const glowScale = isSunset ? 5.0 : 3.5;
-             const glowOpacity = isSunset ? 0.9 : 0.5;
-             
-             glowMeshRef.current.scale.setScalar(glowScale);
-             
-             // Glow color: warmer/more orange than sun core during sunset
-             const glowColor = sunColor.clone();
-             if (isSunset) {
-               glowColor.lerp(new THREE.Color(0xff4500), 0.4); // More orange during sunset
-             } else {
-               glowColor.lerp(new THREE.Color(0xffd700), 0.2); // Slight golden tint during day
-             }
-             
-             glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
-             glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
-           }
+          if (glowMeshRef.current && glowMaterialRef.current) {
+            // Position glow at sun location (using smooth position)
+            glowMeshRef.current.position.copy(targetSunPos);
+            
+            // Make glow always face camera
+            glowMeshRef.current.lookAt(camera.position);
+            
+            // Calculate glow intensity and size based on sun position
+            const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
+            const glowScale = isSunset ? 5.0 : 3.5;
+            const glowOpacity = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+            
+            glowMeshRef.current.scale.setScalar(glowScale);
+            
+            const glowColor = getSunGlowColor(normalizedHeight, sunColor);
+            glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
+            glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
+          }
         }
     }
   });
@@ -355,14 +397,14 @@ const SunFollower: React.FC = () => {
       />
       <primitive object={target} />
       
-      {/* Physical Sun Mesh */}
+      {/* Physical Sun Mesh - Bright solid core */}
       <mesh ref={sunMeshRef}>
          <sphereGeometry args={[15, 32, 32]} />
          <meshBasicMaterial 
            ref={sunMaterialRef}
            color="#fffee0" 
            toneMapped={false} 
-           fog={false} 
+           fog={false}
          />
       </mesh>
       
