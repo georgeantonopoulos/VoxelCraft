@@ -25,7 +25,8 @@ interface ChunkState {
   meshIndices: Uint32Array;
   meshMaterials: Float32Array;
   meshMaterials2: Float32Array;
-  meshBlendWeights: Float32Array;
+  meshMaterials3: Float32Array;
+  meshWeights: Float32Array;
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
@@ -97,10 +98,16 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
     }
 
-    if (chunk.meshBlendWeights && chunk.meshBlendWeights.length === vertexCount) {
-        geom.setAttribute('aBlend', new THREE.BufferAttribute(chunk.meshBlendWeights, 1));
+    if (chunk.meshMaterials3 && chunk.meshMaterials3.length === vertexCount) {
+        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(chunk.meshMaterials3, 1));
     } else {
-        geom.setAttribute('aBlend', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
+    }
+
+    if (chunk.meshWeights && chunk.meshWeights.length === vertexCount * 3) {
+        geom.setAttribute('aWeight', new THREE.BufferAttribute(chunk.meshWeights, 3));
+    } else {
+        geom.setAttribute('aWeight', new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
     }
 
     // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
@@ -128,7 +135,7 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     geom.computeBoundingSphere();
 
     return geom;
-  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshMaterials2, chunk.meshBlendWeights, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
+  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshMaterials2, chunk.meshMaterials3, chunk.meshWeights, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -317,7 +324,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMaterials, meshMaterials2, meshBlendWeights, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const { key, meshPositions, meshIndices, meshMaterials, meshMaterials2, meshMaterials3, meshWeights, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
@@ -328,7 +335,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             meshIndices,
             meshMaterials,
             meshMaterials2,
-            meshBlendWeights,
+            meshMaterials3,
+            meshWeights,
             meshNormals,
             meshWetness: meshWetness || current.meshWetness, // Fallback if missing
             meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing
