@@ -207,11 +207,11 @@ const fragmentShader = `
     col = mix(col, col * 0.5, vWetness * 0.9);
     col = clamp(col, 0.0, 5.0);
 
-    // Apply gentle distance fog to blend toward the sky color without hiding nearby terrain
+    // Apply strong distance fog to blend toward the sky color and hide terrain generation
     float fogDist = length(vWorldPosition - cameraPosition);
     float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
-    fogAmt = pow(fogAmt, 1.25); // keep nearby detail crisp
-    col = mix(col, uFogColor, fogAmt * 0.6);
+    fogAmt = pow(fogAmt, 1.1); // slightly sharper transition for stronger fog
+    col = mix(col, uFogColor, fogAmt * 0.9); // stronger fog intensity
 
     csm_DiffuseColor = vec4(col, uOpacity);
 

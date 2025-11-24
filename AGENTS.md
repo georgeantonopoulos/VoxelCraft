@@ -67,13 +67,20 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
     - **Day** (sun high): White/yellow (`#fffcf0`), full intensity
   - **Smooth Transitions**: Uses `THREE.Color.lerpColors()` for smooth color interpolation between phases.
   - **Dual Updates**: Both directional light color and sun mesh material color update together for visual consistency.
-- **Atmosphere Controller**: `AtmosphereController` component manages fog, background, and hemisphere light colors.
-  - **Dynamic Sky Colors**: Sky/fog colors transition smoothly based on sun position:
-    - **Night** (sun below horizon): Dark blue/purple (`#2a2a4a`)
-    - **Sunrise/Sunset** (sun near horizon): Warm orange/pink (`#ffb380`)
-    - **Day** (sun high): Light blue (`#87CEEB`)
-  - **Synchronized Updates**: Background color, fog color, and hemisphere light sky color all update together to maintain visual consistency.
-  - **Ground Colors**: Hemisphere light ground color also adjusts for time of day (darker at night, warmer during sunrise/sunset).
+  - **Sun Glow**: Sun features a billboard glow effect that:
+    - Always faces the camera for optimal visibility
+    - Increases in size (5.0x) and opacity (0.9) during sunset/sunrise for enhanced visibility
+    - Uses warmer orange tones during sunset, golden tints during day
+    - Creates a realistic atmospheric glow around the sun
+- **Atmosphere Controller**: `AtmosphereController` component manages gradient sky, fog, and hemisphere light colors.
+  - **Gradient Sky**: Renders a `SkyDome` component that creates a realistic sky gradient:
+    - **Night**: Deep dark blue at zenith (`#020210`), slightly lighter at horizon (`#101025`)
+    - **Sunrise/Sunset**: Deep blue at zenith (`#2c3e50`), vibrant orange/pink at horizon (`#ff6b6b`)
+    - **Day**: Rich sky blue at zenith (`#1e90ff`), pale blue at horizon (`#87CEEB`)
+    - Gradient transitions smoothly based on sun position using shader-based interpolation
+  - **Dynamic Fog**: Fog color matches the horizon (bottom) color of the sky gradient for seamless blending.
+  - **Hemisphere Light**: Sky color matches zenith (top) color, ground color adjusts for time of day (darker at night, warmer during sunrise/sunset).
+  - **Performance**: Uses refs to update SkyDome colors without triggering React re-renders every frame.
 
 #### Startup & UI
 - **Startup Flow**:
