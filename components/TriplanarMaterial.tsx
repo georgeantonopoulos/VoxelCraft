@@ -7,13 +7,15 @@ import { noiseTexture } from '../utils/sharedResources';
 const vertexShader = `
   attribute float aVoxelMat;
   attribute float aVoxelMat2;
-  attribute float aBlend;
+  attribute float aVoxelMat3;
+  attribute vec3 aWeight;
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
   flat varying float vMaterial1;
   flat varying float vMaterial2;
-  varying float vBlend;
+  flat varying float vMaterial3;
+  varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -22,7 +24,8 @@ const vertexShader = `
   void main() {
     vMaterial1 = aVoxelMat;
     vMaterial2 = aVoxelMat2;
-    vBlend = aBlend;
+    vMaterial3 = aVoxelMat3;
+    vW = aWeight;
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     
@@ -54,7 +57,8 @@ const fragmentShader = `
 
   flat varying float vMaterial1;
   flat varying float vMaterial2;
-  varying float vBlend;
+  flat varying float vMaterial3;
+  varying vec3 vW;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -147,33 +151,37 @@ const fragmentShader = `
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
+    // 1. Sample Low-Frequency "Warp" Noise
+    float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
+
+    // 2. Distort the Linear Weights
+    vec3 warpedW = vW + (warp - 0.5) * 0.3;
+
+    // 3. Soft-Max Blending
+    vec3 softW = pow(max(warpedW, 0.0), vec3(4.0));
+
+    // 4. Renormalize
+    softW /= (softW.x + softW.y + softW.z + 0.0001);
+
+    // 5. Conditional Sampling & Blending
     MatInfo m1 = getMaterialInfo(vMaterial1, nMid, nHigh);
 
-    vec3 finalBaseCol = m1.baseCol;
-    float finalRoughness = m1.roughness;
-    float finalNoiseFactor = m1.noiseFactor;
+    vec3 finalBaseCol = m1.baseCol * softW.x;
+    float finalRoughness = m1.roughness * softW.x;
+    float finalNoiseFactor = m1.noiseFactor * softW.x;
 
-    if (vBlend > 0.01) {
+    if (softW.y > 0.001) {
         MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
+        finalBaseCol += m2.baseCol * softW.y;
+        finalRoughness += m2.roughness * softW.y;
+        finalNoiseFactor += m2.noiseFactor * softW.y;
+    }
 
-        // --- GOLDEN COMMIT LOGIC RESTORED ---
-        // Sample noise for the edge transition (using world position)
-        // High-frequency noise makes the edge jagged
-        float edgeNoise = texture(uNoiseTexture, vWorldPosition * 0.2).r;
-
-        // 1. Center blend around 0
-        float centeredBlend = vBlend - 0.5;
-
-        // 2. Add noise distortion (0.8 is the "Jaggedness" factor)
-        float distortion = (edgeNoise - 0.5) * 0.8;
-
-        // 3. Smoothstep for a sharp but organic cut
-        // This effectively "pushes" the blend to 0 or 1 based on the noise
-        float organicBlend = smoothstep(-0.05, 0.05, centeredBlend + distortion);
-
-        finalBaseCol = mix(m1.baseCol, m2.baseCol, organicBlend);
-        finalRoughness = mix(m1.roughness, m2.roughness, organicBlend);
-        finalNoiseFactor = mix(m1.noiseFactor, m2.noiseFactor, organicBlend);
+    if (softW.z > 0.001) {
+        MatInfo m3 = getMaterialInfo(vMaterial3, nMid, nHigh);
+        finalBaseCol += m3.baseCol * softW.z;
+        finalRoughness += m3.roughness * softW.z;
+        finalNoiseFactor += m3.noiseFactor * softW.z;
     }
 
     float intensity = 0.6 + 0.6 * finalNoiseFactor;

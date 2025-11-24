@@ -37,6 +37,7 @@ export function generateMesh(
   const tInds: number[] = [];
   const tMats: number[] = [];
   const tMats2: number[] = [];
+  const tMats3: number[] = [];
   const tWeights: number[] = [];
   const tNorms: number[] = [];
   const tWets: number[] = [];
@@ -151,9 +152,12 @@ export function generateMesh(
               else tNorms.push(0, 1, 0);
 
               // Material Selection (Histogram Analysis)
-              let bestMat = MaterialType.DIRT;
-              let secMat = MaterialType.AIR;
-              let blendWeight = 0.0;
+              let m1 = MaterialType.DIRT;
+              let m2 = MaterialType.AIR;
+              let m3 = MaterialType.AIR;
+              let w1 = 1.0;
+              let w2 = 0.0;
+              let w3 = 0.0;
 
               let bestWet = 0;
               let bestMoss = 0;
@@ -173,39 +177,43 @@ export function generateMesh(
                  }
               }
 
-              // Identify Top 2 Materials
-              let maxCount = 0;
-              let secCount = 0;
-              let matA = 0;
-              let matB = 0;
+              // Identify Top 3 Materials
+              let c1 = 0;
+              let c2 = 0;
+              let c3 = 0;
+              m1 = 0;
+              m2 = 0;
+              m3 = 0;
 
               for (let m = 1; m < 16; m++) {
                   const c = matCounts[m];
-                  if (c > maxCount) {
-                      // Demote current max to second
-                      secCount = maxCount;
-                      matB = matA;
-
-                      maxCount = c;
-                      matA = m;
-                  } else if (c > secCount) {
-                      secCount = c;
-                      matB = m;
+                  if (c > c1) {
+                      // Shift 1->2, 2->3
+                      c3 = c2; m3 = m2;
+                      c2 = c1; m2 = m1;
+                      c1 = c;  m1 = m;
+                  } else if (c > c2) {
+                      // Shift 2->3
+                      c3 = c2; m3 = m2;
+                      c2 = c;  m2 = m;
+                  } else if (c > c3) {
+                      c3 = c;  m3 = m;
                   }
               }
 
-              if (matA !== 0) {
-                  bestMat = matA;
-                  if (matB !== 0) {
-                      secMat = matB;
-                      const total = maxCount + secCount;
-                      if (total > 0) blendWeight = secCount / total;
+              if (m1 !== 0) {
+                  // Normalize Weights
+                  const total = c1 + c2 + c3;
+                  if (total > 0) {
+                      w1 = c1 / total;
+                      w2 = c2 / total;
+                      w3 = c3 / total;
                   }
 
-                  // Find wetness/mossiness for the dominant material
+                  // Find wetness/mossiness for the dominant material (m1)
                   for (const [val, cx, cy, cz] of candidates) {
                      const mat = getMat(material, cx, cy, cz);
-                     if (mat === bestMat && val > bestVal) {
+                     if (mat === m1 && val > bestVal) {
                          bestVal = val;
                          bestWet = getByte(wetData, cx, cy, cz);
                          bestMoss = getByte(mossData, cx, cy, cz);
@@ -214,21 +222,14 @@ export function generateMesh(
               } else {
                  // Fallback if no valid materials found (rare)
                  const mat = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ));
-                 bestMat = mat || bestMat;
+                 m1 = mat || MaterialType.DIRT;
+                 // Weights remain 1,0,0
               }
 
-              // Canonical Sorting: Ensure smaller ID is always first to prevent interpolation flip-flops
-              // If bestMat (Slot 1) > secMat (Slot 2), swap them and invert the weight.
-              if (bestMat > secMat) {
-                  const tmp = bestMat;
-                  bestMat = secMat;
-                  secMat = tmp;
-                  blendWeight = 1.0 - blendWeight;
-              }
-
-              tMats.push(bestMat);
-              tMats2.push(secMat);
-              tWeights.push(blendWeight);
+              tMats.push(m1);
+              tMats2.push(m2);
+              tMats3.push(m3);
+              tWeights.push(w1, w2, w3);
               tWets.push(bestWet / 255.0);
               tMoss.push(bestMoss / 255.0);
               tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
@@ -313,7 +314,8 @@ export function generateMesh(
     normals: new Float32Array(tNorms),
     materials: new Float32Array(tMats),
     materials2: new Float32Array(tMats2),
-    blendWeights: new Float32Array(tWeights),
+    materials3: new Float32Array(tMats3),
+    meshWeights: new Float32Array(tWeights),
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     // Return empty arrays for water to satisfy types without generating bad mesh
