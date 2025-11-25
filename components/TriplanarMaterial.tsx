@@ -96,9 +96,8 @@ const fragmentShader = `
   };
 
   MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
-      // Organic Thresholding (Scale 0.12 for larger, less shardy shapes)
-      float noise = texture(uNoiseTexture, vWorldPosition * 0.12).r;
-      float m = floor(rawM + (noise - 0.5) * 0.9 + 0.5);
+      // Use the material ID directly - blending is handled by vertex weights
+      float m = floor(rawM + 0.5);
       m = clamp(m, 0.0, 15.0);
 
       vec3 baseCol = uColorStone;
@@ -156,14 +155,14 @@ const fragmentShader = `
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    // 1. Sample Low-Frequency "Warp" Noise
-    float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
+    // 1. Sample Low-Frequency "Warp" Noise for organic edge variation
+    float warp = texture(uNoiseTexture, vWorldPosition * 0.09).r;
 
-    // 2. Distort the Linear Weights
-    vec3 warpedW = vW + (warp - 0.5) * 0.3;
+    // 2. Apply gentle noise distortion to weights for organic edges
+    vec3 warpedW = vW + (warp - 0.5) * 0.15;
 
-    // 3. Soft-Max Blending
-    vec3 softW = pow(max(warpedW, 0.0), vec3(4.0));
+    // 3. Soft blending - use lower power for smoother transitions
+    vec3 softW = pow(max(warpedW, 0.0), vec3(1.5));
 
     // 4. Renormalize
     softW /= (softW.x + softW.y + softW.z + 0.0001);

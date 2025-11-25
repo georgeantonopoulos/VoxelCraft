@@ -140,30 +140,30 @@ export class TerrainService {
             }
 
             // --- Flora Generation Pass ---
-            // 1. Depth Check (Deep caves only)
-            if (wy < -1 && wy > -50) {
+            // Check if this is a cave floor (air above solid stone/bedrock)
+            // Caves are any enclosed space below the surface
+            if (wy < surfaceHeight - 5 && wy > MESH_Y_OFFSET + 3) {
                 if (y > 0) {
                     const idxBelow = x + (y-1) * sizeX + z * sizeX * sizeY;
                     const dBelow = density[idxBelow];
 
-                    // Current is Air (implicit else block), Below is Solid
+                    // Current is Air, Below is Solid
                     if (dBelow > ISO_LEVEL) {
                         const matBelow = material[idxBelow];
-                        // Allow Stone or Bedrock (as per requirements)
-                        if (matBelow === MaterialType.STONE || matBelow === MaterialType.MOSSY_STONE || matBelow === MaterialType.BEDROCK) {
+                        // Allow Stone, Mossy Stone, Bedrock
+                        if (matBelow === MaterialType.STONE || matBelow === MaterialType.MOSSY_STONE || 
+                            matBelow === MaterialType.BEDROCK) {
 
-                            // Sparsity Noise
-                            const nFlora = noise(wx * 0.15, wy * 0.15, wz * 0.15);
-                            if (nFlora > 0.5) { // Lowered threshold for visibility
+                            // Sparsity Noise - controls how frequently flora spawns
+                            const nFlora = noise(wx * 0.12, wy * 0.12, wz * 0.12);
+                            if (nFlora > 0.7) { // Lower threshold for more visibility
                                 // Random hash for placement jitter
                                 const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
-                                if (hash > 0.1) {
-                                    floraCandidates.push(
-                                        (x - PAD) + (hash * 0.4 - 0.2),
-                                    (y - PAD) + MESH_Y_OFFSET - 0.5, // Sits on floor (Apply MESH_Y_OFFSET)
-                                        (z - PAD) + (hash * 0.4 - 0.2)
-                                    );
-                                }
+                                floraCandidates.push(
+                                    (x - PAD) + (hash * 0.4 - 0.2),
+                                    (y - PAD) + MESH_Y_OFFSET + 0.1, // Slightly above floor
+                                    (z - PAD) + (hash * 0.4 - 0.2)
+                                );
                             }
                         }
                     }
@@ -178,6 +178,11 @@ export class TerrainService {
         wetness,
         mossiness
     };
+
+    // Debug: log flora generation
+    if (floraCandidates.length > 0) {
+        console.log(`[TerrainService] Chunk (${cx},${cz}) generated ${floraCandidates.length / 3} flora positions`);
+    }
 
     return {
         density,

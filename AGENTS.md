@@ -120,9 +120,9 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 6. Visual Artifacts & Solutions
 - **Triangle Artifacts**: Terrain previously used `flat` shading, causing hard triangle edges.
 - **Solution (Phase 2 - Blend Weights)**:
-  - **Dual Material Data**: The mesher (`mesher.ts`) now calculates the two most frequent materials in a voxel cell (`materials` and `materials2`) and a blend weight.
-  - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight`.
-  - **Mixing**: The fragment shader samples material properties for both IDs and mixes them using the interpolated weight, creating smooth transitions between distinct material types (e.g., Stone to Grass).
+  - **Tri-Material Data**: The mesher (`mesher.ts`) calculates the three most frequent materials among the 8 corner voxels of each cell (`materials`, `materials2`, `materials3`) and blend weights proportional to frequency.
+  - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight` (vec3).
+  - **Mixing**: The fragment shader samples material properties for all three IDs and mixes them using soft-max blended weights with noise distortion, creating smooth organic transitions between material types (e.g., Stone to Grass to Dirt).
   - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.
 
 ### 7. Recent Findings
@@ -135,3 +135,4 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - 2025-11-25: Flora harvest now uses a physics-free ray/segment test against placed flora positions (id lookup via store) so DIG reliably picks them up even if Rapier colliders are missed.
 - 2025-01-XX: Added `MoonFollower` component using simple "game physics" approach. Moon orbits exactly opposite to sun (angle + Math.PI) with same speed (0.025) to maintain perfect day/night synchronization. Moon is visible when above horizon and provides subtle cool blue-white light (intensity 0.2). Simple white sphere mesh for clean visibility.
 - 2025-11-25: Placed flora (LuminaFlora) interaction now uses direct RigidBody refs to read live physics positions during DIG raycasts. This fixes interaction misses when flora rolls or bounces, without adding per-frame synchronization overhead.
+- 2025-11-25: Fixed texture blending between terrain layers (grass, dirt, stone). The mesher was only outputting a single material per vertex, but the shader expected tri-material blending (`aVoxelMat2`, `aVoxelMat3`, `aWeight`). Updated `mesher.ts` to calculate material frequency among the 8 corner voxels of each cell, output the top 3 materials and their blend weights. Updated `terrain.worker.ts` to pass `meshMaterials2`, `meshMaterials3`, and `meshWeights` through both GENERATE and REMESH responses.

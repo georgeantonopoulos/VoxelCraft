@@ -453,6 +453,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         const { key, metadata, material, floraPositions } = payload;
         pendingChunks.current.delete(key);
         
+        // Log flora positions for debugging
+        if (floraPositions && floraPositions.length > 0) {
+            console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 3, 'flora positions');
+        }
+        
         // Check if metadata exists before initializing
         if (metadata) {
             metadataDB.initChunk(key, metadata);
