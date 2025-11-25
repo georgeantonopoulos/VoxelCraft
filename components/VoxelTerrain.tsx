@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
+import CustomShaderMaterial from 'three-custom-shader-material';
 import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
@@ -30,6 +31,8 @@ interface ChunkState {
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
+
+  floraPositions?: Float32Array;
 
   meshWaterPositions: Float32Array;
   meshWaterIndices: Uint32Array;
@@ -63,6 +66,72 @@ const isTerrainCollider = (collider: Collider): boolean => {
   const userData = parent?.userData as { type?: string } | undefined;
   return userData?.type === 'terrain';
 };
+
+const FloraMesh: React.FC<{ positions: Float32Array }> = React.memo(({ positions }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const count = positions.length / 3;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color('#00FFFF') },
+    uSeed: { value: Math.random() * 100 }
+  }), []);
+
+  useLayoutEffect(() => {
+    if (!meshRef.current) return;
+    for (let i = 0; i < count; i++) {
+        dummy.position.set(positions[i*3], positions[i*3+1], positions[i*3+2]);
+        // Random rotation and scale for variety
+        dummy.rotation.y = Math.random() * Math.PI * 2;
+        dummy.rotation.x = (Math.random() - 0.5) * 0.5;
+        dummy.scale.setScalar(0.5 + Math.random() * 0.5);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, count, dummy]);
+
+  useFrame(({ clock }) => {
+    if (meshRef.current && meshRef.current.material) {
+        // @ts-ignore
+        const mat = meshRef.current.material as THREE.ShaderMaterial;
+        if(mat.uniforms && mat.uniforms.uTime) {
+            mat.uniforms.uTime.value = clock.getElapsedTime();
+        }
+    }
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]} frustumCulled={false}>
+       <sphereGeometry args={[0.25, 16, 16]} />
+       <CustomShaderMaterial
+         baseMaterial={THREE.MeshStandardMaterial}
+         vertexShader={`
+            varying vec3 vPosition;
+            void main() {
+               vPosition = position;
+            }
+         `}
+         fragmentShader={`
+            uniform float uTime;
+            uniform vec3 uColor;
+            uniform float uSeed;
+            varying vec3 vPosition;
+            void main() {
+                float pulse = sin(uTime * 2.0 + uSeed + vPosition.x * 4.0) * 0.5 + 1.5;
+                csm_Emissive = uColor * pulse;
+            }
+         `}
+         uniforms={uniforms}
+         silent
+         color="#222"
+         roughness={0.4}
+         toneMapped={false}
+       />
+    </instancedMesh>
+  );
+});
 
 const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -187,6 +256,10 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         <WaterMaterial sunDirection={sunDirection} fade={opacity} />
       </mesh>
     )}
+
+    {chunk.floraPositions && chunk.floraPositions.length > 0 && (
+        <FloraMesh positions={chunk.floraPositions} />
+    )}
     </group>
   );
 });
@@ -304,7 +377,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material } = payload;
+        const { key, metadata, material, floraPositions } = payload;
         pendingChunks.current.delete(key);
         
         // Check if metadata exists before initializing
@@ -318,6 +391,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
         const newChunk = {
             ...payload,
+            floraPositions, // Persist flora positions
             terrainVersion: 0,
             visualVersion: 0
         };

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 // Components
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
+import { LuminaFlora } from './components/LuminaFlora';
 import { UI } from './components/UI';
 import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';

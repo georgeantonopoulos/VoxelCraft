@@ -27,7 +27,12 @@ export class TerrainService {
       return surfaceHeight + overhang;
   }
 
-  static generateChunk(cx: number, cz: number): { density: Float32Array, material: Uint8Array, metadata: ChunkMetadata } {
+  static generateChunk(cx: number, cz: number): {
+      density: Float32Array,
+      material: Uint8Array,
+      metadata: ChunkMetadata,
+      floraPositions: Float32Array
+  } {
     const sizeX = TOTAL_SIZE_XZ;
     const sizeY = TOTAL_SIZE_Y;
     const sizeZ = TOTAL_SIZE_XZ;
@@ -36,6 +41,7 @@ export class TerrainService {
     const material = new Uint8Array(sizeX * sizeY * sizeZ);
     const wetness = new Uint8Array(sizeX * sizeY * sizeZ);
     const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
+    const floraCandidates: number[] = [];
 
     const worldOffsetX = cx * CHUNK_SIZE_XZ;
     const worldOffsetZ = cz * CHUNK_SIZE_XZ;
@@ -132,6 +138,37 @@ export class TerrainService {
             } else {
                 material[idx] = MaterialType.AIR;
             }
+
+            // --- Flora Generation Pass ---
+            // 1. Depth Check (Deep caves only)
+            if (wy < -10 && wy > -50) {
+                if (y > 0) {
+                    const idxBelow = x + (y-1) * sizeX + z * sizeX * sizeY;
+                    const dBelow = density[idxBelow];
+
+                    // Current is Air (implicit else block), Below is Solid
+                    if (dBelow > ISO_LEVEL) {
+                        const matBelow = material[idxBelow];
+                        // Allow Stone or Bedrock (as per requirements)
+                        if (matBelow === MaterialType.STONE || matBelow === MaterialType.MOSSY_STONE || matBelow === MaterialType.BEDROCK) {
+
+                            // Sparsity Noise
+                            const nFlora = noise(wx * 0.15, wy * 0.15, wz * 0.15);
+                            if (nFlora > 0.5) { // Lowered threshold for visibility
+                                // Random hash for placement jitter
+                                const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
+                                if (hash > 0.1) {
+                                    floraCandidates.push(
+                                        (x - PAD) + (hash * 0.4 - 0.2),
+                                        (y - PAD) - 0.5, // Sits on floor
+                                        (z - PAD) + (hash * 0.4 - 0.2)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
           }
         }
       }
@@ -142,7 +179,12 @@ export class TerrainService {
         mossiness
     };
 
-    return { density, material, metadata };
+    return {
+        density,
+        material,
+        metadata,
+        floraPositions: new Float32Array(floraCandidates)
+    };
   }
 
   static modifyChunk(

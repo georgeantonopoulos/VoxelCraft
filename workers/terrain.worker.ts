@@ -10,10 +10,11 @@ ctx.onmessage = (e: MessageEvent) => {
     if (type === 'GENERATE') {
         const { cx, cz } = payload;
         const t0 = performance.now();
-        console.log('[terrain.worker] GENERATE start', cx, cz);
-        const { density, material, metadata } = TerrainService.generateChunk(cx, cz);
+        console.log('[terrain.worker] GENERATE start V2', cx, cz);
+        const { density, material, metadata, floraPositions } = TerrainService.generateChunk(cx, cz);
         const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness);
         console.log('[terrain.worker] GENERATE done', cx, cz, {
+            flora: floraPositions.length / 3,
             positions: mesh.positions.length,
             indices: mesh.indices.length,
             waterPositions: mesh.waterPositions.length,
@@ -27,6 +28,7 @@ ctx.onmessage = (e: MessageEvent) => {
             density,
             material,
             metadata, // CRITICAL: Pass metadata back to main thread so VoxelTerrain can init DB
+            floraPositions,
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
@@ -48,6 +50,7 @@ ctx.onmessage = (e: MessageEvent) => {
             material.buffer,
             metadata.wetness.buffer, // Transfer metadata buffers too
             metadata.mossiness.buffer,
+            floraPositions.buffer,
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,
