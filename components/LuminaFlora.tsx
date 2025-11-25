@@ -5,12 +5,13 @@ import { RigidBody } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 
 interface LuminaFloraProps {
+  id: string;
   position: [number, number, number];
   onPickup?: () => void;
   seed?: number; // To vary the phase
 }
 
-export const LuminaFlora: React.FC<LuminaFloraProps> = ({ position, onPickup, seed = 0 }) => {
+export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup, seed = 0 }) => {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
   // Uniforms for the shader
@@ -33,7 +34,7 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ position, onPickup, se
       position={position}
       restitution={0.2}
       friction={0.8}
-      userData={{ type: 'flora' }} // For future interaction
+      userData={{ type: 'flora', id }} // For interaction (pickup on dig)
     >
       <group>
         {/* The Light Source - Cool White, moderate range */}

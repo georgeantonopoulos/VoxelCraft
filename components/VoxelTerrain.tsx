@@ -68,6 +68,12 @@ const isTerrainCollider = (collider: Collider): boolean => {
   return userData?.type === 'terrain';
 };
 
+const isFloraCollider = (collider: Collider): boolean => {
+  const parent = collider.parent();
+  const userData = parent?.userData as { type?: string; id?: string } | undefined;
+  return userData?.type === 'flora' && typeof userData.id === 'string';
+};
+
 const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, chunkKey, onHarvest }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const count = positions.length / 3;
@@ -558,31 +564,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     const maxRayDistance = 16.0;
 
     const ray = new rapier.Ray(origin, direction);
+
+    // 0. CHECK FOR FLORA INTERACTION (HARVEST) — stop if we hit flora first
+    if (action === 'DIG') {
+      const floraHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isFloraCollider);
+      if (floraHit) {
+        const collider = world.getCollider(floraHit.colliderHandle);
+        const parent = collider?.parent();
+        const floraId = (parent?.userData as { id?: string } | undefined)?.id;
+        if (floraId) {
+          useGameStore.getState().harvestFlora(floraId);
+          return;
+        }
+      }
+    }
+
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
     if (terrainHit) {
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
       const dist = origin.distanceTo(impactPoint);
-
-      // 0. CHECK FOR FLORA INTERACTION (HARVEST)
-      // Only if DIGGING (Left Click)
-      if (action === 'DIG') {
-          // Perform a separate raycast for InstancedMesh (Flora)
-          // R3F's raycaster is updated every frame, but we need to check specifically against flora meshes
-          // Since we don't have direct access to the InstancedMesh here easily without traversing...
-          // A better approach: The `terrainHit` collider might have a parent that is the Chunk group.
-          // But Flora is an InstancedMesh inside that group. Rapier collider is for Terrain Trimesh.
-          // Flora currently has NO physics collider in the worker gen, so raycast won't hit it via Rapier.
-          // We need THREE.Raycaster for visual meshes.
-          // We can use the logic from FloraPlacer but reversed?
-          // OR: We can iterate chunks and check intersection.
-
-          // Let's defer Flora Harvest to a dedicated click handler on the InstancedMesh if possible?
-          // InstancedMesh supports onClick in R3F? Yes, if we use <instancedMesh ... onClick={...} />
-          // But `FloraMesh` is memoized and logic is separate.
-          // Let's add onClick to `FloraMesh`.
-      }
 
       const offset = action === 'DIG' ? 0.1 : -0.1;
       const hitPoint = impactPoint.addScaledVector(direction, offset);

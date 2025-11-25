@@ -1,28 +1,29 @@
 import React, { useRef, useEffect } from 'react';
-import { useThree, useFrame } from '@react-three/fiber';
+import { useThree } from '@react-three/fiber';
 import { useGameStore } from '../services/GameManager';
-import { Raycaster, Vector2, Vector3, Mesh } from 'three';
-import { useKeyboardControls } from '@react-three/drei';
+import { Vector2, Vector3, Object3D } from 'three';
 import { LuminaFlora } from './LuminaFlora';
 
 export const FloraPlacer: React.FC = () => {
     const { camera, scene, raycaster } = useThree();
-    const [sub, get] = useKeyboardControls();
-    const inventory = useGameStore(s => s.inventoryCount);
     const placeFlora = useGameStore(s => s.placeFlora);
     const placedFloras = useGameStore(s => s.placedFloras);
     const lastPlaceTime = useRef(0);
-
-    useFrame((state) => {
-        const { e } = get() as any; // Assuming 'e' is mapped? Wait, I need to map 'E' key first.
-
-        // Custom key handler for 'E' since it might not be in the default map
-        // Or I can add it to the map in App.tsx.
-        // For now, let's use a native listener or check via Drei if mapped.
-        // Actually, let's just use native listener for simplicity or add to map.
-    });
+    const terrainTargets = useRef<Object3D[]>([]);
 
     useEffect(() => {
+        /**
+         * Returns true if the object or any parent is tagged as terrain.
+         */
+        const isTerrain = (obj: Object3D | null): boolean => {
+            let current: Object3D | null = obj;
+            while (current) {
+                if (current.userData?.type === 'terrain') return true;
+                current = current.parent;
+            }
+            return false;
+        };
+
         const handleDown = (e: KeyboardEvent) => {
             if (e.code === 'KeyE') {
                 if (useGameStore.getState().inventoryCount > 0) {
@@ -30,13 +31,22 @@ export const FloraPlacer: React.FC = () => {
                     if (now - lastPlaceTime.current < 200) return; // Debounce
 
                     raycaster.setFromCamera(new Vector2(0, 0), camera);
-                    const intersects = raycaster.intersectObjects(scene.children, true);
+                    // Limit raycast to terrain meshes (ancestor-aware) to reduce work without breaking hits
+                    terrainTargets.current = [];
+                    scene.traverse(obj => {
+                        if ((obj as any).isMesh && isTerrain(obj)) {
+                            terrainTargets.current.push(obj);
+                        }
+                    });
+
+                    scene.updateMatrixWorld();
+                    raycaster.far = 24;
+                    const intersects = terrainTargets.current.length > 0
+                      ? raycaster.intersectObjects(terrainTargets.current, false)
+                      : raycaster.intersectObjects(scene.children, true);
 
                     // Filter for terrain
-                    const terrainHit = intersects.find(hit => {
-                        // Check if hit object is terrain (chunk mesh)
-                        return hit.object.userData?.type === 'terrain';
-                    });
+                    const terrainHit = intersects.find(hit => isTerrain(hit.object));
 
                     if (terrainHit) {
                         const normal = terrainHit.face?.normal || new Vector3(0, 1, 0);
@@ -55,7 +65,11 @@ export const FloraPlacer: React.FC = () => {
     return (
         <>
             {placedFloras.map(flora => (
-                <LuminaFlora key={flora.id} position={[flora.position.x, flora.position.y, flora.position.z]} />
+                <LuminaFlora
+                  key={flora.id}
+                  id={flora.id}
+                  position={[flora.position.x, flora.position.y, flora.position.z]}
+                />
             ))}
         </>
     );

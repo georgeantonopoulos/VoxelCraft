@@ -7,6 +7,7 @@ interface GameState {
   addFlora: () => void;
   removeFlora: () => void;
   placeFlora: (position: THREE.Vector3) => void;
+  harvestFlora: (id: string) => void;
 }
 
 export const useGameStore = create<GameState>((set) => ({
@@ -21,5 +22,10 @@ export const useGameStore = create<GameState>((set) => ({
         { id: Math.random().toString(36).substr(2, 9), position },
       ],
       inventoryCount: state.inventoryCount - 1,
+    })),
+  harvestFlora: (id) =>
+    set((state) => ({
+      inventoryCount: state.inventoryCount + 1,
+      placedFloras: state.placedFloras.filter((flora) => flora.id !== id),
     })),
 }));
