@@ -191,20 +191,31 @@ export function generateMesh(
                 }
               }
 
-              // Sort by weighted contribution, get top 3 materials
-              const sorted = [...matWeights.entries()].sort((a, b) => b[1] - a[1]);
-              
-              // Normalize weights
-              const normTotal = totalWeight || 1;
-              
-              const mat1 = sorted[0]?.[0] ?? MaterialType.DIRT;
-              const mat2 = sorted[1]?.[0] ?? mat1;
-              const mat3 = sorted[2]?.[0] ?? mat2;
+              // --- CANONICAL ORDERING FIX ---
+              // 1. First, sort by weight to find the TOP 3 candidates (discard weak noise)
+              let candidates = [...matWeights.entries()].sort((a, b) => b[1] - a[1]);
+              if (candidates.length > 3) {
+                candidates = candidates.slice(0, 3);
+              }
 
-              // Calculate blend weights as proportion of total
-              const w1 = (sorted[0]?.[1] ?? normTotal) / normTotal;
-              const w2 = (sorted[1]?.[1] ?? 0) / normTotal;
-              const w3 = (sorted[2]?.[1] ?? 0) / normTotal;
+              // 2. CRITICAL: Sort the survivors by ID (Ascending)
+              // This locks the slots. Dirt (3) will always be before Grass (4).
+              candidates.sort((a, b) => a[0] - b[0]);
+
+              // 3. Normalize the weights of only these top 3
+              let totalTopWeight = 0;
+              for (const c of candidates) totalTopWeight += c[1];
+              const norm = totalTopWeight > 0.0001 ? totalTopWeight : 1.0;
+
+              // 4. Assign to slots (0 if not present)
+              const mat1 = candidates[0] ? candidates[0][0] : MaterialType.DIRT;
+              const w1 = candidates[0] ? candidates[0][1] / norm : 1.0;
+
+              const mat2 = candidates[1] ? candidates[1][0] : mat1; // Fallback to mat1 prevents 0-id glitches
+              const w2 = candidates[1] ? candidates[1][1] / norm : 0.0;
+
+              const mat3 = candidates[2] ? candidates[2][0] : mat2;
+              const w3 = candidates[2] ? candidates[2][1] / norm : 0.0;
 
               tMats.push(mat1);
               tMats2.push(mat2);

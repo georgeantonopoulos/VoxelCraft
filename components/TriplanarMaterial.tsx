@@ -155,37 +155,36 @@ const fragmentShader = `
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    // 1. Sample Low-Frequency "Warp" Noise for organic edge variation
-    float warp = texture(uNoiseTexture, vWorldPosition * 0.09).r;
+    // 1. Sample High-Frequency Edge Noise to break up straight transition lines (shards)
+    // Triple-A trick: Use high-frequency noise to "shatter" the transition line
+    float edgeNoise = texture(uNoiseTexture, vWorldPosition * 1.5).r;
+    
+    // 2. Apply stronger noise distortion to weights to break up shards
+    vec3 scrambledW = vW + (edgeNoise - 0.5) * 0.5; // Stronger distortion
+    scrambledW = max(scrambledW, 0.0);
+    
+    // 3. Renormalize scrambled weights
+    scrambledW /= (scrambledW.x + scrambledW.y + scrambledW.z + 0.0001);
 
-    // 2. Apply gentle noise distortion to weights for organic edges
-    vec3 warpedW = vW + (warp - 0.5) * 0.15;
-
-    // 3. Soft blending - use lower power for smoother transitions
-    vec3 softW = pow(max(warpedW, 0.0), vec3(1.5));
-
-    // 4. Renormalize
-    softW /= (softW.x + softW.y + softW.z + 0.0001);
-
-    // 5. Conditional Sampling & Blending
+    // 4. Conditional Sampling & Blending using scrambled weights
     MatInfo m1 = getMaterialInfo(vMaterial1, nMid, nHigh);
 
-    vec3 finalBaseCol = m1.baseCol * softW.x;
-    float finalRoughness = m1.roughness * softW.x;
-    float finalNoiseFactor = m1.noiseFactor * softW.x;
+    vec3 finalBaseCol = m1.baseCol * scrambledW.x;
+    float finalRoughness = m1.roughness * scrambledW.x;
+    float finalNoiseFactor = m1.noiseFactor * scrambledW.x;
 
-    if (softW.y > 0.001) {
+    if (scrambledW.y > 0.01) {
         MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
-        finalBaseCol += m2.baseCol * softW.y;
-        finalRoughness += m2.roughness * softW.y;
-        finalNoiseFactor += m2.noiseFactor * softW.y;
+        finalBaseCol += m2.baseCol * scrambledW.y;
+        finalRoughness += m2.roughness * scrambledW.y;
+        finalNoiseFactor += m2.noiseFactor * scrambledW.y;
     }
 
-    if (softW.z > 0.001) {
+    if (scrambledW.z > 0.01) {
         MatInfo m3 = getMaterialInfo(vMaterial3, nMid, nHigh);
-        finalBaseCol += m3.baseCol * softW.z;
-        finalRoughness += m3.roughness * softW.z;
-        finalNoiseFactor += m3.noiseFactor * softW.z;
+        finalBaseCol += m3.baseCol * scrambledW.z;
+        finalRoughness += m3.roughness * scrambledW.z;
+        finalNoiseFactor += m3.noiseFactor * scrambledW.z;
     }
 
     float intensity = 0.6 + 0.6 * finalNoiseFactor;
