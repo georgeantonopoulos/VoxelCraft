@@ -147,6 +147,39 @@ const fragmentShader = `
       return MatInfo(baseCol, roughness, noiseFactor);
   }
 
+  // --- NEW HELPER: Smoothly blends between IDs ---
+  MatInfo getSmoothMaterial(float smoothID, vec4 nMid, vec4 nHigh) {
+      // 1. Add noise to the ID so the transition isn't a perfect straight line
+      // Using a lower frequency noise makes the waviness subtle and organic
+      float noise = texture(uNoiseTexture, vWorldPosition * 0.1).r;
+      float disturbedID = smoothID + (noise - 0.5) * 0.5;
+
+      // 2. Identify the two materials we are between
+      float idLower = floor(disturbedID);
+      float idUpper = ceil(disturbedID);
+      
+      // Clamp to valid range
+      idLower = clamp(idLower, 0.0, 15.0);
+      idUpper = clamp(idUpper, 0.0, 15.0);
+      
+      // 3. Calculate how much to mix (the decimal part)
+      float t = fract(disturbedID);
+      
+      // 4. Make the mix non-linear for better contrast (optional, keeps it from looking 'washed out')
+      t = smoothstep(0.2, 0.8, t);
+
+      // 5. Fetch both materials
+      MatInfo mLower = getMaterialInfo(idLower, nMid, nHigh);
+      MatInfo mUpper = getMaterialInfo(idUpper, nMid, nHigh);
+
+      // 6. Blend them
+      vec3 col = mix(mLower.baseCol, mUpper.baseCol, t);
+      float rough = mix(mLower.roughness, mUpper.roughness, t);
+      float nf = mix(mLower.noiseFactor, mUpper.noiseFactor, t);
+
+      return MatInfo(col, rough, nf);
+  }
+
   void main() {
     // 1. Apply Safe Normalization immediately
     vec3 N = safeNormalize(vWorldNormal);
@@ -155,36 +188,32 @@ const fragmentShader = `
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    // 1. Sample High-Frequency Edge Noise to break up straight transition lines (shards)
-    // Triple-A trick: Use high-frequency noise to "shatter" the transition line
-    float edgeNoise = texture(uNoiseTexture, vWorldPosition * 1.5).r;
+    // --- Weight Blending ---
+    float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
+    vec3 warpedW = vW + (warp - 0.5) * 0.2;
+    vec3 softW = pow(max(warpedW, 0.0), vec3(2.0));
+    softW /= (softW.x + softW.y + softW.z + 0.0001);
+
+    // --- USE THE NEW SMOOTH FUNCTION ---
+    // This replaces the hard floor() logic with smooth interpolation
+    MatInfo m1 = getSmoothMaterial(vMaterial1, nMid, nHigh);
     
-    // 2. Apply stronger noise distortion to weights to break up shards
-    vec3 scrambledW = vW + (edgeNoise - 0.5) * 0.5; // Stronger distortion
-    scrambledW = max(scrambledW, 0.0);
-    
-    // 3. Renormalize scrambled weights
-    scrambledW /= (scrambledW.x + scrambledW.y + scrambledW.z + 0.0001);
+    vec3 finalBaseCol = m1.baseCol * softW.x;
+    float finalRoughness = m1.roughness * softW.x;
+    float finalNoiseFactor = m1.noiseFactor * softW.x;
 
-    // 4. Conditional Sampling & Blending using scrambled weights
-    MatInfo m1 = getMaterialInfo(vMaterial1, nMid, nHigh);
-
-    vec3 finalBaseCol = m1.baseCol * scrambledW.x;
-    float finalRoughness = m1.roughness * scrambledW.x;
-    float finalNoiseFactor = m1.noiseFactor * scrambledW.x;
-
-    if (scrambledW.y > 0.01) {
-        MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
-        finalBaseCol += m2.baseCol * scrambledW.y;
-        finalRoughness += m2.roughness * scrambledW.y;
-        finalNoiseFactor += m2.noiseFactor * scrambledW.y;
+    if (softW.y > 0.001) {
+        MatInfo m2 = getSmoothMaterial(vMaterial2, nMid, nHigh);
+        finalBaseCol += m2.baseCol * softW.y;
+        finalRoughness += m2.roughness * softW.y;
+        finalNoiseFactor += m2.noiseFactor * softW.y;
     }
 
-    if (scrambledW.z > 0.01) {
-        MatInfo m3 = getMaterialInfo(vMaterial3, nMid, nHigh);
-        finalBaseCol += m3.baseCol * scrambledW.z;
-        finalRoughness += m3.roughness * scrambledW.z;
-        finalNoiseFactor += m3.noiseFactor * scrambledW.z;
+    if (softW.z > 0.001) {
+        MatInfo m3 = getSmoothMaterial(vMaterial3, nMid, nHigh);
+        finalBaseCol += m3.baseCol * softW.z;
+        finalRoughness += m3.roughness * softW.z;
+        finalNoiseFactor += m3.noiseFactor * softW.z;
     }
 
     float intensity = 0.6 + 0.6 * finalNoiseFactor;
