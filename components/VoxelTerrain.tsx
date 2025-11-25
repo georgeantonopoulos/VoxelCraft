@@ -152,7 +152,6 @@ const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest
             }
          `}
          uniforms={uniforms}
-         silent
          color="#222"
          roughness={0.4}
          toneMapped={false}

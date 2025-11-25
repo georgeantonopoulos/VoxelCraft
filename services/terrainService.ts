@@ -141,7 +141,7 @@ export class TerrainService {
 
             // --- Flora Generation Pass ---
             // 1. Depth Check (Deep caves only)
-            if (wy < -10 && wy > -50) {
+            if (wy < -1 && wy > -50) {
                 if (y > 0) {
                     const idxBelow = x + (y-1) * sizeX + z * sizeX * sizeY;
                     const dBelow = density[idxBelow];

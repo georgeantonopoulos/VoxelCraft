@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useGameStore } from '../services/GameManager';
-import { Raycaster, Vector3, Mesh } from 'three';
+import { Raycaster, Vector2, Vector3, Mesh } from 'three';
 import { useKeyboardControls } from '@react-three/drei';
 import { LuminaFlora } from './LuminaFlora';
 
@@ -29,7 +29,7 @@ export const FloraPlacer: React.FC = () => {
                     const now = performance.now();
                     if (now - lastPlaceTime.current < 200) return; // Debounce
 
-                    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+                    raycaster.setFromCamera(new Vector2(0, 0), camera);
                     const intersects = raycaster.intersectObjects(scene.children, true);
 
                     // Filter for terrain
