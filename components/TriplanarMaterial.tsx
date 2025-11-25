@@ -96,9 +96,8 @@ const fragmentShader = `
   };
 
   MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
-      // Organic Thresholding (Scale 0.12 for larger, less shardy shapes)
-      float noise = texture(uNoiseTexture, vWorldPosition * 0.12).r;
-      float m = floor(rawM + (noise - 0.5) * 0.9 + 0.5);
+      // Use the material ID directly - blending is handled by vertex weights
+      float m = floor(rawM + 0.5);
       m = clamp(m, 0.0, 15.0);
 
       vec3 baseCol = uColorStone;
@@ -148,6 +147,39 @@ const fragmentShader = `
       return MatInfo(baseCol, roughness, noiseFactor);
   }
 
+  // --- NEW HELPER: Smoothly blends between IDs ---
+  MatInfo getSmoothMaterial(float smoothID, vec4 nMid, vec4 nHigh) {
+      // 1. Add noise to the ID so the transition isn't a perfect straight line
+      // Using a lower frequency noise makes the waviness subtle and organic
+      float noise = texture(uNoiseTexture, vWorldPosition * 0.1).r;
+      float disturbedID = smoothID + (noise - 0.5) * 0.5;
+
+      // 2. Identify the two materials we are between
+      float idLower = floor(disturbedID);
+      float idUpper = ceil(disturbedID);
+      
+      // Clamp to valid range
+      idLower = clamp(idLower, 0.0, 15.0);
+      idUpper = clamp(idUpper, 0.0, 15.0);
+      
+      // 3. Calculate how much to mix (the decimal part)
+      float t = fract(disturbedID);
+      
+      // 4. Make the mix non-linear for better contrast (optional, keeps it from looking 'washed out')
+      t = smoothstep(0.2, 0.8, t);
+
+      // 5. Fetch both materials
+      MatInfo mLower = getMaterialInfo(idLower, nMid, nHigh);
+      MatInfo mUpper = getMaterialInfo(idUpper, nMid, nHigh);
+
+      // 6. Blend them
+      vec3 col = mix(mLower.baseCol, mUpper.baseCol, t);
+      float rough = mix(mLower.roughness, mUpper.roughness, t);
+      float nf = mix(mLower.noiseFactor, mUpper.noiseFactor, t);
+
+      return MatInfo(col, rough, nf);
+  }
+
   void main() {
     // 1. Apply Safe Normalization immediately
     vec3 N = safeNormalize(vWorldNormal);
@@ -156,34 +188,29 @@ const fragmentShader = `
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    // 1. Sample Low-Frequency "Warp" Noise
+    // --- Weight Blending ---
     float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
-
-    // 2. Distort the Linear Weights
-    vec3 warpedW = vW + (warp - 0.5) * 0.3;
-
-    // 3. Soft-Max Blending
-    vec3 softW = pow(max(warpedW, 0.0), vec3(4.0));
-
-    // 4. Renormalize
+    vec3 warpedW = vW + (warp - 0.5) * 0.2;
+    vec3 softW = pow(max(warpedW, 0.0), vec3(2.0));
     softW /= (softW.x + softW.y + softW.z + 0.0001);
 
-    // 5. Conditional Sampling & Blending
-    MatInfo m1 = getMaterialInfo(vMaterial1, nMid, nHigh);
-
+    // --- USE THE NEW SMOOTH FUNCTION ---
+    // This replaces the hard floor() logic with smooth interpolation
+    MatInfo m1 = getSmoothMaterial(vMaterial1, nMid, nHigh);
+    
     vec3 finalBaseCol = m1.baseCol * softW.x;
     float finalRoughness = m1.roughness * softW.x;
     float finalNoiseFactor = m1.noiseFactor * softW.x;
 
     if (softW.y > 0.001) {
-        MatInfo m2 = getMaterialInfo(vMaterial2, nMid, nHigh);
+        MatInfo m2 = getSmoothMaterial(vMaterial2, nMid, nHigh);
         finalBaseCol += m2.baseCol * softW.y;
         finalRoughness += m2.roughness * softW.y;
         finalNoiseFactor += m2.noiseFactor * softW.y;
     }
 
     if (softW.z > 0.001) {
-        MatInfo m3 = getMaterialInfo(vMaterial3, nMid, nHigh);
+        MatInfo m3 = getSmoothMaterial(vMaterial3, nMid, nHigh);
         finalBaseCol += m3.baseCol * softW.z;
         finalRoughness += m3.roughness * softW.z;
         finalNoiseFactor += m3.noiseFactor * softW.z;

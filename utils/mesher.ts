@@ -44,7 +44,6 @@ export function generateMesh(
   const tMoss: number[] = [];
   
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
-  const matCounts = new Uint8Array(16);
 
   const snapEpsilon = 0.02;
   const snapBoundary = (v: number, limit: number) => {
@@ -151,84 +150,76 @@ export function generateMesh(
               if (len > 0.00001) tNorms.push(nx / len, ny / len, nz / len);
               else tNorms.push(0, 1, 0);
 
-              // Material Selection (Histogram Analysis)
-              let m1 = MaterialType.DIRT;
-              let m2 = MaterialType.AIR;
-              let m3 = MaterialType.AIR;
-              let w1 = 1.0;
-              let w2 = 0.0;
-              let w3 = 0.0;
-
+              // Material Selection with Conservative Blending
+              // Only blend with immediately adjacent materials (radius 2) to avoid grass bleeding into deep stone
+              const BLEND_RADIUS = 3;
+              const matWeights: Map<number, number> = new Map();
               let bestWet = 0;
               let bestMoss = 0;
-              let bestVal = -Infinity; // Used for wetness/mossiness selection
+              let bestVal = -Infinity;
+              let totalWeight = 0;
 
-              matCounts.fill(0);
-
-              const candidates: Array<[number, number, number, number]> = [
-                [v000, x, y, z], [v100, x+1, y, z], [v010, x, y+1, z], [v110, x+1, y+1, z],
-                [v001, x, y, z+1], [v101, x+1, y, z+1], [v011, x, y+1, z+1], [v111, x+1, y+1, z+1]
-              ];
-
-              for (const [val, cx, cy, cz] of candidates) {
-                 const mat = getMat(material, cx, cy, cz);
-                 if (val > ISO_LEVEL && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
-                     matCounts[mat]++;
-                 }
+              // Sample in a small sphere - conservative blending
+              for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
+                for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
+                  for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
+                    const sx = Math.round(avgX) + dx;
+                    const sy = Math.round(avgY) + dy;
+                    const sz = Math.round(avgZ) + dz;
+                    
+                    const val = getVal(density, sx, sy, sz);
+                    if (val > ISO_LEVEL) {
+                      const mat = getMat(material, sx, sy, sz);
+                      if (mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
+                        // Distance-based weight - closer samples have more influence
+                        const distSq = dx * dx + dy * dy + dz * dz;
+                        const dist = Math.sqrt(distSq) + 0.3;
+                        const weight = 1.0 / (dist * dist);
+                        
+                        matWeights.set(mat, (matWeights.get(mat) || 0) + weight);
+                        totalWeight += weight;
+                        
+                        // Track wetness/mossiness from highest density voxel
+                        if (val > bestVal) {
+                          bestVal = val;
+                          bestWet = getByte(wetData, sx, sy, sz);
+                          bestMoss = getByte(mossData, sx, sy, sz);
+                        }
+                      }
+                    }
+                  }
+                }
               }
 
-              // Identify Top 3 Materials
-              let c1 = 0;
-              let c2 = 0;
-              let c3 = 0;
-              m1 = 0;
-              m2 = 0;
-              m3 = 0;
-
-              for (let m = 1; m < 16; m++) {
-                  const c = matCounts[m];
-                  if (c > c1) {
-                      // Shift 1->2, 2->3
-                      c3 = c2; m3 = m2;
-                      c2 = c1; m2 = m1;
-                      c1 = c;  m1 = m;
-                  } else if (c > c2) {
-                      // Shift 2->3
-                      c3 = c2; m3 = m2;
-                      c2 = c;  m2 = m;
-                  } else if (c > c3) {
-                      c3 = c;  m3 = m;
-                  }
+              // --- CANONICAL ORDERING FIX ---
+              // 1. First, sort by weight to find the TOP 3 candidates (discard weak noise)
+              let candidates = [...matWeights.entries()].sort((a, b) => b[1] - a[1]);
+              if (candidates.length > 3) {
+                candidates = candidates.slice(0, 3);
               }
 
-              if (m1 !== 0) {
-                  // Normalize Weights
-                  const total = c1 + c2 + c3;
-                  if (total > 0) {
-                      w1 = c1 / total;
-                      w2 = c2 / total;
-                      w3 = c3 / total;
-                  }
+              // 2. CRITICAL: Sort the survivors by ID (Ascending)
+              // This locks the slots. Dirt (3) will always be before Grass (4).
+              candidates.sort((a, b) => a[0] - b[0]);
 
-                  // Find wetness/mossiness for the dominant material (m1)
-                  for (const [val, cx, cy, cz] of candidates) {
-                     const mat = getMat(material, cx, cy, cz);
-                     if (mat === m1 && val > bestVal) {
-                         bestVal = val;
-                         bestWet = getByte(wetData, cx, cy, cz);
-                         bestMoss = getByte(mossData, cx, cy, cz);
-                     }
-                  }
-              } else {
-                 // Fallback if no valid materials found (rare)
-                 const mat = getMat(material, Math.round(avgX), Math.round(avgY), Math.round(avgZ));
-                 m1 = mat || MaterialType.DIRT;
-                 // Weights remain 1,0,0
-              }
+              // 3. Normalize the weights of only these top 3
+              let totalTopWeight = 0;
+              for (const c of candidates) totalTopWeight += c[1];
+              const norm = totalTopWeight > 0.0001 ? totalTopWeight : 1.0;
 
-              tMats.push(m1);
-              tMats2.push(m2);
-              tMats3.push(m3);
+              // 4. Assign to slots (0 if not present)
+              const mat1 = candidates[0] ? candidates[0][0] : MaterialType.DIRT;
+              const w1 = candidates[0] ? candidates[0][1] / norm : 1.0;
+
+              const mat2 = candidates[1] ? candidates[1][0] : mat1; // Fallback to mat1 prevents 0-id glitches
+              const w2 = candidates[1] ? candidates[1][1] / norm : 0.0;
+
+              const mat3 = candidates[2] ? candidates[2][0] : mat2;
+              const w3 = candidates[2] ? candidates[2][1] / norm : 0.0;
+
+              tMats.push(mat1);
+              tMats2.push(mat2);
+              tMats3.push(mat3);
               tWeights.push(w1, w2, w3);
               tWets.push(bestWet / 255.0);
               tMoss.push(bestMoss / 255.0);
@@ -240,12 +231,10 @@ export function generateMesh(
   }
 
   // 2. Quad Generation
-  // OPTIMIZED LOOP: Explicit bounds handling for non-cubic chunks
   const start = PAD;
   const endX = PAD + CHUNK_SIZE_XZ;
   const endY = PAD + CHUNK_SIZE_Y;
 
-  // Helper to push quads using grid indices
   const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
       const c0 = tVertIdx[i0];
       const c1 = tVertIdx[i1];
@@ -258,15 +247,12 @@ export function generateMesh(
       }
   };
 
-  // We iterate up to the boundary (endX/Y) to catch the faces connecting to neighbors
   for (let z = start; z <= endX; z++) {
     for (let y = start; y <= endY; y++) {
       for (let x = start; x <= endX; x++) {
           const val = getVal(density, x, y, z);
           
-          // X-Axis Face (Normal pointing X)
-          // Valid X range: start -> endX-1 (interior)
-          if (x < endX && y > start && z > start) {
+          if (x < endX) {
               const vX = getVal(density, x + 1, y, z);
               if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
                   pushQuad(
@@ -277,10 +263,7 @@ export function generateMesh(
               }
           }
           
-          // Y-Axis Face (Normal pointing Y - Top/Bottom)
-          // Valid Y range: start -> endY-1
-          // CRITICAL: Use endY here, not endX
-          if (y < endY && x > start && z > start) {
+          if (y < endY) {
               const vY = getVal(density, x, y + 1, z);
               if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
                   pushQuad(
@@ -291,12 +274,10 @@ export function generateMesh(
               }
           }
 
-          // Z-Axis Face (Normal pointing Z)
-          // Valid Z range: start -> endX-1 (assuming width=depth)
-          if (z < endX && x > start && y > start) {
+          if (z < endX) {
               const vZ = getVal(density, x, y, z + 1);
               if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
-                  // Swapped indices 1 and 2 for Z-face winding order
+                  // Swapped indices 1 and 2 for Z-face winding
                   pushQuad(
                       bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z),
                       bufIdx(x, y - 1, z), bufIdx(x, y, z),
@@ -322,5 +303,5 @@ export function generateMesh(
     waterPositions: new Float32Array(0),
     waterIndices: new Uint32Array(0),
     waterNormals: new Float32Array(0),
-  };
+  } as MeshData;
 }

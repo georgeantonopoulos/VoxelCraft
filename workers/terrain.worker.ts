@@ -1,5 +1,13 @@
 import { TerrainService } from '../services/terrainService';
 import { generateMesh } from '../utils/mesher';
+import { MeshData } from '../types';
+
+// Type alias to ensure TypeScript recognizes all MeshData properties
+type CompleteMeshData = MeshData & {
+  materials2: Float32Array;
+  materials3: Float32Array;
+  meshWeights: Float32Array;
+};
 
 const ctx: Worker = self as any;
 
@@ -11,15 +19,24 @@ ctx.onmessage = (e: MessageEvent) => {
         const { cx, cz } = payload;
         const t0 = performance.now();
         console.log('[terrain.worker] GENERATE start', cx, cz);
-        const { density, material, metadata } = TerrainService.generateChunk(cx, cz);
-        const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness);
+        const { density, material, metadata, floraPositions } = TerrainService.generateChunk(cx, cz);
+        const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as CompleteMeshData;
         console.log('[terrain.worker] GENERATE done', cx, cz, {
             positions: mesh.positions.length,
             indices: mesh.indices.length,
             waterPositions: mesh.waterPositions.length,
             waterIndices: mesh.waterIndices.length,
+            floraCount: floraPositions.length / 3,
             ms: Math.round(performance.now() - t0)
         });
+        
+        // Log flora positions if any exist
+        if (floraPositions.length > 0) {
+            console.log('[terrain.worker] Flora spawned in chunk', cx, cz, ':', floraPositions.length / 3, 'positions');
+            for (let i = 0; i < Math.min(floraPositions.length, 15); i += 3) {
+                console.log('  Flora at:', floraPositions[i], floraPositions[i+1], floraPositions[i+2]);
+            }
+        }
 
         const response = {
             key: `${cx},${cz}`,
@@ -27,6 +44,7 @@ ctx.onmessage = (e: MessageEvent) => {
             density,
             material,
             metadata, // CRITICAL: Pass metadata back to main thread so VoxelTerrain can init DB
+            floraPositions, // Flora spawn positions for caves
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
@@ -48,6 +66,7 @@ ctx.onmessage = (e: MessageEvent) => {
             material.buffer,
             metadata.wetness.buffer, // Transfer metadata buffers too
             metadata.mossiness.buffer,
+            floraPositions.buffer,
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,
@@ -74,7 +93,7 @@ ctx.onmessage = (e: MessageEvent) => {
         
         const t0 = performance.now();
         console.log('[terrain.worker] REMESH start', key, 'v', version);
-        const mesh = generateMesh(density, material);
+        const mesh = generateMesh(density, material) as CompleteMeshData;
         console.log('[terrain.worker] REMESH done', key, {
             positions: mesh.positions.length,
             indices: mesh.indices.length,

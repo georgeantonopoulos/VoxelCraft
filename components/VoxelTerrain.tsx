@@ -1,11 +1,13 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { RigidBody, useRapier } from '@react-three/rapier';
+import CustomShaderMaterial from 'three-custom-shader-material';
 import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager, SimUpdate } from '../services/SimulationManager';
+import { useGameStore } from '../services/GameManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
 import { WaterMaterial } from './WaterMaterial';
@@ -30,6 +32,8 @@ interface ChunkState {
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
+
+  floraPositions?: Float32Array;
 
   meshWaterPositions: Float32Array;
   meshWaterIndices: Uint32Array;
@@ -64,9 +68,140 @@ const isTerrainCollider = (collider: Collider): boolean => {
   return userData?.type === 'terrain';
 };
 
+// Small helper to test ray vs placed flora without relying on physics colliders
+const rayHitsFlora = (
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxDist: number,
+  floraRadius = 0.6
+): string | null => {
+  const state = useGameStore.getState();
+  let closestId: string | null = null;
+  let closestT = maxDist + 1;
+  const tmp = new THREE.Vector3();
+  const proj = new THREE.Vector3();
+
+  // Iterate over placed flora
+  for (const flora of state.placedFloras) {
+    // Use the live physics position if available, otherwise fall back to initial spawn position
+    const floraWithRef = flora as { id: string; position: THREE.Vector3; bodyRef: React.RefObject<any> };
+    const currentPos = floraWithRef.bodyRef?.current 
+      ? floraWithRef.bodyRef.current.translation() 
+      : floraWithRef.position;
+
+    // Rapier translation returns {x,y,z}, ensure it's Vector3-like
+    tmp.set(currentPos.x, currentPos.y, currentPos.z).sub(origin);
+    
+    const t = tmp.dot(dir);
+    if (t < 0 || t > maxDist) continue; // Behind camera or too far
+    proj.copy(dir).multiplyScalar(t);
+    tmp.sub(proj);
+    const distSq = tmp.lengthSq();
+    if (distSq <= floraRadius * floraRadius && t < closestT) {
+      closestT = t;
+      closestId = floraWithRef.id;
+    }
+  }
+
+  return closestId;
+};
+
+const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, chunkKey, onHarvest }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const count = positions.length / 3;
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Track removed instances visually until remesh
+  const [removedIndices, setRemovedIndices] = useState<Set<number>>(new Set());
+
+  const handleClick = (e: any) => {
+      // e.instanceId is the index
+      if (e.button === 0 && e.instanceId !== undefined && !removedIndices.has(e.instanceId)) {
+           e.stopPropagation();
+           setRemovedIndices(prev => new Set(prev).add(e.instanceId));
+           onHarvest(e.instanceId);
+
+           // Hide instance immediately
+           if (meshRef.current) {
+               meshRef.current.getMatrixAt(e.instanceId, dummy.matrix);
+               dummy.matrix.scale(new THREE.Vector3(0,0,0)); // Scale to zero
+               meshRef.current.setMatrixAt(e.instanceId, dummy.matrix);
+               meshRef.current.instanceMatrix.needsUpdate = true;
+           }
+      }
+  };
+
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color('#00FFFF') },
+    uSeed: { value: Math.random() * 100 }
+  }), []);
+
+  useLayoutEffect(() => {
+    if (!meshRef.current) return;
+    for (let i = 0; i < count; i++) {
+        dummy.position.set(positions[i*3], positions[i*3+1], positions[i*3+2]);
+        // Random rotation and scale for variety
+        dummy.rotation.y = Math.random() * Math.PI * 2;
+        dummy.rotation.x = (Math.random() - 0.5) * 0.5;
+        dummy.scale.setScalar(0.5 + Math.random() * 0.5);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, count, dummy]);
+
+  useFrame(({ clock }) => {
+    if (meshRef.current && meshRef.current.material) {
+        // @ts-ignore
+        const mat = meshRef.current.material as THREE.ShaderMaterial;
+        if(mat.uniforms && mat.uniforms.uTime) {
+            mat.uniforms.uTime.value = clock.getElapsedTime();
+        }
+    }
+  });
+
+  return (
+    <instancedMesh
+        ref={meshRef}
+        args={[undefined, undefined, count]}
+        frustumCulled={false}
+        onClick={handleClick}
+        onPointerOver={() => document.body.style.cursor = 'pointer'}
+        onPointerOut={() => document.body.style.cursor = 'auto'}
+    >
+       <sphereGeometry args={[0.25, 16, 16]} />
+       <CustomShaderMaterial
+         baseMaterial={THREE.MeshStandardMaterial}
+         vertexShader={`
+            varying vec3 vPosition;
+            void main() {
+               vPosition = position;
+            }
+         `}
+         fragmentShader={`
+            uniform float uTime;
+            uniform vec3 uColor;
+            uniform float uSeed;
+            varying vec3 vPosition;
+            void main() {
+                float pulse = sin(uTime * 2.0 + uSeed + vPosition.x * 4.0) * 0.5 + 1.5;
+                csm_Emissive = uColor * pulse;
+            }
+         `}
+         uniforms={uniforms}
+         color="#222"
+         roughness={0.4}
+         toneMapped={false}
+       />
+    </instancedMesh>
+  );
+});
+
 const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
+  const addFlora = useGameStore(s => s.addFlora);
   const useBasicMaterial = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).has('basicMat');
@@ -187,6 +322,17 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
         <WaterMaterial sunDirection={sunDirection} fade={opacity} />
       </mesh>
     )}
+
+    {chunk.floraPositions && chunk.floraPositions.length > 0 && (
+        <FloraMesh
+            positions={chunk.floraPositions}
+            chunkKey={chunk.key}
+            onHarvest={(index) => {
+                addFlora();
+                // Ideally update chunk state to remove permanently, but visual hide is enough for MVP
+            }}
+        />
+    )}
     </group>
   );
 });
@@ -304,8 +450,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material } = payload;
+        const { key, metadata, material, floraPositions } = payload;
         pendingChunks.current.delete(key);
+        
+        // Log flora positions for debugging
+        if (floraPositions && floraPositions.length > 0) {
+            console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 3, 'flora positions');
+        }
         
         // Check if metadata exists before initializing
         if (metadata) {
@@ -318,6 +469,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
         const newChunk = {
             ...payload,
+            floraPositions, // Persist flora positions
             terrainVersion: 0,
             visualVersion: 0
         };
@@ -449,6 +601,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     const maxRayDistance = 16.0;
 
     const ray = new rapier.Ray(origin, direction);
+
+    // 0. CHECK FOR FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
+    if (action === 'DIG') {
+      const floraId = rayHitsFlora(origin, direction, maxRayDistance);
+      if (floraId) {
+        useGameStore.getState().harvestFlora(floraId);
+        return;
+      }
+    }
+
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
     if (terrainHit) {
