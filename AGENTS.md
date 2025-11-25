@@ -72,6 +72,12 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
     - Increases in size (5.0x) and opacity (0.9) during sunset/sunrise for enhanced visibility
     - Uses warmer orange tones during sunset, golden tints during day
     - Creates a realistic atmospheric glow around the sun
+- **Moon Follower**: `MoonFollower` component uses simple "game physics" approach.
+  - **Counter-Weight System**: Moon orbits exactly opposite to the sun (angle + Math.PI), sharing the same speed (0.025) to maintain perfect synchronization.
+  - **Visibility**: Moon is visible whenever it's above the horizon (Y > -50 threshold for smooth transitions).
+  - **Moonlight**: Provides subtle cool blue-white lighting (`#b8d4f0`) with fixed intensity (0.2) when above horizon.
+    - **No Shadows**: Moonlight doesn't cast shadows (performance optimization).
+  - **Visual Moon**: Simple white sphere (20 unit radius) - clean and visible.
 - **Atmosphere Controller**: `AtmosphereController` component manages gradient sky, fog, and hemisphere light colors.
   - **Gradient Sky**: Renders a `SkyDome` component that creates a realistic sky gradient:
     - **Night**: Deep dark blue at zenith (`#020210`), slightly lighter at horizon (`#101025`)
@@ -123,3 +129,4 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - 2025-11-24: Sunset color briefly flashed back to orange because `getSunColor` interpolated in the wrong direction when the sun dipped below the horizon (<0 normalized height). Added clamped interpolation that keeps fading the warm tones into night and remapped the sunrise band (0–0.2) to blend from sunset to day.
 - 2025-11-24: Sun halo used a separate color ramp that could drift into cyan during midday. Added `getSunGlowColor` so the glow now derives from the actual sun color and only applies gentle warm/cool adjustments per phase.
 - 2025-11-24: Fixed bouncing colors during sunset/sunrise. Previous logic in `getSkyGradient` and `getSunColor` had inconsistent ranges (some expecting 0.0 to be night, others sunset) causing visual jumps. Unified logic so: h < -0.15 is Night, -0.15 to 0.0 blends Night->Sunset, 0.0 to 0.3 blends Sunset->Day, >0.3 is Day.
+- 2025-01-XX: Added `MoonFollower` component using simple "game physics" approach. Moon orbits exactly opposite to sun (angle + Math.PI) with same speed (0.025) to maintain perfect day/night synchronization. Moon is visible when above horizon and provides subtle cool blue-white light (intensity 0.2). Simple white sphere mesh for clean visibility.

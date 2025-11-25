@@ -445,6 +445,70 @@ const SunFollower: React.FC = () => {
 };
 
 /**
+ * Simple moon component that orbits exactly opposite to the sun.
+ * Uses "game physics" - moon and sun are counter-weights on a rotating stick.
+ * Moon is visible when above horizon and provides subtle night lighting.
+ */
+const MoonFollower: React.FC = () => {
+  const { camera } = useThree();
+  const moonMeshRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const target = useMemo(() => new THREE.Object3D(), []);
+
+  useFrame(({ clock }) => {
+    if (!moonMeshRef.current || !lightRef.current) return;
+
+    const t = clock.getElapsedTime();
+    const radius = 300; // Distance from player
+    const speed = 0.025; // MUST match Sun speed to stay opposite
+
+    // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
+    const angle = (t * speed) + Math.PI;
+
+    // Calculate position
+    const x = Math.sin(angle) * radius;
+    const y = Math.cos(angle) * radius;
+
+    // Position the moon relative to the camera (so you can't walk past it)
+    const px = camera.position.x + x;
+    const py = y; // Keep height absolute relative to horizon
+    const pz = camera.position.z + 30; // Slight Z offset
+
+    // Apply positions
+    moonMeshRef.current.position.set(px, py, pz);
+
+    // Move the directional light with the mesh
+    lightRef.current.position.set(px, py, pz);
+    target.position.set(camera.position.x, 0, camera.position.z);
+    lightRef.current.target = target;
+    lightRef.current.updateMatrixWorld();
+
+    // VISIBILITY: Only visible when above the horizon
+    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
+    moonMeshRef.current.visible = isAboveHorizon;
+    lightRef.current.intensity = isAboveHorizon ? 0.2 : 0; // Dim light
+  });
+
+  return (
+    <>
+      <directionalLight
+        ref={lightRef}
+        color="#b8d4f0"
+        intensity={0.2}
+        castShadow={false}
+      />
+      <primitive object={target} />
+
+      {/* Simple White Sphere */}
+      <mesh ref={moonMeshRef}>
+        <sphereGeometry args={[20, 32, 32]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+    </>
+  );
+};
+
+/**
  * Controls fog, background, hemisphere light colors, and sky gradient based on sun position.
  * Renders the SkyDome with dynamic gradients and updates fog to match horizon color.
  */
@@ -650,6 +714,9 @@ const App: React.FC = () => {
 
           {/* Sun: Strong directional light */}
           <SunFollower />
+          
+          {/* Moon: Subtle night lighting */}
+          <MoonFollower />
           
           {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
