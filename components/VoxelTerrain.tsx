@@ -68,10 +68,42 @@ const isTerrainCollider = (collider: Collider): boolean => {
   return userData?.type === 'terrain';
 };
 
-const isFloraCollider = (collider: Collider): boolean => {
-  const parent = collider.parent();
-  const userData = parent?.userData as { type?: string; id?: string } | undefined;
-  return userData?.type === 'flora' && typeof userData.id === 'string';
+// Small helper to test ray vs placed flora without relying on physics colliders
+const rayHitsFlora = (
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxDist: number,
+  floraRadius = 0.6
+): string | null => {
+  const state = useGameStore.getState();
+  let closestId: string | null = null;
+  let closestT = maxDist + 1;
+  const tmp = new THREE.Vector3();
+  const proj = new THREE.Vector3();
+
+  // Iterate over placed flora
+  for (const flora of state.placedFloras) {
+    // Use the live physics position if available, otherwise fall back to initial spawn position
+    const floraWithRef = flora as { id: string; position: THREE.Vector3; bodyRef: React.RefObject<any> };
+    const currentPos = floraWithRef.bodyRef?.current 
+      ? floraWithRef.bodyRef.current.translation() 
+      : floraWithRef.position;
+
+    // Rapier translation returns {x,y,z}, ensure it's Vector3-like
+    tmp.set(currentPos.x, currentPos.y, currentPos.z).sub(origin);
+    
+    const t = tmp.dot(dir);
+    if (t < 0 || t > maxDist) continue; // Behind camera or too far
+    proj.copy(dir).multiplyScalar(t);
+    tmp.sub(proj);
+    const distSq = tmp.lengthSq();
+    if (distSq <= floraRadius * floraRadius && t < closestT) {
+      closestT = t;
+      closestId = floraWithRef.id;
+    }
+  }
+
+  return closestId;
 };
 
 const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, chunkKey, onHarvest }) => {
@@ -565,17 +597,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     const ray = new rapier.Ray(origin, direction);
 
-    // 0. CHECK FOR FLORA INTERACTION (HARVEST) — stop if we hit flora first
+    // 0. CHECK FOR FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
     if (action === 'DIG') {
-      const floraHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isFloraCollider);
-      if (floraHit) {
-        const collider = world.getCollider(floraHit.colliderHandle);
-        const parent = collider?.parent();
-        const floraId = (parent?.userData as { id?: string } | undefined)?.id;
-        if (floraId) {
-          useGameStore.getState().harvestFlora(floraId);
-          return;
-        }
+      const floraId = rayHitsFlora(origin, direction, maxRayDistance);
+      if (floraId) {
+        useGameStore.getState().harvestFlora(floraId);
+        return;
       }
     }
 

@@ -9,10 +9,14 @@ interface LuminaFloraProps {
   position: [number, number, number];
   onPickup?: () => void;
   seed?: number; // To vary the phase
+  bodyRef?: React.RefObject<any>;
 }
 
-export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup, seed = 0 }) => {
-  const materialRef = useRef<THREE.ShaderMaterial>(null);
+export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup, seed = 0, bodyRef }) => {
+  const materialRef = useRef<any>(null);
+  // If no external ref provided, use internal one (though for placed flora, bodyRef is expected)
+  const internalRef = useRef<any>(null);
+  const refToUse = bodyRef || internalRef;
 
   // Uniforms for the shader
   const uniforms = useMemo(() => ({
@@ -29,6 +33,7 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup
 
   return (
     <RigidBody
+      ref={refToUse}
       type="dynamic"
       colliders="ball"
       position={position}
@@ -75,7 +80,6 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup
               }
             `}
             uniforms={uniforms}
-            silent
             // MeshStandardMaterial props
             color="#222"
             roughness={0.4}

@@ -52,7 +52,10 @@ export const FloraPlacer: React.FC = () => {
                         const normal = terrainHit.face?.normal || new Vector3(0, 1, 0);
                         // Place slightly off surface
                         const pos = terrainHit.point.clone().add(normal.multiplyScalar(0.5));
-                        placeFlora(pos);
+                        
+                        // Create a stable ref for the new flora
+                        const bodyRef = React.createRef<any>();
+                        placeFlora(pos, bodyRef);
                         lastPlaceTime.current = now;
                     }
                 }
@@ -69,6 +72,7 @@ export const FloraPlacer: React.FC = () => {
                   key={flora.id}
                   id={flora.id}
                   position={[flora.position.x, flora.position.y, flora.position.z]}
+                  bodyRef={flora.bodyRef}
                 />
             ))}
         </>
