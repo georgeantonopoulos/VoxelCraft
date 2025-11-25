@@ -50,6 +50,10 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, onPickup
             distance={8}
             decay={2}
             castShadow
+            // Shadow bias settings to prevent shadow acne on curved terrain
+            shadow-bias={-0.0005}
+            shadow-normalBias={0.03}
+            shadow-mapSize={[512, 512]}
         />
 
         {/* The Visual Bulb - Cyan Emissive with Shader Pulse */}
