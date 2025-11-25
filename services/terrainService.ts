@@ -160,7 +160,7 @@ export class TerrainService {
                                 if (hash > 0.1) {
                                     floraCandidates.push(
                                         (x - PAD) + (hash * 0.4 - 0.2),
-                                        (y - PAD) - 0.5, // Sits on floor
+                                    (y - PAD) + MESH_Y_OFFSET - 0.5, // Sits on floor (Apply MESH_Y_OFFSET)
                                         (z - PAD) + (hash * 0.4 - 0.2)
                                     );
                                 }

@@ -7,6 +7,7 @@ import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager, SimUpdate } from '../services/SimulationManager';
+import { useGameStore } from '../services/GameManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '../constants';
 import { TriplanarMaterial } from './TriplanarMaterial';
 import { WaterMaterial } from './WaterMaterial';
@@ -67,10 +68,30 @@ const isTerrainCollider = (collider: Collider): boolean => {
   return userData?.type === 'terrain';
 };
 
-const FloraMesh: React.FC<{ positions: Float32Array }> = React.memo(({ positions }) => {
+const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, chunkKey, onHarvest }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const count = positions.length / 3;
   const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  // Track removed instances visually until remesh
+  const [removedIndices, setRemovedIndices] = useState<Set<number>>(new Set());
+
+  const handleClick = (e: any) => {
+      // e.instanceId is the index
+      if (e.button === 0 && e.instanceId !== undefined && !removedIndices.has(e.instanceId)) {
+           e.stopPropagation();
+           setRemovedIndices(prev => new Set(prev).add(e.instanceId));
+           onHarvest(e.instanceId);
+
+           // Hide instance immediately
+           if (meshRef.current) {
+               meshRef.current.getMatrixAt(e.instanceId, dummy.matrix);
+               dummy.matrix.scale(new THREE.Vector3(0,0,0)); // Scale to zero
+               meshRef.current.setMatrixAt(e.instanceId, dummy.matrix);
+               meshRef.current.instanceMatrix.needsUpdate = true;
+           }
+      }
+  };
 
   const uniforms = useMemo(() => ({
     uTime: { value: 0 },
@@ -103,7 +124,14 @@ const FloraMesh: React.FC<{ positions: Float32Array }> = React.memo(({ positions
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, count]} frustumCulled={false}>
+    <instancedMesh
+        ref={meshRef}
+        args={[undefined, undefined, count]}
+        frustumCulled={false}
+        onClick={handleClick}
+        onPointerOver={() => document.body.style.cursor = 'pointer'}
+        onPointerOut={() => document.body.style.cursor = 'auto'}
+    >
        <sphereGeometry args={[0.25, 16, 16]} />
        <CustomShaderMaterial
          baseMaterial={THREE.MeshStandardMaterial}
@@ -136,6 +164,7 @@ const FloraMesh: React.FC<{ positions: Float32Array }> = React.memo(({ positions
 const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
+  const addFlora = useGameStore(s => s.addFlora);
   const useBasicMaterial = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).has('basicMat');
@@ -258,7 +287,14 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
     )}
 
     {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <FloraMesh positions={chunk.floraPositions} />
+        <FloraMesh
+            positions={chunk.floraPositions}
+            chunkKey={chunk.key}
+            onHarvest={(index) => {
+                addFlora();
+                // Ideally update chunk state to remove permanently, but visual hide is enough for MVP
+            }}
+        />
     )}
     </group>
   );
@@ -529,6 +565,25 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
       const dist = origin.distanceTo(impactPoint);
+
+      // 0. CHECK FOR FLORA INTERACTION (HARVEST)
+      // Only if DIGGING (Left Click)
+      if (action === 'DIG') {
+          // Perform a separate raycast for InstancedMesh (Flora)
+          // R3F's raycaster is updated every frame, but we need to check specifically against flora meshes
+          // Since we don't have direct access to the InstancedMesh here easily without traversing...
+          // A better approach: The `terrainHit` collider might have a parent that is the Chunk group.
+          // But Flora is an InstancedMesh inside that group. Rapier collider is for Terrain Trimesh.
+          // Flora currently has NO physics collider in the worker gen, so raycast won't hit it via Rapier.
+          // We need THREE.Raycaster for visual meshes.
+          // We can use the logic from FloraPlacer but reversed?
+          // OR: We can iterate chunks and check intersection.
+
+          // Let's defer Flora Harvest to a dedicated click handler on the InstancedMesh if possible?
+          // InstancedMesh supports onClick in R3F? Yes, if we use <instancedMesh ... onClick={...} />
+          // But `FloraMesh` is memoized and logic is separate.
+          // Let's add onClick to `FloraMesh`.
+      }
 
       const offset = action === 'DIG' ? 0.1 : -0.1;
       const hitPoint = impactPoint.addScaledVector(direction, offset);

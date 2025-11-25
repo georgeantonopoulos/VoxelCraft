@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
 import { LuminaFlora } from './components/LuminaFlora';
+import { FloraPlacer } from './components/FloraPlacer';
 import { UI } from './components/UI';
 import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
@@ -664,6 +665,7 @@ const App: React.FC = () => {
                 sunDirection={sunDirection}
                 onInitialLoad={() => setTerrainLoaded(true)}
               />
+              <FloraPlacer />
               <BedrockPlane />
             </Physics>
           </Suspense>

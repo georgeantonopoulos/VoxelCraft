@@ -26,6 +26,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   useFrame((state) => {
     if (!body.current) return;
 
+    // Dispatch position update for UI
+    const pos = body.current.translation();
+    window.dispatchEvent(new CustomEvent('player-moved', {
+        detail: { x: pos.x, y: pos.y, z: pos.z }
+    }));
+
     const { forward, backward, left, right, jump, shift } = getKeys();
     
     const velocity = body.current.linvel();
