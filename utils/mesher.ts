@@ -84,15 +84,19 @@ export function generateMesh(
 
             const addInter = (valA: number, valB: number, axis: 'x'|'y'|'z', offX: number, offY: number, offZ: number) => {
                  if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
-                     // AAA FIX: Prevent division by zero or near-zero
-                     // If values are identical, math breaks.
+                     // 1. Safe Denominator: Prevent Infinity/NaN
+                     // Preserve sign to keep vertex on correct side of edge
                      let denominator = valB - valA;
-                     if (Math.abs(denominator) < 0.00001) denominator = 0.00001;
+                     if (Math.abs(denominator) < 0.00001) {
+                         // Preserve sign to keep vertex on correct side of edge
+                         denominator = (Math.sign(denominator) || 1) * 0.00001;
+                     }
 
+                     // 2. Calculate mu (position along edge 0..1)
                      const mu = (ISO_LEVEL - valA) / denominator;
 
-                     // AAA FIX: Clamp mu to ensure vertex stays strictly on the edge
-                     // This prevents vertices shooting off to infinity
+                     // 3. Clamp mu: Keeps vertices strictly on the grid edge.
+                     // This prevents "wild" vertices from shooting off to infinity.
                      const clampedMu = Math.max(0.0, Math.min(1.0, mu));
 
                      if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
