@@ -3,6 +3,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { EffectComposer, Bloom, ToneMapping, N8AO } from '@react-three/postprocessing';
+import { useControls, Leva } from 'leva';
 import * as THREE from 'three';
 
 // Components
@@ -14,6 +15,7 @@ import { UI } from './components/UI';
 import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
+import { setSnapEpsilon } from './constants';
 
 // Keyboard Map
 const keyboardMap = [
@@ -31,6 +33,8 @@ const InteractionLayer: React.FC<{
 }> = ({ setInteracting, setAction }) => {
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
+       // Only allow interaction if we are locked (gameplay) OR if we are clicking canvas (handled by pointer lock check)
+       // But typically we want to interact when locked.
        if (!document.pointerLockElement) return;
        if (e.button === 0) setAction('DIG');
        if (e.button === 2) setAction('BUILD');
@@ -53,6 +57,20 @@ const InteractionLayer: React.FC<{
     };
   }, [setInteracting, setAction]);
 
+  return null;
+};
+
+const DebugControls = () => {
+  useControls({
+    snapEpsilon: {
+      value: 0.02,
+      min: 0.01,
+      max: 0.15,
+      step: 0.01,
+      onChange: (v) => setSnapEpsilon(v),
+      label: 'Snap Epsilon (Hysteresis)'
+    }
+  });
   return null;
 };
 
@@ -664,6 +682,10 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
   }, []);
+  const debugMode = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('debug');
+  }, []);
 
   // Sun direction for shadows (High Noon-ish for vibrancy)
   const sunDirection = useMemo(() => new THREE.Vector3(50, 100, 30).normalize(), []);
@@ -680,6 +702,10 @@ const App: React.FC = () => {
 
   return (
     <div className="w-full h-full relative bg-sky-300">
+      {/* Leva controls - visible only in debug mode or if you prefer always on in dev */}
+      <Leva hidden={!debugMode} />
+      {debugMode && <DebugControls />}
+
       {!gameStarted && (
         <StartupScreen 
            loaded={terrainLoaded} 

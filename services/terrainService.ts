@@ -95,6 +95,21 @@ export class TerrainService {
           if (wy <= MESH_Y_OFFSET) d += 100.0;
           else if (wy <= MESH_Y_OFFSET + 3) d += 20.0;
 
+          // --- AAA FIX: GENERATION HYSTERESIS ---
+          // Stabilize the terrain at birth. 
+          // If noise puts us in the "Unstable Zone" (0.5 +/- epsilon), snap it.
+          // This creates a robust surface that doesn't shatter on contact.
+          // Use the mutable config if available, otherwise fall back to constant
+          // (This requires SNAP_EPSILON to be imported or accessible)
+          if (Math.abs(d - ISO_LEVEL) < SNAP_EPSILON) {
+              // Bias: If we are essentially air, force deep air. 
+              // If solid, force strong solid.
+              d = (d < ISO_LEVEL) 
+                  ? ISO_LEVEL - SNAP_EPSILON 
+                  : ISO_LEVEL + SNAP_EPSILON;
+          }
+          // --------------------------------------
+
           density[idx] = d;
 
           // --- 3. Material Generation ---
@@ -232,7 +247,12 @@ export class TerrainService {
                 const idx = x + y * sizeX + z * sizeX * sizeY;
                 const dist = Math.sqrt(distSq);
                 const t = dist / radius;
-                const falloff = Math.pow(1.0 - t, 2); 
+                
+                // Tweak: Use a cubic falloff (pow 3) instead of quadratic (pow 2).
+                // This makes the brush "core" strong but the edges fade faster,
+                // reducing the chance of accidental micro-modifications at the rim.
+                const falloff = Math.pow(1.0 - t, 3); 
+                
                 const strength = falloff * delta;
                 const oldDensity = density[idx];
                 
