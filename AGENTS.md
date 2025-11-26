@@ -124,9 +124,17 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
   - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight` (vec3).
   - **Mixing**: The fragment shader samples material properties for all three IDs and mixes them using soft-max blended weights with noise distortion, creating smooth organic transitions between material types (e.g., Stone to Grass to Dirt).
   - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.
+- **Self-Intersection Artifacts (Dark Flickering Patches)**:
+  - **Root Cause**: `DoubleSide` rendering on pinched geometry (sliver triangles from vertex clamping) causes Z-fighting between front and back faces, creating dark flickering squares.
+  - **Solution**: 
+    - **Front-Side Rendering**: Changed `TriplanarMaterial` to `side={THREE.FrontSide}` to eliminate backface Z-fighting artifacts.
+    - **Soft Vertex Clamp**: Relaxed vertex clamp in `mesher.ts` from `0.0/1.0` to `0.001/0.999` to prevent zero-area sliver triangles while still closing holes. This preserves triangle winding direction for proper normal calculation.
+    - **Shadow Bias**: Already configured (`shadow-bias={-0.001}`, `shadow-normalBias={0.08}`) to prevent shadow acne with front-side rendering.
 
 ### 7. Recent Findings
+- 2025-01-XX: Fixed self-intersection artifacts (dark flickering patches) caused by `DoubleSide` rendering on pinched geometry. Changed `TriplanarMaterial` to `FrontSide` rendering and relaxed vertex clamp in mesher from `0.0/1.0` to `0.001/0.999` to prevent zero-area sliver triangles while maintaining hole closure. This eliminates Z-fighting between front/back faces and preserves proper triangle winding for normal calculation.
 - 2025-11-24: Sunset color briefly flashed back to orange because `getSunColor` interpolated in the wrong direction when the sun dipped below the horizon (<0 normalized height). Added clamped interpolation that keeps fading the warm tones into night and remapped the sunrise band (0–0.2) to blend from sunset to day.
 - 2025-11-24: Sun halo used a separate color ramp that could drift into cyan during midday. Added `getSunGlowColor` so the glow now derives from the actual sun color and only applies gentle warm/cool adjustments per phase.
 - 2025-11-24: Fixed bouncing colors during sunset/sunrise. Previous logic in `getSkyGradient` and `getSunColor` had inconsistent ranges (some expecting 0.0 to be night, others sunset) causing visual jumps. Unified logic so: h < -0.15 is Night, -0.15 to 0.0 blends Night->Sunset, 0.0 to 0.3 blends Sunset->Day, >0.3 is Day.
 - 2025-01-XX: Added `MoonFollower` component using simple "game physics" approach. Moon orbits exactly opposite to sun (angle + Math.PI) with same speed (0.025) to maintain perfect day/night synchronization. Moon is visible when above horizon and provides subtle cool blue-white light (intensity 0.2). Simple white sphere mesh for clean visibility.
+- 2025-01-XX: Adjusted day/night cycle to make day longer (~70% of cycle) and night shorter (~30% of cycle). Implemented `calculateOrbitAngle` helper function that uses non-linear angle mapping: day portion (angles where sun is above horizon) is stretched to take up 70% of the cycle instead of 50%, while night portion moves faster. Applied to `SunFollower`, `MoonFollower`, and `AtmosphereController` to maintain synchronization.

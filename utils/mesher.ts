@@ -82,14 +82,30 @@ export function generateMesh(
             let avgY = 0;
             let avgZ = 0;
 
-            const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
-              if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
-                const mu = (ISO_LEVEL - valA) / (valB - valA);
-                if (axis === 'x') { avgX += x + mu; avgY += y + offY; avgZ += z + offZ; }
-                if (axis === 'y') { avgX += x + offX; avgY += y + mu; avgZ += z + offZ; }
-                if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + mu; }
-                edgeCount++;
-              }
+            const addInter = (valA: number, valB: number, axis: 'x'|'y'|'z', offX: number, offY: number, offZ: number) => {
+                 if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
+                     // 1. Safe Denominator: Prevent Infinity/NaN
+                     // Preserve sign to keep vertex on correct side of edge
+                     let denominator = valB - valA;
+                     if (Math.abs(denominator) < 0.00001) {
+                         // Preserve sign to keep vertex on correct side of edge
+                         denominator = (Math.sign(denominator) || 1) * 0.00001;
+                     }
+
+                     // 2. Calculate mu (position along edge 0..1)
+                     const mu = (ISO_LEVEL - valA) / denominator;
+
+                     // 3. AAA FIX: Soft Clamp.
+                     // Instead of 0.0/1.0, use a tiny buffer.
+                     // This prevents vertices from collapsing into the same coordinate,
+                     // preserving the triangle's "direction" for the normal calculator.
+                     const clampedMu = Math.max(0.001, Math.min(0.999, mu));
+
+                     if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
+                     if (axis === 'y') { avgX += x + offX; avgY += y + clampedMu; avgZ += z + offZ; }
+                     if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + clampedMu; }
+                     edgeCount++;
+                 }
             };
 
             addInter(v000, v100, 'x', 0, 0, 0);
@@ -146,9 +162,17 @@ export function generateMesh(
               const val_z1 = lerp(z10, z11, fy);
               const nz = val_z0 - val_z1;
 
-              const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-              if (len > 0.00001) tNorms.push(nx / len, ny / len, nz / len);
-              else tNorms.push(0, 1, 0);
+             const lenSq = nx*nx + ny*ny + nz*nz;
+
+             // AAA FIX: Check squared length to avoid Sqrt on 0, and handle NaN
+             if (lenSq > 0.000001 && !Number.isNaN(lenSq)) {
+                 const len = Math.sqrt(lenSq);
+                 tNorms.push(nx/len, ny/len, nz/len);
+             } else {
+                 // Fallback: If normal is degenerate, point Up.
+                 // This prevents black flickers in the shader.
+                 tNorms.push(0, 1, 0);
+             }
 
               // Material Selection with Conservative Blending
               // Only blend with immediately adjacent materials (radius 2) to avoid grass bleeding into deep stone

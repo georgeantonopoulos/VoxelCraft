@@ -1,5 +1,5 @@
 
-import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET } from '../constants';
+import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '../constants';
 import { noise } from '../utils/noise';
 import { MaterialType, ChunkMetadata } from '../types';
 
@@ -94,6 +94,21 @@ export class TerrainService {
           // Hard floor (Bedrock) — thin but solid
           if (wy <= MESH_Y_OFFSET) d += 100.0;
           else if (wy <= MESH_Y_OFFSET + 3) d += 20.0;
+
+          // --- AAA FIX: GENERATION HYSTERESIS ---
+          // Stabilize the terrain at birth. 
+          // If noise puts us in the "Unstable Zone" (0.5 +/- epsilon), snap it.
+          // This creates a robust surface that doesn't shatter on contact.
+          // Use the mutable config if available, otherwise fall back to constant
+          // (This requires SNAP_EPSILON to be imported or accessible)
+          if (Math.abs(d - ISO_LEVEL) < SNAP_EPSILON) {
+              // Bias: If we are essentially air, force deep air. 
+              // If solid, force strong solid.
+              d = (d < ISO_LEVEL) 
+                  ? ISO_LEVEL - SNAP_EPSILON 
+                  : ISO_LEVEL + SNAP_EPSILON;
+          }
+          // --------------------------------------
 
           density[idx] = d;
 
@@ -232,11 +247,27 @@ export class TerrainService {
                 const idx = x + y * sizeX + z * sizeX * sizeY;
                 const dist = Math.sqrt(distSq);
                 const t = dist / radius;
-                const falloff = Math.pow(1.0 - t, 2); 
+                
+                // Tweak: Use a cubic falloff (pow 3) instead of quadratic (pow 2).
+                // This makes the brush "core" strong but the edges fade faster,
+                // reducing the chance of accidental micro-modifications at the rim.
+                const falloff = Math.pow(1.0 - t, 3); 
+                
                 const strength = falloff * delta;
                 const oldDensity = density[idx];
                 
                 density[idx] += strength;
+
+                // --- THE GROVE FIX: DENSITY HYSTERESIS ---
+                // If the new density is ambiguously close to the surface, snap it.
+                // If we are digging (delta < 0), bias towards Air.
+                // If we are building (delta > 0), bias towards Solid.
+                if (Math.abs(density[idx] - ISO_LEVEL) < SNAP_EPSILON) {
+                    density[idx] = (delta < 0)
+                        ? ISO_LEVEL - SNAP_EPSILON  // Force Air
+                        : ISO_LEVEL + SNAP_EPSILON; // Force Solid
+                }
+                // -----------------------------------------
                 
                 // Apply material when building
                 if (delta > 0 && density[idx] > ISO_LEVEL) {

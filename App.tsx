@@ -3,6 +3,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { EffectComposer, Bloom, ToneMapping, N8AO } from '@react-three/postprocessing';
+import { useControls, Leva } from 'leva';
 import * as THREE from 'three';
 
 // Components
@@ -14,6 +15,7 @@ import { UI } from './components/UI';
 import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
+import { setSnapEpsilon } from './constants';
 
 // Keyboard Map
 const keyboardMap = [
@@ -31,6 +33,8 @@ const InteractionLayer: React.FC<{
 }> = ({ setInteracting, setAction }) => {
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
+       // Only allow interaction if we are locked (gameplay) OR if we are clicking canvas (handled by pointer lock check)
+       // But typically we want to interact when locked.
        if (!document.pointerLockElement) return;
        if (e.button === 0) setAction('DIG');
        if (e.button === 2) setAction('BUILD');
@@ -53,6 +57,20 @@ const InteractionLayer: React.FC<{
     };
   }, [setInteracting, setAction]);
 
+  return null;
+};
+
+const DebugControls = () => {
+  useControls({
+    snapEpsilon: {
+      value: 0.02,
+      min: 0.01,
+      max: 0.15,
+      step: 0.01,
+      onChange: (v) => setSnapEpsilon(v),
+      label: 'Snap Epsilon (Hysteresis)'
+    }
+  });
   return null;
 };
 
@@ -86,6 +104,39 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
   }, [skipPost, gl]);
 
   return null;
+};
+
+/**
+ * Calculates the non-linear orbit angle for sun/moon to make day longer and night shorter.
+ * Maps linear time progression to angle progression where day (sun above horizon) takes
+ * ~70% of the cycle and night takes ~30%.
+ * @param t - Elapsed time in seconds
+ * @param speed - Base orbit speed
+ * @param offset - Optional angle offset (e.g., Math.PI for moon to stay opposite sun)
+ * @returns The calculated orbit angle
+ */
+const calculateOrbitAngle = (t: number, speed: number, offset: number = 0): number => {
+  const cycleTime = t * speed;
+  const normalizedCycle = (cycleTime % (Math.PI * 2)) / (Math.PI * 2); // 0 to 1
+  
+  // Stretch day (when sun is above horizon): spend ~70% of cycle in day, ~30% in night
+  // Day corresponds to angles where cos(angle) > 0, i.e., -π/2 to π/2
+  let angle;
+  if (normalizedCycle < 0.35) {
+    // First half of day: map 0-0.35 to -π/2 to 0
+    angle = -Math.PI / 2 + (normalizedCycle / 0.35) * (Math.PI / 2);
+  } else if (normalizedCycle < 0.65) {
+    // Second half of day: map 0.35-0.65 to 0 to π/2
+    angle = ((normalizedCycle - 0.35) / 0.3) * (Math.PI / 2);
+  } else {
+    // Night: map 0.65-1.0 to π/2 to 3π/2 (faster through night)
+    angle = Math.PI / 2 + ((normalizedCycle - 0.65) / 0.35) * Math.PI;
+  }
+  
+  // Add full cycle offset
+  angle += Math.floor(cycleTime / (Math.PI * 2)) * Math.PI * 2;
+  
+  return angle + offset;
 };
 
 /**
@@ -276,7 +327,9 @@ const SunFollower: React.FC = () => {
         
         // Slow orbit (Cycle every ~8-10 minutes)
         const speed = 0.025; // 1/4th of previous 0.1
-        const angle = t * speed;
+        
+        // Non-linear angle mapping to make day longer and night shorter
+        const angle = calculateOrbitAngle(t, speed);
 
         // Radius of orbit relative to player
         const radius = 300; // Farther away for scale
@@ -388,8 +441,12 @@ const SunFollower: React.FC = () => {
         color="#fffcf0" 
         castShadow 
         shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0005}
-        shadow-normalBias={0.04}
+        // AAA FIX: SHADOW ACNE CALIBRATION
+        // Previous: -0.0005 -> New: -0.001 (Pushes shadow back further)
+        shadow-bias={-0.001} 
+        // Previous: 0.04 -> New: 0.08 (Biases based on surface angle)
+        // This helps specifically with the curved slopes in your screenshot.
+        shadow-normalBias={0.08}
         shadow-camera-near={10}
         shadow-camera-far={500}
         shadow-camera-left={-200}
@@ -465,7 +522,7 @@ const MoonFollower: React.FC = () => {
     const speed = 0.025; // MUST match Sun speed to stay opposite
 
     // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
-    const angle = (t * speed) + Math.PI;
+    const angle = calculateOrbitAngle(t, speed, Math.PI);
 
     // Calculate position
     const x = Math.sin(angle) * radius;
@@ -525,9 +582,9 @@ const AtmosphereController: React.FC = () => {
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     
-    // Use the same orbit calculation as SunFollower
+    // Use the same non-linear orbit calculation as SunFollower
     const speed = 0.025;
-    const angle = t * speed;
+    const angle = calculateOrbitAngle(t, speed);
     const radius = 300;
     const sy = Math.cos(angle) * radius;
     
@@ -664,6 +721,10 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
   }, []);
+  const debugMode = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('debug');
+  }, []);
 
   // Sun direction for shadows (High Noon-ish for vibrancy)
   const sunDirection = useMemo(() => new THREE.Vector3(50, 100, 30).normalize(), []);
@@ -680,6 +741,10 @@ const App: React.FC = () => {
 
   return (
     <div className="w-full h-full relative bg-sky-300">
+      {/* Leva controls - visible only in debug mode or if you prefer always on in dev */}
+      <Leva hidden={!debugMode} />
+      {debugMode && <DebugControls />}
+
       {!gameStarted && (
         <StartupScreen 
            loaded={terrainLoaded} 

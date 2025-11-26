@@ -202,9 +202,10 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
   const addFlora = useGameStore(s => s.addFlora);
-  const useBasicMaterial = useMemo(() => {
+  const debugMode = useMemo(() => {
     if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).has('basicMat');
+    const params = new URLSearchParams(window.location.search);
+    return params.has('debug');
   }, []);
 
   useFrame((_, delta) => {
@@ -308,8 +309,8 @@ const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> =
             frustumCulled
           geometry={terrainGeometry}
         >
-          {useBasicMaterial ? (
-            <meshStandardMaterial color="#ffaa00" opacity={opacity} transparent />
+          {debugMode ? (
+            <meshNormalMaterial fog={true} />
           ) : (
             <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
           )}
