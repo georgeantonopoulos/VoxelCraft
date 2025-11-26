@@ -11,6 +11,7 @@ export const TOTAL_SIZE_Y = CHUNK_SIZE_Y + PAD * 2;
 export const MESH_Y_OFFSET = -35; // Vertical offset to align with Bedrock
 
 export const ISO_LEVEL = 0.5; 
+export const SNAP_EPSILON = 0.02; // Tweak this value. 0.1 might be too aggressive, 0.02 is usually safer for subtle organics.
 export const VOXEL_SCALE = 1.0;
 
 // World Generation

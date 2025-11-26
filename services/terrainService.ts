@@ -1,5 +1,5 @@
 
-import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET } from '../constants';
+import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '../constants';
 import { noise } from '../utils/noise';
 import { MaterialType, ChunkMetadata } from '../types';
 
@@ -237,6 +237,17 @@ export class TerrainService {
                 const oldDensity = density[idx];
                 
                 density[idx] += strength;
+
+                // --- THE GROVE FIX: DENSITY HYSTERESIS ---
+                // If the new density is ambiguously close to the surface, snap it.
+                // If we are digging (delta < 0), bias towards Air.
+                // If we are building (delta > 0), bias towards Solid.
+                if (Math.abs(density[idx] - ISO_LEVEL) < SNAP_EPSILON) {
+                    density[idx] = (delta < 0)
+                        ? ISO_LEVEL - SNAP_EPSILON  // Force Air
+                        : ISO_LEVEL + SNAP_EPSILON; // Force Solid
+                }
+                // -----------------------------------------
                 
                 // Apply material when building
                 if (delta > 0 && density[idx] > ISO_LEVEL) {
