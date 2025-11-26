@@ -305,6 +305,8 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
       metalness={0.0}
       depthWrite
       depthTest
+      // AAA FIX: Use FrontSide to prevent backface Z-fighting artifacts
+      side={THREE.FrontSide}
       vertexShader={vertexShader}
       fragmentShader={fragmentShader}
       uniforms={uniforms}

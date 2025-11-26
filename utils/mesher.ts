@@ -95,9 +95,11 @@ export function generateMesh(
                      // 2. Calculate mu (position along edge 0..1)
                      const mu = (ISO_LEVEL - valA) / denominator;
 
-                     // 3. Clamp mu: Keeps vertices strictly on the grid edge.
-                     // This prevents "wild" vertices from shooting off to infinity.
-                     const clampedMu = Math.max(0.0, Math.min(1.0, mu));
+                     // 3. AAA FIX: Soft Clamp.
+                     // Instead of 0.0/1.0, use a tiny buffer.
+                     // This prevents vertices from collapsing into the same coordinate,
+                     // preserving the triangle's "direction" for the normal calculator.
+                     const clampedMu = Math.max(0.001, Math.min(0.999, mu));
 
                      if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
                      if (axis === 'y') { avgX += x + offX; avgY += y + clampedMu; avgZ += z + offZ; }
