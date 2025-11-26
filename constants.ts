@@ -11,7 +11,7 @@ export const TOTAL_SIZE_Y = CHUNK_SIZE_Y + PAD * 2;
 export const MESH_Y_OFFSET = -35; // Vertical offset to align with Bedrock
 
 export const ISO_LEVEL = 0.5; 
-export let SNAP_EPSILON = 0.7; // Mutable for Leva tuning
+export let SNAP_EPSILON = 0.1; // Mutable for Leva tuning
 
 /**
  * Setter function for SNAP_EPSILON, used by Leva controls
