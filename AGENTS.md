@@ -4,6 +4,8 @@ ALWAYS INSPECT CHANGES MAKE SURE NO BUGS SLIP.
 If doing a visual inspection always wait 10 seconds and use the controls to take 4 separate screenshots and analyse what changed. Update this doc (AGENTS.md) with your findings. 
 
 Do not force GLSL version - there's a mix of them here and its working fine as it is. 
+DO NOT REMOVE COMMENTS. ADD COMMENTS IF NEEDED.
+
 
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
