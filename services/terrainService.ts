@@ -31,7 +31,8 @@ export class TerrainService {
       density: Float32Array,
       material: Uint8Array,
       metadata: ChunkMetadata,
-      floraPositions: Float32Array
+      floraPositions: Float32Array,
+      rootHollowPositions: Float32Array
   } {
     const sizeX = TOTAL_SIZE_XZ;
     const sizeY = TOTAL_SIZE_Y;
@@ -42,6 +43,7 @@ export class TerrainService {
     const wetness = new Uint8Array(sizeX * sizeY * sizeZ);
     const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
     const floraCandidates: number[] = [];
+    const rootHollowCandidates: number[] = [];
 
     const worldOffsetX = cx * CHUNK_SIZE_XZ;
     const worldOffsetZ = cz * CHUNK_SIZE_XZ;
@@ -96,14 +98,7 @@ export class TerrainService {
           else if (wy <= MESH_Y_OFFSET + 3) d += 20.0;
 
           // --- AAA FIX: GENERATION HYSTERESIS ---
-          // Stabilize the terrain at birth. 
-          // If noise puts us in the "Unstable Zone" (0.5 +/- epsilon), snap it.
-          // This creates a robust surface that doesn't shatter on contact.
-          // Use the mutable config if available, otherwise fall back to constant
-          // (This requires SNAP_EPSILON to be imported or accessible)
           if (Math.abs(d - ISO_LEVEL) < SNAP_EPSILON) {
-              // Bias: If we are essentially air, force deep air. 
-              // If solid, force strong solid.
               d = (d < ISO_LEVEL) 
                   ? ISO_LEVEL - SNAP_EPSILON 
                   : ISO_LEVEL + SNAP_EPSILON;
@@ -111,6 +106,25 @@ export class TerrainService {
           // --------------------------------------
 
           density[idx] = d;
+
+          // --- Root Hollow Scanning ---
+          if (y > 0) {
+             const idxBelow = idx - sizeX;
+             const dBelow = density[idxBelow];
+             // Detect Surface: Current is Air (<= ISO), Below is Solid (> ISO)
+             if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
+                 // Check Valley Conditions
+                 if (continental < -1.0 && mountains < 0.0) {
+                     // Sparsity Check
+                     const sparsityNoise = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                     if (sparsityNoise > 0.5) {
+                         // Place slightly embedded at the interface
+                         // Use local coordinates relative to the chunk (ChunkMesh applies the world offset)
+                         rootHollowCandidates.push((x - PAD) + 0.5, wy - 0.5, (z - PAD) + 0.5);
+                     }
+                 }
+             }
+          }
 
           // --- 3. Material Generation ---
           
@@ -145,8 +159,6 @@ export class TerrainService {
             }
           } else {
             // --- Water Generation ---
-            // Ensure we don't generate water inside the "Solid Bedrock" zone (though it's density > ISO, so logic handles it)
-            // But if density logic failed, we check here too.
             if (wy <= WATER_LEVEL) {
                 material[idx] = MaterialType.WATER;
                 wetness[idx] = 255;
@@ -203,7 +215,8 @@ export class TerrainService {
         density,
         material,
         metadata,
-        floraPositions: new Float32Array(floraCandidates)
+        floraPositions: new Float32Array(floraCandidates),
+        rootHollowPositions: new Float32Array(rootHollowCandidates)
     };
   }
 
@@ -249,8 +262,6 @@ export class TerrainService {
                 const t = dist / radius;
                 
                 // Tweak: Use a cubic falloff (pow 3) instead of quadratic (pow 2).
-                // This makes the brush "core" strong but the edges fade faster,
-                // reducing the chance of accidental micro-modifications at the rim.
                 const falloff = Math.pow(1.0 - t, 3); 
                 
                 const strength = falloff * delta;
@@ -258,16 +269,12 @@ export class TerrainService {
                 
                 density[idx] += strength;
 
-                // --- THE GROVE FIX: DENSITY HYSTERESIS ---
-                // If the new density is ambiguously close to the surface, snap it.
-                // If we are digging (delta < 0), bias towards Air.
-                // If we are building (delta > 0), bias towards Solid.
+                // --- DENSITY HYSTERESIS ---
                 if (Math.abs(density[idx] - ISO_LEVEL) < SNAP_EPSILON) {
                     density[idx] = (delta < 0)
                         ? ISO_LEVEL - SNAP_EPSILON  // Force Air
                         : ISO_LEVEL + SNAP_EPSILON; // Force Solid
                 }
-                // -----------------------------------------
                 
                 // Apply material when building
                 if (delta > 0 && density[idx] > ISO_LEVEL) {

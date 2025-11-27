@@ -1,51 +1,16 @@
-import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import { RigidBody, useRapier } from '@react-three/rapier';
-import CustomShaderMaterial from 'three-custom-shader-material';
+import { useRapier } from '@react-three/rapier';
 import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager, SimUpdate } from '../services/SimulationManager';
 import { useGameStore } from '../services/GameManager';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '../constants';
-import { TriplanarMaterial } from './TriplanarMaterial';
-import { WaterMaterial } from './WaterMaterial';
-import { MaterialType } from '../types';
-
-type ChunkKey = string; // "x,z"
-interface ChunkState {
-  key: ChunkKey;
-  cx: number;
-  cz: number;
-  density: Float32Array;
-  material: Uint8Array;
-  terrainVersion: number; // Triggers Physics Rebuild
-  visualVersion: number;  // Triggers Visual Update Only
-
-  meshPositions: Float32Array;
-  meshIndices: Uint32Array;
-  meshMaterials: Float32Array;
-  meshMaterials2: Float32Array;
-  meshMaterials3: Float32Array;
-  meshWeights: Float32Array;
-  meshNormals: Float32Array;
-  meshWetness: Float32Array;
-  meshMossiness: Float32Array;
-
-  floraPositions?: Float32Array;
-
-  meshWaterPositions: Float32Array;
-  meshWaterIndices: Uint32Array;
-  meshWaterNormals: Float32Array;
-}
-
-interface VoxelTerrainProps {
-  action: 'DIG' | 'BUILD' | null;
-  isInteracting: boolean;
-  sunDirection?: THREE.Vector3;
-  onInitialLoad?: () => void;
-}
+import { MaterialType, ChunkState, ChunkKey } from '../types';
+import { ChunkMesh } from './ChunkMesh';
+import { RootHollow } from './RootHollow';
 
 const getMaterialColor = (matId: number) => {
   switch (matId) {
@@ -105,238 +70,6 @@ const rayHitsFlora = (
 
   return closestId;
 };
-
-const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, chunkKey, onHarvest }) => {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const count = positions.length / 3;
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-
-  // Track removed instances visually until remesh
-  const [removedIndices, setRemovedIndices] = useState<Set<number>>(new Set());
-
-  const handleClick = (e: any) => {
-      // e.instanceId is the index
-      if (e.button === 0 && e.instanceId !== undefined && !removedIndices.has(e.instanceId)) {
-           e.stopPropagation();
-           setRemovedIndices(prev => new Set(prev).add(e.instanceId));
-           onHarvest(e.instanceId);
-
-           // Hide instance immediately
-           if (meshRef.current) {
-               meshRef.current.getMatrixAt(e.instanceId, dummy.matrix);
-               dummy.matrix.scale(new THREE.Vector3(0,0,0)); // Scale to zero
-               meshRef.current.setMatrixAt(e.instanceId, dummy.matrix);
-               meshRef.current.instanceMatrix.needsUpdate = true;
-           }
-      }
-  };
-
-  const uniforms = useMemo(() => ({
-    uTime: { value: 0 },
-    uColor: { value: new THREE.Color('#00FFFF') },
-    uSeed: { value: Math.random() * 100 }
-  }), []);
-
-  useLayoutEffect(() => {
-    if (!meshRef.current) return;
-    for (let i = 0; i < count; i++) {
-        dummy.position.set(positions[i*3], positions[i*3+1], positions[i*3+2]);
-        // Random rotation and scale for variety
-        dummy.rotation.y = Math.random() * Math.PI * 2;
-        dummy.rotation.x = (Math.random() - 0.5) * 0.5;
-        dummy.scale.setScalar(0.5 + Math.random() * 0.5);
-        dummy.updateMatrix();
-        meshRef.current.setMatrixAt(i, dummy.matrix);
-    }
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  }, [positions, count, dummy]);
-
-  useFrame(({ clock }) => {
-    if (meshRef.current && meshRef.current.material) {
-        // @ts-ignore
-        const mat = meshRef.current.material as THREE.ShaderMaterial;
-        if(mat.uniforms && mat.uniforms.uTime) {
-            mat.uniforms.uTime.value = clock.getElapsedTime();
-        }
-    }
-  });
-
-  return (
-    <instancedMesh
-        ref={meshRef}
-        args={[undefined, undefined, count]}
-        frustumCulled={false}
-        onClick={handleClick}
-        onPointerOver={() => document.body.style.cursor = 'pointer'}
-        onPointerOut={() => document.body.style.cursor = 'auto'}
-    >
-       <sphereGeometry args={[0.25, 16, 16]} />
-       <CustomShaderMaterial
-         baseMaterial={THREE.MeshStandardMaterial}
-         vertexShader={`
-            varying vec3 vPosition;
-            void main() {
-               vPosition = position;
-            }
-         `}
-         fragmentShader={`
-            uniform float uTime;
-            uniform vec3 uColor;
-            uniform float uSeed;
-            varying vec3 vPosition;
-            void main() {
-                float pulse = sin(uTime * 2.0 + uSeed + vPosition.x * 4.0) * 0.5 + 1.5;
-                csm_Emissive = uColor * pulse;
-            }
-         `}
-         uniforms={uniforms}
-         color="#222"
-         roughness={0.4}
-         toneMapped={false}
-       />
-    </instancedMesh>
-  );
-});
-
-const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const [opacity, setOpacity] = useState(0);
-  const addFlora = useGameStore(s => s.addFlora);
-  const debugMode = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    const params = new URLSearchParams(window.location.search);
-    return params.has('debug');
-  }, []);
-
-  useFrame((_, delta) => {
-    if (opacity < 1) {
-      setOpacity(prev => Math.min(prev + delta * 2, 1));
-    }
-  });
-
-  const terrainGeometry = useMemo(() => {
-    if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
-
-    const vertexCount = chunk.meshPositions.length / 3;
-
-    if (chunk.meshMaterials && chunk.meshMaterials.length === vertexCount) {
-        geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(chunk.meshMaterials, 1));
-    } else {
-        geom.setAttribute('aVoxelMat', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
-    }
-
-    if (chunk.meshMaterials2 && chunk.meshMaterials2.length === vertexCount) {
-        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(chunk.meshMaterials2, 1));
-    } else {
-        geom.setAttribute('aVoxelMat2', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
-    }
-
-    if (chunk.meshMaterials3 && chunk.meshMaterials3.length === vertexCount) {
-        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(chunk.meshMaterials3, 1));
-    } else {
-        geom.setAttribute('aVoxelMat3', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
-    }
-
-    if (chunk.meshWeights && chunk.meshWeights.length === vertexCount * 3) {
-        geom.setAttribute('aWeight', new THREE.BufferAttribute(chunk.meshWeights, 3));
-    } else {
-        geom.setAttribute('aWeight', new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
-    }
-
-    // Fix: Always provide wetness/mossiness attributes, even if 0, to satisfy shader expectations
-    
-    if (chunk.meshWetness && chunk.meshWetness.length === vertexCount) {
-        geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(chunk.meshWetness, 1));
-    } else {
-        geom.setAttribute('aVoxelWetness', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
-    }
-
-    if (chunk.meshMossiness && chunk.meshMossiness.length === vertexCount) {
-        geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(chunk.meshMossiness, 1));
-    } else {
-        geom.setAttribute('aVoxelMossiness', new THREE.BufferAttribute(new Float32Array(vertexCount), 1));
-    }
-
-    if (chunk.meshNormals?.length > 0) {
-      geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
-    } else {
-      geom.computeVertexNormals();
-    }
-
-    geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
-    geom.computeBoundingBox();
-    geom.computeBoundingSphere();
-
-    return geom;
-  }, [chunk.meshPositions, chunk.meshIndices, chunk.meshMaterials, chunk.meshMaterials2, chunk.meshMaterials3, chunk.meshWeights, chunk.meshNormals, chunk.meshWetness, chunk.meshMossiness, chunk.visualVersion]);
-
-  const waterGeometry = useMemo(() => {
-    if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
-
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshWaterPositions, 3));
-    if (chunk.meshWaterNormals?.length > 0) {
-      geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshWaterNormals, 3));
-    } else {
-      geom.computeVertexNormals();
-    }
-    geom.setIndex(new THREE.BufferAttribute(chunk.meshWaterIndices, 1));
-    return geom;
-  }, [chunk.meshWaterPositions, chunk.meshWaterIndices, chunk.meshWaterNormals, chunk.visualVersion]);
-
-  if (!terrainGeometry && !waterGeometry) return null;
-
-  // CRITICAL: Only change key if terrain geometry changes (Physics firewall)
-  const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
-
-  return (
-    <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
-      {terrainGeometry && (
-        <RigidBody
-          key={colliderKey}
-          type="fixed"
-          colliders="trimesh"
-          userData={{ type: 'terrain', key: chunk.key }}
-        >
-          <mesh
-            ref={meshRef}
-            scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
-            castShadow
-            receiveShadow
-            frustumCulled
-          geometry={terrainGeometry}
-        >
-          {debugMode ? (
-            <meshNormalMaterial fog={true} />
-          ) : (
-            <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />
-          )}
-        </mesh>
-      </RigidBody>
-    )}
-
-    {waterGeometry && (
-      <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
-        <WaterMaterial sunDirection={sunDirection} fade={opacity} />
-      </mesh>
-    )}
-
-    {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <FloraMesh
-            positions={chunk.floraPositions}
-            chunkKey={chunk.key}
-            onHarvest={(index) => {
-                addFlora();
-                // Ideally update chunk state to remove permanently, but visual hide is enough for MVP
-            }}
-        />
-    )}
-    </group>
-  );
-});
 
 const Particles = ({ active, position, color }: { active: boolean; position: THREE.Vector3; color: string }) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
@@ -401,6 +134,13 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
   );
 };
 
+interface VoxelTerrainProps {
+  action: 'DIG' | 'BUILD' | null;
+  isInteracting: boolean;
+  sunDirection?: THREE.Vector3;
+  onInitialLoad?: () => void;
+}
+
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
@@ -451,7 +191,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions } = payload;
+        const { key, metadata, material, floraPositions, rootHollowPositions } = payload;
         pendingChunks.current.delete(key);
         
         // Log flora positions for debugging
@@ -468,9 +208,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             console.warn('[VoxelTerrain] Received chunk without metadata', key);
         }
 
-        const newChunk = {
+        const newChunk: ChunkState = {
             ...payload,
             floraPositions, // Persist flora positions
+            rootHollowPositions, // Persist root hollow positions
             terrainVersion: 0,
             visualVersion: 0
         };
@@ -701,7 +442,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
   return (
     <group>
       {Object.values(chunks).map(chunk => (
-        <ChunkMesh key={chunk.key} chunk={chunk} sunDirection={sunDirection} />
+        <React.Fragment key={chunk.key}>
+          <ChunkMesh chunk={chunk} sunDirection={sunDirection} />
+          {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
+             Array.from({ length: chunk.rootHollowPositions.length / 3 }).map((_, i) => (
+                <RootHollow
+                    key={`${chunk.key}-root-${i}`}
+                    position={[
+                        chunk.rootHollowPositions![i*3] + chunk.cx * CHUNK_SIZE_XZ,
+                        chunk.rootHollowPositions![i*3+1],
+                        chunk.rootHollowPositions![i*3+2] + chunk.cz * CHUNK_SIZE_XZ
+                    ]}
+                />
+             ))
+          )}
+        </React.Fragment>
       ))}
       <Particles active={particleState.active} position={particleState.pos} color={particleState.color} />
     </group>

@@ -67,3 +67,32 @@ export enum ToolMode {
   BUILD = 'BUILD',
   PAINT = 'PAINT'
 }
+
+export type ChunkKey = string; // "x,z"
+
+export interface ChunkState {
+  key: ChunkKey;
+  cx: number;
+  cz: number;
+  density: Float32Array;
+  material: Uint8Array;
+  terrainVersion: number; // Triggers Physics Rebuild
+  visualVersion: number;  // Triggers Visual Update Only
+
+  meshPositions: Float32Array;
+  meshIndices: Uint32Array;
+  meshMaterials: Float32Array;
+  meshMaterials2: Float32Array;
+  meshMaterials3: Float32Array;
+  meshWeights: Float32Array;
+  meshNormals: Float32Array;
+  meshWetness: Float32Array;
+  meshMossiness: Float32Array;
+
+  floraPositions?: Float32Array;
+  rootHollowPositions?: Float32Array;
+
+  meshWaterPositions: Float32Array;
+  meshWaterIndices: Uint32Array;
+  meshWaterNormals: Float32Array;
+}
