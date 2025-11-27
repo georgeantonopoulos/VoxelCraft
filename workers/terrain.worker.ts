@@ -19,7 +19,7 @@ ctx.onmessage = (e: MessageEvent) => {
         const { cx, cz } = payload;
         const t0 = performance.now();
         console.log('[terrain.worker] GENERATE start', cx, cz);
-        const { density, material, metadata, floraPositions } = TerrainService.generateChunk(cx, cz);
+        const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz);
         const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as CompleteMeshData;
         console.log('[terrain.worker] GENERATE done', cx, cz, {
             positions: mesh.positions.length,
@@ -45,6 +45,7 @@ ctx.onmessage = (e: MessageEvent) => {
             material,
             metadata, // CRITICAL: Pass metadata back to main thread so VoxelTerrain can init DB
             floraPositions, // Flora spawn positions for caves
+            rootHollowPositions,
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
@@ -67,6 +68,7 @@ ctx.onmessage = (e: MessageEvent) => {
             metadata.wetness.buffer, // Transfer metadata buffers too
             metadata.mossiness.buffer,
             floraPositions.buffer,
+            rootHollowPositions.buffer,
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,

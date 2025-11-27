@@ -8,6 +8,9 @@ def verify_visuals():
         # Use a reasonable viewport
         page = browser.new_page(viewport={'width': 1280, 'height': 720})
 
+        # Listen for console logs
+        page.on("console", lambda msg: print(f"BROWSER LOG: {msg.text}"))
+
         print("Navigating to http://localhost:3000/")
         page.goto("http://localhost:3000/")
 

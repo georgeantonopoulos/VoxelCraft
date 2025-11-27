@@ -31,7 +31,8 @@ export class TerrainService {
       density: Float32Array,
       material: Uint8Array,
       metadata: ChunkMetadata,
-      floraPositions: Float32Array
+      floraPositions: Float32Array,
+      rootHollowPositions: Float32Array
   } {
     const sizeX = TOTAL_SIZE_XZ;
     const sizeY = TOTAL_SIZE_Y;
@@ -42,6 +43,7 @@ export class TerrainService {
     const wetness = new Uint8Array(sizeX * sizeY * sizeZ);
     const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
     const floraCandidates: number[] = [];
+    const rootHollowCandidates: number[] = [];
 
     const worldOffsetX = cx * CHUNK_SIZE_XZ;
     const worldOffsetZ = cz * CHUNK_SIZE_XZ;
@@ -189,21 +191,63 @@ export class TerrainService {
       }
     }
 
+    // --- Second Pass: Root Hollow Placement ---
+    // This runs *after* all density and material data is finalized.
+    for (let z = PAD; z < sizeZ - PAD; z++) {
+      for (let y = 1; y < sizeY - 1; y++) {
+        for (let x = PAD; x < sizeX - PAD; x++) {
+          const idx = x + y * sizeX + z * sizeX * sizeY;
+          const idxAbove = x + (y + 1) * sizeX + z * sizeX * sizeY;
+
+          // Condition: The current voxel is solid, and the one above is air (i.e., it's a surface).
+          if (density[idx] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL) {
+
+            // Check if the material is GRASS.
+            if (material[idx] === MaterialType.GRASS) {
+                const wx = (x - PAD) + worldOffsetX;
+                const wy = (y - PAD) + MESH_Y_OFFSET;
+                const wz = (z - PAD) + worldOffsetZ;
+
+                // Use noise checks to find "valley" areas suitable for hollows.
+                const qx = noise(wx * 0.008, 0, wz * 0.008) * 15.0;
+                const qz = noise(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * 15.0;
+                const continental = noise((wx + qx) * 0.01, 0, (wz + qz) * 0.01) * 8;
+                const mountains = noise((wx + qx) * 0.05, 0, (wz + qz) * 0.05) * 4;
+
+                // Valley Condition: Based on logged noise values.
+                // DEBUG: Relaxed conditions to ensure hollows are generated.
+                const isValley = continental < 0.0; // Was -1.0 and mountains < 0.0
+                const isAboveWater = wy > WATER_LEVEL + 1;
+
+                if (isValley && isAboveWater) {
+                    const sparsityNoise = noise(wx * 0.03, wy * 0.03, wz * 0.03);
+
+                    // DEBUG: Lowered threshold
+                    if (sparsityNoise > 0.0) { // Was 0.5
+                        rootHollowCandidates.push(
+                            (x - PAD) + worldOffsetX,
+                            wy + 0.5,
+                            (z - PAD) + worldOffsetZ
+                        );
+                    }
+                }
+            }
+          }
+        }
+      }
+    }
+
     const metadata: ChunkMetadata = {
         wetness,
         mossiness
     };
 
-    // Debug: log flora generation
-    if (floraCandidates.length > 0) {
-        console.log(`[TerrainService] Chunk (${cx},${cz}) generated ${floraCandidates.length / 3} flora positions`);
-    }
-
     return {
         density,
         material,
         metadata,
-        floraPositions: new Float32Array(floraCandidates)
+        floraPositions: new Float32Array(floraCandidates),
+        rootHollowPositions: new Float32Array(rootHollowCandidates)
     };
   }
 

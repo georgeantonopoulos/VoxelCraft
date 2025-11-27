@@ -8,7 +8,7 @@ import { PLAYER_SPEED, JUMP_FORCE } from '../constants';
 const FLY_SPEED = 8; // Vertical speed when flying
 const DOUBLE_TAP_TIME = 300; // Milliseconds between taps to count as double-tap
 
-export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
+export const Player = ({ position = [16, 32, 16], onPlaceFlora }: { position?: [number, number, number], onPlaceFlora: (p: THREE.Vector3) => void }) => {
   const body = useRef<any>(null);
   const [, getKeys] = useKeyboardControls();
   const { rapier, world } = useRapier();
@@ -33,6 +33,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     }));
 
     const { forward, backward, left, right, jump, shift } = getKeys();
+
+    // Flora Placement
+    if (getKeys().place) {
+        const pos = body.current.translation();
+        onPlaceFlora(new THREE.Vector3(pos.x, pos.y, pos.z));
+    }
     
     const velocity = body.current.linvel();
     const camera = state.camera;

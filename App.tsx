@@ -9,11 +9,11 @@ import * as THREE from 'three';
 // Components
 import { VoxelTerrain } from './components/VoxelTerrain';
 import { Player } from './components/Player';
-import { LuminaFlora } from './components/LuminaFlora';
 import { FloraPlacer } from './components/FloraPlacer';
 import { UI } from './components/UI';
 import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
+import { useGameStore } from './services/GameManager';
 import { TerrainService } from './services/terrainService';
 import { setSnapEpsilon } from './constants';
 
@@ -25,6 +25,7 @@ const keyboardMap = [
   { name: 'right', keys: ['ArrowRight', 'd', 'D'] },
   { name: 'jump', keys: ['Space'] },
   { name: 'shift', keys: ['Shift'] },
+  { name: 'place', keys: ['e', 'E'] },
 ];
 
 const InteractionLayer: React.FC<{
@@ -33,8 +34,6 @@ const InteractionLayer: React.FC<{
 }> = ({ setInteracting, setAction }) => {
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
-       // Only allow interaction if we are locked (gameplay) OR if we are clicking canvas (handled by pointer lock check)
-       // But typically we want to interact when locked.
        if (!document.pointerLockElement) return;
        if (e.button === 0) setAction('DIG');
        if (e.button === 2) setAction('BUILD');
@@ -80,7 +79,7 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
 
   useFrame(({ clock }) => {
     const now = clock.getElapsedTime();
-    if (now - lastLog.current < 2.0) return; // Log every 2s
+    if (now - lastLog.current < 2.0) return;
     lastLog.current = now;
 
     const info = gl.info;
@@ -106,78 +105,39 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
   return null;
 };
 
-/**
- * Calculates the non-linear orbit angle for sun/moon to make day longer and night shorter.
- * Maps linear time progression to angle progression where day (sun above horizon) takes
- * ~70% of the cycle and night takes ~30%.
- * @param t - Elapsed time in seconds
- * @param speed - Base orbit speed
- * @param offset - Optional angle offset (e.g., Math.PI for moon to stay opposite sun)
- * @returns The calculated orbit angle
- */
 const calculateOrbitAngle = (t: number, speed: number, offset: number = 0): number => {
   const cycleTime = t * speed;
-  const normalizedCycle = (cycleTime % (Math.PI * 2)) / (Math.PI * 2); // 0 to 1
-  
-  // Stretch day (when sun is above horizon): spend ~70% of cycle in day, ~30% in night
-  // Day corresponds to angles where cos(angle) > 0, i.e., -π/2 to π/2
+  const normalizedCycle = (cycleTime % (Math.PI * 2)) / (Math.PI * 2);
   let angle;
   if (normalizedCycle < 0.35) {
-    // First half of day: map 0-0.35 to -π/2 to 0
     angle = -Math.PI / 2 + (normalizedCycle / 0.35) * (Math.PI / 2);
   } else if (normalizedCycle < 0.65) {
-    // Second half of day: map 0.35-0.65 to 0 to π/2
     angle = ((normalizedCycle - 0.35) / 0.3) * (Math.PI / 2);
   } else {
-    // Night: map 0.65-1.0 to π/2 to 3π/2 (faster through night)
     angle = Math.PI / 2 + ((normalizedCycle - 0.65) / 0.35) * Math.PI;
   }
-  
-  // Add full cycle offset
   angle += Math.floor(cycleTime / (Math.PI * 2)) * Math.PI * 2;
-  
   return angle + offset;
 };
 
-/**
- * Calculates sun color based on sun height (Y position).
- * Returns a color that transitions smoothly between:
- * - Night (sun below horizon): blue and darker
- * - Sunrise/sunset (sun near horizon): orange (not pink)
- * - Day (sun high): white/yellow
- */
 const getSunColor = (sunY: number, radius: number): THREE.Color => {
-  // Normalize sun height: -1 (fully below) to 1 (noon)
   const normalizedHeight = sunY / radius;
-  
-  // Define color states
-  const nightColor = new THREE.Color(0x4a5a7a); // Blue, darker
-  const sunriseSunsetColor = new THREE.Color(0xff7f42); // Orange (more orange, less pink)
-  const dayColor = new THREE.Color(0xfffcf0); // White/yellow
-  
-  // Determine which phase we're in
+  const nightColor = new THREE.Color(0x4a5a7a);
+  const sunriseSunsetColor = new THREE.Color(0xff7f42);
+  const dayColor = new THREE.Color(0xfffcf0);
   if (normalizedHeight < -0.15) {
-    // Deep night: sun is well below horizon
     return nightColor;
   } else if (normalizedHeight < 0.0) {
-    // Transition from Night to Sunset
-    const t = (normalizedHeight + 0.15) / 0.15; // 0 at -0.15, 1 at 0.0
+    const t = (normalizedHeight + 0.15) / 0.15;
     return new THREE.Color().lerpColors(nightColor, sunriseSunsetColor, t);
   } else if (normalizedHeight < 0.3) {
-    // Transition from Sunset to Day
-    const t = normalizedHeight / 0.3; // 0 at 0.0, 1 at 0.3
+    const t = normalizedHeight / 0.3;
     return new THREE.Color().lerpColors(sunriseSunsetColor, dayColor, t);
   } else {
-    // Day: sun is high
     return dayColor;
   }
 };
 
-/**
- * Generates the halo color for the sun billboard so it remains tonally synced
- * with the main sun color while still allowing subtle warmth/cool adjustments
- * for different times of day.
- */
 const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE.Color => {
   const glowColor = sunColor.clone();
   const nightGlow = new THREE.Color(0x4a5a7a);
@@ -203,37 +163,25 @@ const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE
   return glowColor.lerp(dayHighlight, 0.2).multiplyScalar(1.05);
 };
 
-/**
- * Calculates sky gradient colors (top/zenith and bottom/horizon) based on sun height.
- * Returns colors that create a realistic sky gradient transitioning from zenith to horizon.
- */
 const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, bottom: THREE.Color } => {
   const normalizedHeight = sunY / radius;
-  
-  // Night: Deep dark blue at top, slightly lighter at horizon
   const nightTop = new THREE.Color(0x020210); 
   const nightBottom = new THREE.Color(0x101025);
-
-  // Sunrise/Sunset: Deep blue at top, vibrant orange at horizon (less pink)
   const sunsetTop = new THREE.Color(0x2c3e50);
   const sunsetBottom = new THREE.Color(0xff8c42);
-
-  // Day: Rich sky blue at top, pale blue at horizon
   const dayTop = new THREE.Color(0x1e90ff);
   const dayBottom = new THREE.Color(0x87CEEB);
 
   if (normalizedHeight < -0.15) {
     return { top: nightTop, bottom: nightBottom };
   } else if (normalizedHeight < 0.0) {
-    // Transition from Night to Sunset
-    const t = (normalizedHeight + 0.15) / 0.15; // 0 at -0.15, 1 at 0.0
+    const t = (normalizedHeight + 0.15) / 0.15;
     return {
       top: new THREE.Color().lerpColors(nightTop, sunsetTop, t),
       bottom: new THREE.Color().lerpColors(nightBottom, sunsetBottom, t)
     };
   } else if (normalizedHeight < 0.3) {
-    // Transition from Sunset to Day
-    const t = normalizedHeight / 0.3; // 0 at 0.0, 1 at 0.3
+    const t = normalizedHeight / 0.3;
     return {
       top: new THREE.Color().lerpColors(sunsetTop, dayTop, t),
       bottom: new THREE.Color().lerpColors(sunsetBottom, dayBottom, t)
@@ -243,10 +191,6 @@ const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, botto
   }
 };
 
-/**
- * SkyDome component that renders a gradient sky sphere.
- * The gradient transitions from top (zenith) to bottom (horizon) colors.
- */
 const SkyDome: React.FC<{ 
   topColor: THREE.Color, 
   bottomColor: THREE.Color 
@@ -261,7 +205,6 @@ const SkyDome: React.FC<{
 
   useFrame((state) => {
     if (meshRef.current) {
-      // Center sky dome on camera so it always surrounds the player
       meshRef.current.position.copy(state.camera.position);
       
       const material = meshRef.current.material as THREE.ShaderMaterial;
@@ -311,11 +254,9 @@ const SunFollower: React.FC = () => {
   const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
   const target = useMemo(() => new THREE.Object3D(), []);
   
-  // Smooth position tracking to prevent choppy updates
   const smoothSunPos = useRef(new THREE.Vector3());
   const lastCameraPos = useRef(new THREE.Vector3());
 
-  // Initialize smooth position tracking
   useEffect(() => {
     lastCameraPos.current.copy(camera.position);
     smoothSunPos.current.set(0, 0, 0);
@@ -324,26 +265,17 @@ const SunFollower: React.FC = () => {
   useFrame(({ clock }) => {
     if (lightRef.current) {
         const t = clock.getElapsedTime();
-        
-        // Slow orbit (Cycle every ~8-10 minutes)
-        const speed = 0.025; // 1/4th of previous 0.1
-        
-        // Non-linear angle mapping to make day longer and night shorter
+        const speed = 0.025;
         const angle = calculateOrbitAngle(t, speed);
-
-        // Radius of orbit relative to player
-        const radius = 300; // Farther away for scale
-
+        const radius = 300;
         const sx = Math.sin(angle) * radius;
         const sy = Math.cos(angle) * radius; 
         const sz = 30; 
 
-        // Smooth sun position relative to camera to prevent choppy updates
         const cameraDelta = camera.position.clone().sub(lastCameraPos.current);
         smoothSunPos.current.add(cameraDelta);
         lastCameraPos.current.copy(camera.position);
         
-        // Calculate smooth sun position (only for visual sun, light stays snapped for performance)
         const sunDist = 350;
         const targetSunPos = new THREE.Vector3(
           smoothSunPos.current.x + Math.sin(angle) * sunDist,
@@ -351,7 +283,6 @@ const SunFollower: React.FC = () => {
           smoothSunPos.current.z + sz
         );
 
-        // Light position: snap to grid for performance (shadows don't need smooth movement)
         const q = 4;
         const lx = Math.round(camera.position.x / q) * q;
         const lz = Math.round(camera.position.z / q) * q;
@@ -363,63 +294,43 @@ const SunFollower: React.FC = () => {
         lightRef.current.updateMatrixWorld();
         target.updateMatrixWorld();
         
-        // Calculate sun color based on height
         const sunColor = getSunColor(sy, radius);
-        
-        // Update light color
         lightRef.current.color.copy(sunColor);
         
-        // Adjust intensity: fade out smoothly when below horizon
         const normalizedHeight = sy / radius;
         if (normalizedHeight < -0.15) {
-          // Deep night: darker
           lightRef.current.intensity = 0.1;
         } else if (normalizedHeight < 0.0) {
-          // Transition from Night to Sunset
-          const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
+          const t = (normalizedHeight + 0.15) / 0.15;
           lightRef.current.intensity = 0.1 + (0.4 - 0.1) * t; 
         } else if (normalizedHeight < 0.3) {
-          // Sunset to Day
-          const t = normalizedHeight / 0.3; // 0 to 1
+          const t = normalizedHeight / 0.3;
           lightRef.current.intensity = 0.4 + (1.0 - 0.4) * t;
         } else {
-          // Day: full intensity
           lightRef.current.intensity = 1.0;
         }
 
-        // Update Visual Sun color and glow
         if (sunMeshRef.current) {
-           // Use smooth position for visual sun to prevent choppy updates
            sunMeshRef.current.position.copy(targetSunPos);
            sunMeshRef.current.lookAt(camera.position);
            
-           // Update sun material color
            if (sunMaterialRef.current) {
              const sunMeshColor = sunColor.clone();
              if (normalizedHeight < -0.15) {
-               // Deep night: make sun mesh dim
                sunMeshColor.multiplyScalar(0.4);
              } else if (normalizedHeight < 0.0) {
-               // Transition from sunset to night - fade smoothly
                const t = (normalizedHeight + 0.15) / 0.15;
                sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
              } else {
-               // Day/sunrise: bright sun core
                sunMeshColor.multiplyScalar(1.5);
              }
-             
              sunMaterialRef.current.color.copy(sunMeshColor);
            }
            
-           // Update glow - make it more visible during sunset
           if (glowMeshRef.current && glowMaterialRef.current) {
-            // Position glow at sun location (using smooth position)
             glowMeshRef.current.position.copy(targetSunPos);
-            
-            // Make glow always face camera
             glowMeshRef.current.lookAt(camera.position);
             
-            // Calculate glow intensity and size based on sun position
             const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
             const glowScale = isSunset ? 5.0 : 3.5;
             const glowOpacity = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
@@ -441,11 +352,7 @@ const SunFollower: React.FC = () => {
         color="#fffcf0" 
         castShadow 
         shadow-mapSize={[2048, 2048]}
-        // AAA FIX: SHADOW ACNE CALIBRATION
-        // Previous: -0.0005 -> New: -0.001 (Pushes shadow back further)
         shadow-bias={-0.001} 
-        // Previous: 0.04 -> New: 0.08 (Biases based on surface angle)
-        // This helps specifically with the curved slopes in your screenshot.
         shadow-normalBias={0.08}
         shadow-camera-near={10}
         shadow-camera-far={500}
@@ -456,7 +363,6 @@ const SunFollower: React.FC = () => {
       />
       <primitive object={target} />
       
-      {/* Physical Sun Mesh - Bright solid core */}
       <mesh ref={sunMeshRef}>
          <sphereGeometry args={[15, 32, 32]} />
          <meshBasicMaterial 
@@ -467,7 +373,6 @@ const SunFollower: React.FC = () => {
          />
       </mesh>
       
-      {/* Sun Glow Billboard - Always faces camera, more visible during sunset */}
       <mesh ref={glowMeshRef}>
         <planeGeometry args={[40, 40]} />
         <shaderMaterial 
@@ -503,11 +408,6 @@ const SunFollower: React.FC = () => {
   );
 };
 
-/**
- * Simple moon component that orbits exactly opposite to the sun.
- * Uses "game physics" - moon and sun are counter-weights on a rotating stick.
- * Moon is visible when above horizon and provides subtle night lighting.
- */
 const MoonFollower: React.FC = () => {
   const { camera } = useThree();
   const moonMeshRef = useRef<THREE.Mesh>(null);
@@ -518,34 +418,24 @@ const MoonFollower: React.FC = () => {
     if (!moonMeshRef.current || !lightRef.current) return;
 
     const t = clock.getElapsedTime();
-    const radius = 300; // Distance from player
-    const speed = 0.025; // MUST match Sun speed to stay opposite
-
-    // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
+    const radius = 300;
+    const speed = 0.025;
     const angle = calculateOrbitAngle(t, speed, Math.PI);
-
-    // Calculate position
     const x = Math.sin(angle) * radius;
     const y = Math.cos(angle) * radius;
-
-    // Position the moon relative to the camera (so you can't walk past it)
     const px = camera.position.x + x;
-    const py = y; // Keep height absolute relative to horizon
-    const pz = camera.position.z + 30; // Slight Z offset
+    const py = y;
+    const pz = camera.position.z + 30;
 
-    // Apply positions
     moonMeshRef.current.position.set(px, py, pz);
-
-    // Move the directional light with the mesh
     lightRef.current.position.set(px, py, pz);
     target.position.set(camera.position.x, 0, camera.position.z);
     lightRef.current.target = target;
     lightRef.current.updateMatrixWorld();
 
-    // VISIBILITY: Only visible when above the horizon
-    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
+    const isAboveHorizon = py > -50;
     moonMeshRef.current.visible = isAboveHorizon;
-    lightRef.current.intensity = isAboveHorizon ? 0.2 : 0; // Dim light
+    lightRef.current.intensity = isAboveHorizon ? 0.2 : 0;
   });
 
   return (
@@ -558,7 +448,6 @@ const MoonFollower: React.FC = () => {
       />
       <primitive object={target} />
 
-      {/* Simple White Sphere */}
       <mesh ref={moonMeshRef}>
         <sphereGeometry args={[20, 32, 32]} />
         <meshBasicMaterial color="#ffffff" />
@@ -567,10 +456,6 @@ const MoonFollower: React.FC = () => {
   );
 };
 
-/**
- * Controls fog, background, hemisphere light colors, and sky gradient based on sun position.
- * Renders the SkyDome with dynamic gradients and updates fog to match horizon color.
- */
 const AtmosphereController: React.FC = () => {
   const { scene } = useThree();
   const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
@@ -581,39 +466,29 @@ const AtmosphereController: React.FC = () => {
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
-    
-    // Use the same non-linear orbit calculation as SunFollower
     const speed = 0.025;
     const angle = calculateOrbitAngle(t, speed);
     const radius = 300;
     const sy = Math.cos(angle) * radius;
-    
-    // Calculate sky gradient colors based on sun position
     const { top, bottom } = getSkyGradient(sy, radius);
     
-    // Update gradient ref for SkyDome
     gradientRef.current.top.copy(top);
     gradientRef.current.bottom.copy(bottom);
     
-    // Update fog color to match horizon (bottom) color for seamless blending
     const fog = scene.fog as THREE.Fog | undefined;
     if (fog) {
       fog.color.copy(bottom);
     }
     
-    // Update hemisphere light colors to match atmosphere
     if (hemisphereLightRef.current) {
       const normalizedHeight = sy / radius;
       hemisphereLightRef.current.color.copy(top);
       
       if (normalizedHeight < -0.1) {
-        // Night: darker ground
         hemisphereLightRef.current.groundColor.set(0x1a1a2a);
       } else if (normalizedHeight < 0.2) {
-        // Sunrise/sunset: warmer ground
         hemisphereLightRef.current.groundColor.set(0x3a2a2a);
       } else {
-        // Day: darker ground for contrast
         hemisphereLightRef.current.groundColor.set(0x2a2a4a);
       }
     }
@@ -630,16 +505,11 @@ const AtmosphereController: React.FC = () => {
   );
 };
 
-/**
- * Helper component to bridge the gradient ref to SkyDome.
- * Updates SkyDome colors without triggering React re-renders.
- */
 const SkyDomeRefLink: React.FC<{ 
   gradientRef: React.MutableRefObject<{ top: THREE.Color, bottom: THREE.Color }> 
 }> = ({ gradientRef }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   
-  // Create stable uniform references
   const uniforms = useMemo(() => ({
     uTopColor: { value: new THREE.Color('#87CEEB') },
     uBottomColor: { value: new THREE.Color('#87CEEB') },
@@ -649,8 +519,6 @@ const SkyDomeRefLink: React.FC<{
   useFrame((state) => {
     if (meshRef.current) {
       meshRef.current.position.copy(state.camera.position);
-      
-      // Update uniforms from gradient ref
       uniforms.uTopColor.value.copy(gradientRef.current.top);
       uniforms.uBottomColor.value.copy(gradientRef.current.bottom);
     }
@@ -693,13 +561,13 @@ const CinematicCamera: React.FC<{ spawnPos: [number, number, number] | null }> =
   const angle = useRef(0);
 
   useFrame((state, delta) => {
-     angle.current += delta * 0.05; // Slow rotation
+     angle.current += delta * 0.05;
      const radius = 60;
      const centerX = 16;
      const centerZ = 16;
      
      const targetY = spawnPos ? spawnPos[1] : 20;
-     const camY = targetY + 40; // Fly above
+     const camY = targetY + 40;
 
      const x = centerX + Math.sin(angle.current) * radius;
      const z = centerZ + Math.cos(angle.current) * radius;
@@ -717,6 +585,12 @@ const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
+  const placeFlora = useGameStore(s => s.placeFlora);
+
+  const handleInitialLoad = useCallback(() => {
+    setTerrainLoaded(true);
+  }, []);
+
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -726,12 +600,10 @@ const App: React.FC = () => {
     return params.has('debug');
   }, []);
 
-  // Sun direction for shadows (High Noon-ish for vibrancy)
   const sunDirection = useMemo(() => new THREE.Vector3(50, 100, 30).normalize(), []);
 
   useEffect(() => {
-      const h = TerrainService.getHeightAt(16, 16);
-      setSpawnPos([16, h + 5, 16]);
+      setSpawnPos([10, 20, 10]);
   }, []);
 
   const handleUnlock = useCallback(() => {
@@ -741,7 +613,6 @@ const App: React.FC = () => {
 
   return (
     <div className="w-full h-full relative bg-sky-300">
-      {/* Leva controls - visible only in debug mode or if you prefer always on in dev */}
       <Leva hidden={!debugMode} />
       {debugMode && <DebugControls />}
 
@@ -756,59 +627,39 @@ const App: React.FC = () => {
           shadows 
           dpr={[1, 2]}
           gl={{ 
-            antialias: false, // Post-processing handles AA usually, keeps edges crisp
+            antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
-            // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
           camera={{ fov: 60, near: 0.1, far: 400 }}
         >
-          <DebugGL skipPost={skipPost} />
-
-          {/* --- 1. ATMOSPHERE & LIGHTING (Aetherial & Immersive) --- */}
+          {gameStarted && <DebugGL skipPost={skipPost} />}
           
-          {/* Background: Fallback color, SkyDome renders gradient sky */}
           <color attach="background" args={['#87CEEB']} />
-          
-          {/* Fog: Strong fog starting close to camera to hide terrain generation - color updated by AtmosphereController */}
-          <fog attach="fog" args={['#87CEEB', 15, 150]} />
-          
-          {/* Ambient: Softer base to let point lights shine */}
-          <ambientLight intensity={0.3} color="#ccccff" />
-
-          {/* Atmosphere Controller: Renders gradient SkyDome and updates fog/hemisphere light colors */}
-          <AtmosphereController />
-
-          {/* Sun: Strong directional light */}
+          {/* <fog attach="fog" args={['#87CEEB', 15, 150]} /> */}
+          <ambientLight intensity={2.0} color="#ccccff" />
+          {/* <AtmosphereController /> */}
           <SunFollower />
-          
-          {/* Moon: Subtle night lighting */}
           <MoonFollower />
           
-          {/* --- 2. GAME WORLD --- */}
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
-              {gameStarted && spawnPos && <Player position={spawnPos} />}
+              {gameStarted && spawnPos && <Player position={spawnPos} onPlaceFlora={placeFlora} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
               
               <VoxelTerrain 
                 action={action}
                 isInteracting={isInteracting}
                 sunDirection={sunDirection}
-                onInitialLoad={() => setTerrainLoaded(true)}
+                onInitialLoad={handleInitialLoad}
               />
               <FloraPlacer />
               <BedrockPlane />
             </Physics>
           </Suspense>
 
-          {/* --- 3. POST-PROCESSING (Vibrant Polish) --- */}
           {!skipPost ? (
             <EffectComposer>
-               {/* N8AO: Adds depth to the voxels without darkening the whole screen too much.
-                   distanceFalloff helps prevent artifacts at sky/infinity. 
-                   halfRes fixes black frame issues on high-DPI/Mac devices.
-               */}
                <N8AO 
                  halfRes
                  quality="performance"
@@ -818,11 +669,7 @@ const App: React.FC = () => {
                  distanceFalloff={200}
                  screenSpaceRadius={false}
                />
-
-               {/* Bloom: Gentle glow for sky and water highlights */}
                <Bloom luminanceThreshold={0.8} mipmapBlur intensity={0.6} />
-
-               {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
                <ToneMapping />
             </EffectComposer>
           ) : (
