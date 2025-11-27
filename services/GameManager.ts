@@ -9,6 +9,7 @@ interface GameState {
   removeFlora: () => void;
   placeFlora: (position: THREE.Vector3, bodyRef: React.RefObject<any>) => void;
   harvestFlora: (id: string) => void;
+  consumeFlora: (id: string) => void;
 }
 
 export const useGameStore = create<GameState>((set) => ({
@@ -27,6 +28,10 @@ export const useGameStore = create<GameState>((set) => ({
   harvestFlora: (id) =>
     set((state) => ({
       inventoryCount: state.inventoryCount + 1,
+      placedFloras: state.placedFloras.filter((flora) => flora.id !== id),
+    })),
+  consumeFlora: (id) =>
+    set((state) => ({
       placedFloras: state.placedFloras.filter((flora) => flora.id !== id),
     })),
 }));

@@ -19,7 +19,7 @@ ctx.onmessage = (e: MessageEvent) => {
         const { cx, cz } = payload;
         const t0 = performance.now();
         console.log('[terrain.worker] GENERATE start', cx, cz);
-        const { density, material, metadata, floraPositions } = TerrainService.generateChunk(cx, cz);
+        const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz);
         const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as CompleteMeshData;
         console.log('[terrain.worker] GENERATE done', cx, cz, {
             positions: mesh.positions.length,
@@ -27,15 +27,13 @@ ctx.onmessage = (e: MessageEvent) => {
             waterPositions: mesh.waterPositions.length,
             waterIndices: mesh.waterIndices.length,
             floraCount: floraPositions.length / 3,
+            hollowCount: rootHollowPositions.length / 3,
             ms: Math.round(performance.now() - t0)
         });
         
         // Log flora positions if any exist
         if (floraPositions.length > 0) {
             console.log('[terrain.worker] Flora spawned in chunk', cx, cz, ':', floraPositions.length / 3, 'positions');
-            for (let i = 0; i < Math.min(floraPositions.length, 15); i += 3) {
-                console.log('  Flora at:', floraPositions[i], floraPositions[i+1], floraPositions[i+2]);
-            }
         }
 
         const response = {
@@ -45,6 +43,7 @@ ctx.onmessage = (e: MessageEvent) => {
             material,
             metadata, // CRITICAL: Pass metadata back to main thread so VoxelTerrain can init DB
             floraPositions, // Flora spawn positions for caves
+            rootHollowPositions, // Root Hollow positions
             meshPositions: mesh.positions,
             meshIndices: mesh.indices,
             meshMaterials: mesh.materials,
@@ -67,6 +66,7 @@ ctx.onmessage = (e: MessageEvent) => {
             metadata.wetness.buffer, // Transfer metadata buffers too
             metadata.mossiness.buffer,
             floraPositions.buffer,
+            rootHollowPositions.buffer,
             mesh.positions.buffer,
             mesh.indices.buffer,
             mesh.materials.buffer,
@@ -82,14 +82,6 @@ ctx.onmessage = (e: MessageEvent) => {
         ]);
     } else if (type === 'REMESH') {
         const { density, material, key, cx, cz, version } = payload;
-        // Remesh might not have metadata updates (yet), assume cached or empty?
-        // Ideally we should store metadata in chunk state and pass it here.
-        // For now, pass undefined or check payload.
-        // The payload in VoxelTerrain currently doesn't include wetness/mossiness arrays.
-        // We should update VoxelTerrain to pass them if we want dynamic updates to persist.
-        // But for now, let's just generate terrain geometry. 
-        // Wait, if we don't pass wetness, it will be zeroed out on remesh!
-        // But the user didn't mention losing wetness, just broken graphics.
         
         const t0 = performance.now();
         console.log('[terrain.worker] REMESH start', key, 'v', version);
