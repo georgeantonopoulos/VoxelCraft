@@ -445,13 +445,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         <React.Fragment key={chunk.key}>
           <ChunkMesh chunk={chunk} sunDirection={sunDirection} />
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
-             Array.from({ length: chunk.rootHollowPositions.length / 3 }).map((_, i) => (
+             // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
+             Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
                 <RootHollow
                     key={`${chunk.key}-root-${i}`}
                     position={[
-                        chunk.rootHollowPositions![i*3] + chunk.cx * CHUNK_SIZE_XZ,
-                        chunk.rootHollowPositions![i*3+1],
-                        chunk.rootHollowPositions![i*3+2] + chunk.cz * CHUNK_SIZE_XZ
+                        chunk.rootHollowPositions![i*6] + chunk.cx * CHUNK_SIZE_XZ,
+                        chunk.rootHollowPositions![i*6+1],
+                        chunk.rootHollowPositions![i*6+2] + chunk.cz * CHUNK_SIZE_XZ
+                    ]}
+                    normal={[
+                        chunk.rootHollowPositions![i*6+3],
+                        chunk.rootHollowPositions![i*6+4],
+                        chunk.rootHollowPositions![i*6+5]
                     ]}
                 />
              ))
