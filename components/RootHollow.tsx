@@ -145,6 +145,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
                 <FractalTree
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
                     position={new THREE.Vector3(0, -0.2, 0)}
+                    baseRadius={stumpRadius}
                 />
             )}
         </group>

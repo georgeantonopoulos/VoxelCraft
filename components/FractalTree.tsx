@@ -7,9 +7,10 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 interface FractalTreeProps {
     seed: number;
     position: THREE.Vector3;
+    baseRadius?: number;
 }
 
-export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position }) => {
+export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6 }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const [data, setData] = useState<{ matrices: Float32Array, depths: Float32Array, boundingBox: { min: any, max: any } } | null>(null);
     const [growth, setGrowth] = useState(0);
@@ -27,9 +28,9 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position }) => {
         worker.onmessage = (e) => {
             setData(e.data);
         };
-        worker.postMessage({ seed });
+        worker.postMessage({ seed, baseRadius });
         return () => worker.terminate();
-    }, [seed]);
+    }, [seed, baseRadius]);
 
     // Apply bounding box and attributes when data arrives
     useEffect(() => {
@@ -119,6 +120,16 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position }) => {
         uColorTip: { value: new THREE.Color('#00FFFF') } // Cyan Glow
     }), []);
 
+    const topCenter = useMemo(() => {
+        if (!data || !data.boundingBox) return new THREE.Vector3(0, 1.5, 0);
+        const { min, max } = data.boundingBox;
+        return new THREE.Vector3(
+            (min.x + max.x) * 0.5,
+            max.y,
+            (min.z + max.z) * 0.5
+        );
+    }, [data]);
+
     if (!data) return null;
 
     return (
@@ -171,6 +182,14 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position }) => {
                     toneMapped={false}
                 />
             </instancedMesh>
+            <pointLight
+                color="#E0F7FA"
+                intensity={growth * 2.5}
+                distance={8}
+                decay={2}
+                position={topCenter}
+                castShadow={false}
+            />
             {physicsBodies}
         </group>
     );
