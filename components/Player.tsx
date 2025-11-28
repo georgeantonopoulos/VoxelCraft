@@ -11,7 +11,7 @@ const DOUBLE_TAP_TIME = 300;
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
   const [, getKeys] = useKeyboardControls();
-  const { world } = useRapier();
+  const { rapier, world } = useRapier();
   const [isFlying, setIsFlying] = useState(false);
   const lastSpacePress = useRef<number>(0);
   const wasJumpPressed = useRef<boolean>(false);
