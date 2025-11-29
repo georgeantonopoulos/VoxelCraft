@@ -27,7 +27,7 @@ ctx.onmessage = (e: MessageEvent) => {
             waterPositions: mesh.waterPositions.length,
             waterIndices: mesh.waterIndices.length,
             floraCount: floraPositions.length / 3,
-            hollowCount: rootHollowPositions.length / 3,
+            hollowCount: rootHollowPositions.length / 6, // 6 values per root: position (3) + normal (3)
             ms: Math.round(performance.now() - t0)
         });
         

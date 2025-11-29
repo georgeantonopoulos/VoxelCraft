@@ -12,7 +12,7 @@ function mulberry32(a: number) {
 }
 
 ctx.onmessage = (e) => {
-    const { seed } = e.data;
+    const { seed, baseRadius } = e.data;
     const rand = mulberry32(seed ? seed : Math.random() * 10000);
 
     const matrices: number[] = [];
@@ -40,7 +40,14 @@ ctx.onmessage = (e) => {
     // Initial Trunk
     const rootPos = new THREE.Vector3(0, 0, 0);
     const rootQuat = new THREE.Quaternion(); // Identity (Up)
-    const rootScale = new THREE.Vector3(0.4, 2.0, 0.4); // Thick trunk, 2m tall
+    const targetRadius = Math.max(0.3, typeof baseRadius === 'number' ? baseRadius : 0.6);
+    const baseLength = 2.0;
+    // Geometry radius is 0.25 at base; scale so the visible trunk radius matches the stump radius
+    const rootScale = new THREE.Vector3(
+        targetRadius / 0.25,
+        baseLength,
+        targetRadius / 0.25
+    );
 
     stack.push({
         position: rootPos,
@@ -50,7 +57,8 @@ ctx.onmessage = (e) => {
     });
 
     const MAX_DEPTH = 8;
-    const DECAY = 0.85;
+    const LENGTH_DECAY = 0.85;
+    const RADIUS_DECAY = 0.6; // Faster decay to thin branches
     const ANGLE_BASE = 25 * (Math.PI / 180);
 
     const dummy = new THREE.Matrix4();
@@ -131,13 +139,10 @@ ctx.onmessage = (e) => {
                 const newQuat = rot.clone().multiply(q2).multiply(q1);
 
                 // New Scale
-                const newScale = seg.scale.clone().multiplyScalar(DECAY);
-                // Make length slightly longer to cover gaps? Or standard decay.
-                // branches usually get thinner faster than shorter?
-                // Let's stick to uniform decay for now, maybe stretch length.
-                newScale.y = seg.scale.y * DECAY;
-                newScale.x = seg.scale.x * DECAY;
-                newScale.z = seg.scale.z * DECAY;
+                const newScale = seg.scale.clone();
+                newScale.y = seg.scale.y * LENGTH_DECAY;
+                newScale.x = Math.max(seg.scale.x * RADIUS_DECAY, 0.1);
+                newScale.z = Math.max(seg.scale.z * RADIUS_DECAY, 0.1);
 
                 stack.push({
                     position: newPos,

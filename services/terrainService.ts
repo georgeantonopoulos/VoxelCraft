@@ -108,20 +108,84 @@ export class TerrainService {
           density[idx] = d;
 
           // --- Root Hollow Scanning ---
-          if (y > 0) {
+          // Only check surface voxels (not every voxel)
+          if (y > 0 && y < sizeY - 1) {
              const idxBelow = idx - sizeX;
              const dBelow = density[idxBelow];
-             // Detect Surface: Current is Air (<= ISO), Below is Solid (> ISO)
-             if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                 // Check Valley Conditions
-                 if (continental < -1.0 && mountains < 0.0) {
-                     // Sparsity Check
-                     const sparsityNoise = noise(wx * 0.5, wy * 0.5, wz * 0.5);
-                     if (sparsityNoise > 0.5) {
-                         // Place slightly embedded at the interface
-                         // Use local coordinates relative to the chunk (ChunkMesh applies the world offset)
-                         rootHollowCandidates.push((x - PAD) + 0.5, wy - 0.5, (z - PAD) + 0.5);
+            // Detect Surface: Current is Air (<= ISO), Below is Solid (> ISO)
+            if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
+                // Relaxed Valley Conditions (lower/valley areas, but not too strict)
+                // Debug: Track how many surface voxels pass each condition
+                if (continental < 0.0 && mountains < 1.5) {
+                     // Calculate local slope to ensure flat-ish areas
+                     // Sample neighboring heights to check flatness
+                     let maxHeightDiff = 0.0;
+                     const sampleRadius = 2;
+                     const centerHeight = wy;
+                     
+                     for (let dz = -sampleRadius; dz <= sampleRadius; dz++) {
+                         for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
+                             if (dx === 0 && dz === 0) continue;
+                             const sampleX = Math.max(0, Math.min(sizeX - 1, x + dx));
+                             const sampleZ = Math.max(0, Math.min(sizeZ - 1, z + dz));
+                             // Find surface height at sample point
+                             for (let sy = y - 2; sy <= y + 2; sy++) {
+                                 if (sy < 0 || sy >= sizeY) continue;
+                                 const sampleIdx = sampleX + sy * sizeX + sampleZ * sizeX * sizeY;
+                                 const sampleD = density[sampleIdx];
+                                 const sampleDBelow = (sy > 0) ? density[sampleIdx - sizeX] : sampleD;
+                                 if (sampleD <= ISO_LEVEL && sampleDBelow > ISO_LEVEL) {
+                                     const sampleHeight = (sy - PAD) + MESH_Y_OFFSET;
+                                     const heightDiff = Math.abs(sampleHeight - centerHeight);
+                                     maxHeightDiff = Math.max(maxHeightDiff, heightDiff);
+                                     break;
+                                 }
+                             }
+                         }
                      }
+                     
+                    // Relaxed flatness check (slope < 3.5 units to allow placement on slopes)
+                    if (maxHeightDiff < 3.5) {
+                        // Moderate spawn rate (~25% chance)
+                        const sparsityNoise = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                        if (sparsityNoise > 0.75) {
+                            // Place slightly embedded underground (roots go down)
+                            // Use local coordinates relative to the chunk (ChunkMesh applies the world offset)
+                            const localX = (x - PAD) + 0.5;
+                            const localY = wy - 0.8;
+                            const localZ = (z - PAD) + 0.5;
+                            
+                            // --- Calculate Surface Normal via Central Differences ---
+                            // Calculate gradient at the SOLID voxel below (y-1), not the air voxel
+                            // We use a wider stride (2 voxels) to get a smoother "average" slope that ignores small noise bumps
+                            const solidY = y - 1; 
+                            const stride = 2; // Widen sampling to smooth out normals
+                            
+                            const idxXp = Math.min(sizeX - 1, x + stride) + solidY * sizeX + z * sizeX * sizeY;
+                            const idxXm = Math.max(0, x - stride) + solidY * sizeX + z * sizeX * sizeY;
+                            const idxYp = x + Math.min(sizeY - 1, solidY + stride) * sizeX + z * sizeX * sizeY;
+                            const idxYm = x + Math.max(0, solidY - stride) * sizeX + z * sizeX * sizeY;
+                            const idxZp = x + solidY * sizeX + Math.min(sizeZ - 1, z + stride) * sizeX * sizeY;
+                            const idxZm = x + solidY * sizeX + Math.max(0, z - stride) * sizeX * sizeY;
+                            
+                            const dx = density[idxXp] - density[idxXm];
+                            const dy = density[idxYp] - density[idxYm];
+                            const dz = density[idxZp] - density[idxZm];
+                            
+                            // The gradient points towards higher density (solid), so the Normal points away (negative gradient)
+                            // Normalize the vector
+                            const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                            const nx = len > 0.001 ? -dx / len : 0;
+                            const ny = len > 0.001 ? -dy / len : 1; // Default to up if gradient is too small
+                            const nz = len > 0.001 ? -dz / len : 0;
+                            
+                            // Push 6 values: Position (x,y,z) AND Normal (nx,ny,nz)
+                            rootHollowCandidates.push(localX, localY, localZ, nx, ny, nz);
+                            
+                            // Debug logging
+                            console.log(`[TerrainService] Root generated at chunk (${cx},${cz}) world pos (${wx.toFixed(1)}, ${wy.toFixed(1)}, ${wz.toFixed(1)}) local (${localX.toFixed(1)}, ${localY.toFixed(1)}, ${localZ.toFixed(1)}) normal (${nx.toFixed(2)}, ${ny.toFixed(2)}, ${nz.toFixed(2)}) - continental: ${continental.toFixed(2)}, mountains: ${mountains.toFixed(2)}, flatness: ${maxHeightDiff.toFixed(2)}`);
+                        }
+                    }
                  }
              }
           }
@@ -209,6 +273,14 @@ export class TerrainService {
     // Debug: log flora generation
     if (floraCandidates.length > 0) {
         console.log(`[TerrainService] Chunk (${cx},${cz}) generated ${floraCandidates.length / 3} flora positions`);
+    }
+    
+    // Debug: log root hollow generation (now 6 values per root: position + normal)
+    const rootCount = rootHollowCandidates.length / 6;
+    if (rootCount > 0) {
+        console.log(`[TerrainService] Chunk (${cx},${cz}) generated ${rootCount} root hollow positions`);
+    } else {
+        console.log(`[TerrainService] Chunk (${cx},${cz}) generated 0 root hollow positions (conditions too strict?)`);
     }
 
     return {
