@@ -148,7 +148,7 @@ The project follows a domain-driven architecture to improve scalability and main
 - **Solution (Phase 2 - Blend Weights)**:
   - **Tri-Material Data**: The mesher (`mesher.ts`) calculates the three most frequent materials among the 8 corner voxels of each cell (`materials`, `materials2`, `materials3`) and blend weights proportional to frequency.
   - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight` (vec3).
-  - **Mixing**: The fragment shader samples material properties for all three IDs and mixes them using soft-max blended weights with noise distortion, creating smooth organic transitions between material types (e.g., Stone to Grass to Dirt).
+  - **Mixing**: The fragment shader samples material properties for all three IDs using discrete material lookups (no smooth blending between IDs) and mixes them using soft-max blended weights with noise distortion. The mesher handles spatial blending, so the shader uses discrete IDs to prevent chaotic mixing between non-adjacent materials.
   - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.
 - **Self-Intersection Artifacts (Dark Flickering Patches)**:
   - **Root Cause**: `DoubleSide` rendering on pinched geometry (sliver triangles from vertex clamping) causes Z-fighting between front and back faces, creating dark flickering squares.
@@ -158,6 +158,17 @@ The project follows a domain-driven architecture to improve scalability and main
     - **Shadow Bias**: Already configured (`shadow-bias={-0.001}`, `shadow-normalBias={0.08}`) to prevent shadow acne with front-side rendering.
 
 ### 7. Recent Findings
+- 2026-02-XX: Fixed Dexie upgrade crash from changing the `modifications` primary key. `WorldDB` now detects the "Not yet support for changing primary key" `UpgradeError`, deletes the stale IndexedDB, and reopens with the composite `[chunkId+voxelIndex]` schema before any queries run; both save/read helpers await the ready promise to stop worker spam. Note: this wipes old mod data but prevents endless DexieError2 logs. Verified with `npm run build` and `npm run dev` (dev launched on :3000 then stopped after startup).
+- 2026-01-XX: Fixed chaotic material blending in `TriplanarMaterial`. The root cause was biomes changing too rapidly per voxel, causing adjacent voxels to have incompatible materials that the mesher tried to blend. Fixed by:
+  - **Biome smoothing**: Sample biome at coarser scale (every 4 voxels) instead of per-voxel to create smoother biome transitions
+  - **Reduced biome noise frequency**: Changed TEMP_SCALE and HUMID_SCALE from 0.002 to 0.001 to create larger, more stable biome regions
+  - **Removed weight warping**: Completely removed noise-based weight distortion in shader to prevent weak materials from being amplified
+  - **Increased blend thresholds**: Raised threshold for including mat2/mat3 from 0.001 to 0.1 (10%) to ensure only significant materials contribute
+  - **Mesher filtering**: Added filtering in mesher to remove materials with less than 1% of total weight before assignment, preventing noise from creating material mixing artifacts
+  - **Adjacency constraint**: Added constraint to only allow blending between materials that are adjacent in ID space (max 2 ID difference), preventing distant materials (e.g., STONE and GRASS) from blending directly
+  - **Reduced blend radius**: Reduced BLEND_RADIUS from 3 to 2 to make spatial blending more conservative
+  This prevents the "mess of materials" visual artifact by ensuring biomes change smoothly rather than per-voxel.
+- 2025-12-02: Reverted the hard snap change in `TriplanarMaterial` and restored the smooth material blender. Material IDs now use `flat` varyings and vertex normals are guarded against zero-length values to stop rainbow flicker and lighting glitches. Verified with `npm run build` and `npm run dev` (dev booted on port 3003 after 3000-3002 were busy; run was stopped after startup).
 - 2025-01-XX: Fixed self-intersection artifacts (dark flickering patches) caused by `DoubleSide` rendering on pinched geometry. Changed `TriplanarMaterial` to `FrontSide` rendering and relaxed vertex clamp in mesher from `0.0/1.0` to `0.001/0.999` to prevent zero-area sliver triangles while maintaining hole closure. This eliminates Z-fighting between front/back faces and preserves proper triangle winding for normal calculation.
 - 2025-11-24: Sunset color briefly flashed back to orange because `getSunColor` interpolated in the wrong direction when the sun dipped below the horizon (<0 normalized height). Added clamped interpolation that keeps fading the warm tones into night and remapped the sunrise band (0–0.2) to blend from sunset to day.
 - 2025-11-24: Sun halo used a separate color ramp that could drift into cyan during midday. Added `getSunGlowColor` so the glow now derives from the actual sun color and only applies gentle warm/cool adjustments per phase.

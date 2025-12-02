@@ -34,6 +34,37 @@ export class TheGroveDB extends Dexie {
 export const worldDB = new TheGroveDB();
 
 /**
+ * Dexie cannot migrate primary key changes in-place. When we bump the schema to
+ * use the composite `[chunkId+voxelIndex]` key, older IndexedDB instances throw
+ * `UpgradeError: Not yet support for changing primary key` and close the DB.
+ * To avoid endless errors in workers, we detect that upgrade failure once,
+ * drop the database, and reopen with the new schema.
+ */
+async function ensureWorldDBReady(): Promise<void> {
+  try {
+    await worldDB.open();
+  } catch (error) {
+    const message = (error as { message?: string })?.message ?? '';
+    const isPrimaryKeyChange =
+      (error as { name?: string })?.name === 'UpgradeError' ||
+      message.includes('primary key');
+
+    if (isPrimaryKeyChange) {
+      console.warn('[WorldDB] Resetting IndexedDB due to primary key upgrade', error);
+      worldDB.close();
+      await Dexie.delete(worldDB.name);
+      await worldDB.open();
+      return;
+    }
+
+    // Surface unexpected errors; caller-level handlers decide whether to continue.
+    throw error;
+  }
+}
+
+const worldDBReady = ensureWorldDBReady();
+
+/**
  * Helper to save a modification.
  * Can be called from Main Thread (during interaction) or Worker (if architected that way).
  */
@@ -44,6 +75,8 @@ export async function saveModification(
   material: MaterialType,
   density: number
 ) {
+  await worldDBReady;
+
   const chunkId = `${cx},${cz}`;
 
   // Optimized Upsert using put()
@@ -63,6 +96,8 @@ export async function saveModification(
  * Designed to be called by the Web Worker.
  */
 export async function getChunkModifications(cx: number, cz: number): Promise<ChunkModification[]> {
+  await worldDBReady;
+
   const chunkId = `${cx},${cz}`;
   return await worldDB.modifications.where('chunkId').equals(chunkId).toArray();
 }
