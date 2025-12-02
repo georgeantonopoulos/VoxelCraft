@@ -160,16 +160,15 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
 
 // Helper component to set matrices layout-effect style
 const InstanceMatrixSetter = ({ positions, scale }: { positions: Float32Array, scale: number[] }) => {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const anchorRef = useRef<THREE.Object3D>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const anchorObject = useMemo(() => new THREE.Object3D(), []);
 
   useLayoutEffect(() => {
-    if (!meshRef.current) return;
-    const parent = meshRef.current.parent as THREE.InstancedMesh;
+    const parent = anchorRef.current?.parent as THREE.InstancedMesh | undefined;
     if (!parent) return;
 
     const count = positions.length / 3;
-
     for (let i = 0; i < count; i++) {
       dummy.position.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
       dummy.rotation.y = Math.random() * Math.PI * 2;
@@ -179,7 +178,8 @@ const InstanceMatrixSetter = ({ positions, scale }: { positions: Float32Array, s
       parent.setMatrixAt(i, dummy.matrix);
     }
     parent.instanceMatrix.needsUpdate = true;
-  }, [positions, scale]);
+  }, [positions, scale, dummy]);
 
-  return null;
+  // Attach a tiny helper object so we can grab the InstancedMesh parent reliably
+  return <primitive ref={anchorRef} object={anchorObject} />;
 };
