@@ -1,6 +1,7 @@
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
+import { getChunkModifications } from '@/state/WorldDB';
 
 // Type alias to ensure TypeScript recognizes all MeshData properties
 type CompleteMeshData = MeshData & {
@@ -11,7 +12,12 @@ type CompleteMeshData = MeshData & {
 
 const ctx: Worker = self as any;
 
-ctx.onmessage = (e: MessageEvent) => {
+// Instantiate DB connection implicitly by importing it (Singleton in WorldDB.ts)
+// The user requested: "Ensure you instantiate WorldDB outside the onmessage handler."
+// Since `worldDB` is exported as a const instance in `WorldDB.ts`, it is instantiated on module load.
+// We don't need to do anything extra here, just usage is fine.
+
+ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
 
     try {
@@ -19,31 +25,36 @@ ctx.onmessage = (e: MessageEvent) => {
             const { cx, cz } = payload;
             const t0 = performance.now();
             console.log('[terrain.worker] GENERATE start', cx, cz);
-            const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz);
+
+            // 1. Fetch persistent modifications (Async)
+            // This happens BEFORE generation so we can pass them in
+            let modifications: any[] = [];
+            try {
+                modifications = await getChunkModifications(cx, cz);
+            } catch (err) {
+                console.error('[terrain.worker] DB Read Error:', err);
+                // Continue generation even if DB fails, to avoid game crash
+            }
+
+            // 2. Generate with mods
+            const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
+
             const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as CompleteMeshData;
+
             console.log('[terrain.worker] GENERATE done', cx, cz, {
                 positions: mesh.positions.length,
-                indices: mesh.indices.length,
-                waterPositions: mesh.waterPositions.length,
-                waterIndices: mesh.waterIndices.length,
-                floraCount: floraPositions.length / 3,
-                hollowCount: rootHollowPositions.length / 6, // 6 values per root: position (3) + normal (3)
-                ms: Math.round(performance.now() - t0)
+                ms: Math.round(performance.now() - t0),
+                mods: modifications.length
             });
-
-            // Log flora positions if any exist
-            if (floraPositions.length > 0) {
-                console.log('[terrain.worker] Flora spawned in chunk', cx, cz, ':', floraPositions.length / 3, 'positions');
-            }
 
             const response = {
                 key: `${cx},${cz}`,
                 cx, cz,
                 density,
                 material,
-                metadata, // CRITICAL: Pass metadata back to main thread so VoxelTerrain can init DB
-                floraPositions, // Flora spawn positions for caves
-                rootHollowPositions, // Root Hollow positions
+                metadata,
+                floraPositions,
+                rootHollowPositions,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
                 meshMaterials: mesh.materials,
@@ -53,17 +64,15 @@ ctx.onmessage = (e: MessageEvent) => {
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
-                // Water Mesh
                 waterPositions: mesh.waterPositions,
                 waterIndices: mesh.waterIndices,
                 waterNormals: mesh.waterNormals
             };
 
-            // Transfer buffers to avoid copying
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
                 density.buffer,
                 material.buffer,
-                metadata.wetness.buffer, // Transfer metadata buffers too
+                metadata.wetness.buffer,
                 metadata.mossiness.buffer,
                 floraPositions.buffer,
                 rootHollowPositions.buffer,
@@ -84,18 +93,14 @@ ctx.onmessage = (e: MessageEvent) => {
             const { density, material, key, cx, cz, version } = payload;
 
             const t0 = performance.now();
-            console.log('[terrain.worker] REMESH start', key, 'v', version);
+            // console.log('[terrain.worker] REMESH start', key, 'v', version);
             const mesh = generateMesh(density, material) as CompleteMeshData;
-            console.log('[terrain.worker] REMESH done', key, {
-                positions: mesh.positions.length,
-                indices: mesh.indices.length,
-                ms: Math.round(performance.now() - t0)
-            });
+            // console.log('[terrain.worker] REMESH done', key);
 
             const response = {
                 key, cx, cz,
-                density, // Echo back if needed, but usually we just update the mesh parts
-                version, // Echo back version
+                density,
+                version,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
                 meshMaterials: mesh.materials,

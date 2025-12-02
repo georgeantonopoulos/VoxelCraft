@@ -6,7 +6,7 @@ export interface Vector3 {
 }
 
 // Reordered for smoother transitions
-// Updated for Water support
+// Updated for Water support and new Biomes
 export enum MaterialType {
   AIR = 0,
   BEDROCK = 1,
@@ -17,7 +17,14 @@ export enum MaterialType {
   SNOW = 6,
   CLAY = 7,
   WATER = 8,
-  MOSSY_STONE = 10
+  MOSSY_STONE = 10,
+  // New Biome Materials
+  RED_SAND = 11,
+  TERRACOTTA = 12,
+  ICE = 13,
+  JUNGLE_GRASS = 14,
+  GLOW_STONE = 15,
+  OBSIDIAN = 16
 }
 
 export interface MaterialProperties {

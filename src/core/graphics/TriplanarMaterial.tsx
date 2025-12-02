@@ -50,6 +50,14 @@ const fragmentShader = `
   uniform vec3 uColorClay;
   uniform vec3 uColorMoss;
   uniform vec3 uColorBedrock;
+  // New Biomes
+  uniform vec3 uColorRedSand;
+  uniform vec3 uColorTerracotta;
+  uniform vec3 uColorIce;
+  uniform vec3 uColorJungleGrass;
+  uniform vec3 uColorGlowStone;
+  uniform vec3 uColorObsidian;
+
   uniform vec3 uFogColor;
   uniform float uFogNear;
   uniform float uFogFar;
@@ -98,52 +106,80 @@ const fragmentShader = `
   MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
       // Use the material ID directly - blending is handled by vertex weights
       float m = floor(rawM + 0.5);
-      m = clamp(m, 0.0, 15.0);
+      m = clamp(m, 0.0, 20.0); // Expanded range for new mats
 
       vec3 baseCol = uColorStone;
       float roughness = 0.8;
       float noiseFactor = 0.0;
 
-      if (m < 1.5) {
+      if (m < 1.5) { // BEDROCK = 1
           baseCol = uColorBedrock;
           noiseFactor = nMid.r;
       }
-      else if (m < 2.5) {
+      else if (m < 2.5) { // STONE = 2
           baseCol = uColorStone;
           float cracks = nHigh.g;
           noiseFactor = mix(nMid.r, cracks, 0.5);
       }
-      else if (m < 3.5) {
+      else if (m < 3.5) { // DIRT = 3
           baseCol = uColorDirt;
           noiseFactor = nMid.g;
       }
-      else if (m < 4.5) {
+      else if (m < 4.5) { // GRASS = 4
           baseCol = uColorGrass;
           float bladeNoise = nHigh.a;
           float patchNoise = nMid.r;
           noiseFactor = mix(bladeNoise, patchNoise, 0.3);
           baseCol *= vec3(1.0, 1.1, 1.0);
       }
-      else if (m < 5.5) {
+      else if (m < 5.5) { // SAND = 5
           baseCol = uColorSand;
           noiseFactor = nHigh.a;
       }
-      else if (m < 6.5) {
+      else if (m < 6.5) { // SNOW = 6
           baseCol = uColorSnow;
           noiseFactor = nMid.r * 0.5 + 0.5;
       }
-      else if (m < 7.5) {
+      else if (m < 7.5) { // CLAY = 7
           baseCol = uColorClay;
           noiseFactor = nMid.g;
       }
-      else if (m < 9.5) {
+      else if (m < 9.5) { // WATER = 8
           baseCol = uColorWater;
           roughness = 0.1;
       }
-      else {
+      else if (m < 10.5) { // MOSSY_STONE = 10
           baseCol = uColorMoss;
           noiseFactor = nMid.r;
       }
+      else if (m < 11.5) { // RED_SAND = 11
+          baseCol = uColorRedSand;
+          noiseFactor = nHigh.a;
+      }
+      else if (m < 12.5) { // TERRACOTTA = 12
+          baseCol = uColorTerracotta;
+          noiseFactor = nMid.g;
+          roughness = 0.9;
+      }
+      else if (m < 13.5) { // ICE = 13
+          baseCol = uColorIce;
+          noiseFactor = nMid.b * 0.5;
+          roughness = 0.1;
+      }
+      else if (m < 14.5) { // JUNGLE_GRASS = 14
+          baseCol = uColorJungleGrass;
+          noiseFactor = nHigh.a;
+      }
+      else if (m < 15.5) { // GLOW_STONE = 15
+          baseCol = uColorGlowStone;
+          noiseFactor = nMid.r + 0.5; // Brighter
+      }
+      else { // OBSIDIAN = 16
+          baseCol = uColorObsidian;
+          noiseFactor = nHigh.b;
+          roughness = 0.2; // Shiny
+      }
+
       return MatInfo(baseCol, roughness, noiseFactor);
   }
 
@@ -159,8 +195,8 @@ const fragmentShader = `
       float idUpper = ceil(disturbedID);
       
       // Clamp to valid range
-      idLower = clamp(idLower, 0.0, 15.0);
-      idUpper = clamp(idUpper, 0.0, 15.0);
+      idLower = clamp(idLower, 0.0, 20.0);
+      idUpper = clamp(idUpper, 0.0, 20.0);
       
       // 3. Calculate how much to mix (the decimal part)
       float t = fract(disturbedID);
@@ -290,6 +326,15 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
     uColorClay: { value: new THREE.Color('#a67b5b') },
     uColorMoss: { value: new THREE.Color('#5c8a3c') },
     uColorBedrock: { value: new THREE.Color('#2a2a2a') },
+
+    // New Colors
+    uColorRedSand: { value: new THREE.Color('#d45d35') }, // Orange-Red
+    uColorTerracotta: { value: new THREE.Color('#9e6b52') }, // Brownish
+    uColorIce: { value: new THREE.Color('#a3d9ff') }, // Ice Blue
+    uColorJungleGrass: { value: new THREE.Color('#2e8b1d') }, // Darker Vivid Green
+    uColorGlowStone: { value: new THREE.Color('#ffcc00') }, // Bright Yellow
+    uColorObsidian: { value: new THREE.Color('#1a1024') }, // Dark Purple/Black
+
     uFogColor: { value: new THREE.Color('#87CEEB') },
     uFogNear: { value: 30 },
     uFogFar: { value: 400 },
