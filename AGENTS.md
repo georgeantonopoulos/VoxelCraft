@@ -178,3 +178,5 @@ The project follows a domain-driven architecture to improve scalability and main
     - **Branches**: Added "elastic out" easing for a bouncy growth effect and improved the organic wobble.
     - **Leaves**: Added a "pop" effect where leaves scale up rapidly at the end of the growth cycle (0.8-1.0 progress).
   - **Verification**: Verified visual changes by temporarily spawning a tree and observing the animation. Build verified with `npm run build`.
+- 2025-12-02: Merged the `ancestral-roots-visuals` refactor into `main`. Domain-driven layout under `src/core`, `src/features`, `src/state`, and `src/ui` is now canonical; legacy root `components/`, `services/`, and `workers/` files were removed or relocated.
+- 2025-12-02: `npm run dev` starts Vite but the sandbox blocks `uv_interface_addresses` when binding to `0.0.0.0:3000`, so the server exits early after cycling ports. Run with elevated network permissions or outside the sandbox when a live preview is required.
