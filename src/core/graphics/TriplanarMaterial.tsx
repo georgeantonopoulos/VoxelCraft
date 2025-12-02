@@ -183,37 +183,22 @@ const fragmentShader = `
       return MatInfo(baseCol, roughness, noiseFactor);
   }
 
-  // --- NEW HELPER: Smoothly blends between IDs ---
+  // --- NEW HELPER: Hard Snap to Nearest ID (Rainbow Fix) ---
   MatInfo getSmoothMaterial(float smoothID, vec4 nMid, vec4 nHigh) {
-      // 1. Add noise to the ID so the transition isn't a perfect straight line
-      // Using a lower frequency noise makes the waviness subtle and organic
+      // 1. Add noise to the ID so the transition is dithered
       float noise = texture(uNoiseTexture, vWorldPosition * 0.1).r;
       float disturbedID = smoothID + (noise - 0.5) * 0.5;
 
-      // 2. Identify the two materials we are between
-      float idLower = floor(disturbedID);
-      float idUpper = ceil(disturbedID);
+      // 2. Snap to nearest integer ID (Fixes Rainbow Artifact)
+      // Instead of blending between 4 and 11 (which passes through 5,6,7...),
+      // we snap to either 4 or 11 based on the threshold.
+      float snappedID = floor(disturbedID + 0.5);
       
       // Clamp to valid range
-      idLower = clamp(idLower, 0.0, 20.0);
-      idUpper = clamp(idUpper, 0.0, 20.0);
-      
-      // 3. Calculate how much to mix (the decimal part)
-      float t = fract(disturbedID);
-      
-      // 4. Make the mix non-linear for better contrast (optional, keeps it from looking 'washed out')
-      t = smoothstep(0.2, 0.8, t);
+      snappedID = clamp(snappedID, 0.0, 20.0);
 
-      // 5. Fetch both materials
-      MatInfo mLower = getMaterialInfo(idLower, nMid, nHigh);
-      MatInfo mUpper = getMaterialInfo(idUpper, nMid, nHigh);
-
-      // 6. Blend them
-      vec3 col = mix(mLower.baseCol, mUpper.baseCol, t);
-      float rough = mix(mLower.roughness, mUpper.roughness, t);
-      float nf = mix(mLower.noiseFactor, mUpper.noiseFactor, t);
-
-      return MatInfo(col, rough, nf);
+      // 3. Fetch material info for the snapped ID
+      return getMaterialInfo(snappedID, nMid, nHigh);
   }
 
   void main() {

@@ -13,18 +13,11 @@ export type BiomeType =
   | 'SKY_ISLANDS' // Special case
   | 'THE_GROVE'; // Default/Temperate
 
-interface BiomeParameters {
-  id: BiomeType;
-  surfaceMaterial: MaterialType;
-  subSurfaceMaterial: MaterialType;
-  liquidMaterial: MaterialType; // Water or maybe Lava/Ice
+// Helper function for linear interpolation
+const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * t;
 
-  // Terrain shaping parameters
-  baseHeight: number;
-  heightAmp: number;      // Multiplier for height noise
-  roughness: number;      // Frequency of detail noise
-  warpStrength: number;   // Domain warp amount
-}
+// Helper to smooth the noise input (removes harsh linearity)
+const smooth = (t: number) => t * t * (3 - 2 * t);
 
 export class BiomeManager {
   // Using a fixed seed for now, could be passed in
@@ -33,11 +26,6 @@ export class BiomeManager {
   // 2D Noise functions for macro-climate
   private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
   private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
-
-  // Detail noises for height - distinct from TerrainService to allow specialized biome shapes?
-  // Actually TerrainService uses its own noise.
-  // For 'getBlendedHeight', we might want to return PARAMETERS to TerrainService
-  // so it can generate the density/height using its loop efficiently.
 
   // Scales
   static readonly TEMP_SCALE = 0.002;
@@ -61,10 +49,9 @@ export class BiomeManager {
   static getBiomeAt(x: number, z: number): BiomeType {
     const { temp, humid } = this.getClimate(x, z);
 
-    // Rare Sky Islands check (can be position based or noise based)
-    // Let's say it happens in very specific humidity/temp pockets or just random patches
-    // The user suggested: "Rare occurrence where Heat is High + Humidity is Low + Random 'Magic' factor"
-    // For now, let's stick to the table logic first.
+    // Discrete Biome Logic (for Material Selection mainly)
+    // We still use discrete regions for materials, but we will fix the "Material Rainbow"
+    // in the shader by snapping IDs.
 
     if (temp < -0.5) { // Cold
       if (humid > 0.5) return 'ICE_SPIKES';
@@ -90,7 +77,7 @@ export class BiomeManager {
       case 'SNOW': return MaterialType.SNOW;
       case 'ICE_SPIKES': return MaterialType.ICE;
       case 'JUNGLE': return MaterialType.JUNGLE_GRASS;
-      case 'SAVANNA': return MaterialType.DIRT; // Dried grass look?
+      case 'SAVANNA': return MaterialType.DIRT;
       case 'MOUNTAINS': return MaterialType.STONE;
       case 'PLAINS': return MaterialType.GRASS;
       case 'THE_GROVE': return MaterialType.GRASS;
@@ -111,68 +98,49 @@ export class BiomeManager {
     freq: number,
     warp: number
   } {
-    const { temp, humid } = this.getClimate(x, z);
+    // 1. Get Climate (-1 to 1)
+    let { temp, humid } = this.getClimate(x, z);
 
-    // Define "Poles"
-    // Cold/Dry (Ice Plains): Flat, High base
-    // Hot/Dry (Desert): Flat, Low base
-    // Hot/Wet (Jungle): Rugged, High Amp
-    // Temperate (Grove): Rolling, Medium Amp
+    // 2. Normalize to 0..1 range for easier math
+    const t = smooth((temp + 1) / 2); // 0 = Cold, 1 = Hot
+    const h = smooth((humid + 1) / 2); // 0 = Dry, 1 = Wet
 
-    // Baseline (The Grove)
-    let baseHeight = 14;
-    let amp = 8;     // Continental noise multiplier
-    let freq = 1.0;  // Multiplier for noise coordinate scaling
-    let warp = 15.0; // Warp strength
+    // 3. Define the 4 Corners of our Climate Space
 
-    // Temperature Influence
-    // Hotter = often more extreme or flatter depending on biome
-    if (temp > 0.5) {
-      // Hot
-      if (humid < -0.2) {
-        // Desert/Red Desert - Flat dunes
-        amp = 4;
-        warp = 5;
-        baseHeight = 10;
-      } else if (humid > 0.2) {
-        // Jungle - Rugged
-        amp = 25;
-        freq = 1.5;
-        warp = 25;
-        baseHeight = 20;
-      } else {
-        // Savanna - Plateau-ish (Shattered Savanna logic)
-        amp = 15;
-        baseHeight = 30; // High plateau
-      }
-    } else if (temp < -0.5) {
-      // Cold
-      if (humid > 0.5) {
-        // Ice Spikes - Extreme chaotic
-        amp = 40;
-        freq = 2.0;
-        warp = 10;
-      } else {
-        // Snow/Tundra - Gentle
-        amp = 6;
-        baseHeight = 18;
-      }
-    } else {
-      // Temperate
-      if (humid > 0.6) {
-        // Swamp/Dense Forest - Low, wet
-        baseHeight = 8;
-        amp = 4;
-      } else if (Math.abs(temp) < 0.2 && Math.abs(humid) < 0.2) {
-        // "The Grove" (Classic) - Keep default
-      }
-    }
+    // COLD & DRY (Tundra/Ice Plains)
+    const pColdDry = { baseHeight: 18, amp: 6, freq: 1.0, warp: 10 };
 
-    // Smooth blending via linear interpolation could be added here
-    // by defining specific parameter sets for 4 corners and bilinear interpolating
-    // based on temp/humid, but this conditional logic + smooth noise driving it
-    // creates decent transitions if the noise frequency is low.
+    // COLD & WET (Ice Spikes/Snowy Mountains)
+    const pColdWet = { baseHeight: 35, amp: 40, freq: 2.0, warp: 15 };
 
-    return { baseHeight, amp, freq, warp };
+    // HOT & DRY (Desert/Dunes)
+    const pHotDry = { baseHeight: 10, amp: 10, freq: 0.8, warp: 5 };
+
+    // HOT & WET (Jungle/Mountains)
+    const pHotWet = { baseHeight: 25, amp: 30, freq: 1.5, warp: 25 };
+
+    // 4. Bilinear Interpolation
+    // First blend along Humidity (Dry -> Wet) for both Temp poles
+    const pCold = {
+      baseHeight: lerp(pColdDry.baseHeight, pColdWet.baseHeight, h),
+      amp: lerp(pColdDry.amp, pColdWet.amp, h),
+      freq: lerp(pColdDry.freq, pColdWet.freq, h),
+      warp: lerp(pColdDry.warp, pColdWet.warp, h),
+    };
+
+    const pHot = {
+      baseHeight: lerp(pHotDry.baseHeight, pHotWet.baseHeight, h),
+      amp: lerp(pHotDry.amp, pHotWet.amp, h),
+      freq: lerp(pHotDry.freq, pHotWet.freq, h),
+      warp: lerp(pHotDry.warp, pHotWet.warp, h),
+    };
+
+    // Now blend along Temperature (Cold -> Hot)
+    return {
+      baseHeight: lerp(pCold.baseHeight, pHot.baseHeight, t),
+      amp: lerp(pCold.amp, pHot.amp, t),
+      freq: lerp(pCold.freq, pHot.freq, t),
+      warp: lerp(pCold.warp, pHot.warp, t),
+    };
   }
 }

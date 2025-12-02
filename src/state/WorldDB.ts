@@ -3,7 +3,7 @@ import { MaterialType } from '@/types';
 
 // Defines the shape of a modification entry
 export interface ChunkModification {
-  id?: number; // Auto-incrementing primary key
+  id?: number; // Not used with composite key, but good to keep optional
   chunkId: string; // "cx,cz"
   voxelIndex: number; // Flat index in the chunk array
   material: MaterialType;
@@ -16,10 +16,16 @@ export class TheGroveDB extends Dexie {
   constructor() {
     super('TheGroveDB');
 
-    // Schema definition
-    // "chunkId" is indexed for fast lookups by chunk
+    // Version 1: Initial Schema
     this.version(1).stores({
       modifications: '++id, chunkId, voxelIndex'
+    });
+
+    // Version 2: Optimized Compound Index
+    // [chunkId+voxelIndex] is the primary key (Composite)
+    // We also keep chunkId index for fast fetching of all mods in a chunk
+    this.version(2).stores({
+      modifications: '[chunkId+voxelIndex], chunkId'
     });
   }
 }
@@ -40,31 +46,15 @@ export async function saveModification(
 ) {
   const chunkId = `${cx},${cz}`;
 
-  // Upsert logic: Check if exists, update or add
-  // Since we don't have a composite key [chunkId+voxelIndex] defined in the store string above
-  // (Dexie compound indices are complex to use for uniqueness constraints sometimes),
-  // we can just query first.
-  // Optimization: For a real game, a composite key index `[chunkId+voxelIndex]` is better.
+  // Optimized Upsert using put()
+  // Because we defined [chunkId+voxelIndex] as the primary key in version(2),
+  // .put() will automatically overwrite if an entry with the same cx,cz,voxelIndex exists.
 
-  // Let's rely on finding by chunkId and filtering, or just adding.
-  // If we just add, we might have duplicates.
-  // Better: Check existence.
-
-  await worldDB.transaction('rw', worldDB.modifications, async () => {
-    const existing = await worldDB.modifications
-      .where({ chunkId, voxelIndex })
-      .first();
-
-    if (existing) {
-      await worldDB.modifications.update(existing.id!, { material, density });
-    } else {
-      await worldDB.modifications.add({
-        chunkId,
-        voxelIndex,
-        material,
-        density
-      });
-    }
+  await worldDB.modifications.put({
+    chunkId,
+    voxelIndex,
+    material,
+    density
   });
 }
 
