@@ -57,7 +57,7 @@ ctx.onmessage = (e) => {
         depth: 0
     });
 
-    const MAX_DEPTH = 8;
+    const MAX_DEPTH = 6;
     const LENGTH_DECAY = 0.85;
     const RADIUS_DECAY = 0.6; // Faster decay to thin branches
     const ANGLE_BASE = 25 * (Math.PI / 180);

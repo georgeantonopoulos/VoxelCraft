@@ -32,9 +32,12 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         const worker = new Worker(new URL('../workers/fractal.worker.ts', import.meta.url), { type: 'module' });
         worker.onmessage = (e) => {
             setData(e.data);
+            worker.terminate();
         };
         worker.postMessage({ seed, baseRadius });
-        return () => worker.terminate();
+        return () => {
+            // worker.terminate(); // Already terminated
+        };
     }, [seed, baseRadius]);
 
     // Apply bounding box and attributes when data arrives
@@ -112,8 +115,9 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
 
         const count = matrices.length / 16;
         for (let i = 0; i < count; i++) {
-            // Only spawn physics for trunk and thick branches
-            if (depths[i] > 0.35) continue;
+            // Only spawn physics for trunk and thick branches (depth 0, 1, 2)
+            // Normalized depth: 0/6=0, 1/6=0.16, 2/6=0.33, 3/6=0.5
+            if (depths[i] > 0.4) continue;
 
             tempMatrix.fromArray(matrices, i * 16);
             tempMatrix.decompose(pos, quat, scale);
