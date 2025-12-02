@@ -46,6 +46,7 @@ export interface ChunkData {
   density: Float32Array;
   material: Uint8Array; // Stores material ID per voxel
   metadata: ChunkMetadata; // Flexible metadata storage
+  vegetationData?: Record<number, Float32Array>; // Ambient Vegetation
   sizeX: number;
   sizeY: number;
   sizeZ: number;
@@ -98,6 +99,7 @@ export interface ChunkState {
 
   floraPositions?: Float32Array;
   rootHollowPositions?: Float32Array;
+  vegetationData?: Record<number, Float32Array>;
 
   meshWaterPositions: Float32Array;
   meshWaterIndices: Uint32Array;

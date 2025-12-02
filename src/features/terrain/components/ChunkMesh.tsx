@@ -8,6 +8,7 @@ import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
 import { ChunkState } from '@/types';
+import { VegetationLayer } from './VegetationLayer';
 
 // FloraMesh is unchanged - it works perfectly in main and here
 const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, onHarvest }) => {
@@ -157,6 +158,11 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
           <WaterMaterial sunDirection={sunDirection} fade={opacity} />
         </mesh>
       )}
+
+      {chunk.vegetationData && (
+        <VegetationLayer data={chunk.vegetationData} />
+      )}
+
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
         <FloraMesh positions={chunk.floraPositions} chunkKey={chunk.key} onHarvest={() => addFlora()} />
       )}
