@@ -4,6 +4,10 @@ ALWAYS INSPECT CHANGES MAKE SURE NO BUGS SLIP.
 If doing a visual inspection always wait 10 seconds and use the controls to take 4 separate screenshots and analyse what changed. Update this doc (AGENTS.md) with your findings. 
 
 Do not force GLSL version - there's a mix of them here and its working fine as it is. 
+Do not remove comments, add them if missing. 
+
+Always verify and run npm run build and npm run dev to make sure the app is working as expected. 
+
 
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
@@ -14,10 +18,17 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 2. Core Architecture
 
 #### File Structure
-- `components/`: React components (Terrain, Player, UI, StartupScreen).
-- `services/`: Singletons for logic (Terrain generation, Simulation, Metadata).
-- `workers/`: Web Workers for heavy computation (Terrain generation, Simulation loop).
-- `utils/`: Math helpers, Noise functions, Meshing algorithms.
+The project follows a domain-driven architecture to improve scalability and maintainability.
+
+- `src/core/`: Engine-level utilities (Math, Graphics, Memory, Types).
+- `src/features/`: Game modules grouped by domain.
+  - `terrain/`: Voxel engine, meshing, chunk management.
+  - `flora/`: Plants, trees, and growth logic.
+  - `player/`: Player controller and input handling.
+- `src/ui/`: User Interface components (HUD, StartupScreen).
+- `src/state/`: Global state management (Zustand stores).
+- `src/assets/`: Static assets (GLB models, images).
+- `src/utils/`: General helper functions.
 
 #### Key Concepts
 - **Coordinates**:
@@ -32,10 +43,10 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 ### 3. Subsystems
 
 #### Terrain System
-- **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`utils/noise.ts`) to create a density field.
+- **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`src/core/math/noise.ts`) to create a density field.
   - **Density > ISO_LEVEL (0.5)** = Solid.
   - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
-- **Meshing**: `utils/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
+- **Meshing**: `src/features/terrain/logic/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
   - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
 - **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
   - **Shader Stability**: Implements `safeNormalize` to prevent NaNs on degenerate geometry (e.g., sharp concave features from digging) which prevents flashing artifacts.
@@ -123,7 +134,7 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
   - Avoid blocking the main thread; offload heavy math to workers.
 - **Conventions**:
   - Add JSDoc to new functions.
-  - Use `constants.ts` for magic numbers (Gravity, Speed, Chunk Size).
+  - Use `src/constants.ts` for magic numbers (Gravity, Speed, Chunk Size).
 - **Particle System**:
   - **Critical Bug Fix**: Always initialize arrays of objects with individual instances (e.g., `Array.from({ length: n }, () => new Vector3())` instead of `Array(n).fill(new Vector3())`). Using `fill()` creates shared references causing all particles to share the same velocity/state.
   - **Timeout Management**: Use refs to track `setTimeout` IDs and clear them before setting new ones to prevent race conditions when rapid interactions occur.
@@ -158,6 +169,6 @@ Do not force GLSL version - there's a mix of them here and its working fine as i
 - 2025-01-XX: Adjusted day/night cycle to make day longer (~70% of cycle) and night shorter (~30% of cycle). Implemented `calculateOrbitAngle` helper function that uses non-linear angle mapping: day portion (angles where sun is above horizon) is stretched to take up 70% of the cycle instead of 50%, while night portion moves faster. Applied to `SunFollower`, `MoonFollower`, and `AtmosphereController` to maintain synchronization.
 - 2025-01-XX: Implemented `RootHollow` component - procedurally generated hollow stump with vertex-displaced root flares. Replaced sphere-based geometry with open-ended cylinder using `CustomShaderMaterial` with vertex/fragment shaders for organic root displacement and procedural bark/moss texturing. Fixed shader varying name conflicts (`vNormal`, `vWorldPos` renamed to `vStumpNormal`, `vStumpWorldPos`) and memoized rotation to prevent re-rotation on render. Roots spawn in flat valley areas via `TerrainService` with debug logging for placement tracking.
 - 2025-01-XX: Upgraded `RootHollow` with surface normal alignment and FBM shader. Fixed "floating" artifact by calculating terrain surface normals via central differences on density field during generation. Stumps now align perpendicular to terrain surface using `Quaternion.setFromUnitVectors`, allowing proper placement on slopes. Added Fractal Brownian Motion (FBM) in vertex shader (3 octaves) for intricate, gnarly bark ridges and organic root detail. Increased geometry density to 64 radial and 24 height segments to support FBM displacement. Updated placement conditions to allow slopes up to 3.5 units height difference. Changed data structure from 3-tuple (position) to 6-tuple (position + normal) in `TerrainService` and `VoxelTerrain`.
-- 2026-01-XX: Added spatial hashing utilities (`src/utils/spatial.ts`) and `WorldStore` state container (`src/stores/WorldStore.ts`) to establish the chunk-based entity index. `App.tsx` currently logs store initialization for verification; wiring to gameplay systems planned for follow-up phases.
+- 2026-01-XX: Added spatial hashing utilities (`src/utils/spatial.ts`) and `WorldStore` state container (`src/state/WorldStore.ts`) to establish the chunk-based entity index. `App.tsx` currently logs store initialization for verification; wiring to gameplay systems planned for follow-up phases.
 - 2026-01-XX: Migrated flora placement and consumption to `WorldStore` (see `FloraPlacer`, `RootHollow`, `VoxelTerrain`). GameManager now only tracks inventory; flora queries use chunk-indexed lookups for O(1) nearby searches.
 - 2026-01-XX: Stabilized `FloraPlacer` rendering subscription by memoizing the Map->array conversion of WorldStore entities to prevent `useSyncExternalStore` snapshot churn and infinite render loops.

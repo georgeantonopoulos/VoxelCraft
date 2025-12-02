@@ -18,14 +18,39 @@
     "moduleDetection": "force",
     "allowJs": true,
     "jsx": "react-jsx",
+    "baseUrl": ".",
     "paths": {
+      "@core/*": [
+        "src/core/*"
+      ],
+      "@features/*": [
+        "src/features/*"
+      ],
+      "@ui/*": [
+        "src/ui/*"
+      ],
+      "@state/*": [
+        "src/state/*"
+      ],
+      "@utils/*": [
+        "src/utils/*"
+      ],
+      "@assets/*": [
+        "src/assets/*"
+      ],
       "@/*": [
-        "./*"
+        "src/*"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true
-  }
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
