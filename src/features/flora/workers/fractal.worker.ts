@@ -17,6 +17,7 @@ ctx.onmessage = (e) => {
 
     const matrices: number[] = [];
     const depths: number[] = [];
+    const leafMatrices: number[] = [];
 
     // Bounding Box tracking
     const min = { x: Infinity, y: Infinity, z: Infinity };
@@ -151,19 +152,38 @@ ctx.onmessage = (e) => {
                     depth: seg.depth + 1
                 });
             }
+
+        } else {
+            // Tip of the branch - Add Leaf
+            // Position is 'end'
+            // Random rotation
+            dummy.makeRotationFromEuler(new THREE.Euler(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+            ));
+            dummy.setPosition(end);
+            // Scale leaf
+            const lScale = 0.5 + Math.random() * 0.5;
+            dummy.scale(new THREE.Vector3(lScale, lScale, lScale));
+
+            const le = dummy.elements;
+            for (let i = 0; i < 16; i++) leafMatrices.push(le[i]);
         }
     }
-
     // Convert to Float32Array
     const matricesArray = new Float32Array(matrices);
     const depthsArray = new Float32Array(depths);
+    const leafMatricesArray = new Float32Array(leafMatrices);
 
     ctx.postMessage({
         matrices: matricesArray,
         depths: depthsArray,
+        leafMatrices: leafMatricesArray,
         boundingBox: { min, max }
-    }, [matricesArray.buffer, depthsArray.buffer]);
-};
+    }, [matricesArray.buffer, depthsArray.buffer, leafMatricesArray.buffer]);
+}
+
 
 function updateBounds(v: THREE.Vector3, min: { x: number, y: number, z: number }, max: { x: number, y: number, z: number }) {
     if (v.x < min.x) min.x = v.x;

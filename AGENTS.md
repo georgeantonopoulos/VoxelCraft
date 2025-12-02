@@ -172,3 +172,9 @@ The project follows a domain-driven architecture to improve scalability and main
 - 2026-01-XX: Added spatial hashing utilities (`src/utils/spatial.ts`) and `WorldStore` state container (`src/state/WorldStore.ts`) to establish the chunk-based entity index. `App.tsx` currently logs store initialization for verification; wiring to gameplay systems planned for follow-up phases.
 - 2026-01-XX: Migrated flora placement and consumption to `WorldStore` (see `FloraPlacer`, `RootHollow`, `VoxelTerrain`). GameManager now only tracks inventory; flora queries use chunk-indexed lookups for O(1) nearby searches.
 - 2026-01-XX: Stabilized `FloraPlacer` rendering subscription by memoizing the Map->array conversion of WorldStore entities to prevent `useSyncExternalStore` snapshot churn and infinite render loops.
+- 2025-12-02: Improved `FractalTree` look and animation.
+  - **Leaves**: Added `OctahedronGeometry` leaves at branch tips (depth 8) using a separate `InstancedMesh`. Leaves are generated in `fractal.worker.ts` with random rotation/scale and passed as `leafMatrices`.
+  - **Animation**: Enhanced `CustomShaderMaterial` shaders for both branches and leaves.
+    - **Branches**: Added "elastic out" easing for a bouncy growth effect and improved the organic wobble.
+    - **Leaves**: Added a "pop" effect where leaves scale up rapidly at the end of the growth cycle (0.8-1.0 progress).
+  - **Verification**: Verified visual changes by temporarily spawning a tree and observing the animation. Build verified with `npm run build`.
