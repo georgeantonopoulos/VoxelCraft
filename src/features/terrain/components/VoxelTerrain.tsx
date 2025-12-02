@@ -12,6 +12,8 @@ import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/cons
 import { MaterialType, ChunkState } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
+import { FallingTree } from '@features/flora/components/FallingTree';
+import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 
 const getMaterialColor = (matId: number) => {
   switch (matId) {
@@ -172,6 +174,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     pos: new THREE.Vector3(),
     color: '#fff'
   });
+
+  const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
 
   useEffect(() => {
     simulationManager.start();
@@ -361,6 +365,129 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     if (terrainHit) {
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
+
+      // Check for Tree/Vegetation Interaction BEFORE modifying terrain
+      if (action === 'DIG') {
+        const hitX = impactPoint.x;
+        const hitZ = impactPoint.z;
+        const cx = Math.floor(hitX / CHUNK_SIZE_XZ);
+        const cz = Math.floor(hitZ / CHUNK_SIZE_XZ);
+
+        // Check current and neighbor chunks (in case we hit near border)
+        const checkKeys = [
+          `${cx},${cz}`,
+          `${cx + 1},${cz}`, `${cx - 1},${cz}`,
+          `${cx},${cz + 1}`, `${cx},${cz - 1}`
+        ];
+
+        for (const key of checkKeys) {
+          const chunk = chunksRef.current[key];
+          if (!chunk) continue;
+
+          const chunkOriginX = chunk.cx * CHUNK_SIZE_XZ;
+          const chunkOriginZ = chunk.cz * CHUNK_SIZE_XZ;
+
+          // 1. Check Trees
+          if (chunk.floraPositions) {
+            const positions = chunk.floraPositions;
+            let hitIndex = -1;
+
+            for (let i = 0; i < positions.length; i += 4) {
+              const x = positions[i] + chunkOriginX;
+              const y = positions[i + 1];
+              const z = positions[i + 2] + chunkOriginZ;
+              const type = positions[i + 3];
+
+              // Simple distance check to tree trunk base
+              // Tree trunk is roughly at (x, y, z) to (x, y+height, z)
+              // We check distance to the vertical segment
+              const dx = impactPoint.x - x;
+              const dz = impactPoint.z - z;
+              const dy = impactPoint.y - y;
+
+              // Cylinder check: radius 0.8, height 4.0
+              if (dx * dx + dz * dz < 0.8 * 0.8 && dy >= 0 && dy < 4.0) {
+                hitIndex = i;
+
+                // Spawn Falling Tree
+                const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
+                setFallingTrees(prev => [...prev, {
+                  id: `${key}-${i}`,
+                  position: new THREE.Vector3(x, y, z),
+                  type,
+                  seed
+                }]);
+                break;
+              }
+            }
+
+            if (hitIndex !== -1) {
+              // Remove tree from chunk
+              const newPositions = new Float32Array(positions.length - 4);
+              newPositions.set(positions.subarray(0, hitIndex), 0);
+              newPositions.set(positions.subarray(hitIndex + 4), hitIndex);
+
+              const updatedChunk = { ...chunk, floraPositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+              chunksRef.current[key] = updatedChunk;
+              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+              return; // Stop processing (don't dig ground)
+            }
+          }
+
+          // 2. Check Vegetation
+          if (chunk.vegetationData) {
+            let hitType = -1;
+            let hitIndex = -1;
+
+            for (const [typeStr, positions] of Object.entries(chunk.vegetationData)) {
+              const typeId = parseInt(typeStr);
+              for (let i = 0; i < positions.length; i += 3) {
+                const x = positions[i] + chunkOriginX;
+                const y = positions[i + 1];
+                const z = positions[i + 2] + chunkOriginZ;
+
+                const distSq = (impactPoint.x - x) ** 2 + (impactPoint.y - y) ** 2 + (impactPoint.z - z) ** 2;
+                if (distSq < 1.0) { // 1.0 radius for vegetation
+                  hitType = typeId;
+                  hitIndex = i;
+                  break;
+                }
+              }
+              if (hitIndex !== -1) break;
+            }
+
+            if (hitIndex !== -1) {
+              const positions = chunk.vegetationData[hitType];
+              const newPositions = new Float32Array(positions.length - 3);
+              newPositions.set(positions.subarray(0, hitIndex), 0);
+              newPositions.set(positions.subarray(hitIndex + 3), hitIndex);
+
+              const newVegData = { ...chunk.vegetationData, [hitType]: newPositions };
+              if (newPositions.length === 0) delete newVegData[hitType];
+
+              const updatedChunk = { ...chunk, vegetationData: newVegData, visualVersion: chunk.visualVersion + 1 };
+              chunksRef.current[key] = updatedChunk;
+              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+
+              // Particles
+              const asset = VEGETATION_ASSETS[hitType];
+              setParticleState({
+                active: true,
+                pos: new THREE.Vector3(
+                  chunk.vegetationData[hitType][hitIndex] + chunkOriginX,
+                  chunk.vegetationData[hitType][hitIndex + 1] + 0.5,
+                  chunk.vegetationData[hitType][hitIndex + 2] + chunkOriginZ
+                ),
+                color: asset ? asset.color : '#00ff00'
+              });
+              setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
+
+              return; // Stop processing
+            }
+          }
+        }
+      }
+
       const dist = origin.distanceTo(impactPoint);
 
       const offset = action === 'DIG' ? 0.1 : -0.1;
@@ -468,6 +595,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         </React.Fragment>
       ))}
       <Particles active={particleState.active} position={particleState.pos} color={particleState.color} />
+      {fallingTrees.map(tree => (
+        <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
+      ))}
     </group>
   );
 };
