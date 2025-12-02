@@ -37,6 +37,11 @@ const MATERIAL_TO_CHANNEL = (() => {
 })();
 
 const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.length ? MATERIAL_TO_CHANNEL[mat] : -1);
+/**
+ * Clamp a voxel sample coordinate so central differences stay inside the padded grid.
+ */
+const clampSampleCoord = (v: number, max: number) => Math.min(Math.max(v, 1), max - 2);
+const MIN_NORMAL_LEN_SQ = 0.0001;
 
 // Helpers
 const getVal = (density: Float32Array, x: number, y: number, z: number) => {
@@ -162,6 +167,9 @@ export function generateMesh(
             const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
 
             tVerts.push(px, py, pz);
+            const centerX = Math.round(avgX);
+            const centerY = Math.round(avgY);
+            const centerZ = Math.round(avgZ);
 
             // Trilinear Gradient Normal
             const fx = avgX - x;
@@ -196,13 +204,29 @@ export function generateMesh(
             const lenSq = nx * nx + ny * ny + nz * nz;
 
             // AAA FIX: Check squared length to avoid Sqrt on 0, and handle NaN
-            if (lenSq > 0.000001 && !Number.isNaN(lenSq)) {
+            if (Number.isFinite(lenSq) && lenSq >= MIN_NORMAL_LEN_SQ) {
               const len = Math.sqrt(lenSq);
               tNorms.push(nx / len, ny / len, nz / len);
             } else {
-              // Fallback: If normal is degenerate, point Up.
-              // This prevents black flickers in the shader.
-              tNorms.push(0, 1, 0);
+              // Fallback: sample a clamped central difference across the density field.
+              // Isolated peaks sometimes lack neighbors inside the cell, so we probe the padded grid.
+              const sx = clampSampleCoord(centerX, SIZE_X);
+              const sy = clampSampleCoord(centerY, SIZE_Y);
+              const sz = clampSampleCoord(centerZ, SIZE_Z);
+
+              const fnx = getVal(density, sx + 1, sy, sz) - getVal(density, sx - 1, sy, sz);
+              const fny = getVal(density, sx, sy + 1, sz) - getVal(density, sx, sy - 1, sz);
+              const fnz = getVal(density, sx, sy, sz + 1) - getVal(density, sx, sy, sz - 1);
+              const fallbackLenSq = fnx * fnx + fny * fny + fnz * fnz;
+
+              if (Number.isFinite(fallbackLenSq) && fallbackLenSq >= 0.000001) {
+                const len = Math.sqrt(fallbackLenSq);
+                tNorms.push(fnx / len, fny / len, fnz / len);
+              } else {
+                // Fallback: If normal is still degenerate, point Up.
+                // This prevents black flickers in the shader.
+                tNorms.push(0, 1, 0);
+              }
             }
 
             // Fixed-channel weight splatting
@@ -212,10 +236,6 @@ export function generateMesh(
             let bestMoss = 0;
             let bestVal = -Infinity;
             let totalWeight = 0;
-
-            const centerX = Math.round(avgX);
-            const centerY = Math.round(avgY);
-            const centerZ = Math.round(avgZ);
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
