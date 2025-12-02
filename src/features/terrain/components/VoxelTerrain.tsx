@@ -380,6 +380,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           `${cx},${cz + 1}`, `${cx},${cz - 1}`
         ];
 
+        let anyFloraHit = false;
+
         for (const key of checkKeys) {
           const chunk = chunksRef.current[key];
           if (!chunk) continue;
@@ -387,10 +389,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           const chunkOriginX = chunk.cx * CHUNK_SIZE_XZ;
           const chunkOriginZ = chunk.cz * CHUNK_SIZE_XZ;
 
+          // Use a slightly larger radius for trees to ensure we catch them
+          // DIG_RADIUS is typically 2-3 units.
+          const dist = origin.distanceTo(impactPoint);
+          const digRadius = (dist < 3.0) ? 1.5 : DIG_RADIUS;
+
           // 1. Check Trees
           if (chunk.floraPositions) {
             const positions = chunk.floraPositions;
-            let hitIndex = -1;
+            const hitIndices: number[] = [];
 
             for (let i = 0; i < positions.length; i += 4) {
               const x = positions[i] + chunkOriginX;
@@ -398,93 +405,127 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               const z = positions[i + 2] + chunkOriginZ;
               const type = positions[i + 3];
 
-              // Simple distance check to tree trunk base
-              // Tree trunk is roughly at (x, y, z) to (x, y+height, z)
-              // We check distance to the vertical segment
+              // Check distance from impact point to tree base
               const dx = impactPoint.x - x;
               const dz = impactPoint.z - z;
               const dy = impactPoint.y - y;
 
-              // Cylinder check: radius 0.8, height 4.0
-              if (dx * dx + dz * dz < 0.8 * 0.8 && dy >= 0 && dy < 4.0) {
-                hitIndex = i;
+              // If tree is within dig radius OR if we hit the trunk directly
+              // Tree trunk radius ~0.5, Dig Radius ~2.5
+              const distSq = dx * dx + dz * dz + (dy > 0 && dy < 4.0 ? 0 : dy * dy); // Ignore Y diff if within trunk height
+
+              if (distSq < (digRadius + 0.5) ** 2) {
+                hitIndices.push(i);
 
                 // Spawn Falling Tree
                 const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
                 setFallingTrees(prev => [...prev, {
-                  id: `${key}-${i}`,
+                  id: `${key}-${i}-${Date.now()}`, // Unique ID
                   position: new THREE.Vector3(x, y, z),
                   type,
                   seed
                 }]);
-                break;
               }
             }
 
-            if (hitIndex !== -1) {
-              // Remove tree from chunk
-              const newPositions = new Float32Array(positions.length - 4);
-              newPositions.set(positions.subarray(0, hitIndex), 0);
-              newPositions.set(positions.subarray(hitIndex + 4), hitIndex);
+            if (hitIndices.length > 0) {
+              anyFloraHit = true;
+              // Remove trees from chunk (filter out hit indices)
+              // We need to reconstruct the array
+              const newCount = (positions.length / 4) - hitIndices.length;
+              const newPositions = new Float32Array(newCount * 4);
+              let destIdx = 0;
+              let currentHitIdx = 0;
+              hitIndices.sort((a, b) => a - b); // Ensure sorted
+
+              for (let i = 0; i < positions.length; i += 4) {
+                if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
+                  currentHitIdx++;
+                  continue;
+                }
+                newPositions[destIdx] = positions[i];
+                newPositions[destIdx + 1] = positions[i + 1];
+                newPositions[destIdx + 2] = positions[i + 2];
+                newPositions[destIdx + 3] = positions[i + 3];
+                destIdx += 4;
+              }
 
               const updatedChunk = { ...chunk, floraPositions: newPositions, visualVersion: chunk.visualVersion + 1 };
               chunksRef.current[key] = updatedChunk;
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-              return; // Stop processing (don't dig ground)
             }
           }
 
           // 2. Check Vegetation
           if (chunk.vegetationData) {
-            let hitType = -1;
-            let hitIndex = -1;
+            let chunkModified = false;
+            const newVegData = { ...chunk.vegetationData };
 
             for (const [typeStr, positions] of Object.entries(chunk.vegetationData)) {
               const typeId = parseInt(typeStr);
+              const hitIndices: number[] = [];
+
               for (let i = 0; i < positions.length; i += 3) {
                 const x = positions[i] + chunkOriginX;
                 const y = positions[i + 1];
                 const z = positions[i + 2] + chunkOriginZ;
 
                 const distSq = (impactPoint.x - x) ** 2 + (impactPoint.y - y) ** 2 + (impactPoint.z - z) ** 2;
-                if (distSq < 1.0) { // 1.0 radius for vegetation
-                  hitType = typeId;
-                  hitIndex = i;
-                  break;
+                if (distSq < (digRadius + 0.5) ** 2) {
+                  hitIndices.push(i);
+
+                  // Particles
+                  const asset = VEGETATION_ASSETS[typeId];
+                  // We can only show one particle system easily with current setup, 
+                  // or we need to spawn multiple. For now, just update the single one 
+                  // to the last hit. Ideally we'd have a particle manager.
+                  setParticleState({
+                    active: true,
+                    pos: new THREE.Vector3(x, y + 0.5, z),
+                    color: asset ? asset.color : '#00ff00'
+                  });
                 }
               }
-              if (hitIndex !== -1) break;
+
+              if (hitIndices.length > 0) {
+                chunkModified = true;
+                anyFloraHit = true;
+
+                const newCount = (positions.length / 3) - hitIndices.length;
+                if (newCount === 0) {
+                  delete newVegData[typeId];
+                } else {
+                  const newArr = new Float32Array(newCount * 3);
+                  let destIdx = 0;
+                  let currentHitIdx = 0;
+                  hitIndices.sort((a, b) => a - b);
+
+                  for (let i = 0; i < positions.length; i += 3) {
+                    if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
+                      currentHitIdx++;
+                      continue;
+                    }
+                    newArr[destIdx] = positions[i];
+                    newArr[destIdx + 1] = positions[i + 1];
+                    newArr[destIdx + 2] = positions[i + 2];
+                    destIdx += 3;
+                  }
+                  newVegData[typeId] = newArr;
+                }
+              }
             }
 
-            if (hitIndex !== -1) {
-              const positions = chunk.vegetationData[hitType];
-              const newPositions = new Float32Array(positions.length - 3);
-              newPositions.set(positions.subarray(0, hitIndex), 0);
-              newPositions.set(positions.subarray(hitIndex + 3), hitIndex);
-
-              const newVegData = { ...chunk.vegetationData, [hitType]: newPositions };
-              if (newPositions.length === 0) delete newVegData[hitType];
-
+            if (chunkModified) {
               const updatedChunk = { ...chunk, vegetationData: newVegData, visualVersion: chunk.visualVersion + 1 };
               chunksRef.current[key] = updatedChunk;
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-
-              // Particles
-              const asset = VEGETATION_ASSETS[hitType];
-              setParticleState({
-                active: true,
-                pos: new THREE.Vector3(
-                  chunk.vegetationData[hitType][hitIndex] + chunkOriginX,
-                  chunk.vegetationData[hitType][hitIndex + 1] + 0.5,
-                  chunk.vegetationData[hitType][hitIndex + 2] + chunkOriginZ
-                ),
-                color: asset ? asset.color : '#00ff00'
-              });
-              setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
-
-              return; // Stop processing
             }
           }
+        }
+
+        if (anyFloraHit) {
+          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
+          return; // Stop processing (don't dig ground if we hit flora)
         }
       }
 

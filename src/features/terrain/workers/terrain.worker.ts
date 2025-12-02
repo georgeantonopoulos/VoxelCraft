@@ -3,8 +3,9 @@ import { generateMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 import { BiomeManager } from '../logic/BiomeManager';
-import { getVegetationForBiome } from '../logic/VegetationConfig';
-import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
+import { getVegetationForBiome, getBiomeVegetationDensity } from '../logic/VegetationConfig';
+import { noise } from '@core/math/noise';
+import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
 
 const ctx: Worker = self as any;
 
@@ -50,65 +51,84 @@ ctx.onmessage = async (e: MessageEvent) => {
                     const worldZ = cz * CHUNK_SIZE_XZ + z;
 
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
+                    const biomeDensity = getBiomeVegetationDensity(biome);
 
-                    // Simple Raycast from top down to find surface
-                    let surfaceY = -1;
+                    // 1. Density Noise (Smaller, more frequent patches)
+                    // Scale 0.15 = ~6-7 blocks per cycle (much smaller patches)
+                    const densityNoise = noise(worldX * 0.15, 0, worldZ * 0.15);
+                    const normalizedDensity = (densityNoise + 1) * 0.5;
 
-                    // Note: density array is [x + y*sizeX + z*sizeX*sizeY]
-                    // We need to map local x/z (0..31) to density indices which include PAD
-                    // Assuming TerrainService uses PAD = 2
-                    // We need to match the PAD used in TerrainService.
-                    // Let's assume PAD is consistent.
+                    // Jitter to break edges
+                    const jitter = noise(worldX * 0.8, 0, worldZ * 0.8) * 0.3;
 
-                    const pad = 2; // Hardcoded PAD matching TerrainService/constants
-                    const dx = x + pad;
-                    const dz = z + pad;
-                    const sizeX = TOTAL_SIZE_XZ;
-                    const sizeY = TOTAL_SIZE_Y;
-                    const sizeZ = TOTAL_SIZE_XZ; // Symmetrical
+                    const finalDensity = normalizedDensity + jitter;
+                    const threshold = 1.0 - biomeDensity;
 
-                    // Scan down
-                    for (let y = sizeY - 2; y >= 0; y--) { // Skip top boundary
-                        const idx = dx + y * sizeX + dz * sizeX * sizeY;
-                        const d = density[idx];
+                    if (finalDensity > threshold) {
 
-                        if (d > ISO_LEVEL) {
-                            surfaceY = y;
+                        // Simple Raycast from top down to find surface
+                        let surfaceY = -1;
+                        const pad = 2;
+                        const dx = x + pad;
+                        const dz = z + pad;
+                        const sizeX = TOTAL_SIZE_XZ;
+                        const sizeY = TOTAL_SIZE_Y;
 
-                            // Interpolate for precise surface height
-                            // y is solid, y+1 is air (since we scan down and stopped here)
-                            const idxAbove = idx + sizeX;
-                            const dAbove = density[idxAbove];
+                        // Scan down
+                        for (let y = sizeY - 2; y >= 0; y--) {
+                            const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                            const d = density[idx];
 
-                            // t = (ISO - d) / (dAbove - d)
-                            // Surface is at y + t
-                            const t = (ISO_LEVEL - d) / (dAbove - d);
-                            surfaceY += t;
-
-                            break;
+                            if (d > ISO_LEVEL) {
+                                surfaceY = y;
+                                const idxAbove = idx + sizeX;
+                                const dAbove = density[idxAbove];
+                                const t = (ISO_LEVEL - d) / (dAbove - d);
+                                surfaceY += t;
+                                break;
+                            }
                         }
-                    }
 
-                    const meshYOffset = -35;
-                    const worldY = (surfaceY - pad) + meshYOffset;
+                        const meshYOffset = -35;
+                        const worldY = (surfaceY - pad) + meshYOffset;
 
-                    // Skip if underwater or too low
-                    if (surfaceY > 0 && worldY > 11) { // 11 is WATER_LEVEL
+                        // Skip if underwater or too low
+                        if (surfaceY > 0 && worldY > 11) {
 
-                        // Deterministic Placement
-                        const seed = Math.sin(worldX * 12.9898 + worldZ * 78.233) * 43758.5453;
-                        const noiseVal = seed - Math.floor(seed);
+                            // 2. Clumping Logic
+                            // If density is very high, place multiple plants
+                            let numPlants = 1;
+                            if (finalDensity > threshold + 0.4) numPlants = 3; // Dense clump
+                            else if (finalDensity > threshold + 0.2) numPlants = 2; // Moderate clump
 
-                        const vegType = getVegetationForBiome(biome, noiseVal);
+                            // 3. Type Noise
+                            const typeNoise = noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100);
+                            const normalizedType = (typeNoise + 1) * 0.5;
+                            const vegType = getVegetationForBiome(biome, normalizedType);
 
-                        if (vegType !== null) {
-                            if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
+                            if (vegType !== null) {
+                                if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
 
-                            vegetationBuckets[vegType].push(
-                                x + (noiseVal - 0.5) * 0.6,
-                                worldY - 0.1, // Slight sink to bury roots/base
-                                z + (Math.cos(noiseVal * 100) - 0.5) * 0.6
-                            );
+                                for (let i = 0; i < numPlants; i++) {
+                                    // Unique hash for each sub-plant
+                                    const seed = (worldX * 31 + worldZ * 17 + i * 13);
+                                    const r1 = Math.sin(seed) * 43758.5453;
+                                    const r2 = Math.cos(seed) * 43758.5453;
+
+                                    // Random offset -0.4 to 0.4 (stay roughly within block but spread out)
+                                    const offX = (r1 - Math.floor(r1) - 0.5) * 0.8;
+                                    const offZ = (r2 - Math.floor(r2) - 0.5) * 0.8;
+
+                                    // Scale variation
+                                    // We don't store scale here, but we could jitter position slightly more to avoid Z-fighting
+
+                                    vegetationBuckets[vegType].push(
+                                        x + offX,
+                                        worldY - 0.1,
+                                        z + offZ
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -179,7 +199,6 @@ ctx.onmessage = async (e: MessageEvent) => {
         } else if (type === 'REMESH') {
             const { density, material, key, cx, cz, version } = payload;
 
-            const t0 = performance.now();
             // console.log('[terrain.worker] REMESH start', key, 'v', version);
             const mesh = generateMesh(density, material) as MeshData;
             // console.log('[terrain.worker] REMESH done', key);

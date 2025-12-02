@@ -37,11 +37,12 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
             position={position}
             colliders={false}
             type="dynamic"
-            linearDamping={0.5}
-            angularDamping={0.5}
+            linearDamping={0.8}
+            angularDamping={0.8}
+            friction={2.0}
         >
             {/* Approximate collider for the trunk */}
-            <CylinderCollider args={[2.0 * scale, 0.3 * scale]} position={[0, 2.0 * scale, 0]} />
+            <CylinderCollider args={[2.0 * scale, 0.3 * scale]} position={[0, 2.0 * scale, 0]} friction={2.0} />
 
             <group rotation={[0, rotation, 0]} scale={[scale, scale, scale]}>
                 <mesh geometry={wood} castShadow receiveShadow>
