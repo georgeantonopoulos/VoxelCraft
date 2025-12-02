@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
-import { useGameStore } from '../services/GameManager';
+import { useWorldStore } from '../src/stores/WorldStore';
 import { FractalTree } from './FractalTree';
 import stumpUrl from '../models/tree_stump.glb?url';
 
@@ -28,8 +28,8 @@ interface RootHollowProps {
  */
 export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1, 0] }) => {
     const [status, setStatus] = useState<'IDLE' | 'GROWING'>('IDLE');
-    const consumeFlora = useGameStore(s => s.consumeFlora);
-    const placedFloras = useGameStore(s => s.placedFloras);
+    const removeEntity = useWorldStore(s => s.removeEntity);
+    const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
 
     const { scene } = useGLTF(stumpUrl);
@@ -113,15 +113,21 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
 
     useFrame(() => {
         if (status !== 'IDLE') return;
-        for (const flora of placedFloras) {
-             const body = flora.bodyRef?.current;
+
+        const nearbyEntities = getEntitiesNearby(posVec, 2.0);
+
+        for (const entity of nearbyEntities) {
+             if (entity.type !== 'FLORA') continue;
+
+             const body = entity.bodyRef?.current;
              if (!body) continue;
+
              const fPos = body.translation();
              const distSq = (fPos.x - posVec.x)**2 + (fPos.y - posVec.y)**2 + (fPos.z - posVec.z)**2;
              if (distSq < 2.25) {
                  const vel = body.linvel();
                  if (vel.x**2 + vel.y**2 + vel.z**2 < 0.01) {
-                     consumeFlora(flora.id);
+                     removeEntity(entity.id);
                      setStatus('GROWING');
                  }
             }

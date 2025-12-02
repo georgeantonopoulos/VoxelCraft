@@ -7,6 +7,7 @@ import { TerrainService } from '../services/terrainService';
 import { metadataDB } from '../services/MetadataDB';
 import { simulationManager, SimUpdate } from '../services/SimulationManager';
 import { useGameStore } from '../services/GameManager';
+import { useWorldStore } from '../src/stores/WorldStore';
 import { DIG_RADIUS, DIG_STRENGTH, VOXEL_SCALE, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '../constants';
 import { MaterialType, ChunkState, ChunkKey } from '../types';
 import { ChunkMesh } from './ChunkMesh';
@@ -40,33 +41,34 @@ const rayHitsFlora = (
   maxDist: number,
   floraRadius = 0.6
 ): string | null => {
-  const state = useGameStore.getState();
+  const state = useWorldStore.getState();
   let closestId: string | null = null;
   let closestT = maxDist + 1;
   const tmp = new THREE.Vector3();
   const proj = new THREE.Vector3();
 
   // Iterate over placed flora
-  for (const flora of state.placedFloras) {
+  for (const flora of state.entities.values()) {
+    if (flora.type !== 'FLORA') continue;
+
     // Use the live physics position if available, otherwise fall back to initial spawn position
-    const floraWithRef = flora as { id: string; position: THREE.Vector3; bodyRef: React.RefObject<any> };
-    const currentPos = floraWithRef.bodyRef?.current 
-      ? floraWithRef.bodyRef.current.translation() 
-      : floraWithRef.position;
+    const currentPos = flora.bodyRef?.current
+      ? flora.bodyRef.current.translation()
+      : flora.position;
 
     // Rapier translation returns {x,y,z}, ensure it's Vector3-like
     tmp.set(currentPos.x, currentPos.y, currentPos.z).sub(origin);
     
     const t = tmp.dot(dir);
     if (t < 0 || t > maxDist) continue; // Behind camera or too far
-    proj.copy(dir).multiplyScalar(t);
-    tmp.sub(proj);
-    const distSq = tmp.lengthSq();
-    if (distSq <= floraRadius * floraRadius && t < closestT) {
-      closestT = t;
-      closestId = floraWithRef.id;
+      proj.copy(dir).multiplyScalar(t);
+      tmp.sub(proj);
+      const distSq = tmp.lengthSq();
+      if (distSq <= floraRadius * floraRadius && t < closestT) {
+        closestT = t;
+        closestId = flora.id;
+      }
     }
-  }
 
   return closestId;
 };
@@ -348,7 +350,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     if (action === 'DIG') {
       const floraId = rayHitsFlora(origin, direction, maxRayDistance);
       if (floraId) {
-        useGameStore.getState().harvestFlora(floraId);
+        useWorldStore.getState().removeEntity(floraId);
+        useGameStore.getState().harvestFlora();
         return;
       }
     }

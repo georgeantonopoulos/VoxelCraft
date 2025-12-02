@@ -16,6 +16,7 @@ import { StartupScreen } from './components/StartupScreen';
 import { BedrockPlane } from './components/BedrockPlane';
 import { TerrainService } from './services/terrainService';
 import { setSnapEpsilon } from './constants';
+import { useWorldStore } from './src/stores/WorldStore';
 
 // Keyboard Map
 const keyboardMap = [
@@ -724,6 +725,10 @@ const App: React.FC = () => {
   const debugMode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('debug');
+  }, []);
+
+  useEffect(() => {
+    console.log('[WorldStore] Initialized', useWorldStore.getState());
   }, []);
 
   // Sun direction for shadows (High Noon-ish for vibrancy)
