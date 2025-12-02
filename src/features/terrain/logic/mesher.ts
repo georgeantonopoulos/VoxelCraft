@@ -1,0 +1,331 @@
+import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET } from '@/constants';
+import { MeshData, MaterialType } from '@/types';
+
+const SIZE_X = TOTAL_SIZE_XZ;
+const SIZE_Y = TOTAL_SIZE_Y;
+const SIZE_Z = TOTAL_SIZE_XZ;
+
+const bufIdx = (x: number, y: number, z: number) => x + y * SIZE_X + z * SIZE_X * SIZE_Y;
+
+// Helpers
+const getVal = (density: Float32Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return -1.0;
+  return density[bufIdx(x, y, z)];
+};
+
+const getMat = (material: Uint8Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return 0;
+  return material[bufIdx(x, y, z)];
+};
+
+const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
+  if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return 0;
+  return arr[bufIdx(x, y, z)];
+};
+
+export function generateMesh(
+  density: Float32Array,
+  material: Uint8Array,
+  wetness?: Uint8Array,
+  mossiness?: Uint8Array
+): MeshData {
+  const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
+  const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
+
+  // --- Buffers ---
+  const tVerts: number[] = [];
+  const tInds: number[] = [];
+  const tMats: number[] = [];
+  const tMats2: number[] = [];
+  const tMats3: number[] = [];
+  const tWeights: number[] = [];
+  const tNorms: number[] = [];
+  const tWets: number[] = [];
+  const tMoss: number[] = [];
+
+  const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
+
+  const snapEpsilon = 0.02;
+  const snapBoundary = (v: number, limit: number) => {
+    if (Math.abs(v - PAD) < snapEpsilon) return PAD;
+    if (Math.abs(v - (PAD + limit)) < snapEpsilon) return PAD + limit;
+    return v;
+  };
+
+  // 1. Vertex Generation
+  for (let z = 0; z < SIZE_Z - 1; z++) {
+    for (let y = 0; y < SIZE_Y - 1; y++) {
+      for (let x = 0; x < SIZE_X - 1; x++) {
+
+        const v000 = getVal(density, x, y, z);
+        const v100 = getVal(density, x + 1, y, z);
+        const v010 = getVal(density, x, y + 1, z);
+        const v110 = getVal(density, x + 1, y + 1, z);
+        const v001 = getVal(density, x, y, z + 1);
+        const v101 = getVal(density, x + 1, y, z + 1);
+        const v011 = getVal(density, x, y + 1, z + 1);
+        const v111 = getVal(density, x + 1, y + 1, z + 1);
+
+        let mask = 0;
+        if (v000 > ISO_LEVEL) mask |= 1;
+        if (v100 > ISO_LEVEL) mask |= 2;
+        if (v010 > ISO_LEVEL) mask |= 4;
+        if (v110 > ISO_LEVEL) mask |= 8;
+        if (v001 > ISO_LEVEL) mask |= 16;
+        if (v101 > ISO_LEVEL) mask |= 32;
+        if (v011 > ISO_LEVEL) mask |= 64;
+        if (v111 > ISO_LEVEL) mask |= 128;
+
+        if (mask !== 0 && mask !== 255) {
+          let edgeCount = 0;
+          let avgX = 0;
+          let avgY = 0;
+          let avgZ = 0;
+
+          const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
+            if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
+              // 1. Safe Denominator: Prevent Infinity/NaN
+              // Preserve sign to keep vertex on correct side of edge
+              let denominator = valB - valA;
+              if (Math.abs(denominator) < 0.00001) {
+                // Preserve sign to keep vertex on correct side of edge
+                denominator = (Math.sign(denominator) || 1) * 0.00001;
+              }
+
+              // 2. Calculate mu (position along edge 0..1)
+              const mu = (ISO_LEVEL - valA) / denominator;
+
+              // 3. AAA FIX: Soft Clamp.
+              // Instead of 0.0/1.0, use a tiny buffer.
+              // This prevents vertices from collapsing into the same coordinate,
+              // preserving the triangle's "direction" for the normal calculator.
+              const clampedMu = Math.max(0.001, Math.min(0.999, mu));
+
+              if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
+              if (axis === 'y') { avgX += x + offX; avgY += y + clampedMu; avgZ += z + offZ; }
+              if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + clampedMu; }
+              edgeCount++;
+            }
+          };
+
+          addInter(v000, v100, 'x', 0, 0, 0);
+          addInter(v010, v110, 'x', 0, 1, 0);
+          addInter(v001, v101, 'x', 0, 0, 1);
+          addInter(v011, v111, 'x', 0, 1, 1);
+          addInter(v000, v010, 'y', 0, 0, 0);
+          addInter(v100, v110, 'y', 1, 0, 0);
+          addInter(v001, v011, 'y', 0, 0, 1);
+          addInter(v101, v111, 'y', 1, 0, 1);
+          addInter(v000, v001, 'z', 0, 0, 0);
+          addInter(v100, v101, 'z', 1, 0, 0);
+          addInter(v010, v011, 'z', 0, 1, 0);
+          addInter(v110, v111, 'z', 1, 1, 0);
+
+          if (edgeCount > 0) {
+            avgX /= edgeCount;
+            avgY /= edgeCount;
+            avgZ /= edgeCount;
+
+            const px = snapBoundary(avgX, CHUNK_SIZE_XZ) - PAD;
+            const py = snapBoundary(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
+            const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
+
+            tVerts.push(px, py, pz);
+
+            // Trilinear Gradient Normal
+            const fx = avgX - x;
+            const fy = avgY - y;
+            const fz = avgZ - z;
+            const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+            const x00 = lerp(v000, v010, fy);
+            const x01 = lerp(v001, v011, fy);
+            const val_x0 = lerp(x00, x01, fz);
+            const x10 = lerp(v100, v110, fy);
+            const x11 = lerp(v101, v111, fy);
+            const val_x1 = lerp(x10, x11, fz);
+            const nx = val_x0 - val_x1;
+
+            const y00 = lerp(v000, v100, fx);
+            const y01 = lerp(v001, v101, fx);
+            const val_y0 = lerp(y00, y01, fz);
+            const y10 = lerp(v010, v110, fx);
+            const y11 = lerp(v011, v111, fx);
+            const val_y1 = lerp(y10, y11, fz);
+            const ny = val_y0 - val_y1;
+
+            const z00 = lerp(v000, v100, fx);
+            const z01 = lerp(v010, v110, fx);
+            const val_z0 = lerp(z00, z01, fy);
+            const z10 = lerp(v001, v101, fx);
+            const z11 = lerp(v011, v111, fx);
+            const val_z1 = lerp(z10, z11, fy);
+            const nz = val_z0 - val_z1;
+
+            const lenSq = nx * nx + ny * ny + nz * nz;
+
+            // AAA FIX: Check squared length to avoid Sqrt on 0, and handle NaN
+            if (lenSq > 0.000001 && !Number.isNaN(lenSq)) {
+              const len = Math.sqrt(lenSq);
+              tNorms.push(nx / len, ny / len, nz / len);
+            } else {
+              // Fallback: If normal is degenerate, point Up.
+              // This prevents black flickers in the shader.
+              tNorms.push(0, 1, 0);
+            }
+
+            // Material Selection with Conservative Blending
+            // Only blend with immediately adjacent materials (radius 2) to avoid grass bleeding into deep stone
+            const BLEND_RADIUS = 3;
+            const matWeights: Map<number, number> = new Map();
+            let bestWet = 0;
+            let bestMoss = 0;
+            let bestVal = -Infinity;
+            let totalWeight = 0;
+
+            // Sample in a small sphere - conservative blending
+            for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
+              for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
+                for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
+                  const sx = Math.round(avgX) + dx;
+                  const sy = Math.round(avgY) + dy;
+                  const sz = Math.round(avgZ) + dz;
+
+                  const val = getVal(density, sx, sy, sz);
+                  if (val > ISO_LEVEL) {
+                    const mat = getMat(material, sx, sy, sz);
+                    if (mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
+                      // Distance-based weight - closer samples have more influence
+                      const distSq = dx * dx + dy * dy + dz * dz;
+                      const dist = Math.sqrt(distSq) + 0.3;
+                      const weight = 1.0 / (dist * dist);
+
+                      matWeights.set(mat, (matWeights.get(mat) || 0) + weight);
+                      totalWeight += weight;
+
+                      // Track wetness/mossiness from highest density voxel
+                      if (val > bestVal) {
+                        bestVal = val;
+                        bestWet = getByte(wetData, sx, sy, sz);
+                        bestMoss = getByte(mossData, sx, sy, sz);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            // --- CANONICAL ORDERING FIX ---
+            // 1. First, sort by weight to find the TOP 3 candidates (discard weak noise)
+            let candidates = [...matWeights.entries()].sort((a, b) => b[1] - a[1]);
+            if (candidates.length > 3) {
+              candidates = candidates.slice(0, 3);
+            }
+
+            // 2. CRITICAL: Sort the survivors by ID (Ascending)
+            // This locks the slots. Dirt (3) will always be before Grass (4).
+            candidates.sort((a, b) => a[0] - b[0]);
+
+            // 3. Normalize the weights of only these top 3
+            let totalTopWeight = 0;
+            for (const c of candidates) totalTopWeight += c[1];
+            const norm = totalTopWeight > 0.0001 ? totalTopWeight : 1.0;
+
+            // 4. Assign to slots (0 if not present)
+            const mat1 = candidates[0] ? candidates[0][0] : MaterialType.DIRT;
+            const w1 = candidates[0] ? candidates[0][1] / norm : 1.0;
+
+            const mat2 = candidates[1] ? candidates[1][0] : mat1; // Fallback to mat1 prevents 0-id glitches
+            const w2 = candidates[1] ? candidates[1][1] / norm : 0.0;
+
+            const mat3 = candidates[2] ? candidates[2][0] : mat2;
+            const w3 = candidates[2] ? candidates[2][1] / norm : 0.0;
+
+            tMats.push(mat1);
+            tMats2.push(mat2);
+            tMats3.push(mat3);
+            tWeights.push(w1, w2, w3);
+            tWets.push(bestWet / 255.0);
+            tMoss.push(bestMoss / 255.0);
+            tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Quad Generation
+  const start = PAD;
+  const endX = PAD + CHUNK_SIZE_XZ;
+  const endY = PAD + CHUNK_SIZE_Y;
+
+  const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
+    const c0 = tVertIdx[i0];
+    const c1 = tVertIdx[i1];
+    const c2 = tVertIdx[i2];
+    const c3 = tVertIdx[i3];
+
+    if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
+      if (!flipped) tInds.push(c0, c1, c2, c2, c1, c3);
+      else tInds.push(c2, c1, c0, c3, c1, c2);
+    }
+  };
+
+  for (let z = start; z <= endX; z++) {
+    for (let y = start; y <= endY; y++) {
+      for (let x = start; x <= endX; x++) {
+        const val = getVal(density, x, y, z);
+
+        if (x < endX) {
+          const vX = getVal(density, x + 1, y, z);
+          if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
+            pushQuad(
+              bufIdx(x, y - 1, z - 1), bufIdx(x, y - 1, z),
+              bufIdx(x, y, z - 1), bufIdx(x, y, z),
+              val > ISO_LEVEL
+            );
+          }
+        }
+
+        if (y < endY) {
+          const vY = getVal(density, x, y + 1, z);
+          if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
+            pushQuad(
+              bufIdx(x - 1, y, z - 1), bufIdx(x, y, z - 1),
+              bufIdx(x - 1, y, z), bufIdx(x, y, z),
+              val > ISO_LEVEL
+            );
+          }
+        }
+
+        if (z < endX) {
+          const vZ = getVal(density, x, y, z + 1);
+          if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
+            // Swapped indices 1 and 2 for Z-face winding
+            pushQuad(
+              bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z),
+              bufIdx(x, y - 1, z), bufIdx(x, y, z),
+              val > ISO_LEVEL
+            );
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(tVerts),
+    indices: new Uint32Array(tInds),
+    normals: new Float32Array(tNorms),
+    materials: new Float32Array(tMats),
+    materials2: new Float32Array(tMats2),
+    materials3: new Float32Array(tMats3),
+    meshWeights: new Float32Array(tWeights),
+    wetness: new Float32Array(tWets),
+    mossiness: new Float32Array(tMoss),
+    // Return empty arrays for water to satisfy types without generating bad mesh
+    waterPositions: new Float32Array(0),
+    waterIndices: new Uint32Array(0),
+    waterNormals: new Float32Array(0),
+  } as MeshData;
+}
