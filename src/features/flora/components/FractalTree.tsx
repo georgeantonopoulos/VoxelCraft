@@ -8,9 +8,10 @@ interface FractalTreeProps {
     seed: number;
     position: THREE.Vector3;
     baseRadius?: number;
+    type?: number; // 0=Oak, 1=Pine, etc.
 }
 
-export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6 }) => {
+export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0 }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const leafRef = useRef<THREE.InstancedMesh>(null);
     const [data, setData] = useState<{ matrices: Float32Array, depths: Float32Array, leafMatrices: Float32Array, boundingBox: { min: any, max: any } } | null>(null);
@@ -25,8 +26,12 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
     }, []);
 
     const leafGeometry = useMemo(() => {
+        // Different leaf shapes for different trees?
+        // For now, simple Octahedron is versatile.
+        // Maybe Cone for Pine?
+        if (type === 1) return new THREE.ConeGeometry(0.3, 0.8, 5);
         return new THREE.OctahedronGeometry(0.4, 0);
-    }, []);
+    }, [type]);
 
     useEffect(() => {
         const worker = new Worker(new URL('../workers/fractal.worker.ts', import.meta.url), { type: 'module' });
@@ -34,11 +39,11 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
             setData(e.data);
             worker.terminate();
         };
-        worker.postMessage({ seed, baseRadius });
+        worker.postMessage({ seed, baseRadius, type });
         return () => {
             // worker.terminate(); // Already terminated
         };
-    }, [seed, baseRadius]);
+    }, [seed, baseRadius, type]);
 
     // Apply bounding box and attributes when data arrives
     useEffect(() => {
@@ -137,11 +142,28 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         return bodies;
     }, [physicsReady, data]);
 
-    const uniforms = useMemo(() => ({
-        uGrowthProgress: { value: 0 },
-        uColorBase: { value: new THREE.Color('#3e2723') }, // Dark Wood
-        uColorTip: { value: new THREE.Color('#00FFFF') } // Cyan Glow
-    }), []);
+    const uniforms = useMemo(() => {
+        let base = '#3e2723';
+        let tip = '#00FFFF'; // Default magical
+
+        if (type === 0) { // OAK
+            base = '#4e342e'; tip = '#4CAF50';
+        } else if (type === 1) { // PINE
+            base = '#3e2723'; tip = '#1B5E20';
+        } else if (type === 2) { // PALM
+            base = '#795548'; tip = '#8BC34A';
+        } else if (type === 4) { // ACACIA
+            base = '#6D4C41'; tip = '#CDDC39';
+        } else if (type === 5) { // CACTUS
+            base = '#2E7D32'; tip = '#43A047';
+        }
+
+        return {
+            uGrowthProgress: { value: 0 },
+            uColorBase: { value: new THREE.Color(base) },
+            uColorTip: { value: new THREE.Color(tip) }
+        };
+    }, [type]);
 
     const topCenter = useMemo(() => {
         if (!data || !data.boundingBox) return new THREE.Vector3(0, 1.5, 0);

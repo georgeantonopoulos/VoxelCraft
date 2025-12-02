@@ -69,24 +69,26 @@ ctx.onmessage = async (e: MessageEvent) => {
 
                     // Scan down
                     for (let y = sizeY - 2; y >= 0; y--) { // Skip top boundary
-                         const idx = dx + y * sizeX + dz * sizeX * sizeY;
-                         if (density[idx] > ISO_LEVEL) {
-                             surfaceY = y;
-                             break;
-                         }
+                        const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                        const d = density[idx];
+
+                        if (d > ISO_LEVEL) {
+                            surfaceY = y;
+
+                            // Interpolate for precise surface height
+                            // y is solid, y+1 is air (since we scan down and stopped here)
+                            const idxAbove = idx + sizeX;
+                            const dAbove = density[idxAbove];
+
+                            // t = (ISO - d) / (dAbove - d)
+                            // Surface is at y + t
+                            const t = (ISO_LEVEL - d) / (dAbove - d);
+                            surfaceY += t;
+
+                            break;
+                        }
                     }
 
-                    // Check if surface is valid and not underwater
-                    // Assuming MESH_Y_OFFSET handled by renderer world position,
-                    // but we need relative Y to the chunk bottom (which is 0 in local coords?)
-                    // Wait, TerrainService outputs density in a padded grid.
-                    // The mesh output positions are relative to (cx*CHUNK, 0, cz*CHUNK).
-                    // The density y index maps to world Y via MESH_Y_OFFSET (-35).
-
-                    // Water Check:
-                    // If surfaceY corresponds to a world Y below WATER_LEVEL (11), skip.
-                    // surfaceWorldY = surfaceY - PAD + MESH_Y_OFFSET?
-                    // No, TerrainService loop uses `wy = (y - PAD) + MESH_Y_OFFSET`.
                     const meshYOffset = -35;
                     const worldY = (surfaceY - pad) + meshYOffset;
 
@@ -102,24 +104,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                         if (vegType !== null) {
                             if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
 
-                            // Position relative to Chunk Origin (0,0,0)
-                            // The mesh generation produces vertices relative to (0,0,0) of the chunk.
-                            // x and z loop are 0..31.
-                            // We need to add random offset.
-
                             vegetationBuckets[vegType].push(
                                 x + (noiseVal - 0.5) * 0.6,
-                                worldY - 0.2, // Use world Y because rendering assumes 0 is bedrock?
-                                              // Wait, ChunkMesh positions the group at [cx*CHUNK, 0, cz*CHUNK].
-                                              // The vertices in mesh are local.
-                                              // Mesh generator uses `wy` for Y values? No.
-                                              // Mesher uses `y - PAD + MESH_Y_OFFSET` to calculate vertex positions?
-                                              // Actually `mesher.ts` usually outputs coordinates relative to the grid origin?
-                                              // Let's look at `mesher.ts` output.
-                                              // Standard Dual Contouring usually outputs world space or local space.
-                                              // If ChunkMesh groups are positioned at (cx, 0, cz), then local Y must be World Y.
-                                              // Yes, standard Minecraft engines use Y=WorldY.
-
+                                worldY - 0.1, // Slight sink to bury roots/base
                                 z + (Math.cos(noiseVal * 100) - 0.5) * 0.6
                             );
                         }

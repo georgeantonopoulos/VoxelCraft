@@ -9,6 +9,15 @@ export enum VegetationType {
   JUNGLE_FERN = 5,
 }
 
+export enum TreeType {
+  OAK = 0,
+  PINE = 1,
+  PALM = 2,
+  JUNGLE = 3,
+  ACACIA = 4,
+  CACTUS = 5
+}
+
 // Visual definition for each type
 export const VEGETATION_ASSETS: Record<number, {
   color: string;
@@ -55,12 +64,33 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
       if (noiseVal > 0.90) return VegetationType.GRASS_TALL;
       break;
     case 'MOUNTAINS':
-        // Sparse alpine patches
-        if (noiseVal > 0.98) return VegetationType.GRASS_LOW;
-        break;
+      // Sparse alpine patches
+      if (noiseVal > 0.98) return VegetationType.GRASS_LOW;
+      break;
     case 'ICE_SPIKES':
-        // Barren
-        return null;
+      // Barren
+      return null;
   }
   return null;
+};
+
+export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | null => {
+  switch (biome) {
+    case 'THE_GROVE':
+    case 'PLAINS':
+    case 'SKY_ISLANDS':
+      return TreeType.OAK;
+    case 'SNOW':
+    case 'MOUNTAINS':
+    case 'ICE_SPIKES':
+      return TreeType.PINE;
+    case 'DESERT':
+    case 'RED_DESERT':
+      return TreeType.CACTUS;
+    case 'JUNGLE':
+      return TreeType.JUNGLE;
+    case 'SAVANNA':
+      return TreeType.ACACIA;
+  }
+  return TreeType.OAK;
 };

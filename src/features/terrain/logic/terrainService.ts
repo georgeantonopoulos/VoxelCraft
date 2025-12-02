@@ -3,6 +3,7 @@ import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL
 import { noise } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, BiomeType } from './BiomeManager';
+import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
 
 export class TerrainService {
@@ -143,14 +144,14 @@ export class TerrainService {
                         const idxBelow = idx - sizeX;
                         const dBelow = density[idxBelow];
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                             const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
-                             if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
-                                 const localX = (x - PAD) + 0.5;
-                                 const localY = wy - 0.8;
-                                 const localZ = (z - PAD) + 0.5;
-                                 // Simple up normal for now
-                                 rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
-                             }
+                            const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                            if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
+                                const localX = (x - PAD) + 0.5;
+                                const localY = wy - 0.8;
+                                const localZ = (z - PAD) + 0.5;
+                                // Simple up normal for now
+                                rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
+                            }
                         }
                     }
 
@@ -184,10 +185,10 @@ export class TerrainService {
                                 material[idx] = MaterialType.STONE;
                             } else {
                                 if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
-                                     material[idx] = biomeMat;
-                                     if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
+                                    material[idx] = biomeMat;
+                                    if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
                                 } else if (biomeMat === MaterialType.SNOW || biomeMat === MaterialType.ICE) {
-                                     material[idx] = biomeMat;
+                                    material[idx] = biomeMat;
                                 } else {
                                     if (depth < 1.5) {
                                         material[idx] = biomeMat;
@@ -210,24 +211,75 @@ export class TerrainService {
                             material[idx] = MaterialType.AIR;
                         }
 
-                        // Flora (Simplified)
-                         if (wy < surfaceHeight - 5 && wy > MESH_Y_OFFSET + 3 && !isSkyIsland) {
-                            if (y > 0) {
-                                const idxBelow = x + (y - 1) * sizeX + z * sizeX * sizeY;
-                                const dBelow = density[idxBelow];
-                                if (dBelow > ISO_LEVEL) {
-                                    const nFlora = noise(wx * 0.12, wy * 0.12, wz * 0.12);
-                                    if (nFlora > 0.7) {
-                                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
-                                        floraCandidates.push(
-                                            (x - PAD) + (hash * 0.4 - 0.2),
-                                            (y - PAD) + MESH_Y_OFFSET + 0.1,
-                                            (z - PAD) + (hash * 0.4 - 0.2)
-                                        );
-                                    }
-                                }
+                    }
+                }
+            }
+        }
+
+        // --- 3.5 Flora Generation (Post-Pass) ---
+        // We do this after density is fully generated so we can scan from top-down
+        // to ensure we only place trees on the actual surface (not in caves).
+
+        // We need to check a grid of positions.
+        // Since trees are sparse, we can iterate with a step or just check every X/Z.
+        // Let's check every coordinate but use noise to decide placement.
+
+        for (let z = 0; z < sizeZ; z++) {
+            for (let x = 0; x < sizeX; x++) {
+                const wx = (x - PAD) + worldOffsetX;
+                const wz = (z - PAD) + worldOffsetZ;
+
+                // Check biome for tree density/chance first to avoid unnecessary scans
+                const biome = BiomeManager.getBiomeAt(wx, wz);
+
+                // Optimization: Quick noise check before scanning height
+                const nFlora = noise(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
+
+                let treeThreshold = 0.6; // Default increased density (was 0.7)
+                if (biome === 'JUNGLE') {
+                    treeThreshold = 0.3; // Much higher density for Jungle
+                } else if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
+                    treeThreshold = 0.98; // Very sparse
+                } else if (biome === 'SAVANNA') {
+                    treeThreshold = 0.8;
+                }
+
+                if (nFlora > treeThreshold) {
+                    // Potential tree spot. Now find the surface.
+                    let surfaceY = -1;
+
+                    // Scan from top down
+                    for (let y = sizeY - 2; y >= 0; y--) {
+                        const idx = x + y * sizeX + z * sizeX * sizeY;
+                        const d = density[idx];
+                        if (d > ISO_LEVEL) {
+                            // Found surface
+                            // Check if it's not bedrock/too low
+                            const wy = (y - PAD) + MESH_Y_OFFSET;
+                            if (wy > MESH_Y_OFFSET + 5) {
+                                surfaceY = y;
+
+                                // Interpolate
+                                const idxAbove = x + (y + 1) * sizeX + z * sizeX * sizeY;
+                                const dAbove = density[idxAbove];
+                                const t = (ISO_LEVEL - d) / (dAbove - d);
+                                surfaceY += t;
                             }
+                            break; // Stop at first surface (highest)
                         }
+                    }
+
+                    if (surfaceY !== -1) {
+                        const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
+                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
+                        const treeType = getTreeForBiome(biome, hash) || 0;
+
+                        floraCandidates.push(
+                            (x - PAD) + (hash * 0.4 - 0.2),
+                            wy - 0.2, // Slight sink
+                            (z - PAD) + (hash * 0.4 - 0.2),
+                            treeType
+                        );
                     }
                 }
             }

@@ -1,103 +1,20 @@
-import React, { useRef, useState, useMemo, useLayoutEffect } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
-import CustomShaderMaterial from 'three-custom-shader-material';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
+import { TreeLayer } from './TreeLayer';
 
-// FloraMesh is unchanged - it works perfectly in main and here
-const FloraMesh: React.FC<{ positions: Float32Array; chunkKey: string; onHarvest: (index: number) => void }> = React.memo(({ positions, onHarvest }) => {
-  // ... (skipping lines)
 
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const count = positions.length / 3;
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const [removedIndices, setRemovedIndices] = useState<Set<number>>(new Set());
-
-  const handleClick = (e: any) => {
-    if (e.button === 0 && e.instanceId !== undefined && !removedIndices.has(e.instanceId)) {
-      e.stopPropagation();
-      setRemovedIndices(prev => new Set(prev).add(e.instanceId));
-      onHarvest(e.instanceId);
-      if (meshRef.current) {
-        meshRef.current.getMatrixAt(e.instanceId, dummy.matrix);
-        dummy.matrix.scale(new THREE.Vector3(0, 0, 0));
-        meshRef.current.setMatrixAt(e.instanceId, dummy.matrix);
-        meshRef.current.instanceMatrix.needsUpdate = true;
-      }
-    }
-  };
-
-  const uniforms = useMemo(() => ({
-    uTime: { value: 0 },
-    uColor: { value: new THREE.Color('#00FFFF') },
-    uSeed: { value: Math.random() * 100 }
-  }), []);
-
-  useLayoutEffect(() => {
-    if (!meshRef.current) return;
-    for (let i = 0; i < count; i++) {
-      dummy.position.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-      dummy.rotation.y = Math.random() * Math.PI * 2;
-      dummy.rotation.x = (Math.random() - 0.5) * 0.5;
-      dummy.scale.setScalar(0.5 + Math.random() * 0.5);
-      dummy.updateMatrix();
-      meshRef.current.setMatrixAt(i, dummy.matrix);
-    }
-    meshRef.current.instanceMatrix.needsUpdate = true;
-  }, [positions, count, dummy]);
-
-  useFrame(({ clock }) => {
-    if (meshRef.current && meshRef.current.material) {
-      // @ts-ignore
-      const mat = meshRef.current.material as THREE.ShaderMaterial;
-      if (mat.uniforms && mat.uniforms.uTime) mat.uniforms.uTime.value = clock.getElapsedTime();
-    }
-  });
-
-  return (
-    <instancedMesh
-      ref={meshRef}
-      args={[undefined, undefined, count]}
-      frustumCulled={false}
-      onClick={handleClick}
-      onPointerOver={() => document.body.style.cursor = 'pointer'}
-      onPointerOut={() => document.body.style.cursor = 'auto'}
-    >
-      <sphereGeometry args={[0.25, 16, 16]} />
-      <CustomShaderMaterial
-        baseMaterial={THREE.MeshStandardMaterial}
-        vertexShader={`
-            varying vec3 vPosition;
-            void main() { vPosition = position; }
-         `}
-        fragmentShader={`
-            uniform float uTime;
-            uniform vec3 uColor;
-            varying vec3 vPosition;
-            void main() {
-                float pulse = sin(uTime * 2.0 + vPosition.x * 4.0) * 0.5 + 1.5;
-                csm_Emissive = uColor * pulse;
-            }
-         `}
-        uniforms={uniforms}
-        color="#222"
-        roughness={0.4}
-        toneMapped={false}
-      />
-    </instancedMesh>
-  );
-});
 
 export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
-  const addFlora = useGameStore(s => s.addFlora);
   const debugMode = useMemo(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
@@ -164,10 +81,11 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <FloraMesh positions={chunk.floraPositions} chunkKey={chunk.key} onHarvest={() => addFlora()} />
+        <TreeLayer data={chunk.floraPositions} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}
     </group>
   );
 });
+
