@@ -220,7 +220,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMaterials, meshMaterials2, meshMaterials3, meshWeights, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const { key, meshPositions, meshIndices, meshMatWeightsA, meshMatWeightsB, meshMatWeightsC, meshMatWeightsD, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
@@ -229,10 +229,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             visualVersion: current.visualVersion + 1,
             meshPositions,
             meshIndices,
-            meshMaterials,
-            meshMaterials2,
-            meshMaterials3,
-            meshWeights,
+            meshMatWeightsA,
+            meshMatWeightsB,
+            meshMatWeightsC,
+            meshMatWeightsD,
             meshNormals,
             meshWetness: meshWetness || current.meshWetness, // Fallback if missing
             meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing

@@ -116,10 +116,10 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
       if (data && data.length === vertexCount * itemSize) geom.setAttribute(name, new THREE.BufferAttribute(data, itemSize));
       else geom.setAttribute(name, new THREE.BufferAttribute(new Float32Array(vertexCount * itemSize), itemSize));
     };
-    ensureAttribute(chunk.meshMaterials, 'aVoxelMat', 1);
-    ensureAttribute(chunk.meshMaterials2, 'aVoxelMat2', 1);
-    ensureAttribute(chunk.meshMaterials3, 'aVoxelMat3', 1);
-    ensureAttribute(chunk.meshWeights, 'aWeight', 3);
+    ensureAttribute(chunk.meshMatWeightsA, 'aMatWeightsA', 4);
+    ensureAttribute(chunk.meshMatWeightsB, 'aMatWeightsB', 4);
+    ensureAttribute(chunk.meshMatWeightsC, 'aMatWeightsC', 4);
+    ensureAttribute(chunk.meshMatWeightsD, 'aMatWeightsD', 4);
     ensureAttribute(chunk.meshWetness, 'aVoxelWetness', 1);
     ensureAttribute(chunk.meshMossiness, 'aVoxelMossiness', 1);
     if (chunk.meshNormals?.length > 0) geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));

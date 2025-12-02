@@ -7,6 +7,37 @@ const SIZE_Z = TOTAL_SIZE_XZ;
 
 const bufIdx = (x: number, y: number, z: number) => x + y * SIZE_X + z * SIZE_X * SIZE_Y;
 
+// Fixed channel ordering shared with the shader
+const MATERIAL_CHANNELS = [
+  MaterialType.AIR,
+  MaterialType.BEDROCK,
+  MaterialType.STONE,
+  MaterialType.DIRT,
+  MaterialType.GRASS,
+  MaterialType.SAND,
+  MaterialType.SNOW,
+  MaterialType.CLAY,
+  MaterialType.WATER,
+  MaterialType.MOSSY_STONE,
+  MaterialType.RED_SAND,
+  MaterialType.TERRACOTTA,
+  MaterialType.ICE,
+  MaterialType.JUNGLE_GRASS,
+  MaterialType.GLOW_STONE,
+  MaterialType.OBSIDIAN
+] as const;
+
+const MATERIAL_TO_CHANNEL = (() => {
+  const maxId = Math.max(...MATERIAL_CHANNELS);
+  const map = new Int8Array(maxId + 1).fill(-1);
+  MATERIAL_CHANNELS.forEach((mat, idx) => {
+    if (mat >= 0 && mat < map.length) map[mat] = idx;
+  });
+  return map;
+})();
+
+const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.length ? MATERIAL_TO_CHANNEL[mat] : -1);
+
 // Helpers
 const getVal = (density: Float32Array, x: number, y: number, z: number) => {
   if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return -1.0;
@@ -35,10 +66,10 @@ export function generateMesh(
   // --- Buffers ---
   const tVerts: number[] = [];
   const tInds: number[] = [];
-  const tMats: number[] = [];
-  const tMats2: number[] = [];
-  const tMats3: number[] = [];
-  const tWeights: number[] = [];
+  const tWa: number[] = [];
+  const tWb: number[] = [];
+  const tWc: number[] = [];
+  const tWd: number[] = [];
   const tNorms: number[] = [];
   const tWets: number[] = [];
   const tMoss: number[] = [];
@@ -174,77 +205,60 @@ export function generateMesh(
               tNorms.push(0, 1, 0);
             }
 
-            // Material Selection with Conservative Blending
-            // Only blend with immediately adjacent materials (radius 2) to avoid grass bleeding into deep stone
+            // Fixed-channel weight splatting
             const BLEND_RADIUS = 3;
-            const matWeights: Map<number, number> = new Map();
+            const localWeights = new Float32Array(16);
             let bestWet = 0;
             let bestMoss = 0;
             let bestVal = -Infinity;
             let totalWeight = 0;
 
-            // Sample in a small sphere - conservative blending
+            const centerX = Math.round(avgX);
+            const centerY = Math.round(avgY);
+            const centerZ = Math.round(avgZ);
+
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
                 for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
-                  const sx = Math.round(avgX) + dx;
-                  const sy = Math.round(avgY) + dy;
-                  const sz = Math.round(avgZ) + dz;
+                  const sx = centerX + dx;
+                  const sy = centerY + dy;
+                  const sz = centerZ + dz;
 
                   const val = getVal(density, sx, sy, sz);
                   if (val > ISO_LEVEL) {
                     const mat = getMat(material, sx, sy, sz);
-                    if (mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
-                      // Distance-based weight - closer samples have more influence
+                    const channel = resolveChannel(mat);
+                    // AIR and WATER are handled separately (water is a distinct mesh)
+                    if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
                       const distSq = dx * dx + dy * dy + dz * dz;
-                      const dist = Math.sqrt(distSq) + 0.3;
-                      const weight = 1.0 / (dist * dist);
-
-                      matWeights.set(mat, (matWeights.get(mat) || 0) + weight);
+                      const weight = 1.0 / (distSq + 0.1); // Soft inverse square falloff
+                      localWeights[channel] += weight;
                       totalWeight += weight;
+                    }
 
-                      // Track wetness/mossiness from highest density voxel
-                      if (val > bestVal) {
-                        bestVal = val;
-                        bestWet = getByte(wetData, sx, sy, sz);
-                        bestMoss = getByte(mossData, sx, sy, sz);
-                      }
+                    if (val > bestVal) {
+                      bestVal = val;
+                      bestWet = getByte(wetData, sx, sy, sz);
+                      bestMoss = getByte(mossData, sx, sy, sz);
                     }
                   }
                 }
               }
             }
 
-            // --- CANONICAL ORDERING FIX ---
-            // 1. First, sort by weight to find the TOP 3 candidates (discard weak noise)
-            let candidates = [...matWeights.entries()].sort((a, b) => b[1] - a[1]);
-            if (candidates.length > 3) {
-              candidates = candidates.slice(0, 3);
+            if (totalWeight > 0.0001) {
+              for (let i = 0; i < localWeights.length; i++) {
+                localWeights[i] /= totalWeight;
+              }
+            } else {
+              const dirtChannel = resolveChannel(MaterialType.DIRT);
+              if (dirtChannel > -1) localWeights[dirtChannel] = 1.0;
             }
 
-            // 2. CRITICAL: Sort the survivors by ID (Ascending)
-            // This locks the slots. Dirt (3) will always be before Grass (4).
-            candidates.sort((a, b) => a[0] - b[0]);
-
-            // 3. Normalize the weights of only these top 3
-            let totalTopWeight = 0;
-            for (const c of candidates) totalTopWeight += c[1];
-            const norm = totalTopWeight > 0.0001 ? totalTopWeight : 1.0;
-
-            // 4. Assign to slots (0 if not present)
-            const mat1 = candidates[0] ? candidates[0][0] : MaterialType.DIRT;
-            const w1 = candidates[0] ? candidates[0][1] / norm : 1.0;
-
-            const mat2 = candidates[1] ? candidates[1][0] : mat1; // Fallback to mat1 prevents 0-id glitches
-            const w2 = candidates[1] ? candidates[1][1] / norm : 0.0;
-
-            const mat3 = candidates[2] ? candidates[2][0] : mat2;
-            const w3 = candidates[2] ? candidates[2][1] / norm : 0.0;
-
-            tMats.push(mat1);
-            tMats2.push(mat2);
-            tMats3.push(mat3);
-            tWeights.push(w1, w2, w3);
+            tWa.push(localWeights[0], localWeights[1], localWeights[2], localWeights[3]);
+            tWb.push(localWeights[4], localWeights[5], localWeights[6], localWeights[7]);
+            tWc.push(localWeights[8], localWeights[9], localWeights[10], localWeights[11]);
+            tWd.push(localWeights[12], localWeights[13], localWeights[14], localWeights[15]);
             tWets.push(bestWet / 255.0);
             tMoss.push(bestMoss / 255.0);
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
@@ -317,10 +331,10 @@ export function generateMesh(
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
     normals: new Float32Array(tNorms),
-    materials: new Float32Array(tMats),
-    materials2: new Float32Array(tMats2),
-    materials3: new Float32Array(tMats3),
-    meshWeights: new Float32Array(tWeights),
+    matWeightsA: new Float32Array(tWa),
+    matWeightsB: new Float32Array(tWb),
+    matWeightsC: new Float32Array(tWc),
+    matWeightsD: new Float32Array(tWd),
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     // Return empty arrays for water to satisfy types without generating bad mesh

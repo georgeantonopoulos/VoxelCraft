@@ -56,11 +56,11 @@ export interface MeshData {
   positions: Float32Array;
   indices: Uint32Array;
   normals: Float32Array;
-  materials: Float32Array; // Attribute to pass to shader
-  materials2: Float32Array; // Secondary Material ID (Sub-dominant)
-  materials3: Float32Array; // Tertiary Material ID
-  meshWeights: Float32Array; // vec3 weights (r,g,b)
-  wetness: Float32Array;   // Attribute for wetness
+  matWeightsA: Float32Array; // Materials 0-3
+  matWeightsB: Float32Array; // Materials 4-7
+  matWeightsC: Float32Array; // Materials 8-11
+  matWeightsD: Float32Array; // Materials 12-15
+  wetness: Float32Array; // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
 
   // Water Mesh Data
@@ -88,10 +88,10 @@ export interface ChunkState {
 
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
-  meshMaterials: Float32Array;
-  meshMaterials2: Float32Array;
-  meshMaterials3: Float32Array;
-  meshWeights: Float32Array;
+  meshMatWeightsA: Float32Array;
+  meshMatWeightsB: Float32Array;
+  meshMatWeightsC: Float32Array;
+  meshMatWeightsD: Float32Array;
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;

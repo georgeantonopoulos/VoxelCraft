@@ -145,11 +145,11 @@ The project follows a domain-driven architecture to improve scalability and main
 
 ### 6. Visual Artifacts & Solutions
 - **Triangle Artifacts**: Terrain previously used `flat` shading, causing hard triangle edges.
-- **Solution (Phase 2 - Blend Weights)**:
-  - **Tri-Material Data**: The mesher (`mesher.ts`) calculates the three most frequent materials among the 8 corner voxels of each cell (`materials`, `materials2`, `materials3`) and blend weights proportional to frequency.
-  - **Interpolation**: The shader uses `flat` varyings for the material IDs (to prevent ID interpolation artifacts) but interpolates the `blendWeight` (vec3).
-  - **Mixing**: The fragment shader samples material properties for all three IDs using discrete material lookups (no smooth blending between IDs) and mixes them using soft-max blended weights with noise distortion. The mesher handles spatial blending, so the shader uses discrete IDs to prevent chaotic mixing between non-adjacent materials.
-  - **Safe Normalization**: `safeNormalize` is retained to prevent NaNs from degenerate normals.
+- **Solution (Fixed Channel Splatting)**:
+  - **16 Fixed Channels**: The mesher (`mesher.ts`) now writes four `vec4` weight attributes (`matWeightsA`–`D`) covering 16 material channels (AIR, BEDROCK, STONE, DIRT, GRASS, SAND, SNOW, CLAY, WATER, MOSSY_STONE, RED_SAND, TERRACOTTA, ICE, JUNGLE_GRASS, GLOW_STONE, OBSIDIAN).
+  - **Weight Only Interpolation**: Vertices carry only weights; material IDs are fixed per channel, so shared edges never interpolate IDs and cannot rainbow.
+  - **Neighborhood Splatting**: Each vertex samples a small radius of solid voxels, accumulates inverse-square weights per channel (ignoring AIR/WATER), normalizes, and falls back to DIRT if empty.
+  - **Shader Accumulation**: `TriplanarMaterial` sums weighted material responses per channel and normalizes the accumulated roughness/color; moss/wetness overlays still apply with safe-normalized normals to avoid NaNs.
 - **Self-Intersection Artifacts (Dark Flickering Patches)**:
   - **Root Cause**: `DoubleSide` rendering on pinched geometry (sliver triangles from vertex clamping) causes Z-fighting between front and back faces, creating dark flickering squares.
   - **Solution**: 
@@ -158,6 +158,7 @@ The project follows a domain-driven architecture to improve scalability and main
     - **Shadow Bias**: Already configured (`shadow-bias={-0.001}`, `shadow-normalBias={0.08}`) to prevent shadow acne with front-side rendering.
 
 ### 7. Recent Findings
+- 2025-12-02: Replaced tri-material ID interpolation with fixed 16-channel splatting (`matWeightsA`–`D`) to eliminate rainbow seams. Mesher now accumulates inverse-square neighborhood weights per material channel (skipping AIR/WATER) and normalizes per vertex; `TriplanarMaterial` sums weighted responses per channel and keeps `safeNormalize` for stability. Verified with `npm run build` and `npm run dev` (dev started on :3000 and was stopped after startup).
 - 2026-02-XX: Fixed Dexie upgrade crash from changing the `modifications` primary key. `WorldDB` now detects the "Not yet support for changing primary key" `UpgradeError`, deletes the stale IndexedDB, and reopens with the composite `[chunkId+voxelIndex]` schema before any queries run; both save/read helpers await the ready promise to stop worker spam. Note: this wipes old mod data but prevents endless DexieError2 logs. Verified with `npm run build` and `npm run dev` (dev launched on :3000 then stopped after startup).
 - 2026-01-XX: Fixed chaotic material blending in `TriplanarMaterial`. The root cause was biomes changing too rapidly per voxel, causing adjacent voxels to have incompatible materials that the mesher tried to blend. Fixed by:
   - **Biome smoothing**: Sample biome at coarser scale (every 4 voxels) instead of per-voxel to create smoother biome transitions

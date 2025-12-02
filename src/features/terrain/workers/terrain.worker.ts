@@ -3,13 +3,6 @@ import { generateMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 
-// Type alias to ensure TypeScript recognizes all MeshData properties
-type CompleteMeshData = MeshData & {
-    materials2: Float32Array;
-    materials3: Float32Array;
-    meshWeights: Float32Array;
-};
-
 const ctx: Worker = self as any;
 
 // Instantiate DB connection implicitly by importing it (Singleton in WorldDB.ts)
@@ -39,7 +32,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             // 2. Generate with mods
             const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
-            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as CompleteMeshData;
+            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as MeshData;
 
             console.log('[terrain.worker] GENERATE done', cx, cz, {
                 positions: mesh.positions.length,
@@ -57,10 +50,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMaterials: mesh.materials,
-                meshMaterials2: mesh.materials2,
-                meshMaterials3: mesh.materials3,
-                meshWeights: mesh.meshWeights,
+                meshMatWeightsA: mesh.matWeightsA,
+                meshMatWeightsB: mesh.matWeightsB,
+                meshMatWeightsC: mesh.matWeightsC,
+                meshMatWeightsD: mesh.matWeightsD,
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -78,10 +71,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions.buffer,
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.materials.buffer,
-                mesh.materials2.buffer,
-                mesh.materials3.buffer,
-                mesh.meshWeights.buffer,
+                mesh.matWeightsA.buffer,
+                mesh.matWeightsB.buffer,
+                mesh.matWeightsC.buffer,
+                mesh.matWeightsD.buffer,
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
@@ -94,7 +87,7 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             const t0 = performance.now();
             // console.log('[terrain.worker] REMESH start', key, 'v', version);
-            const mesh = generateMesh(density, material) as CompleteMeshData;
+            const mesh = generateMesh(density, material) as MeshData;
             // console.log('[terrain.worker] REMESH done', key);
 
             const response = {
@@ -103,10 +96,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                 version,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMaterials: mesh.materials,
-                meshMaterials2: mesh.materials2,
-                meshMaterials3: mesh.materials3,
-                meshWeights: mesh.meshWeights,
+                meshMatWeightsA: mesh.matWeightsA,
+                meshMatWeightsB: mesh.matWeightsB,
+                meshMatWeightsC: mesh.matWeightsC,
+                meshMatWeightsD: mesh.matWeightsD,
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -118,10 +111,10 @@ ctx.onmessage = async (e: MessageEvent) => {
             ctx.postMessage({ type: 'REMESHED', payload: response }, [
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.materials.buffer,
-                mesh.materials2.buffer,
-                mesh.materials3.buffer,
-                mesh.meshWeights.buffer,
+                mesh.matWeightsA.buffer,
+                mesh.matWeightsB.buffer,
+                mesh.matWeightsC.buffer,
+                mesh.matWeightsD.buffer,
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,

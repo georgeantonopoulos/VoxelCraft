@@ -5,27 +5,27 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '@core/memory/sharedResources';
 
 const vertexShader = `
-  attribute float aVoxelMat;
-  attribute float aVoxelMat2;
-  attribute float aVoxelMat3;
-  attribute vec3 aWeight;
+  attribute vec4 aMatWeightsA;
+  attribute vec4 aMatWeightsB;
+  attribute vec4 aMatWeightsC;
+  attribute vec4 aMatWeightsD;
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
-  varying float vMaterial1;
-  varying float vMaterial2;
-  varying float vMaterial3;
-  varying vec3 vW;
+  varying vec4 vWa;
+  varying vec4 vWb;
+  varying vec4 vWc;
+  varying vec4 vWd;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
   void main() {
-    vMaterial1 = aVoxelMat;
-    vMaterial2 = aVoxelMat2;
-    vMaterial3 = aVoxelMat3;
-    vW = aWeight;
+    vWa = aMatWeightsA;
+    vWb = aMatWeightsB;
+    vWc = aMatWeightsC;
+    vWd = aMatWeightsD;
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     
@@ -33,6 +33,7 @@ const vertexShader = `
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     
     csm_Position = position;
+    csm_Normal = normal;
   }
 `;
 
@@ -63,10 +64,10 @@ const fragmentShader = `
   uniform float uFogFar;
   uniform float uOpacity;
 
-  varying float vMaterial1;
-  varying float vMaterial2;
-  varying float vMaterial3;
-  varying vec3 vW;
+  varying vec4 vWa;
+  varying vec4 vWb;
+  varying vec4 vWc;
+  varying vec4 vWd;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
@@ -103,151 +104,154 @@ const fragmentShader = `
       float noiseFactor;
   };
 
-  MatInfo getMaterialInfo(float rawM, vec4 nMid, vec4 nHigh) {
-      // Use the material ID directly - blending is handled by vertex weights
-      float m = floor(rawM + 0.5);
-      m = clamp(m, 0.0, 20.0); // Expanded range for new mats
-
+  // Channel -> material mapping must match MATERIAL_CHANNELS in mesher.ts
+  MatInfo getMatParams(int channel, vec4 nMid, vec4 nHigh) {
       vec3 baseCol = uColorStone;
       float roughness = 0.8;
       float noiseFactor = 0.0;
 
-      if (m < 1.5) { // BEDROCK = 1
+      if (channel == 0) { // Air (no visible contribution)
+          baseCol = vec3(0.0);
+      }
+      else if (channel == 1) { // Bedrock
           baseCol = uColorBedrock;
           noiseFactor = nMid.r;
       }
-      else if (m < 2.5) { // STONE = 2
+      else if (channel == 2) { // Stone
           baseCol = uColorStone;
           float cracks = nHigh.g;
           noiseFactor = mix(nMid.r, cracks, 0.5);
       }
-      else if (m < 3.5) { // DIRT = 3
+      else if (channel == 3) { // Dirt
           baseCol = uColorDirt;
           noiseFactor = nMid.g;
       }
-      else if (m < 4.5) { // GRASS = 4
+      else if (channel == 4) { // Grass
           baseCol = uColorGrass;
           float bladeNoise = nHigh.a;
           float patchNoise = nMid.r;
           noiseFactor = mix(bladeNoise, patchNoise, 0.3);
           baseCol *= vec3(1.0, 1.1, 1.0);
       }
-      else if (m < 5.5) { // SAND = 5
+      else if (channel == 5) { // Sand
           baseCol = uColorSand;
           noiseFactor = nHigh.a;
       }
-      else if (m < 6.5) { // SNOW = 6
+      else if (channel == 6) { // Snow
           baseCol = uColorSnow;
           noiseFactor = nMid.r * 0.5 + 0.5;
       }
-      else if (m < 7.5) { // CLAY = 7
+      else if (channel == 7) { // Clay
           baseCol = uColorClay;
           noiseFactor = nMid.g;
       }
-      else if (m < 9.5) { // WATER = 8
+      else if (channel == 8) { // Water (rarely used on terrain mesh)
           baseCol = uColorWater;
           roughness = 0.1;
       }
-      else if (m < 10.5) { // MOSSY_STONE = 10
+      else if (channel == 9) { // Mossy Stone
           baseCol = uColorMoss;
           noiseFactor = nMid.r;
       }
-      else if (m < 11.5) { // RED_SAND = 11
+      else if (channel == 10) { // Red Sand
           baseCol = uColorRedSand;
           noiseFactor = nHigh.a;
       }
-      else if (m < 12.5) { // TERRACOTTA = 12
+      else if (channel == 11) { // Terracotta
           baseCol = uColorTerracotta;
           noiseFactor = nMid.g;
           roughness = 0.9;
       }
-      else if (m < 13.5) { // ICE = 13
+      else if (channel == 12) { // Ice
           baseCol = uColorIce;
           noiseFactor = nMid.b * 0.5;
           roughness = 0.1;
       }
-      else if (m < 14.5) { // JUNGLE_GRASS = 14
+      else if (channel == 13) { // Jungle Grass
           baseCol = uColorJungleGrass;
           noiseFactor = nHigh.a;
       }
-      else if (m < 15.5) { // GLOW_STONE = 15
+      else if (channel == 14) { // Glow Stone
           baseCol = uColorGlowStone;
-          noiseFactor = nMid.r + 0.5; // Brighter
+          noiseFactor = nMid.r + 0.5;
       }
-      else { // OBSIDIAN = 16
+      else if (channel == 15) { // Obsidian
           baseCol = uColorObsidian;
           noiseFactor = nHigh.b;
-          roughness = 0.2; // Shiny
+          roughness = 0.2;
       }
 
       return MatInfo(baseCol, roughness, noiseFactor);
   }
 
-  // --- NEW HELPER: Hard Snap to Nearest ID (Rainbow Fix) ---
-  MatInfo getSmoothMaterial(float smoothID, vec4 nMid, vec4 nHigh) {
-      // 1. Add noise to the ID so the transition is dithered
-      float noise = texture(uNoiseTexture, vWorldPosition * 0.1).r;
-      float disturbedID = smoothID + (noise - 0.5) * 0.5;
-
-      // 2. Snap to nearest integer ID (Fixes Rainbow Artifact)
-      // Instead of blending between 4 and 11 (which passes through 5,6,7...),
-      // we snap to either 4 or 11 based on the threshold.
-      float snappedID = floor(disturbedID + 0.5);
-      
-      // Clamp to valid range
-      snappedID = clamp(snappedID, 0.0, 20.0);
-
-      // 3. Fetch material info for the snapped ID
-      return getMaterialInfo(snappedID, nMid, nHigh);
+  void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
+    inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float totalW,
+    inout int dominantChannel, inout float dominantWeight) {
+    if (weight > 0.001) {
+      MatInfo m = getMatParams(channel, nMid, nHigh);
+      accColor += m.baseCol * weight;
+      accRoughness += m.roughness * weight;
+      accNoise += m.noiseFactor * weight;
+      totalW += weight;
+      if (weight > dominantWeight) {
+        dominantWeight = weight;
+        dominantChannel = channel;
+      }
+    }
   }
 
   void main() {
-    // 1. Apply Safe Normalization immediately
     vec3 N = safeNormalize(vWorldNormal);
-
-    // 2. Use the safe normal for sampling
     vec4 nMid = getTriplanarNoise(N, 0.15);
     vec4 nHigh = getTriplanarNoise(N, 0.6);
 
-    // --- Weight Blending ---
-    float warp = texture(uNoiseTexture, vWorldPosition * 0.05).r;
-    vec3 warpedW = vW + (warp - 0.5) * 0.2;
-    vec3 softW = pow(max(warpedW, 0.0), vec3(2.0));
-    softW /= (softW.x + softW.y + softW.z + 0.0001);
+    vec3 accColor = vec3(0.0);
+    float accRoughness = 0.0;
+    float accNoise = 0.0;
+    float totalW = 0.0;
+    float dominantWeight = -1.0;
+    int dominantChannel = 2; // default to stone
 
-    // --- USE THE NEW SMOOTH FUNCTION ---
-    // This replaces the hard floor() logic with smooth interpolation
-    MatInfo m1 = getSmoothMaterial(vMaterial1, nMid, nHigh);
-    
-    vec3 finalBaseCol = m1.baseCol * softW.x;
-    float finalRoughness = m1.roughness * softW.x;
-    float finalNoiseFactor = m1.noiseFactor * softW.x;
+    accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
 
-    if (softW.y > 0.001) {
-        MatInfo m2 = getSmoothMaterial(vMaterial2, nMid, nHigh);
-        finalBaseCol += m2.baseCol * softW.y;
-        finalRoughness += m2.roughness * softW.y;
-        finalNoiseFactor += m2.noiseFactor * softW.y;
+    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+
+    accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+
+    accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(15, vWd.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+
+    if (totalW > 0.0001) {
+      accColor /= totalW;
+      accRoughness /= totalW;
+      accNoise /= totalW;
+    } else {
+      accColor = uColorStone;
+      accRoughness = 0.9;
+      accNoise = 0.0;
     }
 
-    if (softW.z > 0.001) {
-        MatInfo m3 = getSmoothMaterial(vMaterial3, nMid, nHigh);
-        finalBaseCol += m3.baseCol * softW.z;
-        finalRoughness += m3.roughness * softW.z;
-        finalNoiseFactor += m3.noiseFactor * softW.z;
-    }
-
-    float intensity = 0.6 + 0.6 * finalNoiseFactor;
-    vec3 col = finalBaseCol * intensity;
+    float intensity = 0.6 + 0.6 * accNoise;
+    vec3 col = accColor * intensity;
 
     // --- Overlays ---
-    // Use dominant material (m1) for moss logic trigger
-    if (vMossiness > 0.1 || vMaterial1 >= 9.5) {
+    if (vMossiness > 0.1 || dominantChannel == 9) {
         vec3 mossColor = uColorMoss;
         float mossNoise = nHigh.g;
         mossColor *= (0.8 + 0.4 * mossNoise);
         float mossAmount = vMossiness;
-        if (vMaterial1 >= 9.5) mossAmount = max(mossAmount, 0.35);
+        if (dominantChannel == 9) mossAmount = max(mossAmount, 0.35);
         float mossMix = smoothstep(0.3, 0.6, mossAmount + mossNoise * 0.2);
         col = mix(col, mossColor, mossMix);
     }
@@ -264,12 +268,11 @@ const fragmentShader = `
     csm_DiffuseColor = vec4(col, uOpacity);
 
     // Adjust roughness
-    finalRoughness -= (nHigh.r * 0.1);
-    finalRoughness = mix(finalRoughness, 0.2, vWetness);
-    // Force roughness for water-like (if exists)
-    if (vMaterial1 >= 8.0 && vMaterial1 < 9.5) finalRoughness = 0.1;
+    accRoughness -= (nHigh.r * 0.1);
+    accRoughness = mix(accRoughness, 0.2, vWetness);
+    if (dominantChannel == 8) accRoughness = 0.1;
     
-    csm_Roughness = finalRoughness;
+    csm_Roughness = accRoughness;
     csm_Metalness = 0.0;
   }
 `;
