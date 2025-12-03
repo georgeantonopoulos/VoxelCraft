@@ -86,7 +86,7 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} />
+        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

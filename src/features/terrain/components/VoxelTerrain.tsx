@@ -7,6 +7,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
+import { useInventoryStore } from '@state/InventoryStore';
 import { useWorldStore, FloraHotspot } from '@state/WorldStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState } from '@/types';
@@ -176,6 +177,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
   const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
   const remeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
+  const treeDamageRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -381,7 +383,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     const ray = new rapier.Ray(origin, direction);
 
-  // 0. CHECK FOR PLACED FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
+    // 0. CHECK FOR PLACED FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
     if (action === 'DIG') {
       const floraId = rayHitsFlora(origin, direction, maxRayDistance);
       if (floraId) {
@@ -392,6 +394,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     }
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+
+    // 0.5 CHECK FOR FLORA TREE INTERACTION (GET AXE)
+    if (action === 'DIG') {
+      const physicsHit = world.castRay(ray, maxRayDistance, true);
+      if (physicsHit && physicsHit.collider) {
+        const parent = physicsHit.collider.parent();
+        if (parent && parent.userData && (parent.userData as any).type === 'flora_tree') {
+          // Give Axe!
+          useInventoryStore.getState().setHasAxe(true);
+          // Maybe play a sound or show a notification?
+          console.log("Got Axe!");
+          return;
+        }
+      }
+    }
 
     if (terrainHit) {
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
@@ -496,16 +513,44 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               const distSq = dx * dx + dz * dz + (dy > 0 && dy < 4.0 ? 0 : dy * dy); // Ignore Y diff if within trunk height
 
               if (distSq < (digRadius + 0.5) ** 2) {
-                hitIndices.push(i);
+                // AAA FIX: Tree Cutting Logic
+                const treeId = `${key}-${i}`;
+                const hasAxe = useInventoryStore.getState().hasAxe;
 
-                // Spawn Falling Tree
-                const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
-                setFallingTrees(prev => [...prev, {
-                  id: `${key}-${i}-${Date.now()}`, // Unique ID
-                  position: new THREE.Vector3(x, y, z),
-                  type,
-                  seed
-                }]);
+                if (!hasAxe) {
+                  // No axe? No cut.
+                  // TODO: Play "clunk" sound
+                  continue;
+                }
+
+                // Track damage
+                // We use a static map on the component or ref? 
+                // Since this is inside the loop, we need access to the ref.
+                // Assuming treeDamageRef is defined in the component scope (I will add it).
+                const currentDamage = (treeDamageRef.current.get(treeId) || 0) + 1;
+                treeDamageRef.current.set(treeId, currentDamage);
+
+                // Particles for hit
+                setParticleState({
+                  active: true,
+                  pos: new THREE.Vector3(x, y + 1, z),
+                  color: '#8B4513' // Wood color
+                });
+                setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
+
+                if (currentDamage >= 5) {
+                  hitIndices.push(i);
+                  treeDamageRef.current.delete(treeId);
+
+                  // Spawn Falling Tree
+                  const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
+                  setFallingTrees(prev => [...prev, {
+                    id: `${key}-${i}-${Date.now()}`, // Unique ID
+                    position: new THREE.Vector3(x, y, z),
+                    type,
+                    seed
+                  }]);
+                }
               }
             }
 

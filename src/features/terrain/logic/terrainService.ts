@@ -288,10 +288,29 @@ export class TerrainService {
 
         // --- 3.6 Tree Generation (Surface Pass) ---
         // Restores original surface tree placement (separate from lumina flora).
-        for (let z = 0; z < sizeZ; z++) {
-            for (let x = 0; x < sizeX; x++) {
-                const wx = (x - PAD) + worldOffsetX;
-                const wz = (z - PAD) + worldOffsetZ;
+        // AAA FIX: Use Jittered Grid Sampling to prevent clumping
+        const GRID_SIZE = 4; // 4x4 voxel cells
+
+        for (let z = 0; z < sizeZ; z += GRID_SIZE) {
+            for (let x = 0; x < sizeX; x += GRID_SIZE) {
+                // Calculate grid cell origin in world space
+                const cellWx = (x - PAD) + worldOffsetX;
+                const cellWz = (z - PAD) + worldOffsetZ;
+
+                // Hash for this cell to pick a random spot within it
+                const cellHash = Math.abs(noise(cellWx * 0.13, 0, cellWz * 0.13));
+
+                // Pick a random offset within the cell (0..GRID_SIZE)
+                const offX = (cellHash * 12.9898) % GRID_SIZE;
+                const offZ = (cellHash * 78.233) % GRID_SIZE;
+
+                const localX = x + offX;
+                const localZ = z + offZ;
+
+                if (localX >= sizeX || localZ >= sizeZ) continue;
+
+                const wx = (localX - PAD) + worldOffsetX;
+                const wz = (localZ - PAD) + worldOffsetZ;
 
                 // Check biome for tree density/chance first to avoid unnecessary scans
                 const biome = BiomeManager.getBiomeAt(wx, wz);
@@ -314,7 +333,7 @@ export class TerrainService {
 
                     // Scan from top down
                     for (let y = sizeY - 2; y >= 0; y--) {
-                        const idx = x + y * sizeX + z * sizeX * sizeY;
+                        const idx = Math.floor(localX) + y * sizeX + Math.floor(localZ) * sizeX * sizeY;
                         const d = density[idx];
                         if (d > ISO_LEVEL) {
                             // Found surface
@@ -324,7 +343,7 @@ export class TerrainService {
                                 surfaceY = y;
 
                                 // Interpolate
-                                const idxAbove = x + (y + 1) * sizeX + z * sizeX * sizeY;
+                                const idxAbove = Math.floor(localX) + (y + 1) * sizeX + Math.floor(localZ) * sizeX * sizeY;
                                 const dAbove = density[idxAbove];
                                 const t = (ISO_LEVEL - d) / (dAbove - d);
                                 surfaceY += t;
@@ -339,9 +358,9 @@ export class TerrainService {
                         const treeType = getTreeForBiome(biome, hash) || 0;
 
                         treeCandidates.push(
-                            (x - PAD) + (hash * 0.4 - 0.2),
+                            (localX - PAD) + (hash * 0.4 - 0.2),
                             wy - 0.2, // Slight sink
-                            (z - PAD) + (hash * 0.4 - 0.2),
+                            (localZ - PAD) + (hash * 0.4 - 0.2),
                             treeType
                         );
                     }
@@ -372,6 +391,39 @@ export class TerrainService {
             treePositions: new Float32Array(treeCandidates),
             rootHollowPositions: new Float32Array(rootHollowCandidates)
         };
+    }
+
+    // Helper to cluster lights for performance (run in worker)
+    static computeLightClusters(floraPositions: Float32Array): Float32Array {
+        const positions: number[] = [];
+        const CLUSTER_RADIUS_SQ = 5.0 * 5.0;
+
+        for (let i = 0; i < floraPositions.length; i += 4) {
+            const x = floraPositions[i];
+            const y = floraPositions[i + 1];
+            const z = floraPositions[i + 2];
+
+            // Check if close to any existing light
+            let found = false;
+            // Iterate backwards for better locality? No, simple scan is fine for < 50 lights
+            for (let j = 0; j < positions.length; j += 3) {
+                const lx = positions[j];
+                const ly = positions[j + 1];
+                const lz = positions[j + 2];
+                const distSq = (x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2;
+
+                if (distSq < CLUSTER_RADIUS_SQ) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                // Add new light center (slightly raised)
+                positions.push(x, y + 1.5, z);
+            }
+        }
+        return new Float32Array(positions);
     }
 
     static modifyChunk(

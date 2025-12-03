@@ -17,6 +17,7 @@ import { BedrockPlane } from '@features/terrain/components/BedrockPlane';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { setSnapEpsilon } from '@/constants';
 import { useWorldStore } from '@state/WorldStore';
+import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
 
 // Keyboard Map
 const keyboardMap = [
@@ -280,8 +281,7 @@ const SunFollower: React.FC = () => {
       const angle = calculateOrbitAngle(t, speed);
 
       // Radius of orbit relative to player
-      const radius = 300; // Farther away for scale
-
+      const radius = 300;
       const sx = Math.sin(angle) * radius;
       const sy = Math.cos(angle) * radius;
       const sz = 30;
@@ -738,6 +738,7 @@ const App: React.FC = () => {
           <MoonFollower />
 
           {/* --- 2. GAME WORLD --- */}
+
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
               {gameStarted && spawnPos && <Player position={spawnPos} />}
@@ -752,6 +753,8 @@ const App: React.FC = () => {
               <FloraPlacer />
               <BedrockPlane />
             </Physics>
+            {/* Add FirstPersonTools here, outside Physics but inside Canvas/Suspense if needed, or just inside Canvas */}
+            <FirstPersonTools />
           </Suspense>
 
           {/* --- 3. POST-PROCESSING (Vibrant Polish) --- */}

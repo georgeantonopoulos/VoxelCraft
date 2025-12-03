@@ -36,6 +36,9 @@ ctx.onmessage = async (e: MessageEvent) => {
             // 2. Generate with mods
             const { density, material, metadata, floraPositions, treePositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
+            // 3. Compute Light Clusters (Async in Worker)
+            const lightPositions = TerrainService.computeLightClusters(floraPositions);
+
             // --- AMBIENT VEGETATION GENERATION ---
             const vegetationBuckets: Record<number, number[]> = {};
 

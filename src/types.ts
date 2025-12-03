@@ -105,4 +105,6 @@ export interface ChunkState {
   meshWaterPositions: Float32Array;
   meshWaterIndices: Uint32Array;
   meshWaterNormals: Float32Array;
+
+  lightPositions?: Float32Array;
 }

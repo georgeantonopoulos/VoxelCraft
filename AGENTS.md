@@ -9,6 +9,8 @@ Do not remove comments, add them if missing.
 Always verify and run npm run build and npm run dev to make sure the app is working as expected. 
 
 
+Do NOT REMOVE COMMENTS. ADD THEM IF NECESSARY. AND UPDATE THIS DOCUMENT (AGENTS.md) WITH YOUR FINDINGS. 
+
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
 - **Physics**: `@react-three/rapier`.
@@ -197,3 +199,12 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Verification**: Verified visual changes by temporarily spawning a tree and observing the animation. Build verified with `npm run build`.
 - 2025-12-02: Merged the `ancestral-roots-visuals` refactor into `main`. Domain-driven layout under `src/core`, `src/features`, `src/state`, and `src/ui` is now canonical; legacy root `components/`, `services/`, and `workers/` files were removed or relocated.
 - 2025-12-02: `npm run dev` starts Vite but the sandbox blocks `uv_interface_addresses` when binding to `0.0.0.0:3000`, so the server exits early after cycling ports. Run with elevated network permissions or outside the sandbox when a live preview is required.
+
+### 8. Gameplay Mechanics (New)
+- **Tree Placement**: Implemented Jittered Grid Sampling in `terrainService.ts` to prevent tree clumping. Trees are now placed using a 4x4 voxel grid with random offsets, ensuring better distribution.
+- **Luma Axe**:
+  - **Acquisition**: Player must place "Luminous Flora" (found in caverns) into a "Root Hollow" to grow a "Flora Tree". Interacting (DIG) with the grown Flora Tree grants the `luma_axe`.
+  - **Usage**: The `luma_axe` is required to cut down trees.
+  - **Cutting Logic**: Trees now require 5 hits to be felled. Each hit shows particles. Without the axe, trees cannot be cut.
+  - **Visualization**: A `FirstPersonTools` component renders the axe in the player's hand when equipped.
+- **Inventory**: `InventoryStore` now tracks `hasAxe` and `luminousFloraCount`.

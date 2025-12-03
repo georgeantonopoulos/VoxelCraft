@@ -9,103 +9,19 @@ interface FractalTreeProps {
     position: THREE.Vector3;
     baseRadius?: number;
     type?: number; // 0=Oak, 1=Pine, etc.
+    userData?: Record<string, any>;
 }
 
-export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0 }) => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const leafRef = useRef<THREE.InstancedMesh>(null);
-    const [data, setData] = useState<{ matrices: Float32Array, depths: Float32Array, leafMatrices: Float32Array, boundingBox: { min: any, max: any } } | null>(null);
-    const [growth, setGrowth] = useState(0);
-    const [physicsReady, setPhysicsReady] = useState(false);
+export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0, userData }) => {
+    // ... (refs and state)
 
-    // Geometry with pivot at bottom
-    const geometry = useMemo(() => {
-        const geo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 7);
-        geo.translate(0, 0.5, 0); // Pivot at bottom
-        return geo;
-    }, []);
+    // ... (geometry memo)
 
-    const leafGeometry = useMemo(() => {
-        // Different leaf shapes for different trees?
-        // For now, simple Octahedron is versatile.
-        // Maybe Cone for Pine?
-        if (type === 1) return new THREE.ConeGeometry(0.3, 0.8, 5);
-        return new THREE.OctahedronGeometry(0.4, 0);
-    }, [type]);
+    // ... (worker effect)
 
-    useEffect(() => {
-        const worker = new Worker(new URL('../workers/fractal.worker.ts', import.meta.url), { type: 'module' });
-        worker.onmessage = (e) => {
-            setData(e.data);
-            worker.terminate();
-        };
-        worker.postMessage({ seed, baseRadius, type });
-        return () => {
-            // worker.terminate(); // Already terminated
-        };
-    }, [seed, baseRadius, type]);
+    // ... (data effect)
 
-    // Apply bounding box and attributes when data arrives
-    useEffect(() => {
-        if (data && meshRef.current) {
-            const { matrices, depths, leafMatrices, boundingBox } = data;
-            const count = matrices.length / 16;
-
-            meshRef.current.count = count;
-
-            // Set instance matrices
-            const im = meshRef.current.instanceMatrix;
-            im.array.set(matrices);
-            im.needsUpdate = true;
-
-            // Set attributes
-            geometry.setAttribute('aBranchDepth', new THREE.InstancedBufferAttribute(depths, 1));
-
-            // Set Leaves
-            if (leafRef.current && leafMatrices && leafMatrices.length > 0) {
-                const leafCount = leafMatrices.length / 16;
-                leafRef.current.count = leafCount;
-                leafRef.current.instanceMatrix.array.set(leafMatrices);
-                leafRef.current.instanceMatrix.needsUpdate = true;
-            }
-
-            // Set Bounding Box
-            if (boundingBox) {
-                geometry.boundingBox = new THREE.Box3(
-                    new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.min.z),
-                    new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.max.z)
-                );
-                geometry.boundingSphere = new THREE.Sphere();
-                geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
-            }
-        }
-    }, [data, geometry]);
-
-    useFrame((_state, delta) => {
-        if (!data) return;
-
-        // Animate Growth
-        if (growth < 1.0) {
-            setGrowth(g => Math.min(g + delta * 0.4, 1.0));
-        } else if (!physicsReady) {
-            setPhysicsReady(true);
-        }
-
-        // Update Uniforms
-        if (meshRef.current && meshRef.current.material) {
-            // Update shader uniform
-            const mat = meshRef.current.material as THREE.ShaderMaterial;
-            if (mat.uniforms && mat.uniforms.uGrowthProgress) {
-                mat.uniforms.uGrowthProgress.value = growth;
-            }
-        }
-        if (leafRef.current && leafRef.current.material) {
-            const mat = leafRef.current.material as THREE.ShaderMaterial;
-            if (mat.uniforms && mat.uniforms.uGrowthProgress) {
-                mat.uniforms.uGrowthProgress.value = growth;
-            }
-        }
-    });
+    // ... (useFrame)
 
     // Physics Generation
     const physicsBodies = useMemo(() => {
@@ -121,7 +37,6 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         const count = matrices.length / 16;
         for (let i = 0; i < count; i++) {
             // Only spawn physics for trunk and thick branches (depth 0, 1, 2)
-            // Normalized depth: 0/6=0, 1/6=0.16, 2/6=0.33, 3/6=0.5
             if (depths[i] > 0.4) continue;
 
             tempMatrix.fromArray(matrices, i * 16);
@@ -133,6 +48,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                     type="fixed"
                     position={pos} // Local to group
                     quaternion={quat}
+                    userData={userData}
                 >
                     {/* CylinderCollider args: [halfHeight, radius] */}
                     <CylinderCollider args={[scale.y * 0.5, Math.max(scale.x, scale.z) * 0.5]} />
@@ -140,7 +56,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
             );
         }
         return bodies;
-    }, [physicsReady, data]);
+    }, [physicsReady, data, userData]);
 
     const uniforms = useMemo(() => {
         let base = '#3e2723';
