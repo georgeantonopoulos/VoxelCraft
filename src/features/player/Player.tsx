@@ -26,7 +26,27 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     if (!body.current) return;
 
     const pos = body.current.translation();
-    window.dispatchEvent(new CustomEvent('player-moved', { detail: { x: pos.x, y: pos.y, z: pos.z } }));
+
+    // Calculate rotation from forward vector to avoid Euler order issues
+    const dir = new THREE.Vector3();
+    state.camera.getWorldDirection(dir);
+    // We want the angle of the "Backward" vector because Canvas +Y is Down (South-ish)
+    // and we want Forward to be Up.
+    // atan2(y, x) -> atan2(-dir.x, -dir.z)
+    // This gives us the rotation needed to align Forward with Up (-Y in CSS? No, CSS 0 is Right)
+    // Let's stick to the logic: 
+    // North (0,0,-1) -> atan2(0, 1) = 0. Map North is Up. Correct.
+    // East (1,0,0) -> atan2(-1, 0) = -PI/2. Map East (Right) rotates -90 to Top. Correct.
+    const rotation = Math.atan2(-dir.x, -dir.z);
+
+    window.dispatchEvent(new CustomEvent('player-moved', {
+      detail: {
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        rotation: rotation
+      }
+    }));
 
     const { forward, backward, left, right, jump, shift } = getKeys();
     // REMOVED: The Flora Placement logic that was conflicting
