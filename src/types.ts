@@ -57,10 +57,13 @@ export interface MeshData {
   positions: Float32Array;
   indices: Uint32Array;
   normals: Float32Array;
-  materialIndices: Uint8Array; // 4 component indices
-  materialWeights: Float32Array; // 4 component weights
-  wetness: Float32Array; // Attribute for wetness
-  mossiness: Float32Array; // Attribute for mossiness
+
+  // Optimized material attributes (replaces matWeightsA-D)
+  matIndices: Uint8Array; // 4 indices per vertex
+  matWeights: Float32Array; // 4 weights per vertex
+
+  wetness: Float32Array;
+  mossiness: Float32Array;
 
   // Water Mesh Data
   waterPositions: Float32Array;
@@ -87,18 +90,28 @@ export interface ChunkState {
 
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
-  meshMaterialIndices: Uint8Array;
-  meshMaterialWeights: Float32Array;
+
+  // Optimized material attributes
+  meshMatIndices?: Uint8Array;
+  meshMatWeights?: Float32Array;
+
+  // Legacy fallbacks (optional safety nets)
+  meshMatWeightsA?: Float32Array;
+  meshMatWeightsB?: Float32Array;
+  meshMatWeightsC?: Float32Array;
+  meshMatWeightsD?: Float32Array;
+
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
 
+  meshWaterPositions: Float32Array;
+  meshWaterIndices: Uint32Array;
+  meshWaterNormals: Float32Array;
+
+  // Vegetation arrays
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
   rootHollowPositions?: Float32Array;
   vegetationData?: Record<number, Float32Array>;
-
-  meshWaterPositions: Float32Array;
-  meshWaterIndices: Uint32Array;
-  meshWaterNormals: Float32Array;
 }

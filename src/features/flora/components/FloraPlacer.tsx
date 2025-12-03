@@ -1,48 +1,26 @@
-import React, { useRef, useEffect, useLayoutEffect } from 'react';
-import { useThree, useFrame } from '@react-three/fiber';
+import React, { useRef, useEffect, useMemo } from 'react';
+import { useThree } from '@react-three/fiber';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore } from '@state/WorldStore';
-import { Vector2, Vector3, Object3D } from 'three';
-import { FloraManager } from '../logic/FloraManager';
+import { Vector2, Vector3, Object3D, Mesh } from 'three';
+import { LuminaFlora } from '@features/flora/components/LuminaFlora';
 
 export const FloraPlacer: React.FC = () => {
     const { camera, scene, raycaster } = useThree();
     const removeFloraFromInventory = useGameStore(s => s.removeFlora);
     const addEntity = useWorldStore(s => s.addEntity);
-
-    // We do NOT subscribe to the store state here for rendering.
-    // We use a ref to track if we need to update the manager.
-    // Actually, we can subscribe to the store via API and update Manager directly.
-
-    useLayoutEffect(() => {
-        const manager = FloraManager.getInstance();
-        manager.init(scene);
-
-        // Initial sync
-        manager.updateFlora(useWorldStore.getState().entities);
-
-        // Subscribe to store changes
-        const unsub = useWorldStore.subscribe((state) => {
-            manager.updateFlora(state.entities);
-        });
-
-        return () => {
-            unsub();
-            manager.dispose();
-        };
-    }, [scene]);
-
-
+    const floraEntities = useWorldStore(s => s.entities);
+    
+    // Convert to array only when necessary
+    const floras = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'FLORA'), [floraEntities]);
     const lastPlaceTime = useRef(0);
-    const terrainTargets = useRef<Object3D[]>([]);
 
     useEffect(() => {
-        /**
-         * Returns true if the object or any parent is tagged as terrain.
-         */
+        // Helper: Check if hit object is valid terrain
         const isTerrain = (obj: Object3D | null): boolean => {
             let current: Object3D | null = obj;
             while (current) {
+                // Check userData on RigidBody (Group) or Mesh
                 if (current.userData?.type === 'terrain') return true;
                 current = current.parent;
             }
@@ -56,47 +34,54 @@ export const FloraPlacer: React.FC = () => {
                 const now = performance.now();
                 if (now - lastPlaceTime.current < 200) return; // Debounce
 
+                // 1. Setup Raycaster
                 raycaster.setFromCamera(new Vector2(0, 0), camera);
-                // Limit raycast to terrain meshes (ancestor-aware) to reduce work without breaking hits
-                terrainTargets.current = [];
-                scene.traverse(obj => {
-                    if ((obj as any).isMesh && isTerrain(obj)) {
-                        terrainTargets.current.push(obj);
-                    }
-                });
+                raycaster.far = 32;
+                
+                // CRITICAL OPTIMIZATION:
+                // Since we added 'computeBoundsTree' to ChunkMesh, we can use 
+                // 'firstHitOnly' via the accelerated raycast which is O(log n).
+                // No need to manually filter 'terrainTargets'.
+                // Just raycast against the scene and filter the result.
+                (raycaster as any).firstHitOnly = true; 
+                
+                const intersects = raycaster.intersectObjects(scene.children, true);
 
-                scene.updateMatrixWorld();
-                raycaster.far = 24;
-                const intersects = terrainTargets.current.length > 0
-                    ? raycaster.intersectObjects(terrainTargets.current, false)
-                    : raycaster.intersectObjects(scene.children, true);
-
-                // Filter for terrain
+                // 2. Find first valid terrain hit
                 const terrainHit = intersects.find(hit => isTerrain(hit.object));
 
                 if (terrainHit) {
                     const normal = terrainHit.face?.normal || new Vector3(0, 1, 0);
-                    // Place slightly off surface
                     const pos = terrainHit.point.clone().add(normal.multiplyScalar(0.5));
 
-                    const id = Math.random().toString(36).substr(2, 9);
-
                     addEntity({
-                        id,
+                        id: Math.random().toString(36).substr(2, 9),
                         type: 'FLORA',
                         position: pos,
-                        bodyRef: React.createRef(), // Ref not really used by Manager but kept for compatibility
+                        bodyRef: React.createRef(),
                     });
 
                     removeFloraFromInventory();
                     lastPlaceTime.current = now;
                 }
+                
+                (raycaster as any).firstHitOnly = false; // Reset
             }
         };
         window.addEventListener('keydown', handleDown);
         return () => window.removeEventListener('keydown', handleDown);
     }, [camera, scene, raycaster, addEntity, removeFloraFromInventory]);
 
-    // No rendering of <LuminaFlora> components anymore!
-    return null;
+    return (
+        <>
+            {floras.map(flora => (
+                <LuminaFlora
+                    key={flora.id}
+                    id={flora.id}
+                    position={[flora.position.x, flora.position.y, flora.position.z]}
+                    bodyRef={flora.bodyRef}
+                />
+            ))}
+        </>
+    );
 };

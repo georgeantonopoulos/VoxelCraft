@@ -368,8 +368,8 @@ export function generateMesh(
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
     normals: new Float32Array(tNorms),
-    materialIndices: new Uint8Array(tMatIndices), // Output correct type
-    materialWeights: new Float32Array(tMatWeights), // Output correct type
+    matIndices: new Uint8Array(tMatIndices), // Output correct type
+    matWeights: new Float32Array(tMatWeights), // Output correct type
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     waterPositions: new Float32Array(0),

@@ -132,8 +132,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMaterialIndices: mesh.materialIndices, // UPDATED
-                meshMaterialWeights: mesh.materialWeights, // UPDATED
+                meshMatIndices: mesh.matIndices, // Optimized attributes
+                meshMatWeights: mesh.matWeights, // Optimized attributes
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -153,8 +153,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions.buffer,
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.materialIndices.buffer, // UPDATED
-                mesh.materialWeights.buffer, // UPDATED
+                mesh.matIndices.buffer, // Optimized attributes
+                mesh.matWeights.buffer, // Optimized attributes
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
@@ -173,8 +173,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 version,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMaterialIndices: mesh.materialIndices, // UPDATED
-                meshMaterialWeights: mesh.materialWeights, // UPDATED
+                meshMatIndices: mesh.matIndices, // Optimized attributes
+                meshMatWeights: mesh.matWeights, // Optimized attributes
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -186,8 +186,8 @@ ctx.onmessage = async (e: MessageEvent) => {
             ctx.postMessage({ type: 'REMESHED', payload: response }, [
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.materialIndices.buffer, // UPDATED
-                mesh.materialWeights.buffer, // UPDATED
+                mesh.matIndices.buffer, // Optimized attributes
+                mesh.matWeights.buffer, // Optimized attributes
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
