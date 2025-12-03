@@ -9,6 +9,7 @@ import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
+import { LuminaLayer } from './LuminaLayer';
 
 
 
@@ -80,12 +81,15 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
         <VegetationLayer data={chunk.vegetationData} />
       )}
 
+      {chunk.treePositions && chunk.treePositions.length > 0 && (
+        <TreeLayer data={chunk.treePositions} />
+      )}
+
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <TreeLayer data={chunk.floraPositions} />
+        <LuminaLayer data={chunk.floraPositions} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}
     </group>
   );
 });
-

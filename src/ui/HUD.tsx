@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
+import { Vector3 } from 'three';
 import { useInventoryStore as useGameStore } from '@/state/InventoryStore';
 import { useWorldStore } from '@/state/WorldStore';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
@@ -27,6 +28,7 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
   // Get flora entities to display
   const floraEntities = useWorldStore(s => s.entities);
+  const getFloraHotspotsNearby = useWorldStore(s => s.getFloraHotspotsNearby);
   // We need a ref to access the latest entities inside the effect without re-triggering it constantly
   // However, since we redraw every few frames, we can just read from the store or use a ref.
   // Using the hook directly causes re-renders when entities change, which is fine.
@@ -42,6 +44,11 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
       return Math.abs(dx) < range && Math.abs(dz) < range;
     });
   }, [floraEntities, px, pz]);
+
+  const visibleHotspots = useMemo(() => {
+    const range = (MAP_SIZE / 2) * MAP_SCALE + 20; // Keep buffer consistent with entities
+    return getFloraHotspotsNearby(new Vector3(px, 0, pz), range);
+  }, [getFloraHotspotsNearby, px, pz]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -88,18 +95,36 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
     ctx.putImageData(imgData, 0, 0);
 
-    // Draw Flora Indicators
-    // Blue pulsating circles
+    // Draw Flora Hotspots (pre-pickup spawn points from terrain generation)
     const time = Date.now() / 1000;
     const pulse = (Math.sin(time * 5) * 0.5 + 0.5); // 0 to 1
-    const radius = 2 + pulse * 2; // 2 to 4 pixels
+    const hotspotRadius = 3 + pulse * 3; // Larger to signal area of interest
 
-    ctx.fillStyle = '#00FFFF'; // Cyan
+    ctx.fillStyle = '#38bdf8'; // Bright blue
+    ctx.globalAlpha = 0.45 + pulse * 0.35; // Pulse opacity
+
+    visibleHotspots.forEach((spot) => {
+      // Convert world pos to map pos
+      const mapX = cx + (spot.x - px) / MAP_SCALE;
+      const mapY = cy + (spot.z - pz) / MAP_SCALE;
+
+      // Gentle jitter to avoid laser accuracy (consistent per coordinate)
+      const jitterSeed = spot.x * 0.25 + spot.z * 0.75;
+      const offsetX = Math.sin(jitterSeed) * 6;
+      const offsetY = Math.cos(jitterSeed) * 6;
+
+      ctx.beginPath();
+      ctx.arc(mapX + offsetX, mapY + offsetY, hotspotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Draw placed/active flora entities (player-facing objects)
+    const entityRadius = 2 + pulse * 2; // 2 to 4 pixels
+
+    ctx.fillStyle = '#67e8f9'; // Cyan
     ctx.globalAlpha = 0.6 + pulse * 0.4; // Pulse opacity
 
     visibleFlora.forEach(flora => {
-      // Convert world pos to map pos
-      // mapX = cx + (worldX - px) / MAP_SCALE
       const mapX = cx + (flora.position.x - px) / MAP_SCALE;
       const mapY = cy + (flora.position.z - pz) / MAP_SCALE;
 
@@ -110,13 +135,13 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
       const offsetY = (Math.cos(hash) * 10);
 
       ctx.beginPath();
-      ctx.arc(mapX + offsetX, mapY + offsetY, radius, 0, Math.PI * 2);
+      ctx.arc(mapX + offsetX, mapY + offsetY, entityRadius, 0, Math.PI * 2);
       ctx.fill();
     });
 
     ctx.globalAlpha = 1.0;
 
-  }, [px, pz, visibleFlora]); // Re-run when player moves or flora changes
+  }, [px, pz, visibleFlora, visibleHotspots]); // Re-run when player moves or flora changes
 
   return (
     <div className="relative rounded-full border-4 border-slate-800/50 shadow-2xl overflow-hidden bg-slate-900 w-32 h-32 flex items-center justify-center">

@@ -34,7 +34,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             }
 
             // 2. Generate with mods
-            const { density, material, metadata, floraPositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
+            const { density, material, metadata, floraPositions, treePositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
             // --- AMBIENT VEGETATION GENERATION ---
             const vegetationBuckets: Record<number, number[]> = {};
@@ -160,6 +160,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 metadata,
                 vegetationData,
                 floraPositions,
+                treePositions,
                 rootHollowPositions,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
@@ -182,6 +183,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 metadata.wetness.buffer,
                 metadata.mossiness.buffer,
                 floraPositions.buffer,
+                treePositions.buffer,
                 rootHollowPositions.buffer,
                 mesh.positions.buffer,
                 mesh.indices.buffer,

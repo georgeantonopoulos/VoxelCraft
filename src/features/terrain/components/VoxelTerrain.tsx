@@ -7,7 +7,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
-import { useWorldStore } from '@state/WorldStore';
+import { useWorldStore, FloraHotspot } from '@state/WorldStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
@@ -73,6 +73,30 @@ const rayHitsFlora = (
   }
 
   return closestId;
+};
+
+/**
+ * Convert chunk-local flora positions into world-space hotspots for UI overlays.
+ */
+const buildFloraHotspots = (
+  positions: Float32Array | undefined,
+  cx: number,
+  cz: number
+): FloraHotspot[] => {
+  if (!positions || positions.length === 0) return [];
+
+  const originX = cx * CHUNK_SIZE_XZ;
+  const originZ = cz * CHUNK_SIZE_XZ;
+  const hotspots: FloraHotspot[] = [];
+
+  for (let i = 0; i < positions.length; i += 4) {
+    hotspots.push({
+      x: positions[i] + originX,
+      z: positions[i + 2] + originZ
+    });
+  }
+
+  return hotspots;
 };
 
 const Particles = ({ active, position, color }: { active: boolean; position: THREE.Vector3; color: string }) => {
@@ -197,12 +221,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, rootHollowPositions } = payload;
+        const { key, metadata, material, floraPositions, treePositions, rootHollowPositions } = payload;
         pendingChunks.current.delete(key);
 
         // Log flora positions for debugging
         if (floraPositions && floraPositions.length > 0) {
-          console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 3, 'flora positions');
+          console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 4, 'lumina flora positions');
         }
 
         // Check if metadata exists before initializing
@@ -214,9 +238,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           console.warn('[VoxelTerrain] Received chunk without metadata', key);
         }
 
+        useWorldStore.getState().setFloraHotspots(
+          key,
+          buildFloraHotspots(floraPositions, payload.cx, payload.cz)
+        );
+
         const newChunk: ChunkState = {
           ...payload,
-          floraPositions, // Persist flora positions
+          floraPositions, // Lumina flora (for hotspots)
+          treePositions,  // Surface trees
           rootHollowPositions, // Persist root hollow positions
           terrainVersion: 0,
           visualVersion: 0
@@ -301,6 +331,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     Object.keys(newChunks).forEach(key => {
       if (!neededKeys.has(key)) {
         simulationManager.removeChunk(key);
+        useWorldStore.getState().clearFloraHotspots(key);
         delete newChunks[key];
         changed = true;
       }
@@ -350,7 +381,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     const ray = new rapier.Ray(origin, direction);
 
-    // 0. CHECK FOR FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
+  // 0. CHECK FOR PLACED FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
     if (action === 'DIG') {
       const floraId = rayHitsFlora(origin, direction, maxRayDistance);
       if (floraId) {
@@ -381,6 +412,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
         ];
 
         let anyFloraHit = false;
+        let anyLuminaHit = false;
 
         for (const key of checkKeys) {
           const chunk = chunksRef.current[key];
@@ -394,9 +426,58 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           const dist = origin.distanceTo(impactPoint);
           const digRadius = (dist < 3.0) ? 1.5 : DIG_RADIUS;
 
-          // 1. Check Trees
+          // 1. Check Lumina Flora (generated caverns) via chunk data (no physics bodies)
           if (chunk.floraPositions) {
             const positions = chunk.floraPositions;
+            const hitIndices: number[] = [];
+
+            for (let i = 0; i < positions.length; i += 4) {
+              const x = positions[i] + chunkOriginX;
+              const y = positions[i + 1];
+              const z = positions[i + 2] + chunkOriginZ;
+
+              const dx = impactPoint.x - x;
+              const dz = impactPoint.z - z;
+              const dy = impactPoint.y - y;
+
+              // Lumina bulbs are small; allow a bit more Y tolerance
+              const distSq = dx * dx + dz * dz + (dy > 0 && dy < 2.0 ? 0 : dy * dy);
+              if (distSq < (digRadius + 0.6) ** 2) {
+                hitIndices.push(i);
+              }
+            }
+
+            if (hitIndices.length > 0) {
+              anyFloraHit = true;
+              anyLuminaHit = true;
+
+              const newCount = (positions.length / 4) - hitIndices.length;
+              const newPositions = new Float32Array(newCount * 4);
+              let destIdx = 0;
+              let currentHitIdx = 0;
+              hitIndices.sort((a, b) => a - b);
+
+              for (let i = 0; i < positions.length; i += 4) {
+                if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
+                  currentHitIdx++;
+                  continue;
+                }
+                newPositions[destIdx] = positions[i];
+                newPositions[destIdx + 1] = positions[i + 1];
+                newPositions[destIdx + 2] = positions[i + 2];
+                newPositions[destIdx + 3] = positions[i + 3];
+                destIdx += 4;
+              }
+
+              const updatedChunk = { ...chunk, floraPositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+              chunksRef.current[key] = updatedChunk;
+              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+            }
+          }
+
+          // 2. Check Trees
+          if (chunk.treePositions) {
+            const positions = chunk.treePositions;
             const hitIndices: number[] = [];
 
             for (let i = 0; i < positions.length; i += 4) {
@@ -450,7 +531,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 destIdx += 4;
               }
 
-              const updatedChunk = { ...chunk, floraPositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+              const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
               chunksRef.current[key] = updatedChunk;
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
             }
@@ -521,6 +602,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
             }
           }
+        }
+
+        if (anyLuminaHit) {
+          useGameStore.getState().harvestFlora();
         }
 
         if (anyFloraHit) {

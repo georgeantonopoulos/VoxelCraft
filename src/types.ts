@@ -98,6 +98,7 @@ export interface ChunkState {
   meshMossiness: Float32Array;
 
   floraPositions?: Float32Array;
+  treePositions?: Float32Array;
   rootHollowPositions?: Float32Array;
   vegetationData?: Record<number, Float32Array>;
 
