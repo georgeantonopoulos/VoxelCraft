@@ -57,10 +57,8 @@ export interface MeshData {
   positions: Float32Array;
   indices: Uint32Array;
   normals: Float32Array;
-  matWeightsA: Float32Array; // Materials 0-3
-  matWeightsB: Float32Array; // Materials 4-7
-  matWeightsC: Float32Array; // Materials 8-11
-  matWeightsD: Float32Array; // Materials 12-15
+  materialIndices: Uint8Array; // 4 component indices
+  materialWeights: Float32Array; // 4 component weights
   wetness: Float32Array; // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
 
@@ -89,10 +87,8 @@ export interface ChunkState {
 
   meshPositions: Float32Array;
   meshIndices: Uint32Array;
-  meshMatWeightsA: Float32Array;
-  meshMatWeightsB: Float32Array;
-  meshMatWeightsC: Float32Array;
-  meshMatWeightsD: Float32Array;
+  meshMaterialIndices: Uint8Array;
+  meshMaterialWeights: Float32Array;
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;

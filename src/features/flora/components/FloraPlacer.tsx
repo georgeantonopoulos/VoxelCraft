@@ -1,17 +1,38 @@
-import React, { useRef, useEffect, useMemo } from 'react';
-import { useThree } from '@react-three/fiber';
+import React, { useRef, useEffect, useLayoutEffect } from 'react';
+import { useThree, useFrame } from '@react-three/fiber';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore } from '@state/WorldStore';
 import { Vector2, Vector3, Object3D } from 'three';
-import { LuminaFlora } from '@features/flora/components/LuminaFlora';
+import { FloraManager } from '../logic/FloraManager';
 
 export const FloraPlacer: React.FC = () => {
     const { camera, scene, raycaster } = useThree();
     const removeFloraFromInventory = useGameStore(s => s.removeFlora);
-
     const addEntity = useWorldStore(s => s.addEntity);
-    const floraEntities = useWorldStore(s => s.entities);
-    const floras = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'FLORA'), [floraEntities]);
+
+    // We do NOT subscribe to the store state here for rendering.
+    // We use a ref to track if we need to update the manager.
+    // Actually, we can subscribe to the store via API and update Manager directly.
+
+    useLayoutEffect(() => {
+        const manager = FloraManager.getInstance();
+        manager.init(scene);
+
+        // Initial sync
+        manager.updateFlora(useWorldStore.getState().entities);
+
+        // Subscribe to store changes
+        const unsub = useWorldStore.subscribe((state) => {
+            manager.updateFlora(state.entities);
+        });
+
+        return () => {
+            unsub();
+            manager.dispose();
+        };
+    }, [scene]);
+
+
     const lastPlaceTime = useRef(0);
     const terrainTargets = useRef<Object3D[]>([]);
 
@@ -58,15 +79,13 @@ export const FloraPlacer: React.FC = () => {
                     // Place slightly off surface
                     const pos = terrainHit.point.clone().add(normal.multiplyScalar(0.5));
 
-                    // Create a stable ref for the new flora
-                    const bodyRef = React.createRef<any>();
                     const id = Math.random().toString(36).substr(2, 9);
 
                     addEntity({
                         id,
                         type: 'FLORA',
                         position: pos,
-                        bodyRef,
+                        bodyRef: React.createRef(), // Ref not really used by Manager but kept for compatibility
                     });
 
                     removeFloraFromInventory();
@@ -78,16 +97,6 @@ export const FloraPlacer: React.FC = () => {
         return () => window.removeEventListener('keydown', handleDown);
     }, [camera, scene, raycaster, addEntity, removeFloraFromInventory]);
 
-    return (
-        <>
-            {floras.map(flora => (
-                <LuminaFlora
-                    key={flora.id}
-                    id={flora.id}
-                    position={[flora.position.x, flora.position.y, flora.position.z]}
-                    bodyRef={flora.bodyRef}
-                />
-            ))}
-        </>
-    );
+    // No rendering of <LuminaFlora> components anymore!
+    return null;
 };

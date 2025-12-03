@@ -9,11 +9,6 @@ import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constan
 
 const ctx: Worker = self as any;
 
-// Instantiate DB connection implicitly by importing it (Singleton in WorldDB.ts)
-// The user requested: "Ensure you instantiate WorldDB outside the onmessage handler."
-// Since `worldDB` is exported as a const instance in `WorldDB.ts`, it is instantiated on module load.
-// We don't need to do anything extra here, just usage is fine.
-
 ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
 
@@ -24,13 +19,11 @@ ctx.onmessage = async (e: MessageEvent) => {
             console.log('[terrain.worker] GENERATE start', cx, cz);
 
             // 1. Fetch persistent modifications (Async)
-            // This happens BEFORE generation so we can pass them in
             let modifications: any[] = [];
             try {
                 modifications = await getChunkModifications(cx, cz);
             } catch (err) {
                 console.error('[terrain.worker] DB Read Error:', err);
-                // Continue generation even if DB fails, to avoid game crash
             }
 
             // 2. Generate with mods
@@ -38,12 +31,6 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             // --- AMBIENT VEGETATION GENERATION ---
             const vegetationBuckets: Record<number, number[]> = {};
-
-            // We iterate strictly within the CHUNK bounds (excluding padding)
-            // But we access the padded density array.
-            // Padded size is TOTAL_SIZE_XZ (XZ + 2*PAD).
-            // TerrainService generates [TOTAL_SIZE_XZ, TOTAL_SIZE_Y, TOTAL_SIZE_XZ].
-            // We want world coordinates to map biomes.
 
             for (let z = 0; z < CHUNK_SIZE_XZ; z++) {
                 for (let x = 0; x < CHUNK_SIZE_XZ; x++) {
@@ -53,20 +40,14 @@ ctx.onmessage = async (e: MessageEvent) => {
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
                     const biomeDensity = getBiomeVegetationDensity(biome);
 
-                    // 1. Density Noise (Smaller, more frequent patches)
-                    // Scale 0.15 = ~6-7 blocks per cycle (much smaller patches)
                     const densityNoise = noise(worldX * 0.15, 0, worldZ * 0.15);
                     const normalizedDensity = (densityNoise + 1) * 0.5;
-
-                    // Jitter to break edges
                     const jitter = noise(worldX * 0.8, 0, worldZ * 0.8) * 0.3;
 
                     const finalDensity = normalizedDensity + jitter;
                     const threshold = 1.0 - biomeDensity;
 
                     if (finalDensity > threshold) {
-
-                        // Simple Raycast from top down to find surface
                         let surfaceY = -1;
                         const pad = 2;
                         const dx = x + pad;
@@ -74,7 +55,6 @@ ctx.onmessage = async (e: MessageEvent) => {
                         const sizeX = TOTAL_SIZE_XZ;
                         const sizeY = TOTAL_SIZE_Y;
 
-                        // Scan down
                         for (let y = sizeY - 2; y >= 0; y--) {
                             const idx = dx + y * sizeX + dz * sizeX * sizeY;
                             const d = density[idx];
@@ -92,16 +72,11 @@ ctx.onmessage = async (e: MessageEvent) => {
                         const meshYOffset = -35;
                         const worldY = (surfaceY - pad) + meshYOffset;
 
-                        // Skip if underwater or too low
                         if (surfaceY > 0 && worldY > 11) {
-
-                            // 2. Clumping Logic
-                            // If density is very high, place multiple plants
                             let numPlants = 1;
-                            if (finalDensity > threshold + 0.4) numPlants = 3; // Dense clump
-                            else if (finalDensity > threshold + 0.2) numPlants = 2; // Moderate clump
+                            if (finalDensity > threshold + 0.4) numPlants = 3;
+                            else if (finalDensity > threshold + 0.2) numPlants = 2;
 
-                            // 3. Type Noise
                             const typeNoise = noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100);
                             const normalizedType = (typeNoise + 1) * 0.5;
                             const vegType = getVegetationForBiome(biome, normalizedType);
@@ -110,17 +85,11 @@ ctx.onmessage = async (e: MessageEvent) => {
                                 if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
 
                                 for (let i = 0; i < numPlants; i++) {
-                                    // Unique hash for each sub-plant
                                     const seed = (worldX * 31 + worldZ * 17 + i * 13);
                                     const r1 = Math.sin(seed) * 43758.5453;
                                     const r2 = Math.cos(seed) * 43758.5453;
-
-                                    // Random offset -0.4 to 0.4 (stay roughly within block but spread out)
                                     const offX = (r1 - Math.floor(r1) - 0.5) * 0.8;
                                     const offZ = (r2 - Math.floor(r2) - 0.5) * 0.8;
-
-                                    // Scale variation
-                                    // We don't store scale here, but we could jitter position slightly more to avoid Z-fighting
 
                                     vegetationBuckets[vegType].push(
                                         x + offX,
@@ -134,7 +103,6 @@ ctx.onmessage = async (e: MessageEvent) => {
                 }
             }
 
-            // Flatten to Float32Arrays and prepare transfer list
             const vegetationData: Record<number, Float32Array> = {};
             const vegetationBuffers: ArrayBuffer[] = [];
 
@@ -164,10 +132,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMatWeightsA: mesh.matWeightsA,
-                meshMatWeightsB: mesh.matWeightsB,
-                meshMatWeightsC: mesh.matWeightsC,
-                meshMatWeightsD: mesh.matWeightsD,
+                meshMaterialIndices: mesh.materialIndices, // UPDATED
+                meshMaterialWeights: mesh.materialWeights, // UPDATED
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -187,10 +153,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 rootHollowPositions.buffer,
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.matWeightsA.buffer,
-                mesh.matWeightsB.buffer,
-                mesh.matWeightsC.buffer,
-                mesh.matWeightsD.buffer,
+                mesh.materialIndices.buffer, // UPDATED
+                mesh.materialWeights.buffer, // UPDATED
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
@@ -201,9 +165,7 @@ ctx.onmessage = async (e: MessageEvent) => {
         } else if (type === 'REMESH') {
             const { density, material, key, cx, cz, version } = payload;
 
-            // console.log('[terrain.worker] REMESH start', key, 'v', version);
             const mesh = generateMesh(density, material) as MeshData;
-            // console.log('[terrain.worker] REMESH done', key);
 
             const response = {
                 key, cx, cz,
@@ -211,10 +173,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 version,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
-                meshMatWeightsA: mesh.matWeightsA,
-                meshMatWeightsB: mesh.matWeightsB,
-                meshMatWeightsC: mesh.matWeightsC,
-                meshMatWeightsD: mesh.matWeightsD,
+                meshMaterialIndices: mesh.materialIndices, // UPDATED
+                meshMaterialWeights: mesh.materialWeights, // UPDATED
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
@@ -226,10 +186,8 @@ ctx.onmessage = async (e: MessageEvent) => {
             ctx.postMessage({ type: 'REMESHED', payload: response }, [
                 mesh.positions.buffer,
                 mesh.indices.buffer,
-                mesh.matWeightsA.buffer,
-                mesh.matWeightsB.buffer,
-                mesh.matWeightsC.buffer,
-                mesh.matWeightsD.buffer,
+                mesh.materialIndices.buffer, // UPDATED
+                mesh.materialWeights.buffer, // UPDATED
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,

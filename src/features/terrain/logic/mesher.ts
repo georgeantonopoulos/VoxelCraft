@@ -71,10 +71,11 @@ export function generateMesh(
   // --- Buffers ---
   const tVerts: number[] = [];
   const tInds: number[] = [];
-  const tWa: number[] = [];
-  const tWb: number[] = [];
-  const tWc: number[] = [];
-  const tWd: number[] = [];
+
+  // New Attributes
+  const tMatIndices: number[] = []; // uvec4 (flattened)
+  const tMatWeights: number[] = []; // vec4 (flattened)
+
   const tNorms: number[] = [];
   const tWets: number[] = [];
   const tMoss: number[] = [];
@@ -120,21 +121,11 @@ export function generateMesh(
 
           const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
             if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
-              // 1. Safe Denominator: Prevent Infinity/NaN
-              // Preserve sign to keep vertex on correct side of edge
               let denominator = valB - valA;
               if (Math.abs(denominator) < 0.00001) {
-                // Preserve sign to keep vertex on correct side of edge
                 denominator = (Math.sign(denominator) || 1) * 0.00001;
               }
-
-              // 2. Calculate mu (position along edge 0..1)
               const mu = (ISO_LEVEL - valA) / denominator;
-
-              // 3. AAA FIX: Soft Clamp.
-              // Instead of 0.0/1.0, use a tiny buffer.
-              // This prevents vertices from collapsing into the same coordinate,
-              // preserving the triangle's "direction" for the normal calculator.
               const clampedMu = Math.max(0.001, Math.min(0.999, mu));
 
               if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
@@ -171,7 +162,7 @@ export function generateMesh(
             const centerY = Math.round(avgY);
             const centerZ = Math.round(avgZ);
 
-            // Trilinear Gradient Normal
+            // Normal Calculation
             const fx = avgX - x;
             const fy = avgY - y;
             const fz = avgZ - z;
@@ -203,13 +194,10 @@ export function generateMesh(
 
             const lenSq = nx * nx + ny * ny + nz * nz;
 
-            // AAA FIX: Check squared length to avoid Sqrt on 0, and handle NaN
             if (Number.isFinite(lenSq) && lenSq >= MIN_NORMAL_LEN_SQ) {
               const len = Math.sqrt(lenSq);
               tNorms.push(nx / len, ny / len, nz / len);
             } else {
-              // Fallback: sample a clamped central difference across the density field.
-              // Isolated peaks sometimes lack neighbors inside the cell, so we probe the padded grid.
               const sx = clampSampleCoord(centerX, SIZE_X);
               const sy = clampSampleCoord(centerY, SIZE_Y);
               const sz = clampSampleCoord(centerZ, SIZE_Z);
@@ -223,8 +211,6 @@ export function generateMesh(
                 const len = Math.sqrt(fallbackLenSq);
                 tNorms.push(fnx / len, fny / len, fnz / len);
               } else {
-                // Fallback: If normal is still degenerate, point Up.
-                // This prevents black flickers in the shader.
                 tNorms.push(0, 1, 0);
               }
             }
@@ -248,10 +234,9 @@ export function generateMesh(
                   if (val > ISO_LEVEL) {
                     const mat = getMat(material, sx, sy, sz);
                     const channel = resolveChannel(mat);
-                    // AIR and WATER are handled separately (water is a distinct mesh)
                     if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
                       const distSq = dx * dx + dy * dy + dz * dz;
-                      const weight = 1.0 / (distSq + 0.1); // Soft inverse square falloff
+                      const weight = 1.0 / (distSq + 0.1);
                       localWeights[channel] += weight;
                       totalWeight += weight;
                     }
@@ -266,19 +251,51 @@ export function generateMesh(
               }
             }
 
-            if (totalWeight > 0.0001) {
-              for (let i = 0; i < localWeights.length; i++) {
-                localWeights[i] /= totalWeight;
+            // Fallback
+            if (totalWeight <= 0.0001) {
+              const dirtChannel = resolveChannel(MaterialType.DIRT);
+              if (dirtChannel > -1) {
+                 localWeights[dirtChannel] = 1.0;
+                 totalWeight = 1.0;
               }
             } else {
-              const dirtChannel = resolveChannel(MaterialType.DIRT);
-              if (dirtChannel > -1) localWeights[dirtChannel] = 1.0;
+                // Normalize all first
+                for(let i=0; i<16; i++) localWeights[i] /= totalWeight;
             }
 
-            tWa.push(localWeights[0], localWeights[1], localWeights[2], localWeights[3]);
-            tWb.push(localWeights[4], localWeights[5], localWeights[6], localWeights[7]);
-            tWc.push(localWeights[8], localWeights[9], localWeights[10], localWeights[11]);
-            tWd.push(localWeights[12], localWeights[13], localWeights[14], localWeights[15]);
+            // Find Top 4 Weights
+            // Map to objects
+            const weightObjs = [];
+            for(let i=0; i<16; i++) {
+                if (localWeights[i] > 0) weightObjs.push({ id: i, w: localWeights[i] });
+            }
+            // Sort Descending
+            weightObjs.sort((a, b) => b.w - a.w);
+
+            // Take top 4
+            const finalIndices = [0, 0, 0, 0];
+            const finalWeights = [0, 0, 0, 0];
+            let sumTop4 = 0;
+
+            for(let i=0; i<4 && i<weightObjs.length; i++) {
+                finalIndices[i] = weightObjs[i].id;
+                finalWeights[i] = weightObjs[i].w;
+                sumTop4 += weightObjs[i].w;
+            }
+
+            // Renormalize if sum > 0
+            if (sumTop4 > 0.0001) {
+                for(let i=0; i<4; i++) finalWeights[i] /= sumTop4;
+            } else {
+                // Should not happen due to fallback, but safe guard
+                finalIndices[0] = 2; // Stone
+                finalWeights[0] = 1.0;
+            }
+
+            // Push to buffers
+            tMatIndices.push(...finalIndices);
+            tMatWeights.push(...finalWeights);
+
             tWets.push(bestWet / 255.0);
             tMoss.push(bestMoss / 255.0);
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
@@ -351,13 +368,10 @@ export function generateMesh(
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
     normals: new Float32Array(tNorms),
-    matWeightsA: new Float32Array(tWa),
-    matWeightsB: new Float32Array(tWb),
-    matWeightsC: new Float32Array(tWc),
-    matWeightsD: new Float32Array(tWd),
+    materialIndices: new Uint8Array(tMatIndices), // Output correct type
+    materialWeights: new Float32Array(tMatWeights), // Output correct type
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
-    // Return empty arrays for water to satisfy types without generating bad mesh
     waterPositions: new Float32Array(0),
     waterIndices: new Uint32Array(0),
     waterNormals: new Float32Array(0),
