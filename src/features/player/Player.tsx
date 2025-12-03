@@ -4,6 +4,8 @@ import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls } from '@react-three/drei';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
+import { simulationManager } from '@features/flora/logic/SimulationManager';
+import { useWorldStore } from '@state/WorldStore';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
@@ -17,6 +19,39 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const wasJumpPressed = useRef<boolean>(false);
   const spacePressHandled = useRef<boolean>(false);
 
+  // Hypothermia State
+  const [isFreezing, setIsFreezing] = useState(false);
+
+  // HUD Overlay for Freezing
+  useEffect(() => {
+    const hud = document.getElementById('hud-overlay');
+    if (!hud) {
+        const div = document.createElement('div');
+        div.id = 'hud-overlay';
+        div.style.position = 'absolute';
+        div.style.top = '0';
+        div.style.left = '0';
+        div.style.width = '100%';
+        div.style.height = '100%';
+        div.style.pointerEvents = 'none';
+        div.style.transition = 'background-color 0.5s';
+        div.style.zIndex = '10';
+        document.body.appendChild(div);
+    }
+  }, []);
+
+  useEffect(() => {
+    const hud = document.getElementById('hud-overlay');
+    if (hud) {
+        hud.style.backgroundColor = isFreezing ? 'rgba(0, 100, 255, 0.3)' : 'transparent';
+        if (isFreezing) {
+            hud.style.boxShadow = 'inset 0 0 100px rgba(0, 255, 255, 0.5)';
+        } else {
+            hud.style.boxShadow = 'none';
+        }
+    }
+  }, [isFreezing]);
+
   useEffect(() => {
     if (!body.current) return;
     body.current.setGravityScale(isFlying ? 0 : 1, true);
@@ -26,17 +61,19 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     if (!body.current) return;
 
     const pos = body.current.translation();
+    const time = useWorldStore.getState().time; // Assuming time is in store (0-24 or similar)
+    const isNight = time > 18 || time < 6;
+
+    // Check Hypothermia
+    const { wetness } = simulationManager.getMetadataAt(pos.x, pos.y, pos.z);
+
+    // Logic: Night AND Wet > 50%
+    const freezing = isNight && wetness > 0.5;
+    if (freezing !== isFreezing) setIsFreezing(freezing);
 
     // Calculate rotation from forward vector to avoid Euler order issues
     const dir = new THREE.Vector3();
     state.camera.getWorldDirection(dir);
-    // We want the angle of the "Backward" vector because Canvas +Y is Down (South-ish)
-    // and we want Forward to be Up.
-    // atan2(y, x) -> atan2(-dir.x, -dir.z)
-    // This gives us the rotation needed to align Forward with Up (-Y in CSS? No, CSS 0 is Right)
-    // Let's stick to the logic: 
-    // North (0,0,-1) -> atan2(0, 1) = 0. Map North is Up. Correct.
-    // East (1,0,0) -> atan2(-1, 0) = -PI/2. Map East (Right) rotates -90 to Top. Correct.
     const rotation = Math.atan2(-dir.x, -dir.z);
 
     window.dispatchEvent(new CustomEvent('player-moved', {
@@ -49,8 +86,6 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     }));
 
     const { forward, backward, left, right, jump, shift } = getKeys();
-    // REMOVED: The Flora Placement logic that was conflicting
-
     const velocity = body.current.linvel();
     const camera = state.camera;
 
@@ -58,7 +93,10 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const sideVector = new THREE.Vector3((left ? 1 : 0) - (right ? 1 : 0), 0, 0);
     const direction = new THREE.Vector3();
 
-    direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(PLAYER_SPEED);
+    // Apply slow if freezing
+    const speed = freezing ? PLAYER_SPEED * 0.5 : PLAYER_SPEED;
+
+    direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(speed);
     direction.applyEuler(camera.rotation);
 
     let yVelocity = velocity.y;

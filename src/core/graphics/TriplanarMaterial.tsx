@@ -3,29 +3,24 @@ import React, { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '@core/memory/sharedResources';
+import { getPaletteTexture } from '@core/graphics/paletteTexture';
 
 const vertexShader = `
-  attribute vec4 aMatWeightsA;
-  attribute vec4 aMatWeightsB;
-  attribute vec4 aMatWeightsC;
-  attribute vec4 aMatWeightsD;
+  attribute vec4 aMaterialIndices;
+  attribute vec4 aMaterialWeights;
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
 
-  varying vec4 vWa;
-  varying vec4 vWb;
-  varying vec4 vWc;
-  varying vec4 vWd;
+  varying vec4 vMatIndices;
+  varying vec4 vMatWeights;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
   void main() {
-    vWa = aMatWeightsA;
-    vWb = aMatWeightsB;
-    vWc = aMatWeightsC;
-    vWd = aMatWeightsD;
+    vMatIndices = aMaterialIndices;
+    vMatWeights = aMaterialWeights;
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     
@@ -39,165 +34,46 @@ const vertexShader = `
 
 const fragmentShader = `
   precision highp float;
+  precision highp sampler2DArray;
   precision highp sampler3D;
 
   uniform sampler3D uNoiseTexture;
-  uniform vec3 uColorStone;
-  uniform vec3 uColorGrass;
-  uniform vec3 uColorDirt;
-  uniform vec3 uColorSand;
-  uniform vec3 uColorSnow;
-  uniform vec3 uColorWater;
-  uniform vec3 uColorClay;
-  uniform vec3 uColorMoss;
-  uniform vec3 uColorBedrock;
-  // New Biomes
-  uniform vec3 uColorRedSand;
-  uniform vec3 uColorTerracotta;
-  uniform vec3 uColorIce;
-  uniform vec3 uColorJungleGrass;
-  uniform vec3 uColorGlowStone;
-  uniform vec3 uColorObsidian;
+  uniform sampler2DArray uMaterialPalette;
 
+  uniform vec3 uColorMoss;
   uniform vec3 uFogColor;
   uniform float uFogNear;
   uniform float uFogFar;
   uniform float uOpacity;
 
-  varying vec4 vWa;
-  varying vec4 vWb;
-  varying vec4 vWc;
-  varying vec4 vWd;
+  varying vec4 vMatIndices;
+  varying vec4 vMatWeights;
   varying float vWetness;
   varying float vMossiness;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
 
-  // --- THE FIX: Safe Normalization ---
-  // Prevents NaNs (flashing) when normals cancel out in sharp valleys
+  // Safe Normalize
   vec3 safeNormalize(vec3 v) {
       float len = length(v);
       if (len < 0.0001) return vec3(0.0, 1.0, 0.0);
       return v / len;
   }
 
-  // Sharp Triplanar Sampler (GLSL 1 Compatible)
+  // Sharp Triplanar Sampler
   vec4 getTriplanarNoise(vec3 normal, float scale) {
       vec3 blend = abs(normal);
       blend = normalize(max(blend, 0.00001));
-      blend = pow(blend, vec3(8.0)); // Keep the sharp blending you liked
+      blend = pow(blend, vec3(8.0));
       blend /= dot(blend, vec3(1.0));
 
       vec3 p = vWorldPosition * scale;
       
-      // Use standard 'texture' which Three.js handles
       vec4 xN = texture(uNoiseTexture, p.zyx);
       vec4 yN = texture(uNoiseTexture, p.xzy + vec3(100.0));
       vec4 zN = texture(uNoiseTexture, p.xyz + vec3(200.0));
 
       return xN * blend.x + yN * blend.y + zN * blend.z;
-  }
-
-  struct MatInfo {
-      vec3 baseCol;
-      float roughness;
-      float noiseFactor;
-  };
-
-  // Channel -> material mapping must match MATERIAL_CHANNELS in mesher.ts
-  MatInfo getMatParams(int channel, vec4 nMid, vec4 nHigh) {
-      vec3 baseCol = uColorStone;
-      float roughness = 0.8;
-      float noiseFactor = 0.0;
-
-      if (channel == 0) { // Air (no visible contribution)
-          baseCol = vec3(0.0);
-      }
-      else if (channel == 1) { // Bedrock
-          baseCol = uColorBedrock;
-          noiseFactor = nMid.r;
-      }
-      else if (channel == 2) { // Stone
-          baseCol = uColorStone;
-          float cracks = nHigh.g;
-          noiseFactor = mix(nMid.r, cracks, 0.5);
-      }
-      else if (channel == 3) { // Dirt
-          baseCol = uColorDirt;
-          noiseFactor = nMid.g;
-      }
-      else if (channel == 4) { // Grass
-          baseCol = uColorGrass;
-          float bladeNoise = nHigh.a;
-          float patchNoise = nMid.r;
-          noiseFactor = mix(bladeNoise, patchNoise, 0.3);
-          baseCol *= vec3(1.0, 1.1, 1.0);
-      }
-      else if (channel == 5) { // Sand
-          baseCol = uColorSand;
-          noiseFactor = nHigh.a;
-      }
-      else if (channel == 6) { // Snow
-          baseCol = uColorSnow;
-          noiseFactor = nMid.r * 0.5 + 0.5;
-      }
-      else if (channel == 7) { // Clay
-          baseCol = uColorClay;
-          noiseFactor = nMid.g;
-      }
-      else if (channel == 8) { // Water (rarely used on terrain mesh)
-          baseCol = uColorWater;
-          roughness = 0.1;
-      }
-      else if (channel == 9) { // Mossy Stone
-          baseCol = uColorMoss;
-          noiseFactor = nMid.r;
-      }
-      else if (channel == 10) { // Red Sand
-          baseCol = uColorRedSand;
-          noiseFactor = nHigh.a;
-      }
-      else if (channel == 11) { // Terracotta
-          baseCol = uColorTerracotta;
-          noiseFactor = nMid.g;
-          roughness = 0.9;
-      }
-      else if (channel == 12) { // Ice
-          baseCol = uColorIce;
-          noiseFactor = nMid.b * 0.5;
-          roughness = 0.1;
-      }
-      else if (channel == 13) { // Jungle Grass
-          baseCol = uColorJungleGrass;
-          noiseFactor = nHigh.a;
-      }
-      else if (channel == 14) { // Glow Stone
-          baseCol = uColorGlowStone;
-          noiseFactor = nMid.r + 0.5;
-      }
-      else if (channel == 15) { // Obsidian
-          baseCol = uColorObsidian;
-          noiseFactor = nHigh.b;
-          roughness = 0.2;
-      }
-
-      return MatInfo(baseCol, roughness, noiseFactor);
-  }
-
-  void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
-    inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float totalW,
-    inout int dominantChannel, inout float dominantWeight) {
-    if (weight > 0.001) {
-      MatInfo m = getMatParams(channel, nMid, nHigh);
-      accColor += m.baseCol * weight;
-      accRoughness += m.roughness * weight;
-      accNoise += m.noiseFactor * weight;
-      totalW += weight;
-      if (weight > dominantWeight) {
-        dominantWeight = weight;
-        dominantChannel = channel;
-      }
-    }
   }
 
   void main() {
@@ -209,36 +85,80 @@ const fragmentShader = `
     float accRoughness = 0.0;
     float accNoise = 0.0;
     float totalW = 0.0;
-    float dominantWeight = -1.0;
-    int dominantChannel = 2; // default to stone
 
-    accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    // Unrolled loop for top 4 materials
+    for(int i = 0; i < 4; i++) {
+        float weight = vMatWeights[i];
+        if (weight > 0.001) {
+            float id = vMatIndices[i];
 
-    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+            // Look up base color from palette (u=0.5, v=0.5, layer=id)
+            // Palette is 1x1 pixels, so UV doesn't matter much but center is safe
+            vec4 baseCol4 = texture(uMaterialPalette, vec3(0.5, 0.5, id));
+            vec3 baseCol = baseCol4.rgb;
 
-    accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+            float roughness = 0.8;
+            float noiseFactor = 0.0;
 
-    accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(15, vWd.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+            // Simplified Material Parameter Logic (Branchless-ish)
+            // We can bake these into the palette alpha or a secondary texture later.
+            // For now, we use ID checks but they are much fewer than before.
+
+            // Logic derived from old getMatParams:
+            // Bedrock(1): noise=nMid.r
+            // Stone(2): noise=mix(nMid.r, nHigh.g, 0.5)
+            // Dirt(3): noise=nMid.g
+            // Grass(4): noise=mix(nHigh.a, nMid.r, 0.3)
+            // Sand(5), RedSand(10), Jungle(13): noise=nHigh.a
+            // Snow(6): noise=nMid.r * 0.5 + 0.5
+            // Clay(7), Terracotta(11): noise=nMid.g
+            // Water(8), Ice(12): roughness=0.1
+            // Moss(9): noise=nMid.r
+            // Glow(14): noise=nMid.r + 0.5
+            // Obsidian(15): noise=nHigh.b, roughness=0.2
+
+            int iID = int(id + 0.5); // Round to nearest int
+
+            if (iID == 1) noiseFactor = nMid.r;
+            else if (iID == 2) noiseFactor = mix(nMid.r, nHigh.g, 0.5);
+            else if (iID == 3) noiseFactor = nMid.g;
+            else if (iID == 4) {
+                noiseFactor = mix(nHigh.a, nMid.r, 0.3);
+                baseCol *= vec3(1.0, 1.1, 1.0); // Keep the tint
+            }
+            else if (iID == 5 || iID == 10 || iID == 13) noiseFactor = nHigh.a;
+            else if (iID == 6) noiseFactor = nMid.r * 0.5 + 0.5;
+            else if (iID == 7 || iID == 11) {
+                noiseFactor = nMid.g;
+                if (iID == 11) roughness = 0.9;
+            }
+            else if (iID == 8) roughness = 0.1;
+            else if (iID == 9) noiseFactor = nMid.r;
+            else if (iID == 12) {
+                noiseFactor = nMid.b * 0.5;
+                roughness = 0.1;
+            }
+            else if (iID == 14) noiseFactor = nMid.r + 0.5;
+            else if (iID == 15) {
+                noiseFactor = nHigh.b;
+                roughness = 0.2;
+            }
+
+            accColor += baseCol * weight;
+            accRoughness += roughness * weight;
+            accNoise += noiseFactor * weight;
+            totalW += weight;
+        }
+    }
 
     if (totalW > 0.0001) {
       accColor /= totalW;
       accRoughness /= totalW;
       accNoise /= totalW;
     } else {
-      accColor = uColorStone;
-      accRoughness = 0.9;
+      // Fallback Stone
+      accColor = texture(uMaterialPalette, vec3(0.5, 0.5, 2.0)).rgb;
+      accRoughness = 0.8;
       accNoise = 0.0;
     }
 
@@ -246,31 +166,26 @@ const fragmentShader = `
     vec3 col = accColor * intensity;
 
     // --- Overlays ---
-    if (vMossiness > 0.1 || dominantChannel == 9) {
+    if (vMossiness > 0.1) {
         vec3 mossColor = uColorMoss;
         float mossNoise = nHigh.g;
         mossColor *= (0.8 + 0.4 * mossNoise);
-        float mossAmount = vMossiness;
-        if (dominantChannel == 9) mossAmount = max(mossAmount, 0.35);
-        float mossMix = smoothstep(0.3, 0.6, mossAmount + mossNoise * 0.2);
+        float mossMix = smoothstep(0.3, 0.6, vMossiness + mossNoise * 0.2);
         col = mix(col, mossColor, mossMix);
     }
 
     col = mix(col, col * 0.5, vWetness * 0.9);
     col = clamp(col, 0.0, 5.0);
 
-    // Apply strong distance fog to blend toward the sky color and hide terrain generation
     float fogDist = length(vWorldPosition - cameraPosition);
     float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
-    fogAmt = pow(fogAmt, 1.1); // slightly sharper transition for stronger fog
-    col = mix(col, uFogColor, fogAmt * 0.9); // stronger fog intensity
+    fogAmt = pow(fogAmt, 1.1);
+    col = mix(col, uFogColor, fogAmt * 0.9);
 
     csm_DiffuseColor = vec4(col, uOpacity);
 
-    // Adjust roughness
     accRoughness -= (nHigh.r * 0.1);
     accRoughness = mix(accRoughness, 0.2, vWetness);
-    if (dominantChannel == 8) accRoughness = 0.1;
     
     csm_Roughness = accRoughness;
     csm_Metalness = 0.0;
@@ -280,11 +195,13 @@ const fragmentShader = `
 export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity?: number }> = ({ opacity = 1 }) => {
   const materialRef = useRef<any>(null);
   const { scene } = useThree();
+  const paletteTexture = useMemo(() => getPaletteTexture(), []);
 
   useFrame(() => {
     if (materialRef.current) {
       const mat = materialRef.current;
       mat.uniforms.uNoiseTexture.value = noiseTexture;
+      mat.uniforms.uMaterialPalette.value = paletteTexture;
       mat.uniforms.uOpacity.value = opacity;
       const isTransparent = opacity < 0.999;
       mat.transparent = isTransparent;
@@ -305,40 +222,22 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
 
   const uniforms = useMemo(() => ({
     uNoiseTexture: { value: noiseTexture },
-    uColorStone: { value: new THREE.Color('#888c8d') },
-    uColorGrass: { value: new THREE.Color('#41a024') },
-    uColorDirt: { value: new THREE.Color('#755339') },
-    uColorSand: { value: new THREE.Color('#ebd89f') },
-    uColorSnow: { value: new THREE.Color('#ffffff') },
-    uColorWater: { value: new THREE.Color('#0099ff') },
-    uColorClay: { value: new THREE.Color('#a67b5b') },
+    uMaterialPalette: { value: paletteTexture },
     uColorMoss: { value: new THREE.Color('#5c8a3c') },
-    uColorBedrock: { value: new THREE.Color('#2a2a2a') },
-
-    // New Colors
-    uColorRedSand: { value: new THREE.Color('#d45d35') }, // Orange-Red
-    uColorTerracotta: { value: new THREE.Color('#9e6b52') }, // Brownish
-    uColorIce: { value: new THREE.Color('#a3d9ff') }, // Ice Blue
-    uColorJungleGrass: { value: new THREE.Color('#2e8b1d') }, // Darker Vivid Green
-    uColorGlowStone: { value: new THREE.Color('#ffcc00') }, // Bright Yellow
-    uColorObsidian: { value: new THREE.Color('#1a1024') }, // Dark Purple/Black
-
     uFogColor: { value: new THREE.Color('#87CEEB') },
     uFogNear: { value: 30 },
     uFogFar: { value: 400 },
     uOpacity: { value: 1 },
-  }), []);
+  }), [paletteTexture]);
 
   return (
     <CustomShaderMaterial
       ref={materialRef}
       baseMaterial={THREE.MeshStandardMaterial}
-      // REMOVED glslVersion to allow automatic compatibility
       roughness={0.9}
       metalness={0.0}
       depthWrite
       depthTest
-      // AAA FIX: Use FrontSide to prevent backface Z-fighting artifacts
       side={THREE.FrontSide}
       vertexShader={vertexShader}
       fragmentShader={fragmentShader}

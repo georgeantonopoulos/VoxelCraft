@@ -221,7 +221,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, treePositions, rootHollowPositions } = payload;
+        const {
+          key,
+          metadata,
+          material,
+          floraPositions,
+          treePositions,
+          rootHollowPositions,
+          meshMatIndices,
+          meshMatWeights
+        } = payload;
         pendingChunks.current.delete(key);
 
         // Log flora positions for debugging
@@ -248,13 +257,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           floraPositions, // Lumina flora (for hotspots)
           treePositions,  // Surface trees
           rootHollowPositions, // Persist root hollow positions
+          meshMatIndices,
+          meshMatWeights,
           terrainVersion: 0,
           visualVersion: 0
         };
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMatWeightsA, meshMatWeightsB, meshMatWeightsC, meshMatWeightsD, meshNormals, meshWetness, meshMossiness, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+        const {
+          key,
+          meshPositions,
+          meshIndices,
+          meshMatIndices,
+          meshMatWeights,
+          meshNormals,
+          meshWetness,
+          meshMossiness,
+          meshWaterPositions,
+          meshWaterIndices,
+          meshWaterNormals
+        } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
@@ -263,10 +286,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             visualVersion: current.visualVersion + 1,
             meshPositions,
             meshIndices,
-            meshMatWeightsA,
-            meshMatWeightsB,
-            meshMatWeightsC,
-            meshMatWeightsD,
+            meshMatIndices,
+            meshMatWeights,
             meshNormals,
             meshWetness: meshWetness || current.meshWetness, // Fallback if missing
             meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing
