@@ -80,20 +80,16 @@ const rayHitsFlora = (
  * Convert chunk-local flora positions into world-space hotspots for UI overlays.
  */
 const buildFloraHotspots = (
-  positions: Float32Array | undefined,
-  cx: number,
-  cz: number
+  positions: Float32Array | undefined
 ): FloraHotspot[] => {
   if (!positions || positions.length === 0) return [];
 
-  const originX = cx * CHUNK_SIZE_XZ;
-  const originZ = cz * CHUNK_SIZE_XZ;
   const hotspots: FloraHotspot[] = [];
 
   for (let i = 0; i < positions.length; i += 4) {
     hotspots.push({
-      x: positions[i] + originX,
-      z: positions[i + 2] + originZ
+      x: positions[i],
+      z: positions[i + 2]
     });
   }
 
@@ -242,7 +238,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
         useWorldStore.getState().setFloraHotspots(
           key,
-          buildFloraHotspots(floraPositions, payload.cx, payload.cz)
+          buildFloraHotspots(floraPositions)
         );
 
         const newChunk: ChunkState = {
@@ -449,9 +445,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
             const hitIndices: number[] = [];
 
             for (let i = 0; i < positions.length; i += 4) {
-              const x = positions[i] + chunkOriginX;
+              // POSITIONS ARE ALREADY WORLD SPACE
+              // Do NOT add chunkOriginX/Z again!
+              const x = positions[i];
               const y = positions[i + 1];
-              const z = positions[i + 2] + chunkOriginZ;
+              const z = positions[i + 2];
 
               const dx = impactPoint.x - x;
               const dz = impactPoint.z - z;

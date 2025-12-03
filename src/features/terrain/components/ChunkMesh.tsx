@@ -4,7 +4,6 @@ import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
-import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
@@ -86,7 +85,7 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} />
+        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

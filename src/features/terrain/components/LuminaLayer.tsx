@@ -1,10 +1,13 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
+import { CHUNK_SIZE_XZ } from '@/constants';
 
 interface LuminaLayerProps {
   data: Float32Array; // stride 4: x, y, z, type (type unused for now)
   lightPositions?: Float32Array; // stride 3: x, y, z
+  cx: number;
+  cz: number;
 }
 
 /**
@@ -12,10 +15,10 @@ interface LuminaLayerProps {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const { camera } = useThree();
+  // const { camera } = useThree(); // Unused
 
   const count = data.length / 4;
 
@@ -37,10 +40,15 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     // Since we disable frustumCulled, this is less critical but good practice if we re-enable it later with a proper sphere.
     // For now, we just disable culling.
 
+    const originX = cx * CHUNK_SIZE_XZ;
+    const originZ = cz * CHUNK_SIZE_XZ;
+
     for (let i = 0; i < count; i++) {
-      const x = data[i * 4];
+      // Data is in WORLD SPACE, but we are inside a group at [originX, 0, originZ]
+      // So we must subtract the origin to get local space.
+      const x = data[i * 4] - originX;
       const y = data[i * 4 + 1];
-      const z = data[i * 4 + 2];
+      const z = data[i * 4 + 2] - originZ;
 
       dummy.position.set(x, y, z);
       // Randomize scale slightly
@@ -95,7 +103,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
  * state management if we have many.
  */
 const DistanceCulledLight: React.FC<{ position: THREE.Vector3 }> = ({ position }) => {
-  const ref = useRef<THREE.PointLight>(null);
+  // const ref = useRef<THREE.PointLight>(null); // Unused
   const [visible, setVisible] = useState(false);
 
   useFrame((state) => {

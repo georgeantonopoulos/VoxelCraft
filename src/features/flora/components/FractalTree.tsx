@@ -13,15 +13,88 @@ interface FractalTreeProps {
 }
 
 export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0, userData }) => {
-    // ... (refs and state)
+    const meshRef = useRef<THREE.InstancedMesh>(null);
+    const leafRef = useRef<THREE.InstancedMesh>(null);
+    const [data, setData] = useState<{
+        matrices: Float32Array;
+        depths: Float32Array;
+        leafMatrices: Float32Array;
+        boundingBox: { min: THREE.Vector3, max: THREE.Vector3 };
+    } | null>(null);
+    const [growth, setGrowth] = useState(0);
+    const [physicsReady, setPhysicsReady] = useState(false);
 
-    // ... (geometry memo)
+    const geometry = useMemo(() => {
+        const geo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 7);
+        geo.translate(0, 0.5, 0); // Pivot at bottom
+        return geo;
+    }, []);
 
-    // ... (worker effect)
+    const leafGeometry = useMemo(() => {
+        // Different leaf shapes for different trees
+        if (type === 1) return new THREE.ConeGeometry(0.3, 0.8, 5);
+        return new THREE.OctahedronGeometry(0.4, 0);
+    }, [type]);
 
-    // ... (data effect)
+    const growthSpeed = useMemo(() => {
+        // RootHollow tree (type 0) keeps the original slower growth cadence
+        return type === 0 ? 0.4 : 0.5;
+    }, [type]);
 
-    // ... (useFrame)
+    useEffect(() => {
+        const worker = new Worker(new URL('../workers/fractal.worker.ts', import.meta.url), { type: 'module' });
+        worker.postMessage({ seed, baseRadius, type });
+        worker.onmessage = (e) => {
+            setData(e.data);
+            worker.terminate();
+        };
+        return () => worker.terminate();
+    }, [seed, baseRadius, type]);
+
+    useEffect(() => {
+        if (!data || !meshRef.current) return;
+
+        const { matrices, depths, leafMatrices, boundingBox } = data;
+        const count = matrices.length / 16;
+
+        meshRef.current.count = count;
+
+        // Reapply instance transforms/attributes so the fractal structure renders correctly.
+        const im = meshRef.current.instanceMatrix;
+        im.array.set(matrices);
+        im.needsUpdate = true;
+
+        geometry.setAttribute('aBranchDepth', new THREE.InstancedBufferAttribute(depths, 1));
+
+        if (leafRef.current && leafMatrices && leafMatrices.length > 0) {
+            const leafCount = leafMatrices.length / 16;
+            leafRef.current.count = leafCount;
+            leafRef.current.instanceMatrix.array.set(leafMatrices);
+            leafRef.current.instanceMatrix.needsUpdate = true;
+        }
+
+        if (boundingBox) {
+            geometry.boundingBox = new THREE.Box3(
+                new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.min.z),
+                new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.max.z)
+            );
+            geometry.boundingSphere = new THREE.Sphere();
+            geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+        }
+    }, [data, geometry]);
+
+    useFrame((state, delta) => {
+        if (!data) return;
+        if (growth < 1.0) {
+            setGrowth(g => Math.min(g + delta * growthSpeed, 1.0));
+        } else if (!physicsReady) {
+            setPhysicsReady(true);
+        }
+
+        if (uniforms.uGrowthProgress) {
+            uniforms.uGrowthProgress.value = growth;
+        }
+    });
 
     // Physics Generation
     const physicsBodies = useMemo(() => {
@@ -60,11 +133,9 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
 
     const uniforms = useMemo(() => {
         let base = '#3e2723';
-        let tip = '#00FFFF'; // Default magical
+        let tip = '#00FFFF'; // Default magical (Cyan)
 
-        if (type === 0) { // OAK
-            base = '#4e342e'; tip = '#4CAF50';
-        } else if (type === 1) { // PINE
+        if (type === 1) { // PINE
             base = '#3e2723'; tip = '#1B5E20';
         } else if (type === 2) { // PALM
             base = '#795548'; tip = '#8BC34A';
@@ -73,6 +144,11 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         } else if (type === 5) { // CACTUS
             base = '#2E7D32'; tip = '#43A047';
         }
+        // Type 0 (Oak) is now treated as Magical/Default if not specified, 
+        // OR we can add a specific check if we want Oak to be Green.
+        // But since RootHollow passes nothing (type=0), and we want Magical,
+        // we should let 0 be Magical OR change RootHollow to pass a special type.
+        // Given the user's request, I'll make the default (0) Magical.
 
         return {
             uGrowthProgress: { value: 0 },

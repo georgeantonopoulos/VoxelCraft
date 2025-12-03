@@ -31,7 +31,9 @@ interface WorldState {
   floraHotspots: Map<string, FloraHotspot[]>;
 
   addEntity: (data: EntityData) => void;
+  addEntities: (data: EntityData[]) => void;
   removeEntity: (id: string) => void;
+  removeEntitiesInChunk: (chunkKey: string) => void;
 
   // Optimized Query: Returns entities only in the relevant chunks
   getEntitiesNearby: (pos: Vector3, searchRadius?: number) => EntityData[];
@@ -74,6 +76,25 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     return { entities: newEntities, spatialMap: newSpatial };
   }),
 
+  addEntities: (dataList) => set((state) => {
+    if (dataList.length === 0) return state;
+
+    const newEntities = new Map(state.entities);
+    const newSpatial = new Map(state.spatialMap);
+
+    for (const data of dataList) {
+      newEntities.set(data.id, data);
+      const key = getChunkKeyFromPos(data.position);
+
+      if (!newSpatial.has(key)) {
+        newSpatial.set(key, new Set());
+      }
+      newSpatial.get(key)!.add(data.id);
+    }
+
+    return { entities: newEntities, spatialMap: newSpatial };
+  }),
+
   removeEntity: (id) => set((state) => {
     const entity = state.entities.get(id);
     if (!entity) return state;
@@ -92,6 +113,24 @@ export const useWorldStore = create<WorldState>((set, get) => ({
         newSpatial.delete(key);
       }
     }
+
+    return { entities: newEntities, spatialMap: newSpatial };
+  }),
+
+  removeEntitiesInChunk: (chunkKey) => set((state) => {
+    const ids = state.spatialMap.get(chunkKey);
+    if (!ids) return state;
+
+    const newEntities = new Map(state.entities);
+    const newSpatial = new Map(state.spatialMap);
+
+    // Remove all entities in this chunk from the main map
+    for (const id of ids) {
+      newEntities.delete(id);
+    }
+
+    // Remove the chunk entry from the spatial map
+    newSpatial.delete(chunkKey);
 
     return { entities: newEntities, spatialMap: newSpatial };
   }),

@@ -108,13 +108,8 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
       const mapX = cx + (spot.x - px) / MAP_SCALE;
       const mapY = cy + (spot.z - pz) / MAP_SCALE;
 
-      // Gentle jitter to avoid laser accuracy (consistent per coordinate)
-      const jitterSeed = spot.x * 0.25 + spot.z * 0.75;
-      const offsetX = Math.sin(jitterSeed) * 6;
-      const offsetY = Math.cos(jitterSeed) * 6;
-
       ctx.beginPath();
-      ctx.arc(mapX + offsetX, mapY + offsetY, hotspotRadius, 0, Math.PI * 2);
+      ctx.arc(mapX, mapY, hotspotRadius, 0, Math.PI * 2);
       ctx.fill();
     });
 
@@ -128,14 +123,8 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
       const mapX = cx + (flora.position.x - px) / MAP_SCALE;
       const mapY = cy + (flora.position.z - pz) / MAP_SCALE;
 
-      // Add some "inaccuracy" as requested ("Don't be too accurate")
-      // We can hash the ID to get a consistent offset
-      const hash = flora.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      const offsetX = (Math.sin(hash) * 10); // +/- 10 pixels inaccuracy
-      const offsetY = (Math.cos(hash) * 10);
-
       ctx.beginPath();
-      ctx.arc(mapX + offsetX, mapY + offsetY, entityRadius, 0, Math.PI * 2);
+      ctx.arc(mapX, mapY, entityRadius, 0, Math.PI * 2);
       ctx.fill();
     });
 

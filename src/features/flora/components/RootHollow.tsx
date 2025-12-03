@@ -150,7 +150,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
             {status === 'GROWING' && (
                 <FractalTree
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
-                    position={new THREE.Vector3(0, -0.2, 0)}
+                    position={new THREE.Vector3(0, 0.5, 0)}
                     baseRadius={stumpRadius}
                     userData={{ type: 'flora_tree' }}
                 />

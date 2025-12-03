@@ -219,16 +219,17 @@ export class TerrainService {
         }
 
         // --- 3.5 Flora Generation (Post-Pass) ---
-        // Place flora in shallow caverns (world Y: -3..0) and cluster them for readability.
-        const cavernMinWorldY = -3;
-        const cavernMaxWorldY = 0;
+        // Place flora in shallow caverns (world Y: -5..2) and cluster them for readability.
+        const cavernMinWorldY = -5;
+        const cavernMaxWorldY = 2;
         const cavernMinY = Math.max(1, Math.floor(cavernMinWorldY - MESH_Y_OFFSET + PAD));
         const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD)); // leave headroom checks
-        const maxFloraPerChunk = 40; // lower cap to avoid perf spikes
+        const maxFloraPerChunk = 60;
         let floraPlaced = 0;
 
-        for (let z = 0; z < sizeZ && floraPlaced < maxFloraPerChunk; z += 2) {
-            for (let x = 0; x < sizeX && floraPlaced < maxFloraPerChunk; x += 2) {
+        // RELAXED STEP: Use a finer grid (3) to find more spots
+        for (let z = 0; z < sizeZ && floraPlaced < maxFloraPerChunk; z += 3) {
+            for (let x = 0; x < sizeX && floraPlaced < maxFloraPerChunk; x += 3) {
                 const wx = (x - PAD) + worldOffsetX;
                 const wz = (z - PAD) + worldOffsetZ;
 
@@ -237,12 +238,14 @@ export class TerrainService {
                 if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') continue;
 
                 // Low frequency noise to pick cluster centers
-                const clusterNoise = noise(wx * 0.07, 0, wz * 0.07);
+                // Lower threshold (0.55) to allow more clusters
+                const clusterNoise = noise(wx * 0.15, 0, wz * 0.15);
                 if (clusterNoise < 0.55) continue;
 
                 // Find a cavern floor within the target band (air with solid below and headroom above)
-                let floorWy = Number.NEGATIVE_INFINITY;
-                let found = false;
+                let centerFloorWy = Number.NEGATIVE_INFINITY;
+                let foundCenter = false;
+                let centerYIndex = -1;
 
                 for (let y = cavernMaxY; y >= cavernMinY; y--) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
@@ -256,32 +259,68 @@ export class TerrainService {
                         // Interpolate for smoother placement on the floor
                         const dAir = density[idx];
                         const dSolid = density[idxBelow];
-                        const t = (ISO_LEVEL - dAir) / (dSolid - dAir);
-                        floorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
-                        found = true;
+                        const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                        centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
+                        centerYIndex = y;
+                        foundCenter = true;
                         break;
                     }
                 }
 
-                if (!found) continue;
+                if (!foundCenter) continue;
 
-                const seed = Math.abs(noise(wx * 1.31, floorWy * 0.77, wz * 1.91));
-                const clusterCount = 3 + Math.floor(seed * 4); // 3..6 per cluster
-                const spread = 2.2 + seed * 1.2;
+                const seed = Math.abs(noise(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
+                const clusterCount = 4 + Math.floor(seed * 5); // 4..8 per cluster
+                const spread = 3.0 + seed * 2.0; // Wider spread
 
                 for (let i = 0; i < clusterCount && floraPlaced < maxFloraPerChunk; i++) {
                     const angle = seed * 12.9898 + i * 1.3;
-                    const r = spread * (0.4 + ((i + 1) / (clusterCount + 1)));
+                    const r = spread * (0.3 + ((i + 1) / (clusterCount + 1))); // Don't start at 0
                     const offX = Math.sin(angle) * r;
                     const offZ = Math.cos(angle) * r;
 
-                    floraCandidates.push(
-                        (x - PAD) + offX,
-                        floorWy + 0.15,
-                        (z - PAD) + offZ,
-                        0 // type placeholder for lumina flora (could encode rarity later)
-                    );
-                    floraPlaced++;
+                    const candLocalX = x + offX;
+                    const candLocalZ = z + offZ;
+
+                    // Bounds check
+                    if (candLocalX < 0 || candLocalX >= sizeX || candLocalZ < 0 || candLocalZ >= sizeZ) continue;
+
+                    // SNAP TO GROUND: Raycast at the candidate position
+                    // We search around the center Y index +/- 3 blocks to handle slopes
+                    let flowerY = Number.NEGATIVE_INFINITY;
+                    let foundGround = false;
+
+                    const ix = Math.floor(candLocalX);
+                    const iz = Math.floor(candLocalZ);
+
+                    const searchRange = 5; // Increased range to find ground on slopes
+                    const startY = Math.min(sizeY - 2, centerYIndex + searchRange);
+                    const endY = Math.max(1, centerYIndex - searchRange);
+
+                    for (let fy = startY; fy >= endY; fy--) {
+                        const idx = ix + fy * sizeX + iz * sizeX * sizeY;
+                        const idxBelow = idx - sizeX;
+
+                        // Simple check: Air above, Solid below
+                        if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL) {
+                            const dAir = density[idx];
+                            const dSolid = density[idxBelow];
+                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                            flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
+                            foundGround = true;
+                            break;
+                        }
+                    }
+
+                    if (foundGround) {
+                        floraCandidates.push(
+                            (candLocalX - PAD) + worldOffsetX,
+                            flowerY - 0.1, // Sink slightly into ground to avoid floating
+                            (candLocalZ - PAD) + worldOffsetZ,
+                            0
+                        );
+                        floraPlaced++;
+                    }
                 }
             }
         }
