@@ -12,21 +12,31 @@ import { ChunkModification } from '@/state/WorldDB';
 function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string): number {
     const settings = getCaveSettings(biomeId);
 
-    // Warp and Noise calculation (Keep this)
-    const warpStrength = 4.0; // Reduced warp slightly for cleaner tunnels
+    // Warp and Noise calculation
+    const warpStrength = 4.0;
     const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
     const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
 
-    // Use biome scale
-    const noiseVal = noise3D(
+    // Tube Algorithm: Sample two independent noise fields
+    // We offset the second noise by a large amount to ensure independence
+    const noiseA = noise3D(
         warpX * settings.scale,
         wy * settings.scale * 1.5 * settings.frequency,
         warpZ * settings.scale
     );
 
+    const noiseB = noise3D(
+        (warpX + 123.45) * settings.scale,
+        (wy + 123.45) * settings.scale * 1.5 * settings.frequency,
+        (warpZ + 123.45) * settings.scale
+    );
+
+    // Calculate distance from "center" of the tube (where both noises are 0)
+    // Formula: sqrt(a^2 + b^2) < threshold
+    const tunnelVal = Math.sqrt(noiseA * noiseA + noiseB * noiseB);
+
     // If inside threshold, it's a cave (-1), else Neutral (0)
-    // We return a modifier, not the final density yet
-    return Math.abs(noiseVal) < settings.threshold ? -1.0 : 0.0;
+    return tunnelVal < settings.threshold ? -1.0 : 0.0;
 }
 
 export class TerrainService {
@@ -142,10 +152,33 @@ export class TerrainService {
                         // --- NEW CAVE LOGIC ---
                         const caveMod = getCavernModifier(wx, wy, wz, biome);
 
+                        // Congruent Breach Logic
+                        // 1. Get Biome Settings
+                        const settings = getCaveSettings(biome);
+
+                        // 2. Breach Noise (Low frequency, defines "Entrance Zones")
+                        const breachNoise = noise3D(wx * 0.005, 0, wz * 0.005);
+                        // Normalize roughly to 0..1 (noise is -1..1) -> (n+1)/2
+                        const normBreach = (breachNoise + 1) * 0.5;
+
+                        // 3. Determine Crust Thickness
+                        // Default: Deep crust (4 blocks)
+                        let crustThickness = 4.0;
+
+                        // Condition A: Steep Terrain (Cliff/Overhang) -> Natural Entrance
+                        // cliffNoise > 0.4 is a good heuristic for steep overhangs
+                        const isSteep = (cliffNoise > 0.4);
+
+                        // Condition B: Biome Breach Chance
+                        // If we are in a "Breach Zone" defined by the biome's chance
+                        const isBreachZone = (normBreach < settings.surfaceBreachChance);
+
+                        if (isSteep || isBreachZone) {
+                            crustThickness = 0.5; // Allow carving near surface
+                        }
+
                         // CRUST CHECK: Only carve if the ground is already solid enough.
-                        // If d is 0.1 (near surface), we skip. If d is 0.5 (deep), we carve.
-                        // The '0.15' constant determines how thick the surface walls are.
-                        if (caveMod < 0 && d > 4.0) {
+                        if (caveMod < 0 && d > crustThickness) {
                             d = -1.0; // Hollow out the cave
                         }
 

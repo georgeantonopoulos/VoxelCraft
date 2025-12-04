@@ -17,32 +17,33 @@ export interface BiomeCaveSettings {
   scale: number;      // How "zoomed out" the noise is (lower = bigger caves)
   threshold: number;  // Cavity thickness (higher = wider tunnels)
   frequency: number;  // Wiggle factor (higher = more twisted)
+  surfaceBreachChance: number; // 0..1 chance of caves breaking surface (modulated by noise)
 }
 
 export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
   // Archetypes
-  GRASSLANDS: { scale: 0.035, threshold: 0.06, frequency: 1.0 }, // Standard winding caves
+  GRASSLANDS: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 }, // Wider, more breaches
   // DESERT archetype removed to avoid duplicate key error. Using specific mapping below.
-  TUNDRA: { scale: 0.05, threshold: 0.04, frequency: 2.0 }, // Tight icy fissures
-  LUMINA: { scale: 0.025, threshold: 0.1, frequency: 0.8 }, // Huge, magical hollows
+  TUNDRA: { scale: 0.05, threshold: 0.10, frequency: 2.0, surfaceBreachChance: 0.3 }, // Slightly wider
+  LUMINA: { scale: 0.025, threshold: 0.22, frequency: 0.8, surfaceBreachChance: 0.4 }, // Huge hollows
 
   // Specific Biome Mappings
-  PLAINS: { scale: 0.035, threshold: 0.06, frequency: 1.0 },
-  THE_GROVE: { scale: 0.035, threshold: 0.06, frequency: 1.0 },
-  SAVANNA: { scale: 0.035, threshold: 0.06, frequency: 1.0 },
-  JUNGLE: { scale: 0.035, threshold: 0.06, frequency: 1.0 },
+  PLAINS: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.15 }, // Safer but still has caves
+  THE_GROVE: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 },
+  SAVANNA: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.3 },
+  JUNGLE: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.35 },
 
-  DESERT: { scale: 0.02, threshold: 0.08, frequency: 0.5 },
-  RED_DESERT: { scale: 0.02, threshold: 0.08, frequency: 0.5 },
+  DESERT: { scale: 0.02, threshold: 0.16, frequency: 0.5, surfaceBreachChance: 0.25 },
+  RED_DESERT: { scale: 0.02, threshold: 0.16, frequency: 0.5, surfaceBreachChance: 0.25 },
 
-  SNOW: { scale: 0.05, threshold: 0.04, frequency: 2.0 },
-  ICE_SPIKES: { scale: 0.05, threshold: 0.04, frequency: 2.0 },
-  MOUNTAINS: { scale: 0.05, threshold: 0.04, frequency: 2.0 },
+  SNOW: { scale: 0.05, threshold: 0.10, frequency: 2.0, surfaceBreachChance: 0.3 },
+  ICE_SPIKES: { scale: 0.05, threshold: 0.10, frequency: 2.0, surfaceBreachChance: 0.4 },
+  MOUNTAINS: { scale: 0.05, threshold: 0.10, frequency: 2.0, surfaceBreachChance: 0.8 }, // Very high chance on mountains
 
-  SKY_ISLANDS: { scale: 0.015, threshold: 0.00, frequency: 1.0 }, // No caves by default (threshold 0)
+  SKY_ISLANDS: { scale: 0.015, threshold: 0.00, frequency: 1.0, surfaceBreachChance: 0.0 }, // No caves by default (threshold 0)
 
   // Fallback
-  DEFAULT: { scale: 0.035, threshold: 0.06, frequency: 1.0 }
+  DEFAULT: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 }
 };
 
 export function getCaveSettings(biomeId: string): BiomeCaveSettings {
