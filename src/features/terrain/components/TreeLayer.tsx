@@ -97,6 +97,7 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
         else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
         else if (type === TreeType.ACACIA) { base = '#6D4C41'; tip = '#CDDC39'; }
         else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
+        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; } // Dark wood, deep green leaves
 
         return { base, tip };
     }, [type]);

@@ -37,7 +37,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             const { density, material, metadata, floraPositions, treePositions, rootHollowPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
             // 3. Compute Light Clusters (Async in Worker)
-            const lightPositions = TerrainService.computeLightClusters(floraPositions);
+            // const lightPositions = TerrainService.computeLightClusters(floraPositions);
 
             // --- AMBIENT VEGETATION GENERATION ---
             const vegetationBuckets: Record<number, number[]> = {};
@@ -76,6 +76,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                         const dz = z + pad;
                         const sizeX = TOTAL_SIZE_XZ;
                         const sizeY = TOTAL_SIZE_Y;
+                        const sizeZ = TOTAL_SIZE_XZ;
 
                         // Scan down
                         for (let y = sizeY - 2; y >= 0; y--) {
@@ -98,11 +99,61 @@ ctx.onmessage = async (e: MessageEvent) => {
                         // Skip if underwater or too low
                         if (surfaceY > 0 && worldY > 11) {
 
+                            // --- CALCULATE NORMAL ---
+                            // Central differences on the density field
+                            // We need to clamp indices to be safe
+                            const cX = Math.floor(dx);
+                            const cY = Math.floor(surfaceY);
+                            const cZ = Math.floor(dz);
+
+                            // Helper to safely get density
+                            const getD = (ox: number, oy: number, oz: number) => {
+                                const ix = Math.max(0, Math.min(sizeX - 1, cX + ox));
+                                const iy = Math.max(0, Math.min(sizeY - 1, cY + oy));
+                                const iz = Math.max(0, Math.min(sizeZ - 1, cZ + oz));
+                                return density[ix + iy * sizeX + iz * sizeX * sizeY];
+                            };
+
+                            // Gradient vector pointing out of the wall (towards lower density)
+                            // Normal = -Gradient
+                            const nx = -(getD(1, 0, 0) - getD(-1, 0, 0));
+                            const ny = -(getD(0, 1, 0) - getD(0, -1, 0));
+                            const nz = -(getD(0, 0, 1) - getD(0, 0, -1));
+
+                            // Normalize
+                            const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                            // Fallback to UP if degenerate
+                            const invLen = len > 0.0001 ? 1.0 / len : 0;
+                            const finalNx = len > 0.0001 ? nx * invLen : 0;
+                            const finalNy = len > 0.0001 ? ny * invLen : 1;
+                            const finalNz = len > 0.0001 ? nz * invLen : 0;
+
+                            // Re-assign to simple vars for usage below
+                            const nx_val = finalNx;
+                            const ny_val = finalNy;
+                            const nz_val = finalNz;
+
+                            // 2. Clumping Logic
+                            // If density is very high, place multiple plants
+                            // ... inside the loop ...
+
                             // 2. Clumping Logic
                             // If density is very high, place multiple plants
                             let numPlants = 1;
-                            if (finalDensity > threshold + 0.4) numPlants = 3; // Dense clump
-                            else if (finalDensity > threshold + 0.2) numPlants = 2; // Moderate clump
+
+                            // HIGH DENSITY BIOMES (The Ghibli Look)
+                            if (biome === 'JUNGLE' || biome === 'THE_GROVE') {
+                                // We push the count much higher. 
+                                // Since we spherized the normals in the shader, 
+                                // these extra instances won't look "noisy", they will look like soft volume.
+                                if (finalDensity > threshold + 0.30) numPlants = 7; // Extremely dense core
+                                else if (finalDensity > threshold + 0.15) numPlants = 5;
+                                else if (finalDensity > threshold + 0.05) numPlants = 3;
+                            } else {
+                                // Standard Biomes (Plains, etc) - Keep optimized
+                                if (finalDensity > threshold + 0.4) numPlants = 3;
+                                else if (finalDensity > threshold + 0.2) numPlants = 2;
+                            }
 
                             // 3. Type Noise
                             const typeNoise = noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100);
@@ -118,17 +169,36 @@ ctx.onmessage = async (e: MessageEvent) => {
                                     const r1 = Math.sin(seed) * 43758.5453;
                                     const r2 = Math.cos(seed) * 43758.5453;
 
-                                    // Random offset -0.4 to 0.4 (stay roughly within block but spread out)
-                                    const offX = (r1 - Math.floor(r1) - 0.5) * 0.8;
-                                    const offZ = (r2 - Math.floor(r2) - 0.5) * 0.8;
+                                    // Spread Logic Update:
+                                    // Increased multiplier from 1.2 to 1.4
+                                    // This allows grass to step further off the grid center, 
+                                    // blending chunks together so you don't see "rows" of grass.
+                                    const offX = (r1 - Math.floor(r1) - 0.5) * 1.4;
+                                    const offZ = (r2 - Math.floor(r2) - 0.5) * 1.4;
 
-                                    // Scale variation
-                                    // We don't store scale here, but we could jitter position slightly more to avoid Z-fighting
+                                    // Tiny Y Jitter
+                                    // Randomly sink the grass slightly (-0.15 to 0.0) 
+                                    // This prevents the "flat bottom" look on hills.
+                                    const offY = ((r1 + r2) % 1) * -0.15;
+
+                                    // --- SLOPE CORRECTION ---
+                                    // Since we moved X/Z, we must adjust Y based on the slope (normal).
+                                    // Plane eq: nx*x + ny*y + nz*z = 0
+                                    // dy = -(nx*dx + nz*dz) / ny
+                                    // We clamp ny to avoid division by zero (though ny should be > 0 for ground)
+                                    let slopeY = 0;
+                                    if (ny_val > 0.1) {
+                                        slopeY = -(nx_val * offX + nz_val * offZ) / ny_val;
+                                    }
+                                    // Clamp slope correction to avoid wild spikes on steep terrain
+                                    slopeY = Math.max(-1.0, Math.min(1.0, slopeY));
 
                                     vegetationBuckets[vegType].push(
                                         x + offX,
-                                        worldY - 0.1,
-                                        z + offZ
+                                        worldY - 0.1 + offY + slopeY, // Apply sink + slope correction
+                                        z + offZ,
+                                        // Normal (nx, ny, nz)
+                                        nx_val, ny_val, nz_val
                                     );
                                 }
                             }

@@ -6,48 +6,71 @@ import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 
 // The "Life" Shader: Wind sway and subtle color variation
 const VEGETATION_SHADER = {
+  // inside VEGETATION_SHADER object
   vertex: `
-    uniform float uTime;
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
+  uniform float uTime;
+  uniform float uSway;
+  varying vec2 vUv;
+  varying vec3 vWorldPos;
 
-    void main() {
-      vUv = uv;
-      vec3 pos = position;
+  void main() {
+    vUv = uv;
+    vec3 pos = position;
 
-      // Wind Simulation
-      // Sway based on height (pos.y), Time, and World Position (for wave effect)
-      float windFreq = 1.5;
-      float windAmp = 0.1 * pos.y * pos.y; // Curve: stiff at bottom, loose at top
+    // Get world position from instance matrix
+    // instanceMatrix is a mat4 attribute available in InstancedMesh vertex shader
+    vec4 worldInstancePos = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    float worldX = worldInstancePos.x;
+    float worldZ = worldInstancePos.z;
 
-      // Instance matrix contains the world position offset in [3][0], [3][2]
-      float worldX = instanceMatrix[3][0];
-      float worldZ = instanceMatrix[3][2];
+    // --- Wind Simulation ---
+    // Simple sway based on time and position
+    // We use the world position to offset the phase so they don't all sway in unison
+    float wind = sin(uTime * 2.0 + worldX * 0.5 + worldZ * 0.3) + sin(uTime * 1.0 + worldX * 0.2);
+    
+    // Apply sway primarily to the top of the vegetation (uv.y is 0 at bottom, 1 at top)
+    // uSway controls the magnitude from config
+    float swayStrength = uSway * pow(uv.y, 2.0) * 0.15; 
+    
+    pos.x += wind * swayStrength;
+    pos.z += wind * swayStrength * 0.5;
 
-      float swayX = sin(uTime * windFreq + worldX * 0.5) * windAmp;
-      float swayZ = cos(uTime * (windFreq * 0.8) + worldZ * 0.5) * windAmp;
-
-      pos.x += swayX;
-      pos.z += swayZ;
-
-      csm_Position = pos;
-      vWorldPos = vec3(worldX, 0.0, worldZ);
-    }
-  `,
+    // --- THE FIX: Normal Hack ---
+    // We blend the actual normal with a straight-up vector.
+    // 0.0 = Realism (Jagged), 1.0 = Cartoon Softness (fluffy)
+    vec3 originalNormal = normal;
+    vec3 upNormal = vec3(0.0, 1.0, 0.0);
+    
+    // Mix based on how 'fluffy' you want it. 0.6 is a sweet spot.
+    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.6));
+    
+    // Pass this to the built-in Three.js material handling
+    csm_Normal = newNormal; 
+    
+    csm_Position = pos;
+    vWorldPos = vec3(worldX, worldInstancePos.y, worldZ);
+  }
+`,
   fragment: `
     varying vec3 vWorldPos;
     varying vec2 vUv;
     
     void main() {
-       // Gradient from bottom to top (fake AO)
-       float gradient = smoothstep(0.0, 1.0, vUv.y * 1.5 + 0.2);
+       // Lush Gradient: Darker at bottom (roots), lighter at top (tips)
+       // Mix from a dark root color (multiply) to normal color
+       float gradient = smoothstep(0.0, 1.0, vUv.y);
        
        // Add subtle variation to color based on position to break uniformity
-       float noise = sin(vWorldPos.x * 0.1) * cos(vWorldPos.z * 0.1) * 0.1;
+       float noise = sin(vWorldPos.x * 0.5) * cos(vWorldPos.z * 0.5);
        
        vec3 col = csm_DiffuseColor.rgb;
-       col += noise * 0.1;
-       col *= gradient;
+       
+       // Apply noise variation
+       col += noise * 0.05;
+       
+       // Apply lush gradient (dark roots)
+       vec3 rootCol = col * 0.4;
+       col = mix(rootCol, col * 1.1, gradient); // Tips slightly brighter
 
        csm_DiffuseColor = vec4(col, 1.0);
     }
@@ -76,7 +99,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
     // --- GEOMETRY GENERATORS ---
 
     // 1. Grass Clump (Blade clusters)
-    // Generates 3-5 blades radiating from center
+    // Generates 3-5 blades radiating from center with curvature
+    // 1. Grass Clump (Blade clusters)
+    // Generates 3-5 blades radiating from center with curvature
     const createGrassGeo = (bladeCount: number, height: number, width: number) => {
       const positions: number[] = [];
       const indices: number[] = [];
@@ -84,70 +109,77 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
       const uvs: number[] = [];
 
       let idx = 0;
+      const SEGMENTS = 2; // Reduced segments for cleaner look
+
       for (let i = 0; i < bladeCount; i++) {
         const angle = (i / bladeCount) * Math.PI * 2 + (Math.random() * 0.5);
-        const lean = (Math.random() * 0.3) + 0.1; // Lean out
+        const lean = (Math.random() * 0.3) + 0.1; // Reduced lean (was 0.5 + 0.2)
+        const curve = (Math.random() * 0.2) + 0.05; // Reduced curve (was 0.3 + 0.1)
 
-        // Blade is a simple triangle or quad. Let's do a tapered quad (trapezoid)
-        // Base width
-        const w = width * (0.8 + Math.random() * 0.4);
+        // Blade properties - Wider base
+        const w = width * (1.2 + Math.random() * 0.5); // Wider (was 0.8)
         const h = height * (0.8 + Math.random() * 0.4);
 
         // Base center
         const bx = 0;
         const bz = 0;
 
-        // Top position (leaned out)
-        const tx = Math.sin(angle) * lean * h;
-        const tz = Math.cos(angle) * lean * h;
-        const ty = h;
+        // Generate segments
+        for (let j = 0; j <= SEGMENTS; j++) {
+          const t = j / SEGMENTS; // 0 to 1
 
-        // Vertices
-        // BL
-        const x0 = bx + Math.cos(angle) * w * 0.5;
-        const z0 = bz - Math.sin(angle) * w * 0.5;
-        // BR
-        const x1 = bx - Math.cos(angle) * w * 0.5;
-        const z1 = bz + Math.sin(angle) * w * 0.5;
-        // TL (tapered)
-        const x2 = tx + Math.cos(angle) * w * 0.1;
-        const z2 = tz - Math.sin(angle) * w * 0.1;
-        // TR
-        const x3 = tx - Math.cos(angle) * w * 0.1;
-        const z3 = tz + Math.sin(angle) * w * 0.1;
+          // Width tapers to point
+          const currentW = w * (1.0 - t);
 
-        positions.push(
-          x0, 0, z0, // 0
-          x1, 0, z1, // 1
-          x2, ty, z2, // 2
-          x3, ty, z3  // 3
-        );
+          // Height grows linearly
+          const y = h * t;
 
-        // Normals (approximate up/out)
-        // For stylized grass, pointing UP is usually best for lighting
-        normals.push(
-          0, 1, 0,
-          0, 1, 0,
-          0, 1, 0,
-          0, 1, 0
-        );
+          // X/Z offset (Lean + Curve)
+          // Curve is quadratic (t^2)
+          const offset = (lean * t) + (curve * t * t);
 
-        uvs.push(
-          0, 0,
-          1, 0,
-          0, 1,
-          1, 1
-        );
+          const cx = bx + Math.sin(angle) * offset;
+          const cz = bz + Math.cos(angle) * offset;
 
-        // Double sided indices
-        indices.push(
-          idx, idx + 1, idx + 2,
-          idx + 2, idx + 1, idx + 3,
-          idx + 1, idx, idx + 2, // Back face
-          idx + 1, idx + 2, idx + 3
-        );
+          // Left and Right vertices at this height
+          // Perpendicular to angle
+          const px = Math.cos(angle) * currentW * 0.5;
+          const pz = -Math.sin(angle) * currentW * 0.5;
 
-        idx += 4;
+          // Vertex 1 (Left)
+          positions.push(cx + px, y, cz + pz);
+          // Vertex 2 (Right)
+          positions.push(cx - px, y, cz - pz);
+
+          // Normals (approximate up/out)
+          // Tilted slightly out
+          const ny = 1.0;
+          const nx = Math.sin(angle) * 0.5;
+          const nz = Math.cos(angle) * 0.5;
+          // Normalize roughly
+          const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+
+          normals.push(nx / len, ny / len, nz / len);
+          normals.push(nx / len, ny / len, nz / len);
+
+          uvs.push(0, t);
+          uvs.push(1, t);
+        }
+
+        // Indices for quads between segments
+        for (let j = 0; j < SEGMENTS; j++) {
+          const base = idx + j * 2;
+          // Quad: base, base+1, base+3, base+2
+          indices.push(
+            base, base + 1, base + 2,
+            base + 2, base + 1, base + 3,
+            // Back face
+            base + 1, base, base + 2,
+            base + 1, base + 2, base + 3
+          );
+        }
+
+        idx += (SEGMENTS + 1) * 2;
       }
 
       const geo = new THREE.BufferGeometry();
@@ -157,6 +189,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
       geo.setIndex(indices);
       return geo;
     };
+
 
     // 2. Flower (Stem + Head)
     const createFlowerGeo = () => {
@@ -273,13 +306,15 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 3: geoName = 'shrub'; break;
         case 4: geoName = 'grass_low'; break; // Snow grass uses low grass geo
         case 5: geoName = 'fern'; break;
+        case 6: geoName = 'grass_low'; break; // Jungle grass
+        case 7: geoName = 'grass_low'; break; // Grove grass
       }
 
       return {
         id: typeId,
         asset,
         positions, // Float32Array
-        count: positions.length / 3,
+        count: positions.length / 6, // Stride is now 6 (x, y, z, nx, ny, nz)
         geometry: geometries.get(geoName) || geometries.get('box')
       };
     }).filter(Boolean);
@@ -301,6 +336,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
             fragmentShader={VEGETATION_SHADER.fragment}
             uniforms={{
               uTime: { value: 0 },
+              uSway: { value: batch!.asset.sway },
             }}
             color={batch!.asset.color}
             roughness={0.8}
@@ -324,10 +360,29 @@ const InstanceMatrixSetter = ({ positions, scale }: { positions: Float32Array, s
     const parent = anchorRef.current?.parent as THREE.InstancedMesh | undefined;
     if (!parent) return;
 
-    const count = positions.length / 3;
+    const count = positions.length / 6; // Stride 6
+    const up = new THREE.Vector3(0, 1, 0);
+    const normal = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const qY = new THREE.Quaternion();
+
     for (let i = 0; i < count; i++) {
-      dummy.position.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-      dummy.rotation.y = Math.random() * Math.PI * 2;
+      const idx = i * 6;
+      dummy.position.set(positions[idx], positions[idx + 1], positions[idx + 2]);
+
+      // Read Normal
+      normal.set(positions[idx + 3], positions[idx + 4], positions[idx + 5]);
+
+      // Align to normal
+      q.setFromUnitVectors(up, normal);
+
+      // Random rotation around Y (local up)
+      qY.setFromAxisAngle(up, Math.random() * Math.PI * 2);
+
+      // Combine: Align to normal, then rotate around local up
+      // Note: q * qY means apply qY first (local rotation), then q (alignment)
+      dummy.quaternion.copy(q).multiply(qY);
+
       const s = Math.random() * 0.3 + 0.85; // Slight size variance
       dummy.scale.set(scale[0] * s, scale[1] * s, scale[2] * s);
       dummy.updateMatrix();
