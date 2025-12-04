@@ -34,7 +34,7 @@ export const VEGETATION_ASSETS: Record<number, {
   [VegetationType.SNOW_GRASS]: { color: '#ddeedd', scale: [1, 0.5, 1], geometry: 'cross', sway: 0.4 },
   [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2, 1.5, 2], geometry: 'cross', sway: 0.8 },
   [VegetationType.JUNGLE_GRASS]: { color: '#1B5E20', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6 }, // Matches JUNGLE_GRASS material
-  [VegetationType.GROVE_GRASS]: { color: '#6ee241ff', scale: [1, 0.7, 1], geometry: 'cross', sway: 0.5 }, // Matches GRASS material
+  [VegetationType.GROVE_GRASS]: { color: '#7ec850', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5 }, // Matches GRASS material
 };
 
 // Deterministic placement logic
@@ -43,10 +43,9 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
   switch (biome) {
     case 'THE_GROVE':
       // Distinct, safe zone: More flowers, dense lush grass
-      if (noiseVal > 0.85) return VegetationType.GROVE_GRASS; // Tall variant? Or just use Grove Grass
-      if (noiseVal > 0.40) return VegetationType.GROVE_GRASS;
-      if (noiseVal > 0.30) return VegetationType.FLOWER_BLUE;
-      return VegetationType.GROVE_GRASS; // Fallback for very dense feel
+      if (noiseVal > 0.90) return VegetationType.FLOWER_BLUE; // Occasional flowers
+      if (noiseVal > 0.20) return VegetationType.GROVE_GRASS; // Almost everywhere
+      return VegetationType.GROVE_GRASS; // Fallback
     case 'PLAINS':
     case 'SKY_ISLANDS':
       if (noiseVal > 0.90) return VegetationType.GRASS_TALL;
@@ -101,7 +100,7 @@ export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | 
 
 export const getBiomeVegetationDensity = (biome: BiomeType): number => {
   switch (biome) {
-    case 'THE_GROVE': return 0.7; // Very lush
+    case 'THE_GROVE': return 0.95; // Extremely lush carpet
     case 'JUNGLE': return 0.85;   // Extremely dense
     case 'PLAINS': return 0.5;    // Moderate
     case 'SAVANNA': return 0.4;   // Sparse patches

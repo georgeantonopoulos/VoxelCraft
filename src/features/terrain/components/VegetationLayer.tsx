@@ -41,8 +41,8 @@ const VEGETATION_SHADER = {
     vec3 originalNormal = normal;
     vec3 upNormal = vec3(0.0, 1.0, 0.0);
     
-    // Mix based on how 'fluffy' you want it. 0.6 is a sweet spot.
-    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.6));
+    // Mix based on how 'fluffy' you want it. 0.8 makes it look like a soft carpet.
+    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.8));
     
     // Pass this to the built-in Three.js material handling
     csm_Normal = newNormal; 
@@ -61,15 +61,16 @@ const VEGETATION_SHADER = {
        float gradient = smoothstep(0.0, 1.0, vUv.y);
        
        // Add subtle variation to color based on position to break uniformity
-       float noise = sin(vWorldPos.x * 0.5) * cos(vWorldPos.z * 0.5);
+       // Increased scale for larger patches
+       float noise = sin(vWorldPos.x * 0.2) * cos(vWorldPos.z * 0.2);
        
        vec3 col = csm_DiffuseColor.rgb;
        
-       // Apply noise variation
-       col += noise * 0.05;
+       // Apply noise variation - increased intensity for more "patchy" look
+       col += noise * 0.08;
        
        // Apply lush gradient (dark roots)
-       vec3 rootCol = col * 0.4;
+       vec3 rootCol = col * 0.75; // Much brighter roots (was 0.5)
        col = mix(rootCol, col * 1.1, gradient); // Tips slightly brighter
 
        csm_DiffuseColor = vec4(col, 1.0);
@@ -98,8 +99,6 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
 
     // --- GEOMETRY GENERATORS ---
 
-    // 1. Grass Clump (Blade clusters)
-    // Generates 3-5 blades radiating from center with curvature
     // 1. Grass Clump (Blade clusters)
     // Generates 3-5 blades radiating from center with curvature
     const createGrassGeo = (bladeCount: number, height: number, width: number) => {
@@ -276,6 +275,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
     // Half size and thinner as requested
     geoMap.set('grass_low', createGrassGeo(3, 0.3, 0.08));
     geoMap.set('grass_tall', createGrassGeo(4, 0.6, 0.1));
+    // New Carpet Grass: 8 blades, wider spread (0.15 width), slightly shorter (0.4)
+    geoMap.set('grass_carpet', createGrassGeo(8, 0.4, 0.15));
     geoMap.set('flower', createFlowerGeo()); // Updated internally below
     geoMap.set('fern', createFernGeo());
     geoMap.set('shrub', createShrubGeo());
@@ -307,7 +308,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 4: geoName = 'grass_low'; break; // Snow grass uses low grass geo
         case 5: geoName = 'fern'; break;
         case 6: geoName = 'grass_low'; break; // Jungle grass
-        case 7: geoName = 'grass_low'; break; // Grove grass
+        case 7: geoName = 'grass_carpet'; break; // Grove grass - CARPET MODE
       }
 
       return {
