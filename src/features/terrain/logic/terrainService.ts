@@ -7,50 +7,26 @@ import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
 
 // Helper to find surface height at specific world coordinates
-// Returns -1.0 for Air (Cave), 1.0 for Solid (No Cave)
-function getCavernDensity(wx: number, wy: number, wz: number, biomeId: string): number {
-  const settings = getCaveSettings(biomeId);
+// Helper to find surface height at specific world coordinates
+// Returns -1.0 for Cave, 0.0 for Neutral
+function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string): number {
+    const settings = getCaveSettings(biomeId);
 
-  // 1. Warp domain for organic feel (prevents straight "pipes")
-  // We use the same noise function to offset the input coordinates
-  const warpStrength = 8.0;
-  const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
-  const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
+    // Warp and Noise calculation (Keep this)
+    const warpStrength = 4.0; // Reduced warp slightly for cleaner tunnels
+    const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
+    const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
 
-  // 2. Sample 3D Noise (The "Noodle" shape)
-  // Note: We often scale Y differently to make caves flatter or taller.
-  // Here we multiply Y by 1.5 to make them slightly flattened (walkable).
-  const noiseVal = noise3D(
-    warpX * settings.scale,
-    wy * settings.scale * 1.5 * settings.frequency,
-    warpZ * settings.scale
-  );
+    // Use biome scale
+    const noiseVal = noise3D(
+        warpX * settings.scale,
+        wy * settings.scale * 1.5 * settings.frequency,
+        warpZ * settings.scale
+    );
 
-  // 3. The Ridge/Tunnel Calculation
-  // We want values close to 0.0.
-  // If abs(noise) is SMALL, we are inside the "worm".
-  const isCave = Math.abs(noiseVal) < settings.threshold;
-
-  if (!isCave) return 1.0; // Not a cave, keep existing terrain
-
-  // 4. Surface Fade (Deterministic)
-  // We don't want caves breaking the surface everywhere.
-  // We fade them out between Y=10 (full caves) and Y=30 (no caves).
-  // We assume surface is roughly around Y=30 to Y=50.
-
-  // Normalized depth factor: 0.0 at surface (Y=30), 1.0 deep down (Y=10)
-  const surfaceLimit = 30; // approx surface level
-  const fadeDepth = 20;    // how many blocks deep to fully open
-  const depthFactor = Math.min(1.0, Math.max(0.0, (surfaceLimit - wy) / fadeDepth));
-
-  // If we are near surface, reduce the threshold effectively "closing" the cave
-  // Or simpler: strictly cut off if too close to surface, but smooth is better.
-  if (depthFactor < 0.2) {
-      // Very close to surface? Force close unless we get lucky with noise (entrances)
-      return 1.0;
-  }
-
-  return -1.0; // It's a cave! Override density to Air.
+    // If inside threshold, it's a cave (-1), else Neutral (0)
+    // We return a modifier, not the final density yet
+    return Math.abs(noiseVal) < settings.threshold ? -1.0 : 0.0;
 }
 
 export class TerrainService {
@@ -163,12 +139,16 @@ export class TerrainService {
 
                         d = surfaceHeight - wy + overhang;
 
-                        // Caves
-                        // Logic removed, replaced by getCavernDensity below
-                        const caveMod = getCavernDensity(wx, wy, wz, biome);
-                        if (caveMod < 0.0) {
-                            d = -1.0;
+                        // --- NEW CAVE LOGIC ---
+                        const caveMod = getCavernModifier(wx, wy, wz, biome);
+
+                        // CRUST CHECK: Only carve if the ground is already solid enough.
+                        // If d is 0.1 (near surface), we skip. If d is 0.5 (deep), we carve.
+                        // The '0.15' constant determines how thick the surface walls are.
+                        if (caveMod < 0 && d > 4.0) {
+                            d = -1.0; // Hollow out the cave
                         }
+
 
                         // Bedrock
                         if (wy <= MESH_Y_OFFSET) d += 100.0;
