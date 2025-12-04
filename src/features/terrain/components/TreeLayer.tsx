@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
+import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 
@@ -46,7 +47,7 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
 
-    const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
+    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
 
@@ -57,16 +58,6 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
             const x = positions[i * 3];
             const y = positions[i * 3 + 1];
             const z = positions[i * 3 + 2];
-
-            // Add chunk offset here since positions are local to chunk origin (0,0,0) relative to world?
-            // Wait, ChunkMesh puts the group at [cx*SIZE, 0, cz*SIZE].
-            // The positions in data are:
-            // (x - PAD) + (hash * 0.4 - 0.2)
-            // x is 0..31 relative to chunk start?
-            // In terrainService: 
-            // floraCandidates.push((x - PAD) + ..., (y - PAD) + MESH_Y_OFFSET ..., ...)
-            // These are local coordinates relative to the chunk origin.
-            // So we just use them directly.
 
             dummy.position.set(x, y, z);
 
@@ -87,6 +78,52 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
         if (leafMesh.current) leafMesh.current.instanceMatrix.needsUpdate = true;
     }, [positions, count]);
 
+    // Prepare Physics Instances
+    const rigidBodyGroups = useMemo(() => {
+        if (!collisionData || collisionData.length === 0) return [];
+
+        return collisionData.map((branchDef, branchIndex) => {
+            const instances: InstancedRigidBodyProps[] = [];
+            const branchMatrix = new THREE.Matrix4().compose(branchDef.position, branchDef.quaternion, branchDef.scale);
+            const tempMatrix = new THREE.Matrix4();
+            const tempDummy = new THREE.Object3D();
+
+            for (let i = 0; i < count; i++) {
+                const x = positions[i * 3];
+                const y = positions[i * 3 + 1];
+                const z = positions[i * 3 + 2];
+
+                // Reconstruct Tree Transform (must match visual)
+                tempDummy.position.set(x, y, z);
+                const seed = x * 12.9898 + z * 78.233;
+                tempDummy.rotation.y = (seed % 1) * Math.PI * 2;
+                tempDummy.rotation.x = 0; tempDummy.rotation.z = 0;
+                const scale = 0.8 + (seed % 0.4);
+                tempDummy.scale.setScalar(scale);
+                tempDummy.updateMatrix();
+
+                // Combine: Tree * Branch
+                tempMatrix.copy(tempDummy.matrix).multiply(branchMatrix);
+
+                const pos = new THREE.Vector3();
+                const quat = new THREE.Quaternion();
+                const scl = new THREE.Vector3();
+                tempMatrix.decompose(pos, quat, scl);
+
+                const euler = new THREE.Euler().setFromQuaternion(quat);
+
+                instances.push({
+                    key: `tree-${type}-${i}-branch-${branchIndex}`,
+                    position: [pos.x, pos.y, pos.z],
+                    rotation: [euler.x, euler.y, euler.z],
+                    scale: [scl.x, scl.y, scl.z],
+                    userData: { type: 'flora_tree' }
+                });
+            }
+            return instances;
+        });
+    }, [collisionData, positions, count, type]);
+
     // Colors
     const colors = useMemo(() => {
         let base = '#3e2723';
@@ -102,6 +139,17 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
         return { base, tip };
     }, [type]);
 
+    // Collider Geometries
+    const colliderGeometries = useMemo(() => {
+        const cylinder = new THREE.CylinderGeometry(0.225, 0.225, 1.0, 6);
+        cylinder.translate(0, 0.5, 0);
+
+        const box = new THREE.BoxGeometry(0.5, 1.0, 0.125);
+        box.translate(0, 0.5, 0);
+
+        return { cylinder, box };
+    }, []);
+
     return (
         <group>
             <instancedMesh ref={woodMesh} args={[wood, undefined, count]} castShadow receiveShadow>
@@ -112,6 +160,27 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
                     <meshStandardMaterial color={colors.tip} roughness={0.8} />
                 </instancedMesh>
             )}
+
+            {/* Physics Colliders */}
+            {rigidBodyGroups.map((instances, i) => (
+                <InstancedRigidBodies
+                    key={i}
+                    instances={instances}
+                    type="fixed"
+                    colliders={type === TreeType.CACTUS ? "cuboid" : "hull"}
+                >
+                    <instancedMesh
+                        args={[
+                            type === TreeType.CACTUS ? colliderGeometries.box : colliderGeometries.cylinder,
+                            undefined,
+                            instances.length
+                        ]}
+                        visible={false}
+                    >
+                        <meshBasicMaterial />
+                    </instancedMesh>
+                </InstancedRigidBodies>
+            ))}
         </group>
     );
 };

@@ -4,23 +4,22 @@ import { TreeType } from '@features/terrain/logic/VegetationConfig';
 
 // Re-implementing the fractal logic to generate a STATIC merged geometry for a single tree
 export class TreeGeometryFactory {
-    private static cache: Record<number, THREE.BufferGeometry> = {};
-    private static leafCache: Record<number, THREE.BufferGeometry> = {};
+    private static cache: Record<number, { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] }> = {};
 
-    static getTreeGeometry(type: TreeType): { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry } {
-        if (this.cache[type] && this.leafCache[type]) {
-            return { wood: this.cache[type], leaves: this.leafCache[type] };
+    static getTreeGeometry(type: TreeType): { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] } {
+        if (this.cache[type]) {
+            return this.cache[type];
         }
 
-        const { wood, leaves } = this.generateTree(type);
-        this.cache[type] = wood;
-        this.leafCache[type] = leaves;
-        return { wood, leaves };
+        const { wood, leaves, collisionData } = this.generateTree(type);
+        this.cache[type] = { wood, leaves, collisionData };
+        return { wood, leaves, collisionData };
     }
 
     private static generateTree(type: TreeType) {
         const woodGeometries: THREE.BufferGeometry[] = [];
         const leafGeometries: THREE.BufferGeometry[] = [];
+        const collisionData: { position: THREE.Vector3, quaternion: THREE.Quaternion, scale: THREE.Vector3 }[] = [];
 
         // --- GEOMETRY SELECTION ---
         let branchGeo: THREE.BufferGeometry;
@@ -133,6 +132,15 @@ export class TreeGeometryFactory {
             const instanceGeo = branchGeo.clone();
             instanceGeo.applyMatrix4(dummy);
             woodGeometries.push(instanceGeo);
+
+            // Collect Collision Data for thick branches
+            if (seg.depth < 3) {
+                collisionData.push({
+                    position: seg.position.clone(),
+                    quaternion: seg.quaternion.clone(),
+                    scale: seg.scale.clone()
+                });
+            }
 
             const up = new THREE.Vector3(0, 1, 0).applyQuaternion(seg.quaternion).multiplyScalar(seg.scale.y);
             const end = seg.position.clone().add(up);
@@ -259,6 +267,6 @@ export class TreeGeometryFactory {
         const mergedWood = woodGeometries.length > 0 ? BufferGeometryUtils.mergeGeometries(woodGeometries) : new THREE.BufferGeometry();
         const mergedLeaves = leafGeometries.length > 0 ? BufferGeometryUtils.mergeGeometries(leafGeometries) : new THREE.BufferGeometry();
 
-        return { wood: mergedWood, leaves: mergedLeaves };
+        return { wood: mergedWood, leaves: mergedLeaves, collisionData };
     }
 }
