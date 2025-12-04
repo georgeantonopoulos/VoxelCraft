@@ -31,7 +31,7 @@ export class TreeGeometryFactory {
         if (type === TreeType.PINE) leafGeo = new THREE.ConeGeometry(0.3, 0.8, 5);
         else leafGeo = new THREE.OctahedronGeometry(0.4, 0);
 
-        // Parameters (Copied from worker)
+        // Parameters
         let MAX_DEPTH = 6;
         let LENGTH_DECAY = 0.85;
         let RADIUS_DECAY = 0.6;
@@ -64,6 +64,13 @@ export class TreeGeometryFactory {
             RADIUS_DECAY = 0.8;
             ANGLE_BASE = 90 * (Math.PI / 180);
             BASE_LENGTH = 1.5;
+        } else if (type === TreeType.JUNGLE) {
+            // --- NEW JUNGLE LOGIC: Emergent Trees ---
+            MAX_DEPTH = 7;             // Deeper recursion for complexity
+            LENGTH_DECAY = 0.85;
+            RADIUS_DECAY = 0.70;       // Thick trunks
+            ANGLE_BASE = 80 * (Math.PI / 180); // Wide, horizontal spread for canopy
+            BASE_LENGTH = 6.0;         // Massive initial trunk height
         }
 
         // Simulation Stack
@@ -105,15 +112,26 @@ export class TreeGeometryFactory {
             if (seg.depth < MAX_DEPTH) {
                 let numBranches = 2 + (rand() > BRANCH_PROB ? 1 : 0);
 
+                // --- BRANCH COUNT LOGIC ---
                 if (type === TreeType.PALM) {
                     if (seg.depth < MAX_DEPTH - 1) numBranches = 1;
                     else numBranches = 5;
                 } else if (type === TreeType.CACTUS) {
                     numBranches = (rand() > 0.5) ? 1 : 2;
+                } else if (type === TreeType.JUNGLE) {
+                    // Force straight trunk for the first 4 levels
+                    if (seg.depth < 4) {
+                        numBranches = 1;
+                    } else {
+                        // Explode into canopy at the top
+                        numBranches = 3 + (rand() > 0.5 ? 1 : 0);
+                    }
                 }
 
                 for (let i = 0; i < numBranches; i++) {
                     const newPos = end.clone();
+
+                    // --- ANGLE LOGIC ---
                     let angle = ANGLE_BASE + (rand() - 0.5) * 0.5;
                     let azimuth = rand() * Math.PI * 2;
 
@@ -124,6 +142,13 @@ export class TreeGeometryFactory {
                     if (type === TreeType.PINE) {
                         angle = 60 * (Math.PI / 180);
                     }
+                    if (type === TreeType.JUNGLE) {
+                        // If it's the trunk (depth < 4), force it straight up
+                        if (seg.depth < 4) {
+                            angle = (rand() - 0.5) * 0.1; // Tiny wiggle
+                        }
+                        // The canopy naturally uses ANGLE_BASE (80 degrees) for horizontal spread
+                    }
 
                     const q1 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
                     const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), azimuth + (Math.PI * 2 / numBranches) * i);
@@ -132,11 +157,24 @@ export class TreeGeometryFactory {
                         q1.setFromAxisAngle(new THREE.Vector3(1, 0, 0), (rand() - 0.5) * 0.2);
                     }
 
+                    // Extra flattening for very top of Jungle trees
+                    if (type === TreeType.JUNGLE && seg.depth >= MAX_DEPTH - 2) {
+                        const flatAngle = 85 * (Math.PI / 180) + (rand() - 0.5) * 0.5;
+                        q1.setFromAxisAngle(new THREE.Vector3(1, 0, 0), flatAngle);
+                    }
+
                     const newQuat = seg.quaternion.clone().multiply(q2).multiply(q1);
                     const newScale = seg.scale.clone();
                     newScale.y = seg.scale.y * LENGTH_DECAY;
                     newScale.x = Math.max(seg.scale.x * RADIUS_DECAY, 0.1);
                     newScale.z = Math.max(seg.scale.z * RADIUS_DECAY, 0.1);
+
+                    // Jungle Canopy Leaves: Thinner and Wider
+                    if (type === TreeType.JUNGLE && seg.depth >= MAX_DEPTH - 1) {
+                        newScale.y *= 0.5; // Thinner vertically
+                        newScale.x *= 2.0; // Wider horizontally
+                        newScale.z *= 2.0;
+                    }
 
                     stack.push({ position: newPos, quaternion: newQuat, scale: newScale, depth: seg.depth + 1 });
                 }
