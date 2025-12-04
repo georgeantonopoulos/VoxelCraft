@@ -275,8 +275,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
     // Half size and thinner as requested
     geoMap.set('grass_low', createGrassGeo(3, 0.3, 0.08));
     geoMap.set('grass_tall', createGrassGeo(4, 0.6, 0.1));
-    // New Carpet Grass: 8 blades, wider spread (0.15 width), slightly shorter (0.4)
-    geoMap.set('grass_carpet', createGrassGeo(8, 0.4, 0.15));
+    // New Carpet Grass: 12 blades, much thinner (0.05 width), slightly shorter (0.4)
+    geoMap.set('grass_carpet', createGrassGeo(12, 0.4, 0.05));
     geoMap.set('flower', createFlowerGeo()); // Updated internally below
     geoMap.set('fern', createFernGeo());
     geoMap.set('shrub', createShrubGeo());

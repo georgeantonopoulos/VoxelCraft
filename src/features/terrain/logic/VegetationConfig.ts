@@ -43,8 +43,8 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
   switch (biome) {
     case 'THE_GROVE':
       // Distinct, safe zone: More flowers, dense lush grass
-      if (noiseVal > 0.90) return VegetationType.FLOWER_BLUE; // Occasional flowers
-      if (noiseVal > 0.20) return VegetationType.GROVE_GRASS; // Almost everywhere
+      if (noiseVal > 0.95) return VegetationType.FLOWER_BLUE; // Occasional flowers
+      if (noiseVal > 0.10) return VegetationType.GROVE_GRASS; // Almost everywhere
       return VegetationType.GROVE_GRASS; // Fallback
     case 'PLAINS':
     case 'SKY_ISLANDS':
