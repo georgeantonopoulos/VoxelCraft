@@ -60,7 +60,7 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
       if (noiseVal > 0.60) return VegetationType.SNOW_GRASS;
       break;
     case 'JUNGLE':
-      if (noiseVal > 0.60) return VegetationType.JUNGLE_FERN;
+      if (noiseVal > 0.10) return VegetationType.JUNGLE_FERN;
       return VegetationType.JUNGLE_GRASS; // Jungle is full of stuff
     case 'SAVANNA':
       if (noiseVal > 0.80) return VegetationType.GRASS_TALL;

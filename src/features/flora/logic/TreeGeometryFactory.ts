@@ -22,16 +22,39 @@ export class TreeGeometryFactory {
         const woodGeometries: THREE.BufferGeometry[] = [];
         const leafGeometries: THREE.BufferGeometry[] = [];
 
-        // Branch Geometry (Cylinder)
-        const branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 5);
-        branchGeo.translate(0, 0.5, 0);
-
-        // Leaf Geometry
+        // --- GEOMETRY SELECTION ---
+        let branchGeo: THREE.BufferGeometry;
         let leafGeo: THREE.BufferGeometry;
-        if (type === TreeType.PINE) leafGeo = new THREE.ConeGeometry(0.3, 0.8, 5);
-        else leafGeo = new THREE.OctahedronGeometry(0.4, 0);
 
-        // Parameters
+        if (type === TreeType.CACTUS) {
+            // Cactus "Wood" is the green pads
+            // Flattened cylinder to look like a pad
+            branchGeo = new THREE.CylinderGeometry(0.3, 0.2, 1.0, 8);
+            branchGeo.scale(1.0, 1.0, 0.25); // Flatten Z
+            branchGeo.translate(0, 0.5, 0);
+
+            // Cactus "Leaves" are the flowers (Prickly Pear style)
+            // Small sphere or dodecahedron
+            leafGeo = new THREE.DodecahedronGeometry(0.15, 0);
+        } else {
+            // Standard Branch
+            branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 5);
+            branchGeo.translate(0, 0.5, 0);
+
+            // Leaf Selection
+            if (type === TreeType.PINE) {
+                leafGeo = new THREE.ConeGeometry(0.3, 0.8, 5);
+            } else if (type === TreeType.JUNGLE) {
+                // Jungle Canopy: Broad, flat clumps
+                leafGeo = new THREE.DodecahedronGeometry(0.6, 0);
+                leafGeo.scale(1.5, 0.6, 1.5); // Flattened and wide
+            } else {
+                // Oak / Default
+                leafGeo = new THREE.OctahedronGeometry(0.4, 0);
+            }
+        }
+
+        // --- PARAMETERS ---
         let MAX_DEPTH = 6;
         let LENGTH_DECAY = 0.85;
         let RADIUS_DECAY = 0.6;
@@ -59,11 +82,11 @@ export class TreeGeometryFactory {
             ANGLE_BASE = 60 * (Math.PI / 180);
             BASE_LENGTH = 1.5;
         } else if (type === TreeType.CACTUS) {
-            MAX_DEPTH = 3;
-            LENGTH_DECAY = 0.8;
-            RADIUS_DECAY = 0.8;
-            ANGLE_BASE = 90 * (Math.PI / 180);
-            BASE_LENGTH = 1.5;
+            MAX_DEPTH = 4; // More pads
+            LENGTH_DECAY = 0.9; // Keep size relatively consistent
+            RADIUS_DECAY = 0.9;
+            ANGLE_BASE = 45 * (Math.PI / 180);
+            BASE_LENGTH = 1.2;
         } else if (type === TreeType.JUNGLE) {
             // --- NEW JUNGLE LOGIC: Emergent Trees ---
             MAX_DEPTH = 7;             // Deeper recursion for complexity
@@ -86,6 +109,11 @@ export class TreeGeometryFactory {
         const rootQuat = new THREE.Quaternion();
         const targetRadius = 0.6;
         const rootScale = new THREE.Vector3(targetRadius / 0.25, BASE_LENGTH, targetRadius / 0.25);
+
+        // Special initial scale for Cactus to match pad shape
+        if (type === TreeType.CACTUS) {
+            rootScale.set(1.5, BASE_LENGTH, 1.5);
+        }
 
         stack.push({ position: rootPos, quaternion: rootQuat, scale: rootScale, depth: 0 });
 
@@ -117,7 +145,9 @@ export class TreeGeometryFactory {
                     if (seg.depth < MAX_DEPTH - 1) numBranches = 1;
                     else numBranches = 5;
                 } else if (type === TreeType.CACTUS) {
-                    numBranches = (rand() > 0.5) ? 1 : 2;
+                    // Cacti branch less often, sometimes just stack
+                    numBranches = (rand() > 0.3) ? 1 : 2;
+                    if (seg.depth === 0) numBranches = 1; // Single base
                 } else if (type === TreeType.JUNGLE) {
                     // Force straight trunk for the first 4 levels
                     if (seg.depth < 4) {
@@ -141,6 +171,16 @@ export class TreeGeometryFactory {
                     }
                     if (type === TreeType.PINE) {
                         angle = 60 * (Math.PI / 180);
+                    }
+                    if (type === TreeType.CACTUS) {
+                        // Cactus pads branch out at specific angles or stack straight
+                        if (numBranches === 1) {
+                            angle = (rand() - 0.5) * 0.2; // Mostly straight
+                        } else {
+                            angle = 45 * (Math.PI / 180) + (rand() - 0.5) * 0.5;
+                            // Align pads to be somewhat flat relative to each other?
+                            // For now, random azimuth is fine, but maybe snap to 90 degrees?
+                        }
                     }
                     if (type === TreeType.JUNGLE) {
                         // If it's the trunk (depth < 4), force it straight up
@@ -176,11 +216,34 @@ export class TreeGeometryFactory {
                         newScale.z *= 2.0;
                     }
 
+                    // Cactus: Keep pads roughly same size, maybe slightly smaller
+                    if (type === TreeType.CACTUS) {
+                        newScale.x = seg.scale.x * 0.9;
+                        newScale.z = seg.scale.z * 0.9;
+                        newScale.y = seg.scale.y * 0.9;
+                    }
+
                     stack.push({ position: newPos, quaternion: newQuat, scale: newScale, depth: seg.depth + 1 });
                 }
             } else {
                 // Add Leaf
-                if (type !== TreeType.CACTUS) {
+                // Cactus flowers only on tips
+                if (type === TreeType.CACTUS) {
+                    // Chance for a flower
+                    if (rand() > 0.4) {
+                        dummy.makeRotationFromEuler(new THREE.Euler(rand() * 0.5, rand() * 6, rand() * 0.5));
+                        // Position at the very tip of the pad
+                        const tip = end.clone().add(new THREE.Vector3(0, 0.1, 0)); // Slight offset
+                        dummy.setPosition(tip);
+                        const lScale = 1.0;
+                        dummy.scale(new THREE.Vector3(lScale, lScale, lScale));
+
+                        const instanceLeaf = leafGeo.clone();
+                        instanceLeaf.applyMatrix4(dummy);
+                        leafGeometries.push(instanceLeaf);
+                    }
+                } else {
+                    // Standard Leaves
                     dummy.makeRotationFromEuler(new THREE.Euler(rand() * 3, rand() * 3, rand() * 3));
                     dummy.setPosition(end);
                     const lScale = 0.5 + rand() * 0.5;
