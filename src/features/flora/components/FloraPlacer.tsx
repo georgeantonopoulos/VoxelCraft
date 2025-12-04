@@ -7,7 +7,6 @@ import { LuminaFlora } from '@features/flora/components/LuminaFlora';
 
 export const FloraPlacer: React.FC = () => {
     const { camera, scene, raycaster } = useThree();
-    const removeFloraFromInventory = useGameStore(s => s.removeFlora);
 
     const addEntity = useWorldStore(s => s.addEntity);
     const floraEntities = useWorldStore(s => s.entities);
@@ -31,7 +30,11 @@ export const FloraPlacer: React.FC = () => {
         const handleDown = (e: KeyboardEvent) => {
             if (e.code !== 'KeyE') return;
 
-            if (useGameStore.getState().inventoryCount > 0) {
+            const state = useGameStore.getState();
+            const hasLuminous = state.luminousFloraCount > 0;
+            const hasNormal = state.inventoryCount > 0;
+
+            if (hasLuminous || hasNormal) {
                 const now = performance.now();
                 if (now - lastPlaceTime.current < 200) return; // Debounce
 
@@ -69,14 +72,20 @@ export const FloraPlacer: React.FC = () => {
                         bodyRef,
                     });
 
-                    removeFloraFromInventory();
+                    if (hasLuminous) {
+                        state.removeLuminousFlora();
+                        console.log("Placed Luminous Flora");
+                    } else {
+                        state.removeFlora();
+                        console.log("Placed Normal Flora");
+                    }
                     lastPlaceTime.current = now;
                 }
             }
         };
         window.addEventListener('keydown', handleDown);
         return () => window.removeEventListener('keydown', handleDown);
-    }, [camera, scene, raycaster, addEntity, removeFloraFromInventory]);
+    }, [camera, scene, raycaster, addEntity]);
 
     return (
         <>

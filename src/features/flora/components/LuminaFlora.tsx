@@ -1,8 +1,10 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
+
+let activeShadowFlora = 0;
 
 interface LuminaFloraProps {
   id: string;
@@ -17,6 +19,7 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
   // If no external ref provided, use internal one (though for placed flora, bodyRef is expected)
   const internalRef = useRef<any>(null);
   const refToUse = bodyRef || internalRef;
+  const [castsShadow, setCastsShadow] = useState(false);
 
   // Uniforms for the shader
   const uniforms = useMemo(() => ({
@@ -24,6 +27,17 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
     uColor: { value: new THREE.Color('#00FFFF') }, // Cyan
     uSeed: { value: seed }
   }), [seed]);
+
+  // Keep shadows, but cap active shadow-casting flora to avoid blowing the 16 texture unit limit.
+  useEffect(() => {
+    const MAX_SHADOW_FLORA = 2;
+    if (activeShadowFlora >= MAX_SHADOW_FLORA) return undefined;
+    activeShadowFlora += 1;
+    setCastsShadow(true);
+    return () => {
+      activeShadowFlora = Math.max(0, activeShadowFlora - 1);
+    };
+  }, []);
 
   useFrame(({ clock }) => {
     if (materialRef.current) {
@@ -49,11 +63,7 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
           intensity={2.0}
           distance={8}
           decay={2}
-          castShadow
-          // Shadow bias settings to prevent shadow acne on curved terrain
-          shadow-bias={-0.0005}
-          shadow-normalBias={0.03}
-          shadow-mapSize={[512, 512]}
+          castShadow={castsShadow}
         />
 
         {/* The Visual Bulb - Cyan Emissive with Shader Pulse */}

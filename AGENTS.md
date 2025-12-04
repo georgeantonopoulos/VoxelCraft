@@ -9,6 +9,8 @@ Do not remove comments, add them if missing.
 Always verify and run npm run build and npm run dev to make sure the app is working as expected. 
 
 
+Do NOT REMOVE COMMENTS. ADD THEM IF NECESSARY. AND UPDATE THIS DOCUMENT (AGENTS.md) WITH YOUR FINDINGS. 
+
 ### 1. Project Overview
 - **Tech Stack**: Vite + React + TypeScript + `three` / `@react-three/fiber`.
 - **Physics**: `@react-three/rapier`.
@@ -158,8 +160,19 @@ The project follows a domain-driven architecture to improve scalability and main
     - **Shadow Bias**: Already configured (`shadow-bias={-0.001}`, `shadow-normalBias={0.08}`) to prevent shadow acne with front-side rendering.
 
 ### 7. Recent Findings
+- 2025-12-03: Flora Tree leaf DIG still missed because colliders spawned at local origin; applied world-space position/quaternion from RootHollow to branch/leaf colliders and canopy sensor so rays hit correctly. Verified with `npm run build` and `npm run dev` (dev stopped after startup).
+- 2025-12-03: Flora Tree leaf DIG still didn’t trigger because colliders ignored parent transform (spawned at origin). Leaf/trunk colliders now apply the RootHollow quaternion/offset so rays hit in world space, and leaf hits spawn the camera-bound pickup effect. Verified with `npm run build` and `npm run dev` (dev stopped after startup).
+- 2025-12-03: Flora Tree leaf DIG now spawns a pickup animation; leaf colliders alone didn’t trigger axe feedback. Added a canopy leaf pickup effect that falls then homes to the camera when a flora-tree leaf collider is hit, granting the axe while keeping other tree types untouched. Verified with `npm run build` and `npm run dev` (dev stopped after startup).
+- 2025-12-03: DIG on Flora Tree leaves failed to grant the axe because only thick-branch colliders existed; canopy had no physics hit. Added a flora-tree-only sensor collider sized from the fractal bounding box so leaf/canopy clicks register while keeping other tree types untouched. Verified with `npm run build` and `npm run dev` (dev stopped after startup).
+- 2025-12-03: Restored RootHollow FractalTree to commit `940eb3c` visuals (cyan-tipped magical variant). Re-applied worker instance matrices/branch depth attributes and bounding volumes so branches/leaves render correctly, and kept type-based styling for other tree types intact. Verified with `npm run build` and `npm run dev` (dev stopped after startup).
+- 2025-12-03: Fixed flora placement discrepancy and interaction. Generated flora were not being rendered because they weren't synced to `WorldStore`. Updated `VoxelTerrain` to sync generated flora positions to `WorldStore` entities, enabling proper rendering and unified DIG interaction. Also adjusted flora Y-offset (-0.1) to fix floating issues. Verified with `npm run build` and visual check.
+- 2025-12-03: Fixed severe performance regression caused by syncing thousands of generated flora to `WorldStore`. Root cause was double-offsetting: `LuminaLayer` rendered inside a chunk group (already offset) but received World Coordinates, pushing flora 32+ units away. Interaction raycast also double-added offsets. Fix: Reverted store sync (restoring performance), subtracted chunk offset in `LuminaLayer` for correct local rendering, and fixed raycast math in `VoxelTerrain`. Verified with `npm run build` and visual check.
+- 2026-XX-XX: Fixed cavern flora mix-up. `floraPositions` now represent lumina flora (collectibles) placed in clustered shallow caverns (Y -3..0) with headroom checks; surface trees moved to `treePositions`. Chunks sync lumina flora into `WorldStore` so the minimap hotspots and in-world lumina bulbs align, and trees render only from `treePositions`. Verified with `npm run build` and `npm run dev` (dev auto-selected :3001 and was stopped after startup).
+- 2026-XX-XX: Flora hotspots were previously tied to surface tree spawns, so the minimap showed targets without cavern flora present. `TerrainService.generateChunk` now places flora in shallow caverns (world Y -3..0) with clustered noise-based groups and headroom checks; hotspots follow these updated positions. Verified with `npm run build` and `npm run dev` (dev auto-stopped after port auto-select to :3001).
+- 2026-XX-XX: Flora spawn points are generated in `TerrainService.generateChunk` (post-pass noise threshold per biome). `VoxelTerrain` now pushes those world-space hotspots into `WorldStore`, and the HUD minimap renders them as pulsating blue circles so flora hotspots are visible before pickup.
 - 2025-12-02: Stabilized terrain normals on isolated peaks. Trilinear gradients now fall back to a clamped central-difference probe of the padded density grid when the primary normal is near-degenerate, with an Up fallback if both are tiny. This eliminates zero-length/erratic normals on thin ridges and peaks. Verified with `npm run build` and `npm run dev` (dev on 127.0.0.1:3000, auto-stopped after timeout).
 - 2025-12-02: Replaced tri-material ID interpolation with fixed 16-channel splatting (`matWeightsA`–`D`) to eliminate rainbow seams. Mesher now accumulates inverse-square neighborhood weights per material channel (skipping AIR/WATER) and normalizes per vertex; `TriplanarMaterial` sums weighted responses per channel and keeps `safeNormalize` for stability. Verified with `npm run build` and `npm run dev` (dev started on :3000 and was stopped after startup).
+- 2026-03-XX: Ambient vegetation rendered invisible because `InstanceMatrixSetter` never attached to an `InstancedMesh` parent, so instance matrices stayed zeroed. Added a tiny helper primitive as an anchor to reach the parent and populate matrices; grass now spawns correctly. Verified with `npm run build` and `npm run dev` (dev on 127.0.0.1:3000, auto-stopped after timeout).
 - 2026-02-XX: Fixed Dexie upgrade crash from changing the `modifications` primary key. `WorldDB` now detects the "Not yet support for changing primary key" `UpgradeError`, deletes the stale IndexedDB, and reopens with the composite `[chunkId+voxelIndex]` schema before any queries run; both save/read helpers await the ready promise to stop worker spam. Note: this wipes old mod data but prevents endless DexieError2 logs. Verified with `npm run build` and `npm run dev` (dev launched on :3000 then stopped after startup).
 - 2026-01-XX: Fixed chaotic material blending in `TriplanarMaterial`. The root cause was biomes changing too rapidly per voxel, causing adjacent voxels to have incompatible materials that the mesher tried to blend. Fixed by:
   - **Biome smoothing**: Sample biome at coarser scale (every 4 voxels) instead of per-voxel to create smoother biome transitions
@@ -193,3 +206,12 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Verification**: Verified visual changes by temporarily spawning a tree and observing the animation. Build verified with `npm run build`.
 - 2025-12-02: Merged the `ancestral-roots-visuals` refactor into `main`. Domain-driven layout under `src/core`, `src/features`, `src/state`, and `src/ui` is now canonical; legacy root `components/`, `services/`, and `workers/` files were removed or relocated.
 - 2025-12-02: `npm run dev` starts Vite but the sandbox blocks `uv_interface_addresses` when binding to `0.0.0.0:3000`, so the server exits early after cycling ports. Run with elevated network permissions or outside the sandbox when a live preview is required.
+
+### 8. Gameplay Mechanics (New)
+- **Tree Placement**: Implemented Jittered Grid Sampling in `terrainService.ts` to prevent tree clumping. Trees are now placed using a 4x4 voxel grid with random offsets, ensuring better distribution.
+- **Luma Axe**:
+  - **Acquisition**: Player must place "Luminous Flora" (found in caverns) into a "Root Hollow" to grow a "Flora Tree". Interacting (DIG) with the grown Flora Tree grants the `luma_axe`.
+  - **Usage**: The `luma_axe` is required to cut down trees.
+  - **Cutting Logic**: Trees now require 5 hits to be felled. Each hit shows particles. Without the axe, trees cannot be cut.
+  - **Visualization**: A `FirstPersonTools` component renders the axe in the player's hand when equipped.
+- **Inventory**: `InventoryStore` now tracks `hasAxe` and `luminousFloraCount`.

@@ -12,41 +12,70 @@ function mulberry32(a: number) {
 }
 
 ctx.onmessage = (e) => {
-    const { seed, baseRadius } = e.data;
+    const { seed, baseRadius, type } = e.data;
     const rand = mulberry32(seed ? seed : Math.random() * 10000);
 
     const matrices: number[] = [];
     const depths: number[] = [];
     const leafMatrices: number[] = [];
-
-    // Bounding Box tracking
     const min = { x: Infinity, y: Infinity, z: Infinity };
     const max = { x: -Infinity, y: -Infinity, z: -Infinity };
 
-    // Stack for iterative generation
-    // State: Position, Rotation, Scale, Depth (normalized logic later, or steps)
-    // We assume the segment geometry is a Cylinder of height 1.0, radius 1.0 (scaled down)
-    // Actually, usually radius is thinner. Let's assume geometry is unit size and we scale it.
-    // If using CylinderGeometry(1, 1, 1), we scale x/z for thickness, y for length.
+    // Tree Type Parameters
+    // 0=OAK, 1=PINE, 2=PALM, 3=JUNGLE, 4=ACACIA, 5=CACTUS
+    const treeType = type || 0;
+
+    let MAX_DEPTH = 6;
+    let LENGTH_DECAY = 0.85;
+    let RADIUS_DECAY = 0.6;
+    let ANGLE_BASE = 25 * (Math.PI / 180);
+    let BRANCH_PROB = 0.7;
+    let BASE_LENGTH = 2.0;
+
+    // Configure based on type
+    if (treeType === 1) { // PINE
+        MAX_DEPTH = 5;
+        LENGTH_DECAY = 0.8;
+        RADIUS_DECAY = 0.7;
+        ANGLE_BASE = 45 * (Math.PI / 180); // More upward
+        BASE_LENGTH = 3.0;
+    } else if (treeType === 2) { // PALM
+        MAX_DEPTH = 4;
+        LENGTH_DECAY = 0.95; // Long trunk
+        RADIUS_DECAY = 0.8;
+        ANGLE_BASE = 10 * (Math.PI / 180); // Straight up
+        BRANCH_PROB = 0.0; // No branches until top
+        BASE_LENGTH = 1.5;
+    } else if (treeType === 4) { // ACACIA
+        MAX_DEPTH = 5;
+        LENGTH_DECAY = 0.9;
+        RADIUS_DECAY = 0.6;
+        ANGLE_BASE = 60 * (Math.PI / 180); // Wide spread
+        BASE_LENGTH = 1.5;
+    } else if (treeType === 5) { // CACTUS
+        MAX_DEPTH = 3;
+        LENGTH_DECAY = 0.8;
+        RADIUS_DECAY = 0.8; // Thick arms
+        ANGLE_BASE = 90 * (Math.PI / 180); // Right angles
+        BASE_LENGTH = 1.5;
+    }
 
     interface Segment {
         position: THREE.Vector3;
         quaternion: THREE.Quaternion;
         scale: THREE.Vector3;
-        depth: number; // Iteration count
+        depth: number;
     }
 
     const stack: Segment[] = [];
-
-    // Initial Trunk
     const rootPos = new THREE.Vector3(0, 0, 0);
-    const rootQuat = new THREE.Quaternion(); // Identity (Up)
+    const rootQuat = new THREE.Quaternion();
     const targetRadius = Math.max(0.3, typeof baseRadius === 'number' ? baseRadius : 0.6);
-    const baseLength = 2.0;
-    // Geometry radius is 0.25 at base; scale so the visible trunk radius matches the stump radius
+
+    // Initial Trunk Scale
     const rootScale = new THREE.Vector3(
         targetRadius / 0.25,
-        baseLength,
+        BASE_LENGTH,
         targetRadius / 0.25
     );
 
@@ -57,18 +86,11 @@ ctx.onmessage = (e) => {
         depth: 0
     });
 
-    const MAX_DEPTH = 6;
-    const LENGTH_DECAY = 0.85;
-    const RADIUS_DECAY = 0.6; // Faster decay to thin branches
-    const ANGLE_BASE = 25 * (Math.PI / 180);
-
     const dummy = new THREE.Matrix4();
-
 
     while (stack.length > 0) {
         const seg = stack.pop()!;
 
-        // 1. Record this segment
         dummy.compose(seg.position, seg.quaternion, seg.scale);
         const elements = dummy.elements;
         for (let i = 0; i < 16; i++) matrices.push(elements[i]);
@@ -76,70 +98,50 @@ ctx.onmessage = (e) => {
         const normalizedDepth = seg.depth / MAX_DEPTH;
         depths.push(normalizedDepth);
 
-        // Update Bounding Box
-        // Check 8 corners of the transformed box/cylinder?
-        // Approximation: Center + scaled radius/height extent?
-        // Let's assume a box of size 1x1x1 centered at 0,0,0 is the base, then scaled.
-        // Actually, Cylinder is usually centered.
-        // If geometry is Cylinder(radiusTop, radiusBottom, height)
-        // Usually height is along Y.
-        // We'll check the segment's start and end points mostly.
-
-        // Start point
         updateBounds(seg.position, min, max);
-
-        // End point (Position + Rotation * Up * Length)
-        // Length is seg.scale.y
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(seg.quaternion).multiplyScalar(seg.scale.y);
         const end = seg.position.clone().add(up);
         updateBounds(end, min, max);
 
-        // Also expand by thickness (scale.x/z) approx
-        const radius = Math.max(seg.scale.x, seg.scale.z) * 0.5;
-        min.x -= radius; min.z -= radius;
-        max.x += radius; max.z += radius;
-        // Y handled by points
-
-        // 2. Branching
+        // Branching Logic
         if (seg.depth < MAX_DEPTH) {
-            const numBranches = 2 + (rand() > 0.7 ? 1 : 0); // 2 or 3 branches
+            let numBranches = 2 + (rand() > BRANCH_PROB ? 1 : 0);
+
+            // Special rules
+            if (treeType === 2) { // PALM
+                // Only branch at very top
+                if (seg.depth < MAX_DEPTH - 1) numBranches = 1;
+                else numBranches = 5; // Fronds
+            } else if (treeType === 5) { // CACTUS
+                numBranches = (rand() > 0.5) ? 1 : 2; // Fewer arms
+            }
 
             for (let i = 0; i < numBranches; i++) {
-                // New Position is the End point of current
                 const newPos = end.clone();
+                let angle = ANGLE_BASE + (rand() - 0.5) * 0.5;
+                let azimuth = rand() * Math.PI * 2;
 
-                // New Rotation
-                // Rotate around Y (random azimuth)
-                // Rotate outwards (pitch) by Angle
+                // Palm Fronds Logic
+                if (treeType === 2 && seg.depth === MAX_DEPTH - 1) {
+                    angle = 110 * (Math.PI / 180); // Droop down
+                    azimuth = (i / numBranches) * Math.PI * 2;
+                }
 
-                // Create a rotation that deviates from current up
-                const angle = ANGLE_BASE + (rand() - 0.5) * 0.5; // Randomize angle
-                const azimuth = rand() * Math.PI * 2;
+                // Pine Logic: Branches angle up, but lower ones droop?
+                if (treeType === 1) {
+                    angle = 60 * (Math.PI / 180); // Angle down slightly
+                }
 
-                // Construct rotation:
-                // Start with current rotation
-                const rot = seg.quaternion.clone();
+                const q1 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
+                const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), azimuth + (Math.PI * 2 / numBranches) * i);
 
-                // Local rotation logic
-                const branchRot = new THREE.Quaternion();
-                branchRot.setFromEuler(new THREE.Euler(angle, azimuth, 0)); // Pitch and Yaw
-                // This logic is tricky with quaternions.
+                // For Palm trunk, keep straight
+                if (treeType === 2 && seg.depth < MAX_DEPTH - 1) {
+                    q1.setFromAxisAngle(new THREE.Vector3(1, 0, 0), (rand() - 0.5) * 0.2); // Slight wobble
+                }
 
-                // Better:
-                // 1. Get current Up vector
-                // 2. Create a random vector within a cone around Up?
-                // 3. Compute rotation from Up to new Vector.
+                const newQuat = seg.quaternion.clone().multiply(q2).multiply(q1);
 
-                // Simplified L-System style:
-                // Rotate around local axes.
-                // Pitch (X) by angle, Yaw (Y) by azimuth.
-                const q1 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle); // Pitch out
-                const q2 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), azimuth + (Math.PI * 2 / numBranches) * i); // Spread branches
-
-                // Combine: Current * Yaw * Pitch
-                const newQuat = rot.clone().multiply(q2).multiply(q1);
-
-                // New Scale
                 const newScale = seg.scale.clone();
                 newScale.y = seg.scale.y * LENGTH_DECAY;
                 newScale.x = Math.max(seg.scale.x * RADIUS_DECAY, 0.1);
@@ -152,26 +154,20 @@ ctx.onmessage = (e) => {
                     depth: seg.depth + 1
                 });
             }
-
         } else {
-            // Tip of the branch - Add Leaf
-            // Position is 'end'
-            // Random rotation
-            dummy.makeRotationFromEuler(new THREE.Euler(
-                Math.random() * Math.PI,
-                Math.random() * Math.PI,
-                Math.random() * Math.PI
-            ));
-            dummy.setPosition(end);
-            // Scale leaf
-            const lScale = 0.5 + Math.random() * 0.5;
-            dummy.scale(new THREE.Vector3(lScale, lScale, lScale));
-
-            const le = dummy.elements;
-            for (let i = 0; i < 16; i++) leafMatrices.push(le[i]);
+            // Leaves
+            // Cactus has no leaves
+            if (treeType !== 5) {
+                dummy.makeRotationFromEuler(new THREE.Euler(Math.random() * 3, Math.random() * 3, Math.random() * 3));
+                dummy.setPosition(end);
+                const lScale = 0.5 + Math.random() * 0.5;
+                dummy.scale(new THREE.Vector3(lScale, lScale, lScale));
+                const le = dummy.elements;
+                for (let i = 0; i < 16; i++) leafMatrices.push(le[i]);
+            }
         }
     }
-    // Convert to Float32Array
+
     const matricesArray = new Float32Array(matrices);
     const depthsArray = new Float32Array(depths);
     const leafMatricesArray = new Float32Array(leafMatrices);

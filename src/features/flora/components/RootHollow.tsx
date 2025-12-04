@@ -137,9 +137,19 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
     const colliderHeight = stumpHeight || (STUMP_CONFIG.height * STUMP_CONFIG.scale);
     const colliderRadius = stumpRadius ? stumpRadius * 0.6 : 1.4 * STUMP_CONFIG.scale * 0.6;
 
+    const groupPosition = useMemo(
+        () => new THREE.Vector3(position[0], position[1] - STUMP_CONFIG.embedOffset, position[2]),
+        [position]
+    );
+
+    // World-space spawn point for the tree (top of stump)
+    const treeWorldPosition = useMemo(() => {
+        return new THREE.Vector3(0, 0.5, 0).applyQuaternion(quaternion).add(groupPosition);
+    }, [quaternion, groupPosition]);
+
     return (
         // Lower the group slightly (-0.3) so the flared roots embed into the terrain
-        <group position={[position[0], position[1] - STUMP_CONFIG.embedOffset, position[2]]} quaternion={quaternion}>
+        <group position={groupPosition} quaternion={quaternion}>
             <RigidBody type="fixed" colliders={false}>
                 <group position={[0, colliderHeight / 2, 0]}>
                     <CylinderCollider args={[colliderHeight / 2, colliderRadius]} />
@@ -150,8 +160,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
             {status === 'GROWING' && (
                 <FractalTree
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
-                    position={new THREE.Vector3(0, -0.2, 0)}
+                    position={new THREE.Vector3(0, 0.5, 0)}
                     baseRadius={stumpRadius}
+                    userData={{ type: 'flora_tree' }}
+                    orientation={quaternion}
+                    worldPosition={treeWorldPosition}
+                    worldQuaternion={quaternion}
                 />
             )}
         </group>

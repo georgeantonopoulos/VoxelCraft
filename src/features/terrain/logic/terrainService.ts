@@ -3,6 +3,7 @@ import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL
 import { noise } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, BiomeType } from './BiomeManager';
+import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
 
 export class TerrainService {
@@ -29,7 +30,8 @@ export class TerrainService {
         density: Float32Array,
         material: Uint8Array,
         metadata: ChunkMetadata,
-        floraPositions: Float32Array,
+        floraPositions: Float32Array, // Lumina flora (collectibles) in caverns
+        treePositions: Float32Array,  // Surface trees
         rootHollowPositions: Float32Array
     } {
         const sizeX = TOTAL_SIZE_XZ;
@@ -40,7 +42,8 @@ export class TerrainService {
         const material = new Uint8Array(sizeX * sizeY * sizeZ);
         const wetness = new Uint8Array(sizeX * sizeY * sizeZ);
         const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
-        const floraCandidates: number[] = [];
+        const floraCandidates: number[] = []; // Cavern lumina flora
+        const treeCandidates: number[] = [];  // Surface trees
         const rootHollowCandidates: number[] = [];
 
         const worldOffsetX = cx * CHUNK_SIZE_XZ;
@@ -143,14 +146,14 @@ export class TerrainService {
                         const idxBelow = idx - sizeX;
                         const dBelow = density[idxBelow];
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                             const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
-                             if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
-                                 const localX = (x - PAD) + 0.5;
-                                 const localY = wy - 0.8;
-                                 const localZ = (z - PAD) + 0.5;
-                                 // Simple up normal for now
-                                 rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
-                             }
+                            const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                            if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
+                                const localX = (x - PAD) + 0.5;
+                                const localY = wy - 0.8;
+                                const localZ = (z - PAD) + 0.5;
+                                // Simple up normal for now
+                                rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
+                            }
                         }
                     }
 
@@ -184,10 +187,10 @@ export class TerrainService {
                                 material[idx] = MaterialType.STONE;
                             } else {
                                 if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
-                                     material[idx] = biomeMat;
-                                     if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
+                                    material[idx] = biomeMat;
+                                    if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
                                 } else if (biomeMat === MaterialType.SNOW || biomeMat === MaterialType.ICE) {
-                                     material[idx] = biomeMat;
+                                    material[idx] = biomeMat;
                                 } else {
                                     if (depth < 1.5) {
                                         material[idx] = biomeMat;
@@ -210,24 +213,195 @@ export class TerrainService {
                             material[idx] = MaterialType.AIR;
                         }
 
-                        // Flora (Simplified)
-                         if (wy < surfaceHeight - 5 && wy > MESH_Y_OFFSET + 3 && !isSkyIsland) {
-                            if (y > 0) {
-                                const idxBelow = x + (y - 1) * sizeX + z * sizeX * sizeY;
-                                const dBelow = density[idxBelow];
-                                if (dBelow > ISO_LEVEL) {
-                                    const nFlora = noise(wx * 0.12, wy * 0.12, wz * 0.12);
-                                    if (nFlora > 0.7) {
-                                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
-                                        floraCandidates.push(
-                                            (x - PAD) + (hash * 0.4 - 0.2),
-                                            (y - PAD) + MESH_Y_OFFSET + 0.1,
-                                            (z - PAD) + (hash * 0.4 - 0.2)
-                                        );
-                                    }
-                                }
-                            }
+                    }
+                }
+            }
+        }
+
+        // --- 3.5 Flora Generation (Post-Pass) ---
+        // Place flora in shallow caverns (world Y: -5..2) and cluster them for readability.
+        const cavernMinWorldY = -5;
+        const cavernMaxWorldY = 2;
+        const cavernMinY = Math.max(1, Math.floor(cavernMinWorldY - MESH_Y_OFFSET + PAD));
+        const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD)); // leave headroom checks
+        const maxFloraPerChunk = 60;
+        let floraPlaced = 0;
+
+        // RELAXED STEP: Use a finer grid (3) to find more spots
+        for (let z = 0; z < sizeZ && floraPlaced < maxFloraPerChunk; z += 3) {
+            for (let x = 0; x < sizeX && floraPlaced < maxFloraPerChunk; x += 3) {
+                const wx = (x - PAD) + worldOffsetX;
+                const wz = (z - PAD) + worldOffsetZ;
+
+                const biome = BiomeManager.getBiomeAt(wx, wz);
+                // Skip barren biomes for cavern flora
+                if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') continue;
+
+                // Low frequency noise to pick cluster centers
+                // Lower threshold (0.55) to allow more clusters
+                const clusterNoise = noise(wx * 0.15, 0, wz * 0.15);
+                if (clusterNoise < 0.55) continue;
+
+                // Find a cavern floor within the target band (air with solid below and headroom above)
+                let centerFloorWy = Number.NEGATIVE_INFINITY;
+                let foundCenter = false;
+                let centerYIndex = -1;
+
+                for (let y = cavernMaxY; y >= cavernMinY; y--) {
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+                    const idxBelow = idx - sizeX;
+                    const idxAbove = idx + sizeX;
+                    const idxAbove2 = idx + sizeX * 2;
+
+                    if (idxAbove2 >= density.length || idxBelow < 0) continue;
+
+                    if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL && density[idxAbove2] <= ISO_LEVEL) {
+                        // Interpolate for smoother placement on the floor
+                        const dAir = density[idx];
+                        const dSolid = density[idxBelow];
+                        const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                        centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
+                        centerYIndex = y;
+                        foundCenter = true;
+                        break;
+                    }
+                }
+
+                if (!foundCenter) continue;
+
+                const seed = Math.abs(noise(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
+                const clusterCount = 4 + Math.floor(seed * 5); // 4..8 per cluster
+                const spread = 3.0 + seed * 2.0; // Wider spread
+
+                for (let i = 0; i < clusterCount && floraPlaced < maxFloraPerChunk; i++) {
+                    const angle = seed * 12.9898 + i * 1.3;
+                    const r = spread * (0.3 + ((i + 1) / (clusterCount + 1))); // Don't start at 0
+                    const offX = Math.sin(angle) * r;
+                    const offZ = Math.cos(angle) * r;
+
+                    const candLocalX = x + offX;
+                    const candLocalZ = z + offZ;
+
+                    // Bounds check
+                    if (candLocalX < 0 || candLocalX >= sizeX || candLocalZ < 0 || candLocalZ >= sizeZ) continue;
+
+                    // SNAP TO GROUND: Raycast at the candidate position
+                    // We search around the center Y index +/- 3 blocks to handle slopes
+                    let flowerY = Number.NEGATIVE_INFINITY;
+                    let foundGround = false;
+
+                    const ix = Math.floor(candLocalX);
+                    const iz = Math.floor(candLocalZ);
+
+                    const searchRange = 5; // Increased range to find ground on slopes
+                    const startY = Math.min(sizeY - 2, centerYIndex + searchRange);
+                    const endY = Math.max(1, centerYIndex - searchRange);
+
+                    for (let fy = startY; fy >= endY; fy--) {
+                        const idx = ix + fy * sizeX + iz * sizeX * sizeY;
+                        const idxBelow = idx - sizeX;
+
+                        // Simple check: Air above, Solid below
+                        if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL) {
+                            const dAir = density[idx];
+                            const dSolid = density[idxBelow];
+                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                            flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
+                            foundGround = true;
+                            break;
                         }
+                    }
+
+                    if (foundGround) {
+                        floraCandidates.push(
+                            (candLocalX - PAD) + worldOffsetX,
+                            flowerY - 0.1, // Sink slightly into ground to avoid floating
+                            (candLocalZ - PAD) + worldOffsetZ,
+                            0
+                        );
+                        floraPlaced++;
+                    }
+                }
+            }
+        }
+
+        // --- 3.6 Tree Generation (Surface Pass) ---
+        // Restores original surface tree placement (separate from lumina flora).
+        // AAA FIX: Use Jittered Grid Sampling to prevent clumping
+        const GRID_SIZE = 4; // 4x4 voxel cells
+
+        for (let z = 0; z < sizeZ; z += GRID_SIZE) {
+            for (let x = 0; x < sizeX; x += GRID_SIZE) {
+                // Calculate grid cell origin in world space
+                const cellWx = (x - PAD) + worldOffsetX;
+                const cellWz = (z - PAD) + worldOffsetZ;
+
+                // Hash for this cell to pick a random spot within it
+                const cellHash = Math.abs(noise(cellWx * 0.13, 0, cellWz * 0.13));
+
+                // Pick a random offset within the cell (0..GRID_SIZE)
+                const offX = (cellHash * 12.9898) % GRID_SIZE;
+                const offZ = (cellHash * 78.233) % GRID_SIZE;
+
+                const localX = x + offX;
+                const localZ = z + offZ;
+
+                if (localX >= sizeX || localZ >= sizeZ) continue;
+
+                const wx = (localX - PAD) + worldOffsetX;
+                const wz = (localZ - PAD) + worldOffsetZ;
+
+                // Check biome for tree density/chance first to avoid unnecessary scans
+                const biome = BiomeManager.getBiomeAt(wx, wz);
+
+                // Optimization: Quick noise check before scanning height
+                const nFlora = noise(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
+
+                let treeThreshold = 0.6; // Default increased density (was 0.7)
+                if (biome === 'JUNGLE') {
+                    treeThreshold = 0.3; // Much higher density for Jungle
+                } else if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
+                    treeThreshold = 0.98; // Very sparse
+                } else if (biome === 'SAVANNA') {
+                    treeThreshold = 0.8;
+                }
+
+                if (nFlora > treeThreshold) {
+                    // Potential tree spot. Now find the surface.
+                    let surfaceY = -1;
+
+                    // Scan from top down
+                    for (let y = sizeY - 2; y >= 0; y--) {
+                        const idx = Math.floor(localX) + y * sizeX + Math.floor(localZ) * sizeX * sizeY;
+                        const d = density[idx];
+                        if (d > ISO_LEVEL) {
+                            // Found surface
+                            // Check if it's not bedrock/too low
+                            const wy = (y - PAD) + MESH_Y_OFFSET;
+                            if (wy > MESH_Y_OFFSET + 5) {
+                                surfaceY = y;
+
+                                // Interpolate
+                                const idxAbove = Math.floor(localX) + (y + 1) * sizeX + Math.floor(localZ) * sizeX * sizeY;
+                                const dAbove = density[idxAbove];
+                                const t = (ISO_LEVEL - d) / (dAbove - d);
+                                surfaceY += t;
+                            }
+                            break; // Stop at first surface (highest)
+                        }
+                    }
+
+                    if (surfaceY !== -1) {
+                        const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
+                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
+                        const treeType = getTreeForBiome(biome, hash) || 0;
+
+                        treeCandidates.push(
+                            (localX - PAD) + (hash * 0.4 - 0.2),
+                            wy - 0.2, // Slight sink
+                            (localZ - PAD) + (hash * 0.4 - 0.2),
+                            treeType
+                        );
                     }
                 }
             }
@@ -253,8 +427,42 @@ export class TerrainService {
             material,
             metadata,
             floraPositions: new Float32Array(floraCandidates),
+            treePositions: new Float32Array(treeCandidates),
             rootHollowPositions: new Float32Array(rootHollowCandidates)
         };
+    }
+
+    // Helper to cluster lights for performance (run in worker)
+    static computeLightClusters(floraPositions: Float32Array): Float32Array {
+        const positions: number[] = [];
+        const CLUSTER_RADIUS_SQ = 5.0 * 5.0;
+
+        for (let i = 0; i < floraPositions.length; i += 4) {
+            const x = floraPositions[i];
+            const y = floraPositions[i + 1];
+            const z = floraPositions[i + 2];
+
+            // Check if close to any existing light
+            let found = false;
+            // Iterate backwards for better locality? No, simple scan is fine for < 50 lights
+            for (let j = 0; j < positions.length; j += 3) {
+                const lx = positions[j];
+                const ly = positions[j + 1];
+                const lz = positions[j + 2];
+                const distSq = (x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2;
+
+                if (distSq < CLUSTER_RADIUS_SQ) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                // Add new light center (slightly raised)
+                positions.push(x, y + 1.5, z);
+            }
+        }
+        return new Float32Array(positions);
     }
 
     static modifyChunk(
