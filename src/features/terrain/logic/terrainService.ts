@@ -1,10 +1,57 @@
 
 import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
-import { noise } from '@core/math/noise';
+import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
-import { BiomeManager, BiomeType } from './BiomeManager';
+import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
 import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
+
+// Helper to find surface height at specific world coordinates
+// Returns -1.0 for Air (Cave), 1.0 for Solid (No Cave)
+function getCavernDensity(wx: number, wy: number, wz: number, biomeId: string): number {
+  const settings = getCaveSettings(biomeId);
+
+  // 1. Warp domain for organic feel (prevents straight "pipes")
+  // We use the same noise function to offset the input coordinates
+  const warpStrength = 8.0;
+  const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
+  const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
+
+  // 2. Sample 3D Noise (The "Noodle" shape)
+  // Note: We often scale Y differently to make caves flatter or taller.
+  // Here we multiply Y by 1.5 to make them slightly flattened (walkable).
+  const noiseVal = noise3D(
+    warpX * settings.scale,
+    wy * settings.scale * 1.5 * settings.frequency,
+    warpZ * settings.scale
+  );
+
+  // 3. The Ridge/Tunnel Calculation
+  // We want values close to 0.0.
+  // If abs(noise) is SMALL, we are inside the "worm".
+  const isCave = Math.abs(noiseVal) < settings.threshold;
+
+  if (!isCave) return 1.0; // Not a cave, keep existing terrain
+
+  // 4. Surface Fade (Deterministic)
+  // We don't want caves breaking the surface everywhere.
+  // We fade them out between Y=10 (full caves) and Y=30 (no caves).
+  // We assume surface is roughly around Y=30 to Y=50.
+
+  // Normalized depth factor: 0.0 at surface (Y=30), 1.0 deep down (Y=10)
+  const surfaceLimit = 30; // approx surface level
+  const fadeDepth = 20;    // how many blocks deep to fully open
+  const depthFactor = Math.min(1.0, Math.max(0.0, (surfaceLimit - wy) / fadeDepth));
+
+  // If we are near surface, reduce the threshold effectively "closing" the cave
+  // Or simpler: strictly cut off if too close to surface, but smooth is better.
+  if (depthFactor < 0.2) {
+      // Very close to surface? Force close unless we get lucky with noise (entrances)
+      return 1.0;
+  }
+
+  return -1.0; // It's a cave! Override density to Air.
+}
 
 export class TerrainService {
 
@@ -14,14 +61,14 @@ export class TerrainService {
         // We use the same logic as the loop, but simplified for single point
         const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
 
-        const qx = noise(wx * 0.008, 0, wz * 0.008) * warp;
-        const qz = noise(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
 
         const px = wx + qx;
         const pz = wz + qz;
 
         // Base 2D noise for the biome
-        const baseNoise = noise(px * 0.01 * freq, 0, pz * 0.01 * freq);
+        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
 
         return baseHeight + (baseNoise * amp);
     }
@@ -75,7 +122,7 @@ export class TerrainService {
                         const islandCenterY = 40;
                         const islandHeight = 30; // Radius roughly
 
-                        const n3d = noise(wx * 0.05, wy * 0.05, wz * 0.05);
+                        const n3d = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                         // Gradient: 1.0 at center, 0.0 at edges
                         const distY = Math.abs(wy - islandCenterY);
                         const grad = 1.0 - (distY / islandHeight);
@@ -96,35 +143,31 @@ export class TerrainService {
                         // --- Standard Terrain Logic ---
 
                         // Domain Warping
-                        const qx = noise(wx * 0.008, 0, wz * 0.008) * warp;
-                        const qz = noise(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+                        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+                        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
 
                         const px = wx + qx;
                         const pz = wz + qz;
 
-                        const baseNoise = noise(px * 0.01 * freq, 0, pz * 0.01 * freq);
+                        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
 
                         // Add some detail noise
-                        const detail = noise(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
+                        const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
                         // Calculate Height
                         surfaceHeight = baseHeight + (baseNoise * amp) + detail;
 
                         // Cliff/Overhang noise
-                        const cliffNoise = noise(wx * 0.06, wy * 0.08, wz * 0.06);
+                        const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
                         overhang = cliffNoise * 6; // Assign to outer variable
 
                         d = surfaceHeight - wy + overhang;
 
                         // Caves
-                        if (wy < surfaceHeight - 4) {
-                            const caveFreq = 0.08;
-                            const c1 = noise(wx * caveFreq, wy * caveFreq, wz * caveFreq);
-                            if (Math.abs(c1) < 0.12) {
-                                d -= 20.0;
-                                // Deep cave expansion
-                                if (wy < MESH_Y_OFFSET + 8) d -= 6.0;
-                            }
+                        // Logic removed, replaced by getCavernDensity below
+                        const caveMod = getCavernDensity(wx, wy, wz, biome);
+                        if (caveMod < 0.0) {
+                            d = -1.0;
                         }
 
                         // Bedrock
@@ -146,7 +189,7 @@ export class TerrainService {
                         const idxBelow = idx - sizeX;
                         const dBelow = density[idxBelow];
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                            const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                            const sparsity = noise3D(wx * 0.5, wy * 0.5, wz * 0.5);
                             if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
                                 const localX = (x - PAD) + 0.5;
                                 const localY = wy - 0.8;
@@ -162,7 +205,7 @@ export class TerrainService {
                     if (d > ISO_LEVEL) { // If solid
                         // --- Lumina Depths Logic (Deep Underground) ---
                         if (wy < -20 && !isSkyIsland) {
-                            const vein = noise(wx * 0.1, wy * 0.1, wz * 0.1);
+                            const vein = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
                             if (vein > 0.6) {
                                 material[idx] = MaterialType.GLOW_STONE;
                             } else if (vein < -0.6) {
@@ -172,12 +215,12 @@ export class TerrainService {
                             }
                         } else if (isSkyIsland) {
                             material[idx] = MaterialType.STONE;
-                            if (noise(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
+                            if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
                         } else {
                             // --- Standard Surface Biome Materials ---
                             const biomeMat = BiomeManager.getSurfaceMaterial(biome);
 
-                            const soilNoise = noise(wx * 0.1, wy * 0.1, wz * 0.1);
+                            const soilNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
                             const soilDepth = 6.0 + soilNoise * 3.0;
                             const depth = (surfaceHeight + overhang) - wy;
 
@@ -239,7 +282,7 @@ export class TerrainService {
 
                 // Low frequency noise to pick cluster centers
                 // Lower threshold (0.55) to allow more clusters
-                const clusterNoise = noise(wx * 0.15, 0, wz * 0.15);
+                const clusterNoise = noise3D(wx * 0.15, 0, wz * 0.15);
                 if (clusterNoise < 0.55) continue;
 
                 // Find a cavern floor within the target band (air with solid below and headroom above)
@@ -269,7 +312,7 @@ export class TerrainService {
 
                 if (!foundCenter) continue;
 
-                const seed = Math.abs(noise(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
+                const seed = Math.abs(noise3D(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
                 const clusterCount = 4 + Math.floor(seed * 5); // 4..8 per cluster
                 const spread = 3.0 + seed * 2.0; // Wider spread
 
@@ -337,7 +380,7 @@ export class TerrainService {
                 const cellWz = (z - PAD) + worldOffsetZ;
 
                 // Hash for this cell to pick a random spot within it
-                const cellHash = Math.abs(noise(cellWx * 0.13, 0, cellWz * 0.13));
+                const cellHash = Math.abs(noise3D(cellWx * 0.13, 0, cellWz * 0.13));
 
                 // Pick a random offset within the cell (0..GRID_SIZE)
                 const offX = (cellHash * 12.9898) % GRID_SIZE;
@@ -355,7 +398,7 @@ export class TerrainService {
                 const biome = BiomeManager.getBiomeAt(wx, wz);
 
                 // Optimization: Quick noise check before scanning height
-                const nFlora = noise(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
+                const nFlora = noise3D(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
 
                 let treeThreshold = 0.6; // Default increased density (was 0.7)
                 if (biome === 'JUNGLE') {
@@ -393,7 +436,7 @@ export class TerrainService {
 
                     if (surfaceY !== -1) {
                         const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
-                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
+                        const hash = Math.abs(noise3D(wx * 12.3, wy * 12.3, wz * 12.3));
                         const treeType = getTreeForBiome(biome, hash) || 0;
 
                         treeCandidates.push(

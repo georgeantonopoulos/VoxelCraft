@@ -13,6 +13,42 @@ export type BiomeType =
   | 'SKY_ISLANDS' // Special case
   | 'THE_GROVE'; // Default/Temperate
 
+export interface BiomeCaveSettings {
+  scale: number;      // How "zoomed out" the noise is (lower = bigger caves)
+  threshold: number;  // Cavity thickness (higher = wider tunnels)
+  frequency: number;  // Wiggle factor (higher = more twisted)
+}
+
+export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
+  // Archetypes
+  GRASSLANDS: { scale: 0.015, threshold: 0.12, frequency: 1.0 }, // Standard winding caves
+  // DESERT archetype removed to avoid duplicate key error. Using specific mapping below.
+  TUNDRA:     { scale: 0.025, threshold: 0.06, frequency: 2.0 }, // Tight icy fissures
+  LUMINA:     { scale: 0.012, threshold: 0.25, frequency: 0.8 }, // Huge, magical hollows
+
+  // Specific Biome Mappings
+  PLAINS:     { scale: 0.015, threshold: 0.12, frequency: 1.0 },
+  THE_GROVE:  { scale: 0.015, threshold: 0.12, frequency: 1.0 },
+  SAVANNA:    { scale: 0.015, threshold: 0.12, frequency: 1.0 },
+  JUNGLE:     { scale: 0.015, threshold: 0.12, frequency: 1.0 },
+
+  DESERT:     { scale: 0.008, threshold: 0.18, frequency: 0.5 },
+  RED_DESERT: { scale: 0.008, threshold: 0.18, frequency: 0.5 },
+
+  SNOW:       { scale: 0.025, threshold: 0.06, frequency: 2.0 },
+  ICE_SPIKES: { scale: 0.025, threshold: 0.06, frequency: 2.0 },
+  MOUNTAINS:  { scale: 0.025, threshold: 0.06, frequency: 2.0 },
+
+  SKY_ISLANDS:{ scale: 0.015, threshold: 0.00, frequency: 1.0 }, // No caves by default (threshold 0)
+
+  // Fallback
+  DEFAULT:    { scale: 0.015, threshold: 0.12, frequency: 1.0 }
+};
+
+export function getCaveSettings(biomeId: string): BiomeCaveSettings {
+  return BIOME_CAVE_SETTINGS[biomeId] || BIOME_CAVE_SETTINGS.DEFAULT;
+}
+
 // Helper function for linear interpolation
 const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * t;
 
