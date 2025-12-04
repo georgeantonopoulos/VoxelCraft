@@ -96,6 +96,76 @@ const buildFloraHotspots = (
   return hotspots;
 };
 
+const LeafPickupEffect = ({
+  start,
+  color = '#00FFFF',
+  onDone
+}: {
+  start: THREE.Vector3;
+  color?: string;
+  onDone: () => void;
+}) => {
+  const { camera } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
+  const velocity = useRef(new THREE.Vector3(0, 1.5, 0));
+  const phase = useRef<'fall' | 'fly'>('fall');
+  const elapsed = useRef(0);
+  const tmpTarget = useMemo(() => new THREE.Vector3(), []);
+  const pos = useRef(start.clone());
+
+  useEffect(() => {
+    if (meshRef.current) {
+      meshRef.current.position.copy(start);
+    }
+  }, [start]);
+
+  useFrame((_state, delta) => {
+    if (!meshRef.current) return;
+    elapsed.current += delta;
+
+    if (phase.current === 'fall') {
+      velocity.current.y -= 6.0 * delta; // gravity-ish
+      pos.current.addScaledVector(velocity.current, delta);
+
+      // After a short fall, start homing to camera
+      if (elapsed.current > 0.35) {
+        phase.current = 'fly';
+      }
+    } else {
+      // Home toward a point slightly in front of the camera
+      camera.getWorldPosition(tmpTarget);
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      tmpTarget.add(forward.multiplyScalar(0.6));
+      tmpTarget.y -= 0.1;
+
+      pos.current.lerp(tmpTarget, 1 - Math.pow(0.25, delta * 10));
+
+      if (pos.current.distanceTo(tmpTarget) < 0.05) {
+        onDone();
+        return;
+      }
+    }
+
+    meshRef.current.position.copy(pos.current);
+    meshRef.current.rotation.y += delta * 4.0;
+  });
+
+  return (
+    <mesh ref={meshRef} castShadow receiveShadow>
+      <octahedronGeometry args={[0.15, 0]} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={1.2}
+        roughness={0.3}
+        metalness={0.0}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+};
+
 const Particles = ({ active, position, color }: { active: boolean; position: THREE.Vector3; color: string }) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -196,6 +266,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     pos: new THREE.Vector3(),
     color: '#fff'
   });
+  const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
 
@@ -396,11 +467,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const physicsHit = world.castRay(ray, maxRayDistance, true);
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
+        // DEBUG LOGGING
+        // console.log("Ray Hit:", parent?.userData); 
+
         if (parent && parent.userData && (parent.userData as any).type === 'flora_tree') {
+          // If we hit a leaf, spawn a pickup animation from the hit point toward the camera
+          if ((parent.userData as any).part === 'leaf') {
+            const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
+          }
           // Give Axe!
+          console.log("Interacted with Flora Tree! Granting Axe.");
           useInventoryStore.getState().setHasAxe(true);
-          // Maybe play a sound or show a notification?
-          console.log("Got Axe!");
           return;
         }
       }
@@ -767,6 +845,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       {fallingTrees.map(tree => (
         <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
       ))}
+      {leafPickup && (
+        <LeafPickupEffect
+          start={leafPickup}
+          onDone={() => {
+            setLeafPickup(null);
+          }}
+        />
+      )}
     </group>
   );
 };

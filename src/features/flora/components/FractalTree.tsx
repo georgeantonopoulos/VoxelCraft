@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { RigidBody, CylinderCollider } from '@react-three/rapier';
+import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 
 interface FractalTreeProps {
@@ -10,9 +10,12 @@ interface FractalTreeProps {
     baseRadius?: number;
     type?: number; // 0=Oak, 1=Pine, etc.
     userData?: Record<string, any>;
+    orientation?: THREE.Quaternion;
+    worldPosition?: THREE.Vector3;
+    worldQuaternion?: THREE.Quaternion;
 }
 
-export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0, userData }) => {
+export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0, userData, orientation, worldPosition, worldQuaternion }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const leafRef = useRef<THREE.InstancedMesh>(null);
     const [data, setData] = useState<{
@@ -97,6 +100,8 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
     });
 
     // Physics Generation
+    // NOTE: We must clone pos/quat before passing to RigidBody, otherwise all colliders
+    // share the same reference and end up at the last computed position (all bunched up).
     const physicsBodies = useMemo(() => {
         if (!physicsReady || !data) return null;
 
@@ -106,6 +111,8 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         const pos = new THREE.Vector3();
         const quat = new THREE.Quaternion();
         const scale = new THREE.Vector3();
+        const baseOffset = worldPosition ? worldPosition.clone() : position.clone();
+        const baseQuat = (worldQuaternion || orientation)?.clone() || new THREE.Quaternion();
 
         const count = matrices.length / 16;
         for (let i = 0; i < count; i++) {
@@ -114,20 +121,58 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
 
             tempMatrix.fromArray(matrices, i * 16);
             tempMatrix.decompose(pos, quat, scale);
+            pos.applyQuaternion(baseQuat).add(baseOffset);
+            quat.premultiply(baseQuat);
+
+            // Clone vectors to avoid shared reference bug
+            const finalPos = pos.clone();
+            const finalQuat = quat.clone();
+            const halfHeight = scale.y * 0.5;
+            const radius = Math.max(scale.x, scale.z) * 0.5;
 
             bodies.push(
                 <RigidBody
-                    key={i}
+                    key={`branch-${i}`}
                     type="fixed"
-                    position={pos} // Local to group
-                    quaternion={quat}
+                    position={finalPos}
+                    quaternion={finalQuat}
                     userData={userData}
                 >
                     {/* CylinderCollider args: [halfHeight, radius] */}
-                    <CylinderCollider args={[scale.y * 0.5, Math.max(scale.x, scale.z) * 0.5]} />
+                    <CylinderCollider args={[halfHeight, radius]} />
                 </RigidBody>
             );
         }
+
+        // Add Leaf Colliders (Invisible)
+        if (data.leafMatrices && data.leafMatrices.length > 0) {
+            const leafCount = data.leafMatrices.length / 16;
+            // Limit leaf colliders to avoid performance hit? 
+            // For now, add them all but maybe skip some if too many.
+            for (let i = 0; i < leafCount; i++) {
+                tempMatrix.fromArray(data.leafMatrices, i * 16);
+                tempMatrix.decompose(pos, quat, scale);
+                pos.applyQuaternion(baseQuat).add(baseOffset);
+                quat.premultiply(baseQuat);
+
+                // Clone vectors to avoid shared reference bug
+                const finalPos = pos.clone();
+                const finalQuat = quat.clone();
+
+                bodies.push(
+                    <RigidBody
+                        key={`leaf-${i}`}
+                        type="fixed"
+                        position={finalPos}
+                        quaternion={finalQuat}
+                        userData={{ ...userData, part: 'leaf' }}
+                    >
+                        <CylinderCollider args={[0.4, 0.4]} />
+                    </RigidBody>
+                );
+            }
+        }
+
         return bodies;
     }, [physicsReady, data, userData]);
 
@@ -165,6 +210,22 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
             max.y,
             (min.z + max.z) * 0.5
         );
+    }, [data]);
+
+    const interactionBounds = useMemo(() => {
+        if (!data || !data.boundingBox) return null;
+        const { min, max } = data.boundingBox;
+        const center = new THREE.Vector3(
+            (min.x + max.x) * 0.5,
+            (min.y + max.y) * 0.5,
+            (min.z + max.z) * 0.5
+        );
+        const halfExtents = new THREE.Vector3(
+            Math.max((max.x - min.x) * 0.5, 0.25),
+            Math.max((max.y - min.y) * 0.5, 0.75),
+            Math.max((max.z - min.z) * 0.5, 0.25)
+        ).multiplyScalar(1.05); // Slightly larger to ensure leaf hits register
+        return { center, halfExtents };
     }, [data]);
 
     if (!data) return null;
@@ -268,6 +329,28 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                     toneMapped={false}
                 />
             </instancedMesh>
+            {userData?.type === 'flora_tree' && interactionBounds && (
+                <RigidBody
+                    type="fixed"
+                    colliders={false}
+                    position={interactionBounds.center
+                        .clone()
+                        .applyQuaternion((worldQuaternion || orientation) ?? new THREE.Quaternion())
+                        .add(worldPosition || position)}
+                    quaternion={worldQuaternion || orientation}
+                    userData={userData}
+                >
+                    {/* Sensor collider so DIG rays hitting leaves/canopy still grant the axe */}
+                    <CuboidCollider
+                        args={[
+                            interactionBounds.halfExtents.x,
+                            interactionBounds.halfExtents.y,
+                            interactionBounds.halfExtents.z
+                        ]}
+                        sensor
+                    />
+                </RigidBody>
+            )}
             <pointLight
                 color="#E0F7FA"
                 intensity={growth * 2.5}

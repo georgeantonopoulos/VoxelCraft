@@ -37,15 +37,21 @@ export const FirstPersonTools: React.FC = () => {
 
     return (
         <group ref={groupRef} position={[0, 0, -1]}>
-            <group ref={axeRef} position={[0.5, -0.4, -0.5]} rotation={[0, -Math.PI / 4, 0]}>
-                {/* Simple Axe Geometry */}
-                <mesh position={[0, 0.3, 0]}>
-                    <boxGeometry args={[0.1, 0.6, 0.1]} />
-                    <meshStandardMaterial color="#5D4037" />
+            <group ref={axeRef} position={[0.5, -0.3, -0.5]} rotation={[0, -Math.PI / 4, 0]}>
+                {/* Luma Leaf Axe */}
+                <mesh position={[0, 0, 0]} rotation={[0, 0, Math.PI / 4]}>
+                    <octahedronGeometry args={[0.15, 0]} />
+                    <meshStandardMaterial
+                        color="#00FFFF"
+                        emissive="#00FFFF"
+                        emissiveIntensity={2.0}
+                        toneMapped={false}
+                    />
                 </mesh>
-                <mesh position={[0, 0.5, 0.15]}>
-                    <boxGeometry args={[0.05, 0.2, 0.4]} />
-                    <meshStandardMaterial color="#00FFFF" emissive="#00FFFF" emissiveIntensity={0.5} />
+                {/* Small handle/stem? */}
+                <mesh position={[0, -0.2, 0]}>
+                    <cylinderGeometry args={[0.02, 0.01, 0.4, 6]} />
+                    <meshStandardMaterial color="#3e2723" />
                 </mesh>
             </group>
         </group>
