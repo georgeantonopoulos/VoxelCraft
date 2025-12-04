@@ -93,12 +93,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
     body.current.setLinvel({ x: direction.x, y: yVelocity, z: direction.z }, true);
     const translation = body.current.translation();
-    camera.position.set(translation.x, translation.y + 0.8, translation.z);
+    camera.position.set(translation.x, translation.y + 0.6, translation.z);
   });
 
   return (
     <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0}>
-      <CapsuleCollider args={[0.5, 0.5]} />
+      <CapsuleCollider args={[0.4, 0.4]} />
     </RigidBody>
   );
 };
