@@ -713,7 +713,7 @@ const App: React.FC = () => {
             // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
-          camera={{ fov: 60, near: 0.1, far: 400 }}
+          camera={{ fov: 75, near: 0.1, far: 400 }}
         >
           <DebugGL skipPost={skipPost} />
 

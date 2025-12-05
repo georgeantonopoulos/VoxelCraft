@@ -536,6 +536,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
 
+      let isNearTree = false;
+
       // Check for Tree/Vegetation Interaction BEFORE modifying terrain
       if (action === 'DIG') {
         const hitX = impactPoint.x;
@@ -637,6 +639,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               const distSq = dx * dx + dz * dz + (dy > 0 && dy < 4.0 ? 0 : dy * dy); // Ignore Y diff if within trunk height
 
               if (distSq < (digRadius + 0.5) ** 2) {
+                // AAA FIX: ROOT ANCHORING
+                // Prevent digging the ground directly under/near a tree
+                if (distSq < 2.5 * 2.5) {
+                  // We are close to a tree. 
+                  // If we are aiming at the TREE (trunk), we chop it (handled below).
+                  // If we are aiming at the GROUND (terrainHit), we should BLOCK digging if too close.
+                  // But "distSq" here is distance from impact point to tree base.
+                  // If impact point is on ground within radius of tree, block.
+                  // However, we are inside "if (distSq < (digRadius + 0.5) ** 2)".
+                  // We need to flag this to the outer scope to block terraforming.
+                  // Let's use written variable.
+                  isNearTree = true;
+                }
+
                 // AAA FIX: Tree Cutting Logic
                 const treeId = `${key}-${i}`;
                 const hasAxe = useInventoryStore.getState().hasAxe;
@@ -786,7 +802,22 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
       const dist = origin.distanceTo(impactPoint);
 
-      const offset = action === 'DIG' ? 0.1 : -0.1;
+      // AAA FIX: Interaction Distance limit
+      if (dist > 4.5) return;
+
+      // AAA FIX: Root Anchoring Block
+      if (isNearTree && action === 'DIG') {
+        // Play a "thud" to indicate blocking
+        audioPool.play(clunkUrl, 0.4, 0.5);
+        return;
+      }
+
+      // AAA FIX: Raycast Offset for Accuracy
+      // Center the subtraction sphere deeper to ensure it "bites"
+      // Use DIG_RADIUS * 0.5 (approx 0.6)
+      const digOffset = 0.6;
+      const offset = action === 'DIG' ? digOffset : -0.1;
+
       const hitPoint = impactPoint.addScaledVector(direction, offset);
       const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
@@ -820,7 +851,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               { x: localX, y: localY, z: localZ },
               radius,
               delta,
-              buildMat
+              buildMat,
+              cx, // Pass World Coords
+              cz
             );
 
             if (modified) {
@@ -879,6 +912,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
           audio.volume = 0.4;
           audio.playbackRate = 0.9 + Math.random() * 0.2;
           audio.play().catch(() => { });
+
+          // AAA FIX: Visual Feedback for Invincible Blocks
+          setParticleState({
+            active: true,
+            pos: hitPoint,
+            color: '#555555' // Grey sparks
+          });
+          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
         }
       }
     }

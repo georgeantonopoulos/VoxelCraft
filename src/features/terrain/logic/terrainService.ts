@@ -3,6 +3,25 @@ import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL
 import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
+
+export const MATERIAL_HARDNESS: Record<number, number> = {
+    [MaterialType.DIRT]: 1.0,
+    [MaterialType.GRASS]: 1.0,
+    [MaterialType.SAND]: 1.0,
+    [MaterialType.RED_SAND]: 1.0,
+    [MaterialType.CLAY]: 0.8,
+    [MaterialType.MOSSY_STONE]: 0.4,
+    [MaterialType.STONE]: 0.3,
+    [MaterialType.TERRACOTTA]: 0.3,
+    [MaterialType.OBSIDIAN]: 0.1,
+    [MaterialType.GLOW_STONE]: 0.2,
+    [MaterialType.BEDROCK]: 0.0,
+    [MaterialType.SNOW]: 0.8,
+    [MaterialType.ICE]: 0.5,
+    [MaterialType.JUNGLE_GRASS]: 1.0,
+    [MaterialType.WATER]: 1.0,
+    [MaterialType.AIR]: 1.0
+};
 import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
 
@@ -567,7 +586,9 @@ export class TerrainService {
         localPoint: { x: number, y: number, z: number },
         radius: number,
         delta: number,
-        brushMaterial: MaterialType = MaterialType.DIRT
+        brushMaterial: MaterialType = MaterialType.DIRT,
+        cx: number = 0, // World Chunk coords for noise consistency
+        cz: number = 0
     ): boolean {
         const sizeX = TOTAL_SIZE_XZ;
         const sizeY = TOTAL_SIZE_Y;
@@ -578,7 +599,11 @@ export class TerrainService {
         const hz = localPoint.z + PAD;
 
         const rSq = radius * radius;
-        const iRad = Math.ceil(radius);
+        // Optimization: Pre-calculate world offset
+        const worldOffsetX = cx * CHUNK_SIZE_XZ - PAD; // -PAD because loop x includes PAD
+        const worldOffsetZ = cz * CHUNK_SIZE_XZ - PAD;
+
+        const iRad = Math.ceil(radius + 1.0); // Slightly larger for noise
         const minX = Math.max(0, Math.floor(hx - iRad));
         const maxX = Math.min(sizeX - 1, Math.ceil(hx + iRad));
         const minY = Math.max(0, Math.floor(hy - iRad));
@@ -594,35 +619,71 @@ export class TerrainService {
                     const dx = x - hx;
                     const dy = y - hy;
                     const dz = z - hz;
-                    const distSq = dx * dx + dy * dy + dz * dz;
+                    let distSq = dx * dx + dy * dy + dz * dz;
 
-                    if (distSq < rSq) {
-                        const idx = x + y * sizeX + z * sizeX * sizeY;
+                    // --- NOISE JITTER ---
+                    // "Chipped" look for digging
+                    if (delta < 0) { // Only when digging
+                        const wx = x + worldOffsetX;
+                        const wy = y - PAD + MESH_Y_OFFSET;
+                        const wz = z + worldOffsetZ;
+                        const jitter = noise3D(wx * 0.8, wy * 0.8, wz * 0.8) * 0.3; // +/- 0.3 units
+                        // Effectively modifies the distance check
+                        // If jitter is positive, we think we are closer (digs more).
+                        // If negative, we think we are further (digs less).
+                        // We apply it to the distance check threshold, or modify distSq?
+                        // Modifying radius check is easier:
+                        // dist < radius + jitter
+                        // But here we rely on distSq.
+                        // Let's modify the calculated distance
                         const dist = Math.sqrt(distSq);
-                        const t = dist / radius;
-                        const falloff = Math.pow(1.0 - t, 3);
-                        const strength = falloff * delta;
-                        const oldDensity = density[idx];
-
-                        density[idx] += strength;
-
-                        if (Math.abs(density[idx] - ISO_LEVEL) < SNAP_EPSILON) {
-                            density[idx] = (delta < 0) ? ISO_LEVEL - SNAP_EPSILON : ISO_LEVEL + SNAP_EPSILON;
+                        const effectiveDist = dist - jitter; // "Rough" distance
+                        // Overwrite distSq with effective squared (approx)
+                        // Or just use effectiveDist for the check
+                        if (effectiveDist < radius) {
+                            distSq = effectiveDist * effectiveDist; // Update for falloff calc
+                        } else {
+                            continue; // Skip
                         }
-
-                        if (delta > 0 && density[idx] > ISO_LEVEL) {
-                            if (oldDensity <= ISO_LEVEL) {
-                                materialData[idx] = brushMaterial;
-                            }
-                        }
-                        if (delta < 0 && density[idx] <= ISO_LEVEL) {
-                            materialData[idx] = MaterialType.AIR;
-                        }
-
-                        if (density[idx] > 20.0) density[idx] = 20.0;
-                        if (density[idx] < -20.0) density[idx] = -20.0;
-                        modified = true;
+                    } else if (distSq >= rSq) {
+                        continue;
                     }
+
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+                    const dist = Math.sqrt(distSq);
+                    const t = dist / radius;
+                    const falloff = Math.pow(1.0 - t, 3);
+
+                    // --- HARDNESS LOGIC ---
+                    let hardness = 1.0;
+                    if (delta < 0) { // Only apply hardness when digging
+                        const mat = materialData[idx];
+                        hardness = MATERIAL_HARDNESS[mat] ?? 1.0;
+                        // Min impact so play still feels *some* response
+                        if (hardness < 0.1 && hardness > 0) hardness = 0.1;
+                    }
+
+                    const strength = falloff * delta * hardness;
+                    const oldDensity = density[idx];
+
+                    density[idx] += strength;
+
+                    if (Math.abs(density[idx] - ISO_LEVEL) < SNAP_EPSILON) {
+                        density[idx] = (delta < 0) ? ISO_LEVEL - SNAP_EPSILON : ISO_LEVEL + SNAP_EPSILON;
+                    }
+
+                    if (delta > 0 && density[idx] > ISO_LEVEL) {
+                        if (oldDensity <= ISO_LEVEL) {
+                            materialData[idx] = brushMaterial;
+                        }
+                    }
+                    if (delta < 0 && density[idx] <= ISO_LEVEL) {
+                        materialData[idx] = MaterialType.AIR;
+                    }
+
+                    if (density[idx] > 20.0) density[idx] = 20.0;
+                    if (density[idx] < -20.0) density[idx] = -20.0;
+                    modified = true;
                 }
             }
         }
