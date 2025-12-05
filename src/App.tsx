@@ -1,4 +1,5 @@
 import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
+import { MapDebug } from '@/ui/MapDebug';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
@@ -667,6 +668,10 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     return params.has('debug');
   }, []);
+  const mapMode = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('mode') === 'map';
+  }, []);
 
   useEffect(() => {
     console.log('[WorldStore] Initialized', useWorldStore.getState());
@@ -684,6 +689,10 @@ const App: React.FC = () => {
     setIsInteracting(false);
     setAction(null);
   }, []);
+
+  if (mapMode) {
+    return <MapDebug />;
+  }
 
   return (
     <div className="w-full h-full relative bg-sky-300">

@@ -64,9 +64,17 @@ export class BiomeManager {
   private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
   private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
 
-  // Scales
-  static readonly TEMP_SCALE = 0.0013; // 1.5x larger biomes (was 0.002)
-  static readonly HUMID_SCALE = 0.0013;
+  // NEW: Physical Reality noise layers
+  // ContinentalNoise: Low frequency, defines Ocean vs Land.
+  private static continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
+  // ErosionNoise: Defines "Flatness" vs "Mountainous".
+  private static erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+
+  // Scales - Adjusted for larger, more realistic features
+  static readonly TEMP_SCALE = 0.0008; // (Was 0.0013)
+  static readonly HUMID_SCALE = 0.0008;
+  static readonly CONT_SCALE = 0.0005; // Continents are huge
+  static readonly EROSION_SCALE = 0.001; // Mountain ranges are large
 
   // Simple pseudo-random for seeding
   private static hash(n: number): number {
@@ -76,15 +84,27 @@ export class BiomeManager {
 
   // --- 1. Biome Classification ---
 
-  static getClimate(x: number, z: number): { temp: number, humid: number } {
+  /**
+   * Returns full climate data including Temperature, Humidity, Continentalness, and Erosion.
+   * - temp/humid: -1..1
+   * - continent: -1 (Deep Ocean) .. 1 (Inland)
+   * - erosion: -1 (Flat) .. 1 (Peaky/Mountainous)
+   */
+  static getClimate(x: number, z: number): { temp: number, humid: number, continent: number, erosion: number } {
     // Normalize to -1..1 range (fast-simplex-noise usually returns -1..1)
     const temp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
     const humid = this.humidNoise(x * this.HUMID_SCALE, z * this.HUMID_SCALE);
-    return { temp, humid };
+    const continent = this.continentalNoise(x * this.CONT_SCALE, z * this.CONT_SCALE);
+    const erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
+
+    return { temp, humid, continent, erosion };
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {
     const { temp, humid } = this.getClimate(x, z);
+    // Note: We currently don't use 'continent' for Biome ID selection (e.g. OCEAN biome),
+    // because we don't have an OCEAN biome type yet. 
+    // Instead we use it to lower the terrain height in getTerrainParameters.
     return this.getBiomeFromClimate(temp, humid);
   }
 
@@ -158,8 +178,73 @@ export class BiomeManager {
     freq: number,
     warp: number
   } {
-    const { temp, humid } = this.getClimate(x, z);
-    return this.getTerrainParametersFromClimate(temp, humid);
+    const { temp, humid, continent, erosion } = this.getClimate(x, z);
+    return this.getTerrainParametersFromMetrics(temp, humid, continent, erosion);
+  }
+
+  static getTerrainParametersFromMetrics(temp: number, humid: number, continent: number, erosion: number): {
+    baseHeight: number,
+    amp: number,
+    freq: number,
+    warp: number
+  } {
+    // 1. Get Base Biome Params (Temperature/Humidity based)
+    const params = this.getTerrainParametersFromClimate(temp, humid);
+
+    // 2. Apply "Physical Reality" Logic (Continentalness & Erosion)
+
+    // CONTINENTALNESS:
+    // Controls the "Base Height" of the world.
+    // -1.0 to -0.3: Deep Ocean
+    // -0.3 to  0.1: Coast / Transition
+    //  0.1 to  1.0: Land
+
+    let heightMod = 0;
+
+    if (continent < -0.3) {
+      // Ocean
+      // Drop height significantly to create water bodies
+      // Smooth transition at the edge
+      const depth = -continent; // 0.3 to 1.0
+      heightMod = -30 * (depth + 0.5); // -24 to -45
+      params.amp *= 0.3; // Flatter ocean floor
+    } else if (continent < 0.1) {
+      // Coast Transition
+      // continent is -0.3 to 0.1 (range 0.4)
+      // t go form 0 (ocean side) to 1 (land side)
+      const t = (continent - (-0.3)) / 0.4;
+      // Lerp from Ocean floor (-20) to Land (0)
+      heightMod = lerp(-20, 0, t);
+      params.amp *= lerp(0.3, 1.0, t);
+    } else {
+      // Land
+      // continent 0.1 to 1.0
+      // Slight rise inland
+      heightMod = (continent - 0.1) * 10;
+    }
+    params.baseHeight += heightMod;
+
+    // EROSION:
+    // Controls the "Ruggedness" (Amplitude) and "Feature Type".
+    // -1 (Sediment/Flat) -> 1 (Eroded Peaks)
+
+    const e = (erosion + 1) / 2; // 0..1
+
+    if (e < 0.3) {
+      // Flatlands / Plains
+      params.amp *= 0.5;
+      params.warp *= 0.5;
+    } else if (e > 0.7) {
+      // Mountains
+      // Boost amplitude significantly
+      // e goes 0.7 -> 1.0
+      const mountainFactor = (e - 0.7) / 0.3; // 0..1
+      params.amp *= (1.0 + mountainFactor * 2.0); // Up to 3x amp
+      params.baseHeight += mountainFactor * 20; // Push peaks up
+      params.warp *= 1.5;
+    }
+
+    return params;
   }
 
   static getTerrainParametersFromClimate(temp: number, humid: number): {

@@ -104,32 +104,35 @@ export class TerrainService {
         const worldOffsetZ = cz * CHUNK_SIZE_XZ;
 
         for (let z = 0; z < sizeZ; z++) {
-            for (let y = 0; y < sizeY; y++) {
-                for (let x = 0; x < sizeX; x++) {
+            for (let x = 0; x < sizeX; x++) {
+                // Column Setup
+                const wx = (x - PAD) + worldOffsetX;
+                const wz = (z - PAD) + worldOffsetZ;
 
+                // 1. Get Climate & Terrain Params (Column-Constant)
+                const climate = BiomeManager.getClimate(wx, wz);
+
+                // Use new metrics-based params (includes Continentalness/Erosion logic)
+                const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromMetrics(
+                    climate.temp,
+                    climate.humid,
+                    climate.continent,
+                    climate.erosion
+                );
+
+                for (let y = 0; y < sizeY; y++) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
-
-                    // World Coordinates
-                    const wx = (x - PAD) + worldOffsetX;
                     const wy = (y - PAD) + MESH_Y_OFFSET;
-                    const wz = (z - PAD) + worldOffsetZ;
 
                     // AAA FIX: Value-Based Biome Dithering
-                    // Instead of jittering coordinates (which fails on flat gradients),
-                    // we add noise directly to the temperature/humidity values.
-                    // This guarantees a fuzzy transition zone at thresholds (-0.5, 0.5).
-
-                    const climate = BiomeManager.getClimate(wx, wz);
-
-                    const DITHER_AMP = 0.05; // +/- 0.05 variation
+                    // Dither varies with Y to hide transition seams in 3D
+                    const DITHER_AMP = 0.05;
                     const ditherNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
 
                     const ditheredTemp = climate.temp + ditherNoise * DITHER_AMP;
                     const ditheredHumid = climate.humid + ditherNoise * DITHER_AMP;
 
                     const biome = BiomeManager.getBiomeFromClimate(ditheredTemp, ditheredHumid);
-                    // Use UNDITHERED climate for height to keep geometry smooth
-                    const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromClimate(climate.temp, climate.humid);
 
                     let d = 0;
                     let surfaceHeight = 0;
@@ -185,6 +188,9 @@ export class TerrainService {
                         d = surfaceHeight - wy + overhang;
 
                         // --- NEW CAVE LOGIC (SDF) ---
+                        // Only calc caves if we are somewhat near ground or deep?
+                        // Optimization: Skip cave calc if d is huge (sky) or tiny (deep underground bedrock)?
+                        // No, deep underground needs caves.
                         const caveMod = getCavernModifier(wx, wy, wz, biome);
 
                         // Congruent Breach Logic
@@ -201,11 +207,7 @@ export class TerrainService {
                         }
 
                         // SDF BLENDING:
-                        // Only apply cave if we are below the crust (d > crustThickness).
-                        // We use Math.min(d, caveMod) to carve.
-                        // Since caveMod is negative inside the cave, it will pull the density down.
                         if (d > crustThickness) {
-                            // Smooth union (min) of terrain and cave
                             d = Math.min(d, caveMod);
                         }
 
@@ -214,7 +216,7 @@ export class TerrainService {
                         else if (wy <= MESH_Y_OFFSET + 3) d += 20.0;
                     }
 
-                    // --- AAA FIX: GENERATION HYSTERESIS ---
+                    // --- GEN HYSTERESIS ---
                     if (Math.abs(d - ISO_LEVEL) < SNAP_EPSILON) {
                         d = (d < ISO_LEVEL)
                             ? ISO_LEVEL - SNAP_EPSILON
@@ -226,28 +228,23 @@ export class TerrainService {
                     // --- Root Hollow Scanning (Skip for Sky Islands) ---
                     // AAA FIX: Only spawn in THE_GROVE, on flat terrain, and near surface (not caves)
                     if (!isSkyIsland && y > 0 && y < sizeY - 1 && biome === 'THE_GROVE') {
-                        const idxBelow = idx - sizeX;
+                        const idxBelow = idx - sizeX; // Note: idx formula assumes consistent iteration structure, but here we just subtract sizeX (X-stride).
+                        // Wait! idx = x + y*SizeX + ...
+                        // If y decreases by 1, idx decreases by SizeX. Correct.
                         const dBelow = density[idxBelow];
 
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                            // 1. Surface Check: Ensure we are close to the calculated surface height 
-                            // (avoids spawning in deep caves or bubbles)
+                            // 1. Surface Check
                             if (Math.abs(wy - surfaceHeight) > 4.0) continue;
 
-                            // 2. Flatness Check: Avoid cliffs
-                            // Re-calculate cliffNoise if needed, or use 'overhang' proxy? 
-                            // We have 'overhang' from line 150. overhang = cliffNoise * 6.
-                            // If overhang is high, it's a cliff or steep area.
-                            // cliffNoise > 0.4 is considered steep in line 163.
-                            // Let's use a strict threshold for stumps.
+                            // 2. Flatness Check
                             if (Math.abs(overhang) > 1.5) continue;
 
                             const sparsity = noise3D(wx * 0.5, wy * 0.5, wz * 0.5);
-                            if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
+                            if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) {
                                 const localX = (x - PAD) + 0.5;
                                 const localY = wy - 0.8;
                                 const localZ = (z - PAD) + 0.5;
-                                // Simple up normal for now
                                 rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
                             }
                         }
@@ -257,22 +254,16 @@ export class TerrainService {
 
                     if (d > ISO_LEVEL) { // If solid
                         // --- Lumina Depths Logic (Deep Underground) ---
-                        // AAA FEATURE: "Lumina Depths" - Obsidian & Glowstone Caverns
                         if (wy < -20 && !isSkyIsland) {
-                            // 3D Noise for large obsidian structures
                             const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                             const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
 
                             if (luminaNoise > 0.0) {
-                                // Primary Lumina Material: Obsidian
                                 material[idx] = MaterialType.OBSIDIAN;
-
-                                // Veins of Glowstone
                                 if (veinNoise > 0.6) {
                                     material[idx] = MaterialType.GLOW_STONE;
                                 }
                             } else {
-                                // Transition zone / fallback to standard dark stone or bedrock if very deep
                                 if (wy < -40) material[idx] = MaterialType.BEDROCK;
                                 else material[idx] = MaterialType.STONE;
                             }
@@ -292,10 +283,7 @@ export class TerrainService {
                                 material[idx] = MaterialType.BEDROCK;
                             } else if (depth > soilDepth) {
                                 // --- UNDERGROUND / CAVERN WALLS ---
-                                // AAA FEATURE: Biome-Specific Caverns
                                 const { primary, secondary } = BiomeManager.getUndergroundMaterials(biome);
-
-                                // Mix primary and secondary materials
                                 const matNoise = noise3D(wx * 0.08, wy * 0.08, wz * 0.08);
                                 if (matNoise > 0.4) {
                                     material[idx] = secondary;

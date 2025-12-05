@@ -259,7 +259,9 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Issue**: Coordinate-based dithering failed to fix straight-line seams in biomes with flat climate gradients (e.g. extending Tundra/Plains boundaries) because the 15-unit jitter wasn't enough to cross the threshold.
   - **Fix**: Switched to **Value-Based Dithering** in `terrainService.ts`. Explicitly adds noise (+/- 0.05) to the `temp` and `humid` values before biome classification. Refactored `BiomeManager` to expose precise control methods (`getBiomeFromClimate`).
   - **Result**: Guarantees organic, fuzzy transitions at all biome edges regardless of gradient slope.
-- 2025-12-05: Fixed Missing Mountain Tops.
-  - **Issue**: Very high mountains had their geometry cut off abruptly at the top.
-  - **Analysis**: The chunk generation height limit (`CHUNK_SIZE_Y = 80`) combined with the offset (`-35`) resulted in a max world height of ~45. Mountain noise generation parameters allow peaks up to ~85.
-  - **Fix**: Increased `CHUNK_SIZE_Y` to `128` in `constants.ts`. This extends the vertical generation range to cover world Y up to ~93, fully capturing the tall mountain tops and sky islands.
+- 2025-12-05: Implemented "Physically Accurate" Biome Noise & Debug Map.
+  - **Core Algorithm**: Upgraded `BiomeManager` to include 'Continentalness' (Ocean vs Land depth) and 'Erosion' (Flat vs Mountainous shape) noise layers alongside Temperature/Humidity.
+  - **Height Shaping**: `getTerrainParametersFromMetrics` now modulates `baseHeight` based on continental depth (creating actual sea basins) and `amplitude` based on erosion (flattening plains, boosting mountains).
+  - **Performance**: Refactored `TerrainService.ts` loop to iterate Z->X->Y, hoisting the expensive Biome/Climate calculation out of the vertical loop for column-based caching.
+  - **Optimization**: Significant per-voxel CPU reduction (4 noise calls per column instead of per voxel).
+  - **Tooling**: Added `MapDebug` component reachable via `?mode=map` to visualize the biome layout top-down on a 2D canvas 2D. Verified with `npm run build`.
