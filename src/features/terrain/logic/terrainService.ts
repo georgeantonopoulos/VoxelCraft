@@ -210,31 +210,54 @@ export class TerrainService {
 
                     if (d > ISO_LEVEL) { // If solid
                         // --- Lumina Depths Logic (Deep Underground) ---
+                        // AAA FEATURE: "Lumina Depths" - Obsidian & Glowstone Caverns
                         if (wy < -20 && !isSkyIsland) {
-                            const vein = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
-                            if (vein > 0.6) {
-                                material[idx] = MaterialType.GLOW_STONE;
-                            } else if (vein < -0.6) {
+                            // 3D Noise for large obsidian structures
+                            const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
+                            const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
+
+                            if (luminaNoise > 0.0) {
+                                // Primary Lumina Material: Obsidian
                                 material[idx] = MaterialType.OBSIDIAN;
+
+                                // Veins of Glowstone
+                                if (veinNoise > 0.6) {
+                                    material[idx] = MaterialType.GLOW_STONE;
+                                }
                             } else {
-                                material[idx] = MaterialType.STONE;
+                                // Transition zone / fallback to standard dark stone or bedrock if very deep
+                                if (wy < -40) material[idx] = MaterialType.BEDROCK;
+                                else material[idx] = MaterialType.STONE;
                             }
+
                         } else if (isSkyIsland) {
                             material[idx] = MaterialType.STONE;
                             if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
                         } else {
-                            // --- Standard Surface Biome Materials ---
+                            // --- Standard Surface & Cavern Materials ---
                             const biomeMat = BiomeManager.getSurfaceMaterial(biome);
 
                             const soilNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
-                            const soilDepth = 6.0 + soilNoise * 3.0;
+                            const soilDepth = 6.0 + soilNoise * 3.0; // depth of surface soil
                             const depth = (surfaceHeight + overhang) - wy;
 
                             if (wy <= MESH_Y_OFFSET + 4) {
                                 material[idx] = MaterialType.BEDROCK;
                             } else if (depth > soilDepth) {
-                                material[idx] = MaterialType.STONE;
+                                // --- UNDERGROUND / CAVERN WALLS ---
+                                // AAA FEATURE: Biome-Specific Caverns
+                                const { primary, secondary } = BiomeManager.getUndergroundMaterials(biome);
+
+                                // Mix primary and secondary materials
+                                const matNoise = noise3D(wx * 0.08, wy * 0.08, wz * 0.08);
+                                if (matNoise > 0.4) {
+                                    material[idx] = secondary;
+                                } else {
+                                    material[idx] = primary;
+                                }
+
                             } else {
+                                // --- SURFACE SOIL ---
                                 if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
                                     material[idx] = biomeMat;
                                     if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;

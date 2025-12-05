@@ -123,6 +123,29 @@ export class BiomeManager {
     }
   }
 
+  // --- 2.5 Underground Material Lookup ---
+
+  static getUndergroundMaterials(biome: BiomeType): { primary: MaterialType, secondary: MaterialType } {
+    switch (biome) {
+      case 'DESERT':
+      case 'SAVANNA':
+        return { primary: MaterialType.TERRACOTTA, secondary: MaterialType.SAND };
+      case 'RED_DESERT':
+        return { primary: MaterialType.TERRACOTTA, secondary: MaterialType.RED_SAND };
+      case 'JUNGLE':
+        return { primary: MaterialType.MOSSY_STONE, secondary: MaterialType.STONE };
+      case 'SNOW':
+        return { primary: MaterialType.STONE, secondary: MaterialType.ICE };
+      case 'ICE_SPIKES':
+        return { primary: MaterialType.ICE, secondary: MaterialType.SNOW };
+      case 'MOUNTAINS':
+        return { primary: MaterialType.STONE, secondary: MaterialType.STONE };
+      default:
+        // THE_GROVE, PLAINS, Default
+        return { primary: MaterialType.STONE, secondary: MaterialType.DIRT };
+    }
+  }
+
   // --- 3. Height/Terrain Parameter Blending ---
 
   /**

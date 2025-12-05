@@ -102,6 +102,7 @@ const fragmentShader = `
       vec3 baseCol;
       float roughness;
       float noiseFactor;
+      float emission; // AAA: Added emission support
   };
 
   // Channel -> material mapping must match MATERIAL_CHANNELS in mesher.ts
@@ -109,6 +110,7 @@ const fragmentShader = `
       vec3 baseCol = uColorStone;
       float roughness = 0.8;
       float noiseFactor = 0.0;
+      float emission = 0.0;
 
       if (channel == 0) { // Air (no visible contribution)
           baseCol = vec3(0.0);
@@ -150,7 +152,8 @@ const fragmentShader = `
           roughness = 0.1;
       }
       else if (channel == 9) { // Mossy Stone
-          baseCol = uColorMoss;
+          baseCol = uColorStone; // Base is stone
+          // Moss logic applied in overlay, but base color shifts slightly green
           noiseFactor = nMid.r;
       }
       else if (channel == 10) { // Red Sand
@@ -160,12 +163,12 @@ const fragmentShader = `
       else if (channel == 11) { // Terracotta
           baseCol = uColorTerracotta;
           noiseFactor = nMid.g;
-          roughness = 0.9;
+          roughness = 0.95; // Matte
       }
       else if (channel == 12) { // Ice
           baseCol = uColorIce;
           noiseFactor = nMid.b * 0.5;
-          roughness = 0.1;
+          roughness = 0.05; // Glassy
       }
       else if (channel == 13) { // Jungle Grass
           baseCol = uColorJungleGrass;
@@ -174,24 +177,26 @@ const fragmentShader = `
       else if (channel == 14) { // Glow Stone
           baseCol = uColorGlowStone;
           noiseFactor = nMid.r + 0.5;
+          emission = 2.0; // Bright!
       }
       else if (channel == 15) { // Obsidian
           baseCol = uColorObsidian;
-          noiseFactor = nHigh.b;
-          roughness = 0.2;
+          noiseFactor = nHigh.b * 0.3; // Subtle noise
+          roughness = 0.15; // Very shiny/glassy
       }
 
-      return MatInfo(baseCol, roughness, noiseFactor);
+      return MatInfo(baseCol, roughness, noiseFactor, emission);
   }
 
   void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
-    inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float totalW,
+    inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float accEmission, inout float totalW,
     inout int dominantChannel, inout float dominantWeight) {
     if (weight > 0.001) {
       MatInfo m = getMatParams(channel, nMid, nHigh);
       accColor += m.baseCol * weight;
       accRoughness += m.roughness * weight;
       accNoise += m.noiseFactor * weight;
+      accEmission += m.emission * weight;
       totalW += weight;
       if (weight > dominantWeight) {
         dominantWeight = weight;
@@ -208,34 +213,36 @@ const fragmentShader = `
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
     float accNoise = 0.0;
+    float accEmission = 0.0;
     float totalW = 0.0;
     float dominantWeight = -1.0;
     int dominantChannel = 2; // default to stone
 
-    accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
 
-    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
 
-    accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
 
-    accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(15, vWd.w, nMid, nHigh, accColor, accRoughness, accNoise, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(15, vWd.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
 
     if (totalW > 0.0001) {
       accColor /= totalW;
       accRoughness /= totalW;
       accNoise /= totalW;
+      accEmission /= totalW;
     } else {
       accColor = uColorStone;
       accRoughness = 0.9;
@@ -246,18 +253,36 @@ const fragmentShader = `
     vec3 col = accColor * intensity;
 
     // --- Overlays ---
-    if (vMossiness > 0.1 || dominantChannel == 9) {
+    // AAA FIX: Ramp-based organic moss
+    bool isMossyMat = (dominantChannel == 9);
+    if (vMossiness > 0.1 || isMossyMat) {
         vec3 mossColor = uColorMoss;
-        float mossNoise = nHigh.g;
-        mossColor *= (0.8 + 0.4 * mossNoise);
+        
+        // Multi-scale noise for detail (Mid + High)
+        float organicNoise = mix(nMid.r, nHigh.g, 0.4); 
+        
+        // Tangent growth simulation: use world Y normal to encourage top-growth
+        // But for caves we want patches. The noise structure itself provides patches.
+        
         float mossAmount = vMossiness;
-        if (dominantChannel == 9) mossAmount = max(mossAmount, 0.35);
-        float mossMix = smoothstep(0.3, 0.6, mossAmount + mossNoise * 0.2);
-        col = mix(col, mossColor, mossMix);
+        if (isMossyMat) mossAmount = max(mossAmount, 0.6); // Base mossiness for the material
+        
+        // Ramp check: smoothstep creates a hard but antialiased edge for the patch
+        // We use the organic noise to modulate the threshold
+        float threshold = 1.0 - mossAmount; // Higher moss = lower threshold = more moss
+        float mossMix = smoothstep(threshold - 0.1, threshold + 0.1, organicNoise);
+
+        col = mix(col, mossColor * (0.6 + 0.4 * nHigh.a), mossMix); // Blend with detail noise in color
+        
+        // Moss reduces roughness
+        accRoughness = mix(accRoughness, 0.9, mossMix);
     }
 
     col = mix(col, col * 0.5, vWetness * 0.9);
     col = clamp(col, 0.0, 5.0);
+    
+    // Add Emission
+    col += accEmission * accColor; 
 
     // Apply strong distance fog to blend toward the sky color and hide terrain generation
     float fogDist = length(vWorldPosition - cameraPosition);
@@ -266,6 +291,7 @@ const fragmentShader = `
     col = mix(col, uFogColor, fogAmt * 0.9); // stronger fog intensity
 
     csm_DiffuseColor = vec4(col, uOpacity);
+    csm_Emissive = vec3(accEmission * accColor); // Pass emissive to standard material
 
     // Adjust roughness
     accRoughness -= (nHigh.r * 0.1);
@@ -312,16 +338,16 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
     uColorSnow: { value: new THREE.Color('#ffffff') },
     uColorWater: { value: new THREE.Color('#0099ff') },
     uColorClay: { value: new THREE.Color('#a67b5b') },
-    uColorMoss: { value: new THREE.Color('#5c8a3c') },
+    uColorMoss: { value: new THREE.Color('#4a6b2f') }, // Tune: Darker organic green
     uColorBedrock: { value: new THREE.Color('#2a2a2a') },
 
-    // New Colors
-    uColorRedSand: { value: new THREE.Color('#d45d35') }, // Orange-Red
-    uColorTerracotta: { value: new THREE.Color('#9e6b52') }, // Brownish
-    uColorIce: { value: new THREE.Color('#a3d9ff') }, // Ice Blue
-    uColorJungleGrass: { value: new THREE.Color('#2e8b1d') }, // Darker Vivid Green
-    uColorGlowStone: { value: new THREE.Color('#ffcc00') }, // Bright Yellow
-    uColorObsidian: { value: new THREE.Color('#1a1024') }, // Dark Purple/Black
+    // New Colors (Tuned)
+    uColorRedSand: { value: new THREE.Color('#d45d35') },
+    uColorTerracotta: { value: new THREE.Color('#9e5e45') }, // Tune: Richer Earthy Red
+    uColorIce: { value: new THREE.Color('#a3d9ff') },
+    uColorJungleGrass: { value: new THREE.Color('#2e8b1d') },
+    uColorGlowStone: { value: new THREE.Color('#00e5ff') }, // Tune: Cyan/Teal Luma
+    uColorObsidian: { value: new THREE.Color('#0a0814') }, // Tune: Deepest Black/Purple
 
     uFogColor: { value: new THREE.Color('#87CEEB') },
     uFogNear: { value: 30 },
