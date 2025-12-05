@@ -584,8 +584,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               const dy = impactPoint.y - y;
 
               // Lumina bulbs are small; allow a bit more Y tolerance
+              // AAA FIX: Tighter Radius for Flora Removal
+              // Was (digRadius + 0.6), which is huge. Reduced to digRadius * 0.7 to only remove what we touch.
+              const removalRadius = digRadius * 0.7;
               const distSq = dx * dx + dz * dz + (dy > 0 && dy < 2.0 ? 0 : dy * dy);
-              if (distSq < (digRadius + 0.6) ** 2) {
+              if (distSq < removalRadius * removalRadius) {
                 hitIndices.push(i);
               }
             }
@@ -655,10 +658,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
                 // AAA FIX: Tree Cutting Logic
                 const treeId = `${key}-${i}`;
-                const hasAxe = useInventoryStore.getState().hasAxe;
+                const { hasAxe, currentTool } = useInventoryStore.getState();
 
-                // No axe? No cut.
-                if (!hasAxe) {
+                // Only cut if we have an axe AND it is the current tool
+                const canCut = hasAxe && currentTool === 'axe';
+
+                if (!canCut) {
                   // Play "clunk" sound via pool
                   audioPool.play(clunkUrl, 0.4, 0.4);
                   continue;
@@ -732,20 +737,29 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
               const typeId = parseInt(typeStr);
               const hitIndices: number[] = [];
 
-              for (let i = 0; i < positions.length; i += 3) {
+              // AAA FIX: Stride is 6!
+              for (let i = 0; i < positions.length; i += 6) {
                 const x = positions[i] + chunkOriginX;
                 const y = positions[i + 1];
                 const z = positions[i + 2] + chunkOriginZ;
 
                 const distSq = (impactPoint.x - x) ** 2 + (impactPoint.y - y) ** 2 + (impactPoint.z - z) ** 2;
-                if (distSq < (digRadius + 0.5) ** 2) {
+
+                // AAA FIX: Tighter Vegetation Removal
+                // Only remove vegetation that is strictly inside the dig sphere?
+                // Or even smaller? User wants "directly where action is taking place".
+                // AAA FIX: Tighter Vegetation Removal
+                // Only remove vegetation that is strictly inside the dig sphere?
+                // Or even smaller? User wants "directly where action is taking place".
+                // digRadius is ~1.1 to 2.5. 
+                // Let's use 0.3 * digRadius (approx 0.9 units or 1 block).
+                const removalRadius = digRadius * 0.3;
+
+                if (distSq < removalRadius ** 2) {
                   hitIndices.push(i);
 
                   // Particles
                   const asset = VEGETATION_ASSETS[typeId];
-                  // We can only show one particle system easily with current setup, 
-                  // or we need to spawn multiple. For now, just update the single one 
-                  // to the last hit. Ideally we'd have a particle manager.
                   setParticleState({
                     active: true,
                     pos: new THREE.Vector3(x, y + 0.5, z),
@@ -758,32 +772,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 chunkModified = true;
                 anyFloraHit = true;
 
-                const newCount = (positions.length / 3) - hitIndices.length;
-                if (newCount === 0) {
-                  delete newVegData[typeId];
-                } else {
-                  const newArr = new Float32Array(newCount * 3);
-                  let destIdx = 0;
-                  let currentHitIdx = 0;
-                  hitIndices.sort((a, b) => a - b);
+                // AAA FIX: Stride is 6, not 3! (x,y,z,nx,ny,nz)
+                // AAA FIX: Flicker Prevention - "Hide" instead of "Delete"
+                // To avoid reconstructing the InstancedMesh (which causes flicker),
+                // we keep the array length same and just move destroyed items to infinity.
+                const newArr = new Float32Array(positions); // Clone
 
-                  for (let i = 0; i < positions.length; i += 3) {
-                    if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
-                      currentHitIdx++;
-                      continue;
-                    }
-                    newArr[destIdx] = positions[i];
-                    newArr[destIdx + 1] = positions[i + 1];
-                    newArr[destIdx + 2] = positions[i + 2];
-                    destIdx += 3;
-                  }
-                  newVegData[typeId] = newArr;
+                for (const idx of hitIndices) {
+                  // Move Y to -10000 (Subterranean Oblivion)
+                  // Index is start of stride. y is idx + 1.
+                  newArr[idx + 1] = -10000;
                 }
+                newVegData[typeId] = newArr;
               }
             }
 
             if (chunkModified) {
-              const updatedChunk = { ...chunk, vegetationData: newVegData, visualVersion: chunk.visualVersion + 1 };
+              // AAA FIX: Do NOT increment visualVersion for vegetation updates!
+              // This prevents the expensive terrain mesh reconstruction (flicker).
+              // VegetationLayer updates purely on the 'vegetationData' prop reference change.
+              const updatedChunk = { ...chunk, vegetationData: newVegData };
               chunksRef.current[key] = updatedChunk;
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
             }
