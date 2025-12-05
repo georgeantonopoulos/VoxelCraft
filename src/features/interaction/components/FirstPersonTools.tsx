@@ -177,11 +177,17 @@ export const FirstPersonTools: React.FC = () => {
 function usePickaxeDebug(axeRef: React.RefObject<THREE.Group>) {
     // Initial values set to what the user last reported, but they can now adjust them
     // UPDATED: Defaults for Upright + Forward (to avoid clipping)
-    const debugPos = useRef({ x: 0.5, y: -0.4, z: -0.8 });
-    const debugRot = useRef({ x: 0.1, y: -Math.PI + 0.2, z: 0.1 });
+    // FINAL VALUES: Pos: [0.715, -0.220, -0.800] | Rot: [1.150, -3.062, -1.450]
+    const debugPos = useRef({ x: 0.715, y: -0.220, z: -0.800 });
+    const debugRot = useRef({ x: 1.150, y: -3.062, z: -1.450 });
     const keysPressed = useRef<Set<string>>(new Set());
 
+    // Set to true to re-enable interactive positioning
+    const DEBUG_ENABLED = false;
+
     useEffect(() => {
+        if (!DEBUG_ENABLED) return;
+
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
             if (['x', 'y', 'z', 't'].includes(key)) {

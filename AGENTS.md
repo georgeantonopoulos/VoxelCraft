@@ -213,3 +213,9 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Cutting Logic**: Trees now require 5 hits to be felled. Each hit shows particles. Without the axe, trees cannot be cut.
   - **Visualization**: A `FirstPersonTools` component renders the axe in the player's hand when equipped.
 - **Inventory**: `InventoryStore` now tracks `hasAxe` and `luminousFloraCount`.
+
+- 2025-12-05: Critical Fix for First Person Tool Rendering.
+  - **Jitter Fix**: To eliminate jitter, tools must be parented to the Camera (not synced via useFrame, which causes 1-frame lag).
+  - **Graph Visibility**: In R3F, the default Camera is not strictly part of the Scene graph. Parenting a tool to the Camera hides it unless the Camera is explicitly added to the Scene.
+  - **Solution**: Execute `scene.add(camera)` in the tool's useEffect (and remove on cleanup) to ensure children are rendered.
+  - **Lighting**: Avoid `material-depthTest={false}` or `renderOrder` hacks for FPS tools. By placing them in the Scene graph (via camera), they receive proper world lighting and shadows. Added a local PointLight to the tool for fill.
