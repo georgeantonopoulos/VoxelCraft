@@ -86,15 +86,15 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
     lastLog.current = now;
 
     const info = gl.info;
-    console.log('[DebugGL] Stats:', {
-      calls: info.render.calls,
-      triangles: info.render.triangles,
-      textures: info.memory.textures,
-      geometries: info.memory.geometries,
-      camPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
-      camRot: camera.rotation.toArray().slice(0, 3).map(v => typeof v === 'number' ? Math.round(v * 100) / 100 : v),
-      skipPost
-    });
+    // console.log('[DebugGL] Stats:', {
+    //   calls: info.render.calls,
+    //   triangles: info.render.triangles,
+    //   textures: info.memory.textures,
+    //   geometries: info.memory.geometries,
+    //   camPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
+    //   camRot: camera.rotation.toArray().slice(0, 3).map(v => typeof v === 'number' ? Math.round(v * 100) / 100 : v),
+    //   skipPost
+    // });
   });
 
   useEffect(() => {

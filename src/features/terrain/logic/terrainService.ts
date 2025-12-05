@@ -8,7 +8,8 @@ import { ChunkModification } from '@/state/WorldDB';
 
 // Helper to find surface height at specific world coordinates
 // Helper to find surface height at specific world coordinates
-// Returns -1.0 for Cave, 0.0 for Neutral
+// Returns a Signed Distance Field (SDF) approximation
+// Negative = Inside Cave (Air), Positive = Outside Cave (Solid)
 function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string): number {
     const settings = getCaveSettings(biomeId);
 
@@ -18,7 +19,6 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
     const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
 
     // Tube Algorithm: Sample two independent noise fields
-    // We offset the second noise by a large amount to ensure independence
     const noiseA = noise3D(
         warpX * settings.scale,
         wy * settings.scale * 1.5 * settings.frequency,
@@ -31,12 +31,14 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
         (warpZ + 123.45) * settings.scale
     );
 
-    // Calculate distance from "center" of the tube (where both noises are 0)
-    // Formula: sqrt(a^2 + b^2) < threshold
+    // Calculate distance from "center" of the tube
     const tunnelVal = Math.sqrt(noiseA * noiseA + noiseB * noiseB);
 
-    // If inside threshold, it's a cave (-1), else Neutral (0)
-    return tunnelVal < settings.threshold ? -1.0 : 0.0;
+    // SDF Conversion:
+    // (val - threshold) is negative inside, positive outside.
+    // We multiply by a factor (e.g., 50.0) to convert "noise units" to "density units".
+    // This creates a smooth gradient across the cave wall.
+    return (tunnelVal - settings.threshold) * 50.0;
 }
 
 export class TerrainService {
@@ -149,39 +151,30 @@ export class TerrainService {
 
                         d = surfaceHeight - wy + overhang;
 
-                        // --- NEW CAVE LOGIC ---
+                        // --- NEW CAVE LOGIC (SDF) ---
                         const caveMod = getCavernModifier(wx, wy, wz, biome);
 
                         // Congruent Breach Logic
-                        // 1. Get Biome Settings
                         const settings = getCaveSettings(biome);
-
-                        // 2. Breach Noise (Low frequency, defines "Entrance Zones")
                         const breachNoise = noise3D(wx * 0.005, 0, wz * 0.005);
-                        // Normalize roughly to 0..1 (noise is -1..1) -> (n+1)/2
                         const normBreach = (breachNoise + 1) * 0.5;
 
-                        // 3. Determine Crust Thickness
-                        // Default: Deep crust (4 blocks)
                         let crustThickness = 4.0;
-
-                        // Condition A: Steep Terrain (Cliff/Overhang) -> Natural Entrance
-                        // cliffNoise > 0.4 is a good heuristic for steep overhangs
                         const isSteep = (cliffNoise > 0.4);
-
-                        // Condition B: Biome Breach Chance
-                        // If we are in a "Breach Zone" defined by the biome's chance
                         const isBreachZone = (normBreach < settings.surfaceBreachChance);
 
                         if (isSteep || isBreachZone) {
-                            crustThickness = 0.5; // Allow carving near surface
+                            crustThickness = 0.5;
                         }
 
-                        // CRUST CHECK: Only carve if the ground is already solid enough.
-                        if (caveMod < 0 && d > crustThickness) {
-                            d = -1.0; // Hollow out the cave
+                        // SDF BLENDING:
+                        // Only apply cave if we are below the crust (d > crustThickness).
+                        // We use Math.min(d, caveMod) to carve.
+                        // Since caveMod is negative inside the cave, it will pull the density down.
+                        if (d > crustThickness) {
+                            // Smooth union (min) of terrain and cave
+                            d = Math.min(d, caveMod);
                         }
-
 
                         // Bedrock
                         if (wy <= MESH_Y_OFFSET) d += 100.0;
