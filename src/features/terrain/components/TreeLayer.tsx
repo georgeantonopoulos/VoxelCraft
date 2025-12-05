@@ -175,9 +175,9 @@ const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: n
                             undefined,
                             instances.length
                         ]}
-                        visible={false}
+                        visible={true}
                     >
-                        <meshBasicMaterial />
+                        <meshBasicMaterial visible={false} />
                     </instancedMesh>
                 </InstancedRigidBodies>
             ))}

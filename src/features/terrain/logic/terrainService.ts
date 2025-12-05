@@ -1,10 +1,45 @@
 
 import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
-import { noise } from '@core/math/noise';
+import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
-import { BiomeManager, BiomeType } from './BiomeManager';
+import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
 import { getTreeForBiome } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
+
+// Helper to find surface height at specific world coordinates
+// Helper to find surface height at specific world coordinates
+// Returns a Signed Distance Field (SDF) approximation
+// Negative = Inside Cave (Air), Positive = Outside Cave (Solid)
+function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string): number {
+    const settings = getCaveSettings(biomeId);
+
+    // Warp and Noise calculation
+    const warpStrength = 4.0;
+    const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
+    const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
+
+    // Tube Algorithm: Sample two independent noise fields
+    const noiseA = noise3D(
+        warpX * settings.scale,
+        wy * settings.scale * 1.5 * settings.frequency,
+        warpZ * settings.scale
+    );
+
+    const noiseB = noise3D(
+        (warpX + 123.45) * settings.scale,
+        (wy + 123.45) * settings.scale * 1.5 * settings.frequency,
+        (warpZ + 123.45) * settings.scale
+    );
+
+    // Calculate distance from "center" of the tube
+    const tunnelVal = Math.sqrt(noiseA * noiseA + noiseB * noiseB);
+
+    // SDF Conversion:
+    // (val - threshold) is negative inside, positive outside.
+    // We multiply by a factor (e.g., 50.0) to convert "noise units" to "density units".
+    // This creates a smooth gradient across the cave wall.
+    return (tunnelVal - settings.threshold) * 50.0;
+}
 
 export class TerrainService {
 
@@ -14,14 +49,14 @@ export class TerrainService {
         // We use the same logic as the loop, but simplified for single point
         const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
 
-        const qx = noise(wx * 0.008, 0, wz * 0.008) * warp;
-        const qz = noise(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
 
         const px = wx + qx;
         const pz = wz + qz;
 
         // Base 2D noise for the biome
-        const baseNoise = noise(px * 0.01 * freq, 0, pz * 0.01 * freq);
+        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
 
         return baseHeight + (baseNoise * amp);
     }
@@ -75,7 +110,7 @@ export class TerrainService {
                         const islandCenterY = 40;
                         const islandHeight = 30; // Radius roughly
 
-                        const n3d = noise(wx * 0.05, wy * 0.05, wz * 0.05);
+                        const n3d = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                         // Gradient: 1.0 at center, 0.0 at edges
                         const distY = Math.abs(wy - islandCenterY);
                         const grad = 1.0 - (distY / islandHeight);
@@ -96,35 +131,49 @@ export class TerrainService {
                         // --- Standard Terrain Logic ---
 
                         // Domain Warping
-                        const qx = noise(wx * 0.008, 0, wz * 0.008) * warp;
-                        const qz = noise(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+                        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+                        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
 
                         const px = wx + qx;
                         const pz = wz + qz;
 
-                        const baseNoise = noise(px * 0.01 * freq, 0, pz * 0.01 * freq);
+                        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
 
                         // Add some detail noise
-                        const detail = noise(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
+                        const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
                         // Calculate Height
                         surfaceHeight = baseHeight + (baseNoise * amp) + detail;
 
                         // Cliff/Overhang noise
-                        const cliffNoise = noise(wx * 0.06, wy * 0.08, wz * 0.06);
+                        const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
                         overhang = cliffNoise * 6; // Assign to outer variable
 
                         d = surfaceHeight - wy + overhang;
 
-                        // Caves
-                        if (wy < surfaceHeight - 4) {
-                            const caveFreq = 0.08;
-                            const c1 = noise(wx * caveFreq, wy * caveFreq, wz * caveFreq);
-                            if (Math.abs(c1) < 0.12) {
-                                d -= 20.0;
-                                // Deep cave expansion
-                                if (wy < MESH_Y_OFFSET + 8) d -= 6.0;
-                            }
+                        // --- NEW CAVE LOGIC (SDF) ---
+                        const caveMod = getCavernModifier(wx, wy, wz, biome);
+
+                        // Congruent Breach Logic
+                        const settings = getCaveSettings(biome);
+                        const breachNoise = noise3D(wx * 0.005, 0, wz * 0.005);
+                        const normBreach = (breachNoise + 1) * 0.5;
+
+                        let crustThickness = 4.0;
+                        const isSteep = (cliffNoise > 0.4);
+                        const isBreachZone = (normBreach < settings.surfaceBreachChance);
+
+                        if (isSteep || isBreachZone) {
+                            crustThickness = 0.5;
+                        }
+
+                        // SDF BLENDING:
+                        // Only apply cave if we are below the crust (d > crustThickness).
+                        // We use Math.min(d, caveMod) to carve.
+                        // Since caveMod is negative inside the cave, it will pull the density down.
+                        if (d > crustThickness) {
+                            // Smooth union (min) of terrain and cave
+                            d = Math.min(d, caveMod);
                         }
 
                         // Bedrock
@@ -142,11 +191,25 @@ export class TerrainService {
                     density[idx] = d;
 
                     // --- Root Hollow Scanning (Skip for Sky Islands) ---
-                    if (!isSkyIsland && y > 0 && y < sizeY - 1) {
+                    // AAA FIX: Only spawn in THE_GROVE, on flat terrain, and near surface (not caves)
+                    if (!isSkyIsland && y > 0 && y < sizeY - 1 && biome === 'THE_GROVE') {
                         const idxBelow = idx - sizeX;
                         const dBelow = density[idxBelow];
+
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                            const sparsity = noise(wx * 0.5, wy * 0.5, wz * 0.5);
+                            // 1. Surface Check: Ensure we are close to the calculated surface height 
+                            // (avoids spawning in deep caves or bubbles)
+                            if (Math.abs(wy - surfaceHeight) > 4.0) continue;
+
+                            // 2. Flatness Check: Avoid cliffs
+                            // Re-calculate cliffNoise if needed, or use 'overhang' proxy? 
+                            // We have 'overhang' from line 150. overhang = cliffNoise * 6.
+                            // If overhang is high, it's a cliff or steep area.
+                            // cliffNoise > 0.4 is considered steep in line 163.
+                            // Let's use a strict threshold for stumps.
+                            if (Math.abs(overhang) > 1.5) continue;
+
+                            const sparsity = noise3D(wx * 0.5, wy * 0.5, wz * 0.5);
                             if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
                                 const localX = (x - PAD) + 0.5;
                                 const localY = wy - 0.8;
@@ -161,31 +224,54 @@ export class TerrainService {
 
                     if (d > ISO_LEVEL) { // If solid
                         // --- Lumina Depths Logic (Deep Underground) ---
+                        // AAA FEATURE: "Lumina Depths" - Obsidian & Glowstone Caverns
                         if (wy < -20 && !isSkyIsland) {
-                            const vein = noise(wx * 0.1, wy * 0.1, wz * 0.1);
-                            if (vein > 0.6) {
-                                material[idx] = MaterialType.GLOW_STONE;
-                            } else if (vein < -0.6) {
+                            // 3D Noise for large obsidian structures
+                            const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
+                            const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
+
+                            if (luminaNoise > 0.0) {
+                                // Primary Lumina Material: Obsidian
                                 material[idx] = MaterialType.OBSIDIAN;
+
+                                // Veins of Glowstone
+                                if (veinNoise > 0.6) {
+                                    material[idx] = MaterialType.GLOW_STONE;
+                                }
                             } else {
-                                material[idx] = MaterialType.STONE;
+                                // Transition zone / fallback to standard dark stone or bedrock if very deep
+                                if (wy < -40) material[idx] = MaterialType.BEDROCK;
+                                else material[idx] = MaterialType.STONE;
                             }
+
                         } else if (isSkyIsland) {
                             material[idx] = MaterialType.STONE;
-                            if (noise(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
+                            if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
                         } else {
-                            // --- Standard Surface Biome Materials ---
+                            // --- Standard Surface & Cavern Materials ---
                             const biomeMat = BiomeManager.getSurfaceMaterial(biome);
 
-                            const soilNoise = noise(wx * 0.1, wy * 0.1, wz * 0.1);
-                            const soilDepth = 6.0 + soilNoise * 3.0;
+                            const soilNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
+                            const soilDepth = 6.0 + soilNoise * 3.0; // depth of surface soil
                             const depth = (surfaceHeight + overhang) - wy;
 
                             if (wy <= MESH_Y_OFFSET + 4) {
                                 material[idx] = MaterialType.BEDROCK;
                             } else if (depth > soilDepth) {
-                                material[idx] = MaterialType.STONE;
+                                // --- UNDERGROUND / CAVERN WALLS ---
+                                // AAA FEATURE: Biome-Specific Caverns
+                                const { primary, secondary } = BiomeManager.getUndergroundMaterials(biome);
+
+                                // Mix primary and secondary materials
+                                const matNoise = noise3D(wx * 0.08, wy * 0.08, wz * 0.08);
+                                if (matNoise > 0.4) {
+                                    material[idx] = secondary;
+                                } else {
+                                    material[idx] = primary;
+                                }
+
                             } else {
+                                // --- SURFACE SOIL ---
                                 if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
                                     material[idx] = biomeMat;
                                     if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
@@ -219,11 +305,11 @@ export class TerrainService {
         }
 
         // --- 3.5 Flora Generation (Post-Pass) ---
-        // Place flora in shallow caverns (world Y: -5..2) and cluster them for readability.
-        const cavernMinWorldY = -5;
-        const cavernMaxWorldY = 2;
+        // Place flora in Lumina Depths (deep underground) on restricted materials.
+        const cavernMinWorldY = -40; // Bottom of chunk
+        const cavernMaxWorldY = -20; // Start of Lumina Depths
         const cavernMinY = Math.max(1, Math.floor(cavernMinWorldY - MESH_Y_OFFSET + PAD));
-        const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD)); // leave headroom checks
+        const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD));
         const maxFloraPerChunk = 60;
         let floraPlaced = 0;
 
@@ -234,12 +320,13 @@ export class TerrainService {
                 const wz = (z - PAD) + worldOffsetZ;
 
                 const biome = BiomeManager.getBiomeAt(wx, wz);
-                // Skip barren biomes for cavern flora
+                // Skip barren biomes for cavern flora logic if needed, but deep underground biome might be less relevant?
+                // Keeping check for now as optimization.
                 if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') continue;
 
                 // Low frequency noise to pick cluster centers
                 // Lower threshold (0.55) to allow more clusters
-                const clusterNoise = noise(wx * 0.15, 0, wz * 0.15);
+                const clusterNoise = noise3D(wx * 0.15, 0, wz * 0.15);
                 if (clusterNoise < 0.55) continue;
 
                 // Find a cavern floor within the target band (air with solid below and headroom above)
@@ -256,20 +343,25 @@ export class TerrainService {
                     if (idxAbove2 >= density.length || idxBelow < 0) continue;
 
                     if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL && density[idxAbove2] <= ISO_LEVEL) {
-                        // Interpolate for smoother placement on the floor
-                        const dAir = density[idx];
-                        const dSolid = density[idxBelow];
-                        const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                        centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
-                        centerYIndex = y;
-                        foundCenter = true;
-                        break;
+                        // Strict Material Check for Center Finding
+                        // We only want to start clusters on correct materials
+                        const matBelow = material[idxBelow];
+                        if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                            // Interpolate for smoother placement on the floor
+                            const dAir = density[idx];
+                            const dSolid = density[idxBelow];
+                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                            centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
+                            centerYIndex = y;
+                            foundCenter = true;
+                            break;
+                        }
                     }
                 }
 
                 if (!foundCenter) continue;
 
-                const seed = Math.abs(noise(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
+                const seed = Math.abs(noise3D(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
                 const clusterCount = 4 + Math.floor(seed * 5); // 4..8 per cluster
                 const spread = 3.0 + seed * 2.0; // Wider spread
 
@@ -303,12 +395,16 @@ export class TerrainService {
 
                         // Simple check: Air above, Solid below
                         if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL) {
-                            const dAir = density[idx];
-                            const dSolid = density[idxBelow];
-                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                            flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
-                            foundGround = true;
-                            break;
+                            // STRICT MATERIAL CHECK FOR INDIVIDUAL FLORA
+                            const matBelow = material[idxBelow];
+                            if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                                const dAir = density[idx];
+                                const dSolid = density[idxBelow];
+                                const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                                flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
+                                foundGround = true;
+                                break;
+                            }
                         }
                     }
 
@@ -337,7 +433,7 @@ export class TerrainService {
                 const cellWz = (z - PAD) + worldOffsetZ;
 
                 // Hash for this cell to pick a random spot within it
-                const cellHash = Math.abs(noise(cellWx * 0.13, 0, cellWz * 0.13));
+                const cellHash = Math.abs(noise3D(cellWx * 0.13, 0, cellWz * 0.13));
 
                 // Pick a random offset within the cell (0..GRID_SIZE)
                 const offX = (cellHash * 12.9898) % GRID_SIZE;
@@ -355,7 +451,7 @@ export class TerrainService {
                 const biome = BiomeManager.getBiomeAt(wx, wz);
 
                 // Optimization: Quick noise check before scanning height
-                const nFlora = noise(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
+                const nFlora = noise3D(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
 
                 let treeThreshold = 0.6; // Default increased density (was 0.7)
                 if (biome === 'JUNGLE') {
@@ -393,7 +489,7 @@ export class TerrainService {
 
                     if (surfaceY !== -1) {
                         const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
-                        const hash = Math.abs(noise(wx * 12.3, wy * 12.3, wz * 12.3));
+                        const hash = Math.abs(noise3D(wx * 12.3, wy * 12.3, wz * 12.3));
                         const treeType = getTreeForBiome(biome, hash) || 0;
 
                         treeCandidates.push(

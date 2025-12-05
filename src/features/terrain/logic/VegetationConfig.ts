@@ -98,18 +98,4 @@ export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | 
   return TreeType.OAK;
 };
 
-export const getBiomeVegetationDensity = (biome: BiomeType): number => {
-  switch (biome) {
-    case 'THE_GROVE': return 0.95; // Extremely lush carpet
-    case 'JUNGLE': return 0.85;   // Extremely dense
-    case 'PLAINS': return 0.5;    // Moderate
-    case 'SAVANNA': return 0.4;   // Sparse patches
-    case 'SKY_ISLANDS': return 0.6;
-    case 'SNOW': return 0.3;      // Sparse
-    case 'MOUNTAINS': return 0.2; // Very sparse
-    case 'DESERT':
-    case 'RED_DESERT': return 0.15; // Almost empty
-    case 'ICE_SPIKES': return 0.05; // Barren
-    default: return 0.5;
-  }
-};
+

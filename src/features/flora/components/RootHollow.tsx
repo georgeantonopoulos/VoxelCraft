@@ -10,7 +10,7 @@ import stumpUrl from '@assets/models/tree_stump.glb?url';
 // AAA Visual Config - Matching the reference image
 const STUMP_CONFIG = {
     height: 1.4,
-    scale: 1.0,
+    scale: 1.3,
     embedOffset: 0.3
 };
 

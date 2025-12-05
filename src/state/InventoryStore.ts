@@ -15,7 +15,7 @@ interface GameState {
 export const useInventoryStore = create<GameState>((set) => ({
   inventoryCount: 0,
   luminousFloraCount: 0,
-  hasAxe: false,
+  hasAxe: true,
   addFlora: () => set((state) => ({ inventoryCount: state.inventoryCount + 1 })),
   removeFlora: () => set((state) => ({ inventoryCount: Math.max(0, state.inventoryCount - 1) })),
   harvestFlora: () => set((state) => ({ inventoryCount: state.inventoryCount + 1 })),

@@ -6,8 +6,7 @@ import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
-import { useInventoryStore as useGameStore } from '@state/InventoryStore';
-import { useInventoryStore } from '@state/InventoryStore';
+import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore, FloraHotspot } from '@state/WorldStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState } from '@/types';
@@ -15,6 +14,13 @@ import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
+
+
+// Sounds
+import dig1Url from '@/assets/sounds/Dig_1.wav?url';
+import dig2Url from '@/assets/sounds/Dig_2.wav?url';
+import dig3Url from '@/assets/sounds/Dig_3.wav?url';
+import clunkUrl from '@/assets/sounds/clunk.wav?url';
 
 const getMaterialColor = (matId: number) => {
   switch (matId) {
@@ -236,9 +242,51 @@ interface VoxelTerrainProps {
   onInitialLoad?: () => void;
 }
 
+// --- Audio Pool Helper ---
+class AudioPool {
+  private pools: Map<string, HTMLAudioElement[]> = new Map();
+  private index: Map<string, number> = new Map();
+
+  constructor(urls: string[], size: number = 3) {
+    urls.forEach(url => {
+      const pool: HTMLAudioElement[] = [];
+      for (let i = 0; i < size; i++) {
+        const a = new Audio(url);
+        a.volume = 0.3;
+        pool.push(a);
+      }
+      this.pools.set(url, pool);
+      this.index.set(url, 0);
+    });
+  }
+
+  play(url: string, volume: number = 0.3, pitchVar: number = 0) {
+    const pool = this.pools.get(url);
+    if (!pool) return;
+
+    // Round robin
+    const idx = this.index.get(url) || 0;
+    const audio = pool[idx];
+    this.index.set(url, (idx + 1) % pool.length);
+
+    // Reset and play
+    audio.currentTime = 0;
+    audio.volume = volume;
+    // Simple pitch shift (speed change)
+    audio.playbackRate = 1.0 + (Math.random() * pitchVar * 2 - pitchVar);
+
+    audio.play().catch(e => console.warn("Audio play failed", e));
+  }
+}
+
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
+
+  // Initialize Audio Pool once
+  const audioPool = useMemo(() => {
+    return new AudioPool([dig1Url, dig2Url, dig3Url, clunkUrl], 4);
+  }, []);
 
   const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
   const remeshQueue = useRef<Set<string>>(new Set());
@@ -593,9 +641,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
                 const treeId = `${key}-${i}`;
                 const hasAxe = useInventoryStore.getState().hasAxe;
 
+                // No axe? No cut.
                 if (!hasAxe) {
-                  // No axe? No cut.
-                  // TODO: Play "clunk" sound
+                  // Play "clunk" sound via pool
+                  audioPool.play(clunkUrl, 0.4, 0.4);
                   continue;
                 }
 
@@ -788,6 +837,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
       }
 
       if (anyModified && workerRef.current) {
+        // Play Dig Sound
+        if (action === 'DIG') {
+          const sounds = [dig1Url, dig2Url, dig3Url];
+          const selected = sounds[Math.floor(Math.random() * sounds.length)];
+          audioPool.play(selected, 0.3, 0.1);
+        } else {
+          // Building sound - Use Dig_1 pitched down
+          audioPool.play(dig1Url, 0.3, 0.0);
+        }
+
         affectedChunks.forEach(key => {
           const chunk = chunksRef.current[key];
           const metadata = metadataDB.getChunk(key);
@@ -812,6 +871,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
         setParticleState({ active: true, pos: hitPoint, color: getMaterialColor(primaryMat) });
         setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
+      } else if (!anyModified && action === 'DIG') {
+        // Tried to dig but nothing changed -> Indestructible (Bedrock)
+        // Only play if we actually hit something (terrainHit exists)
+        if (terrainHit) {
+          const audio = new Audio(clunkUrl);
+          audio.volume = 0.4;
+          audio.playbackRate = 0.9 + Math.random() * 0.2;
+          audio.play().catch(() => { });
+        }
       }
     }
   }, [isInteracting, action, camera, world, rapier, buildMat]);

@@ -48,6 +48,7 @@ The project follows a domain-driven architecture to improve scalability and main
 - **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`src/core/math/noise.ts`) to create a density field.
   - **Density > ISO_LEVEL (0.5)** = Solid.
   - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
+  - **Caverns**: Stateless "Noodle" Algorithm using domain-warped 3D ridged noise (`abs(noise) < threshold`) in `TerrainService.ts`. Configured per-biome via `BiomeManager.ts`.
 - **Meshing**: `src/features/terrain/logic/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
   - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
 - **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
@@ -198,6 +199,16 @@ The project follows a domain-driven architecture to improve scalability and main
 - 2025-12-02: `npm run dev` starts Vite but the sandbox blocks `uv_interface_addresses` when binding to `0.0.0.0:3000`, so the server exits early after cycling ports. Run with elevated network permissions or outside the sandbox when a live preview is required.
 - 2025-12-04: Implemented performant tree collisions. `TreeGeometryFactory` now extracts collision data (position/rotation/scale) for main branches (depth < 3) during generation. `TreeLayer` uses `InstancedRigidBodies` to render these as physics bodies.
 - 2025-12-04: Fixed `InstancedRigidBodies` crash by wrapping a dummy invisible `InstancedMesh` inside it and using the `colliders` prop (`hull` for branches, `cuboid` for cactus) to generate shapes. This ensures compatibility with Rapier while keeping the visual scene optimized.
+- 2025-12-05: Implemented Stateless 3D Noise Caverns ("Noodle Algorithm").
+  - **Biome-Specific**: Added `BiomeCaveSettings` in `BiomeManager.ts` to control scale, threshold, and frequency per biome (Archetypes: Grasslands, Desert, Tundra, Lumina).
+  - **Generation**: Replaced old random cave logic in `TerrainService.ts` with a domain-warped `abs(noise) < threshold` density check.
+  - **Deterministic Fade**: Implemented a height-based gradient (Y=30 to Y=10) to smoothly fade caves near the surface, preventing chunk popping and hard edges.
+  - **Architecture**: Logic resides in `TerrainService.ts` (helper `getCavernDensity`) for clean separation, called during the generation loop. Verified via console logs showing successful generation of chunks with Lumina flora placement.
+- 2025-12-05: Improved RootHollow Generation.
+  - **Biome Restriction**: RootHollows now only spawn in `THE_GROVE`.
+  - **Constraints**: Added checks for surface proximity (preventing cave spawns) and terrain flatness (using `overhang/cliffNoise` < 1.5).
+  - **Visuals**: Increased stump scale to 1.3 for better gameplay visibility.
+  - **Verification**: Pending manual biome check.
 
 ### 8. Gameplay Mechanics (New)
 - **Tree Placement**: Implemented Jittered Grid Sampling in `terrainService.ts` to prevent tree clumping. Trees are now placed using a 4x4 voxel grid with random offsets, ensuring better distribution.
@@ -207,3 +218,27 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Cutting Logic**: Trees now require 5 hits to be felled. Each hit shows particles. Without the axe, trees cannot be cut.
   - **Visualization**: A `FirstPersonTools` component renders the axe in the player's hand when equipped.
 - **Inventory**: `InventoryStore` now tracks `hasAxe` and `luminousFloraCount`.
+
+- 2025-12-05: Critical Fix for First Person Tool Rendering.
+  - **Jitter Fix**: To eliminate jitter, tools must be parented to the Camera (not synced via useFrame, which causes 1-frame lag).
+  - **Graph Visibility**: In R3F, the default Camera is not strictly part of the Scene graph. Parenting a tool to the Camera hides it unless the Camera is explicitly added to the Scene.
+  - **Solution**: Execute `scene.add(camera)` in the tool's useEffect (and remove on cleanup) to ensure children are rendered.
+  - **Lighting**: Avoid `material-depthTest={false}` or `renderOrder` hacks for FPS tools. By placing them in the Scene graph (via camera), they receive proper world lighting and shadows. Added a local PointLight to the tool for fill.
+
+- 2025-12-05: Implemented Sound System with low-latency `AudioPool`.
+  - **Problem**: Direct `new Audio()` instantiation on click caused noticeable latency and dropped sounds due to garbage collection and disk I/O.
+  - **Solution**: Implemented `AudioPool` utility in `VoxelTerrain.tsx` that pre-loads N instances of each sound (Dig_1-3, Clunk) on mount and recycles them round-robin.
+  - **Features**:
+    - **Randomization**: 'DIG' action picks a random sound from the set and applies pitch variation (0.95 - 1.05) to reduce fatigue.
+    - **Contextual**: Plays "Clunk" sound when interacting with indestructible blocks (Bedrock) or trees without an axe.
+    - **Assets**: Integrated user-provided `Dig_*.wav` and procedurally generated `clunk.wav`.
+
+- 2025-12-05: Enhanced Pickaxe Animation.
+  - **Visuals**: Replaced simple rotation with a multi-phase "Strike Arc" animation.
+  - **Motion**: Axe now moves forward and back significantly (Z-axis) while chopping, mimicking a real swing reach.
+  - **Polish**: Added wrist roll (Z-rotation) and vertical dip (Y-translation) to create a natural, organic movement.
+  - **Timing**: Slowed down animation speed (15 -> 10) to make the weight and arc trajectory clearly visible.
+
+- 2025-12-05: Refined Cave Stone Moss Material.
+  - **Issue**: Users reported the moss overlay in caves looked "splotchy" with hard edges, disrupting the visual transition.
+  - **Fix**: Softened the `smoothstep` transition in `TriplanarMaterial.tsx` fragment shader. Widened the mix band from +/-0.1 to +/-0.4 to create a smoother, more organic gradient between stone and moss, eliminating sharp patches.
