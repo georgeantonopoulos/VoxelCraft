@@ -254,8 +254,13 @@ const fragmentShader = `
 
     // --- Overlays ---
     // AAA FIX: Ramp-based organic moss
-    bool isMossyMat = (dominantChannel == 9);
-    if (vMossiness > 0.1 || isMossyMat) {
+    // Check Channel 9 weight directly (vWc.y) for smooth blending instead of binary dominant check
+    float mossMatWeight = vWc.y; 
+    
+    // Combine simulation mossiness with painted moss material
+    float effectiveMoss = max(vMossiness, mossMatWeight);
+
+    if (effectiveMoss > 0.001) {
         vec3 mossColor = uColorMoss;
         
         // Multi-scale noise for detail (Mid + High)
@@ -264,12 +269,10 @@ const fragmentShader = `
         // Tangent growth simulation: use world Y normal to encourage top-growth
         // But for caves we want patches. The noise structure itself provides patches.
         
-        float mossAmount = vMossiness;
-        if (isMossyMat) mossAmount = max(mossAmount, 0.6); // Base mossiness for the material
-        
         // Ramp check: smoothstep creates a hard but antialiased edge for the patch
         // We use the organic noise to modulate the threshold
-        float threshold = 1.0 - mossAmount; // Higher moss = lower threshold = more moss
+        float threshold = 1.0 - effectiveMoss; // Higher moss = lower threshold = more moss
+        
         // FIX: Widen the band for smoother transition (was 0.1 -> 0.4)
         float mossMix = smoothstep(threshold - 0.4, threshold + 0.4, organicNoise);
 
