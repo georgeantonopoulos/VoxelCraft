@@ -256,11 +256,7 @@ export class TerrainService {
                             const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                             const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
 
-                            // AAA FIX: Dither Transition for Obsidian
-                            // Previously: if (luminaNoise > 0.0) -> Hard Cut
-                            // Now: if (luminaNoise + jitter > 0.0) -> Fuzzy Boundary
-                            const obsJitter = noise3D(wx * 0.5, wy * 0.5, wz * 0.5) * 0.2;
-                            if (luminaNoise + obsJitter > 0.0) {
+                            if (luminaNoise > 0.0) {
                                 // Primary Lumina Material: Obsidian
                                 material[idx] = MaterialType.OBSIDIAN;
 
@@ -270,9 +266,7 @@ export class TerrainService {
                                 }
                             } else {
                                 // Transition zone / fallback to standard dark stone or bedrock if very deep
-                                // AAA FIX: Dither Bedrock Layer (was hard cut at -40)
-                                const bedrockJitter = noise3D(wx * 0.2, wy * 0.2, wz * 0.2) * 5.0; // +/- 5 blocks
-                                if (wy + bedrockJitter < -40) material[idx] = MaterialType.BEDROCK;
+                                if (wy < -40) material[idx] = MaterialType.BEDROCK;
                                 else material[idx] = MaterialType.STONE;
                             }
 
