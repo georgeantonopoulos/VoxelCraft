@@ -114,15 +114,22 @@ export class TerrainService {
                     const wy = (y - PAD) + MESH_Y_OFFSET;
                     const wz = (z - PAD) + worldOffsetZ;
 
-                    // AAA FIX: Dither Biome Borders to prevent straight-line flickering
-                    // We jitter the coordinate used for Biome Classification (Material)
-                    // but NOT for Terrain Parameters (Height), keeping geometry smooth.
-                    const BIOME_JITTER = 15.0;
-                    const bx = wx + noise3D(wx * 0.05, 0, wz * 0.05) * BIOME_JITTER;
-                    const bz = wz + noise3D(wx * 0.05 + 100, 0, wz * 0.05) * BIOME_JITTER;
+                    // AAA FIX: Value-Based Biome Dithering
+                    // Instead of jittering coordinates (which fails on flat gradients),
+                    // we add noise directly to the temperature/humidity values.
+                    // This guarantees a fuzzy transition zone at thresholds (-0.5, 0.5).
 
-                    const biome = BiomeManager.getBiomeAt(bx, bz);
-                    const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
+                    const climate = BiomeManager.getClimate(wx, wz);
+
+                    const DITHER_AMP = 0.05; // +/- 0.05 variation
+                    const ditherNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
+
+                    const ditheredTemp = climate.temp + ditherNoise * DITHER_AMP;
+                    const ditheredHumid = climate.humid + ditherNoise * DITHER_AMP;
+
+                    const biome = BiomeManager.getBiomeFromClimate(ditheredTemp, ditheredHumid);
+                    // Use UNDITHERED climate for height to keep geometry smooth
+                    const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromClimate(climate.temp, climate.humid);
 
                     let d = 0;
                     let surfaceHeight = 0;

@@ -242,3 +242,24 @@ The project follows a domain-driven architecture to improve scalability and main
 - 2025-12-05: Refined Cave Stone Moss Material.
   - **Issue**: Users reported the moss overlay in caves looked "splotchy" with hard edges, disrupting the visual transition.
   - **Fix**: Softened the `smoothstep` transition in `TriplanarMaterial.tsx` fragment shader. Widened the mix band from +/-0.1 to +/-0.4 to create a smoother, more organic gradient between stone and moss, eliminating sharp patches.
+- 2025-12-05: Fixed Snow/Grass Transition Flickering Line.
+  - **Root Cause**: Discrete biome switching in `BiomeManager` created a mathematically perfect line at `temp = -0.5`, causing shader Z-fighting/blending issues.
+  - **Fix**: Implemented "Biome Dithering" in `terrainService.ts`. Applied 3D noise jitter to the biome lookup coordinates (`bx`, `bz`), breaking the straight line into an organic jagged transition that effectively visualizes the seam properly.
+  - **Addendum**: Attempted to use the same dithering for Obsidian/Bedrock, but it created ugly checkerboard artifacts on high-contrast materials, so it was reverted for those specific layers.
+- 2025-12-05: Aesthetic & Performance Tuning.
+  - **Vegetation Shadows**: Disabled `castShadow` on `VegetationLayer` instanced meshes. They still `receiveShadow`, but disabling casting reduces shadow map clutter and improves performance.
+  - **Favicon**: Added a custom crystal shard favicon and linked it in `index.html`.
+  - **UI**: Confirmed `StartupScreen` dependency on Tailwind CSS CDN; restored it to fix layout regression.
+- 2025-12-05: Updated Vegetation Grass Material.
+  - **Goal**: Make grass brighter, more saturated, and more reflective.
+  - **Implementation**: Added `roughness` property to `VEGETATION_ASSETS` in `VegetationConfig.ts`.
+  - **Tuning**: Adjusted grass colors (Low, Tall, Grove) to be more vibrant (saturated green) and brighter. Lowered roughness for grass from default 0.8 to 0.3-0.5 for a "shiny/healthy" look.
+  - **Shader**: Updated `VegetationLayer.tsx` to utilize the per-asset roughness value.
+- 2025-12-05: Improved Biome Dithering (Value-Based).
+  - **Issue**: Coordinate-based dithering failed to fix straight-line seams in biomes with flat climate gradients (e.g. extending Tundra/Plains boundaries) because the 15-unit jitter wasn't enough to cross the threshold.
+  - **Fix**: Switched to **Value-Based Dithering** in `terrainService.ts`. Explicitly adds noise (+/- 0.05) to the `temp` and `humid` values before biome classification. Refactored `BiomeManager` to expose precise control methods (`getBiomeFromClimate`).
+  - **Result**: Guarantees organic, fuzzy transitions at all biome edges regardless of gradient slope.
+- 2025-12-05: Fixed Missing Mountain Tops.
+  - **Issue**: Very high mountains had their geometry cut off abruptly at the top.
+  - **Analysis**: The chunk generation height limit (`CHUNK_SIZE_Y = 80`) combined with the offset (`-35`) resulted in a max world height of ~45. Mountain noise generation parameters allow peaks up to ~85.
+  - **Fix**: Increased `CHUNK_SIZE_Y` to `128` in `constants.ts`. This extends the vertical generation range to cover world Y up to ~93, fully capturing the tall mountain tops and sky islands.

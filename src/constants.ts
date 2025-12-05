@@ -2,7 +2,7 @@
 // Grid Settings
 export const CHUNK_SIZE_XZ = 32;
 export const CHUNK_SIZE = CHUNK_SIZE_XZ; // Alias for compatibility with XZ grid logic
-export const CHUNK_SIZE_Y = 80; // Taller chunks
+export const CHUNK_SIZE_Y = 128; // Taller chunks to prevent mountain top cutoff (was 80)
 export const PAD = 2;
 
 export const TOTAL_SIZE_XZ = CHUNK_SIZE_XZ + PAD * 2;
@@ -10,7 +10,7 @@ export const TOTAL_SIZE_Y = CHUNK_SIZE_Y + PAD * 2;
 
 export const MESH_Y_OFFSET = -35; // Vertical offset to align with Bedrock
 
-export const ISO_LEVEL = 0.5; 
+export const ISO_LEVEL = 0.5;
 export let SNAP_EPSILON = 0.1; // Mutable for Leva tuning
 
 /**
@@ -23,17 +23,17 @@ export function setSnapEpsilon(v: number): void {
 export const VOXEL_SCALE = 1.0;
 
 // World Generation
-export const RENDER_DISTANCE = 2; 
+export const RENDER_DISTANCE = 2;
 export const WATER_LEVEL = 4.5;
 
 // Physics
-export const GRAVITY = -15.0; 
+export const GRAVITY = -15.0;
 export const PLAYER_SPEED = 6;
 export const JUMP_FORCE = 9;
 
 // Tool Settings
-export const DIG_RADIUS = 3.0; 
-export const DIG_STRENGTH = 1.5; 
+export const DIG_RADIUS = 3.0;
+export const DIG_STRENGTH = 1.5;
 
 // Material Physics Properties
 import { MaterialType, MaterialProperties } from './types';

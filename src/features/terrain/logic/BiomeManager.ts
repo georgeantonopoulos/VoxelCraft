@@ -85,11 +85,11 @@ export class BiomeManager {
 
   static getBiomeAt(x: number, z: number): BiomeType {
     const { temp, humid } = this.getClimate(x, z);
+    return this.getBiomeFromClimate(temp, humid);
+  }
 
+  static getBiomeFromClimate(temp: number, humid: number): BiomeType {
     // Discrete Biome Logic (for Material Selection mainly)
-    // We still use discrete regions for materials, but we will fix the "Material Rainbow"
-    // in the shader by snapping IDs.
-
     if (temp < -0.5) { // Cold
       if (humid > 0.5) return 'ICE_SPIKES';
       if (humid < -0.5) return 'SNOW'; // Frozen Wasteland
@@ -158,9 +158,16 @@ export class BiomeManager {
     freq: number,
     warp: number
   } {
-    // 1. Get Climate (-1 to 1)
-    let { temp, humid } = this.getClimate(x, z);
+    const { temp, humid } = this.getClimate(x, z);
+    return this.getTerrainParametersFromClimate(temp, humid);
+  }
 
+  static getTerrainParametersFromClimate(temp: number, humid: number): {
+    baseHeight: number,
+    amp: number,
+    freq: number,
+    warp: number
+  } {
     // 2. Normalize to 0..1 range for easier math
     const t = smooth((temp + 1) / 2); // 0 = Cold, 1 = Hot
     const h = smooth((humid + 1) / 2); // 0 = Dry, 1 = Wet

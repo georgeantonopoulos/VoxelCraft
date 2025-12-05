@@ -340,7 +340,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
               uSway: { value: batch!.asset.sway },
             }}
             color={batch!.asset.color}
-            roughness={0.8}
+            roughness={batch!.asset.roughness}
             toneMapped={false}
             side={THREE.DoubleSide}
           />
