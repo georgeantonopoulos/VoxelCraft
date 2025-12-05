@@ -65,8 +65,8 @@ export class BiomeManager {
   private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
 
   // Scales
-  static readonly TEMP_SCALE = 0.002;
-  static readonly HUMID_SCALE = 0.002;
+  static readonly TEMP_SCALE = 0.0013; // 1.5x larger biomes (was 0.002)
+  static readonly HUMID_SCALE = 0.0013;
 
   // Simple pseudo-random for seeding
   private static hash(n: number): number {
@@ -203,4 +203,52 @@ export class BiomeManager {
       warp: lerp(pCold.warp, pHot.warp, t),
     };
   }
+  // --- 4. Vegetation Density Blending ---
+
+  static getVegetationDensity(x: number, z: number): number {
+    const { temp, humid } = this.getClimate(x, z);
+
+    // Helper: smooth transition weights
+    // Thresholds: -0.5 and 0.5 with 0.4 transition width (-0.7 to -0.3, 0.3 to 0.7)
+    const cw = 0.2; // Blend width
+
+    const wCold = smoothstep(-0.5 + cw, -0.5 - cw, temp);     // 1 when < -0.7
+    const wHot = smoothstep(0.5 - cw, 0.5 + cw, temp);        // 1 when > 0.7
+    const wTemperate = 1.0 - wCold - wHot;                    // Peak at 0
+
+    const wDry = smoothstep(-0.5 + cw, -0.5 - cw, humid);     // 1 when < -0.7
+    const wWet = smoothstep(0.5 - cw, 0.5 + cw, humid);       // 1 when > 0.7
+    const wMid = 1.0 - wDry - wWet;
+
+    // Define Densities for "Archetypal" Biome centers
+    // Corresponds roughly to getBiomeVegetationDensity values
+
+    // Cold Row
+    const dColdDry = 0.3;   // Snow
+    const dColdMid = 0.3;   // Snow
+    const dColdWet = 0.05;  // Ice Spikes (Barren)
+
+    // Temperate Row
+    const dTempDry = 0.5;   // Plains
+    const dTempMid = 0.95;  // The Grove (Lush)
+    const dTempWet = 0.85;  // Jungle/Swamp-ish
+
+    // Hot Row
+    const dHotDry = 0.15;   // Desert
+    const dHotMid = 0.4;    // Savanna
+    const dHotWet = 0.85;   // Jungle
+
+    // Bilinear Blend
+    const dCold = dColdDry * wDry + dColdMid * wMid + dColdWet * wWet;
+    const dTemp = dTempDry * wDry + dTempMid * wMid + dTempWet * wWet;
+    const dHot = dHotDry * wDry + dHotMid * wMid + dHotWet * wWet;
+
+    return dCold * wCold + dTemp * wTemperate + dHot * wHot;
+  }
+}
+
+// Helper for smoothstep (standard GLSL implementation)
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }

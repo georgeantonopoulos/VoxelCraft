@@ -3,7 +3,7 @@ import { generateMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 import { BiomeManager } from '../logic/BiomeManager';
-import { getVegetationForBiome, getBiomeVegetationDensity } from '../logic/VegetationConfig';
+import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
 import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
 
@@ -54,7 +54,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                     const worldZ = cz * CHUNK_SIZE_XZ + z;
 
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
-                    const biomeDensity = getBiomeVegetationDensity(biome);
+                    const biomeDensity = BiomeManager.getVegetationDensity(worldX, worldZ);
 
                     // 1. Density Noise (Smaller, more frequent patches)
                     // Scale 0.15 = ~6-7 blocks per cycle (much smaller patches)
