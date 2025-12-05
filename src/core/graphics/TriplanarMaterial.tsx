@@ -85,7 +85,7 @@ const fragmentShader = `
   vec4 getTriplanarNoise(vec3 normal, float scale) {
       vec3 blend = abs(normal);
       blend = normalize(max(blend, 0.00001));
-      blend = pow(blend, vec3(8.0)); // Keep the sharp blending you liked
+      blend = pow(blend, vec3(4.0)); // Soften blending (was 8.0) to fix flickering artifact
       blend /= dot(blend, vec3(1.0));
 
       vec3 p = vWorldPosition * scale;

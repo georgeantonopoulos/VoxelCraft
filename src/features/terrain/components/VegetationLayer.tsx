@@ -327,7 +327,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         <instancedMesh
           key={batch!.id}
           args={[batch!.geometry, undefined, batch!.count]}
-          castShadow
+          castShadow={false}
           receiveShadow
         >
           <CustomShaderMaterial

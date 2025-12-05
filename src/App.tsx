@@ -389,12 +389,6 @@ const SunFollower: React.FC = () => {
         color="#fffcf0"
         castShadow
         shadow-mapSize={[2048, 2048]}
-        // AAA FIX: SHADOW ACNE CALIBRATION
-        // Previous: -0.0005 -> New: -0.001 (Pushes shadow back further)
-        shadow-bias={-0.001}
-        // Previous: 0.04 -> New: 0.08 (Biases based on surface angle)
-        // This helps specifically with the curved slopes in your screenshot.
-        shadow-normalBias={0.08}
         shadow-camera-near={10}
         shadow-camera-far={500}
         shadow-camera-left={-200}

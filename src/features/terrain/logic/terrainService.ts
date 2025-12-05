@@ -114,7 +114,14 @@ export class TerrainService {
                     const wy = (y - PAD) + MESH_Y_OFFSET;
                     const wz = (z - PAD) + worldOffsetZ;
 
-                    const biome = BiomeManager.getBiomeAt(wx, wz);
+                    // AAA FIX: Dither Biome Borders to prevent straight-line flickering
+                    // We jitter the coordinate used for Biome Classification (Material)
+                    // but NOT for Terrain Parameters (Height), keeping geometry smooth.
+                    const BIOME_JITTER = 15.0;
+                    const bx = wx + noise3D(wx * 0.05, 0, wz * 0.05) * BIOME_JITTER;
+                    const bz = wz + noise3D(wx * 0.05 + 100, 0, wz * 0.05) * BIOME_JITTER;
+
+                    const biome = BiomeManager.getBiomeAt(bx, bz);
                     const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
 
                     let d = 0;
@@ -249,7 +256,11 @@ export class TerrainService {
                             const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                             const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
 
-                            if (luminaNoise > 0.0) {
+                            // AAA FIX: Dither Transition for Obsidian
+                            // Previously: if (luminaNoise > 0.0) -> Hard Cut
+                            // Now: if (luminaNoise + jitter > 0.0) -> Fuzzy Boundary
+                            const obsJitter = noise3D(wx * 0.5, wy * 0.5, wz * 0.5) * 0.2;
+                            if (luminaNoise + obsJitter > 0.0) {
                                 // Primary Lumina Material: Obsidian
                                 material[idx] = MaterialType.OBSIDIAN;
 
@@ -259,7 +270,9 @@ export class TerrainService {
                                 }
                             } else {
                                 // Transition zone / fallback to standard dark stone or bedrock if very deep
-                                if (wy < -40) material[idx] = MaterialType.BEDROCK;
+                                // AAA FIX: Dither Bedrock Layer (was hard cut at -40)
+                                const bedrockJitter = noise3D(wx * 0.2, wy * 0.2, wz * 0.2) * 5.0; // +/- 5 blocks
+                                if (wy + bedrockJitter < -40) material[idx] = MaterialType.BEDROCK;
                                 else material[idx] = MaterialType.STONE;
                             }
 
