@@ -270,7 +270,8 @@ const fragmentShader = `
         // Ramp check: smoothstep creates a hard but antialiased edge for the patch
         // We use the organic noise to modulate the threshold
         float threshold = 1.0 - mossAmount; // Higher moss = lower threshold = more moss
-        float mossMix = smoothstep(threshold - 0.1, threshold + 0.1, organicNoise);
+        // FIX: Widen the band for smoother transition (was 0.1 -> 0.4)
+        float mossMix = smoothstep(threshold - 0.4, threshold + 0.4, organicNoise);
 
         col = mix(col, mossColor * (0.6 + 0.4 * nHigh.a), mossMix); // Blend with detail noise in color
         

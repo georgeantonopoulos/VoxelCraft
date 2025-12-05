@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -22,10 +22,10 @@ export const FirstPersonTools: React.FC = () => {
     // Animation state
     const isDigging = useRef(false);
     const digProgress = useRef(0);
-    const digSpeed = 15.0; // Speed of the chop
+    const digSpeed = 10.0; // Slower, heavier feel
 
     // Debug controls ENABLED
-    const { debugPos, debugRot } = usePickaxeDebug(axeRef);
+    const { debugPos, debugRot } = usePickaxeDebug();
 
     useEffect(() => {
         const handleMouseDown = (e: MouseEvent) => {
@@ -87,10 +87,15 @@ export const FirstPersonTools: React.FC = () => {
             if (digProgress.current < Math.PI) {
                 // Chop down
                 const t = digProgress.current;
-                rotationX += -Math.sin(t) * 0.8; // Reduced intensity
-                rotationZ += -Math.sin(t) * 0.5;
-                positionY -= Math.sin(t) * 0.1;
-                positionZ -= Math.sin(t) * 0.3; // Push forward while chopping
+                const swing = Math.sin(t);
+
+                // Enhance the arc: Combine rotation with significant forward thrust
+                rotationX += -swing * 1.2;  // Stronger chop rotation
+                rotationZ += -swing * 0.35; // Add roll for natural wrist movement
+
+                // Translation Arc
+                positionY -= swing * 0.2;   // Slight dip
+                positionZ -= swing * 0.5;   // Push forward significantly for "reach"
             } else {
                 // Reset
                 isDigging.current = false;
@@ -174,7 +179,7 @@ export const FirstPersonTools: React.FC = () => {
 };
 
 // --- Debug Helper ---
-function usePickaxeDebug(axeRef: React.RefObject<THREE.Group>) {
+function usePickaxeDebug() {
     // Initial values set to what the user last reported, but they can now adjust them
     // UPDATED: Defaults for Upright + Forward (to avoid clipping)
     // FINAL VALUES: Pos: [0.715, -0.220, -0.800] | Rot: [1.150, -3.062, -1.450]

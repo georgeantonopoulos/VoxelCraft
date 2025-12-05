@@ -191,10 +191,24 @@ export class TerrainService {
                     density[idx] = d;
 
                     // --- Root Hollow Scanning (Skip for Sky Islands) ---
-                    if (!isSkyIsland && y > 0 && y < sizeY - 1) {
+                    // AAA FIX: Only spawn in THE_GROVE, on flat terrain, and near surface (not caves)
+                    if (!isSkyIsland && y > 0 && y < sizeY - 1 && biome === 'THE_GROVE') {
                         const idxBelow = idx - sizeX;
                         const dBelow = density[idxBelow];
+
                         if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
+                            // 1. Surface Check: Ensure we are close to the calculated surface height 
+                            // (avoids spawning in deep caves or bubbles)
+                            if (Math.abs(wy - surfaceHeight) > 4.0) continue;
+
+                            // 2. Flatness Check: Avoid cliffs
+                            // Re-calculate cliffNoise if needed, or use 'overhang' proxy? 
+                            // We have 'overhang' from line 150. overhang = cliffNoise * 6.
+                            // If overhang is high, it's a cliff or steep area.
+                            // cliffNoise > 0.4 is considered steep in line 163.
+                            // Let's use a strict threshold for stumps.
+                            if (Math.abs(overhang) > 1.5) continue;
+
                             const sparsity = noise3D(wx * 0.5, wy * 0.5, wz * 0.5);
                             if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) { // Ensure not in bedrock
                                 const localX = (x - PAD) + 0.5;
@@ -291,11 +305,11 @@ export class TerrainService {
         }
 
         // --- 3.5 Flora Generation (Post-Pass) ---
-        // Place flora in shallow caverns (world Y: -5..2) and cluster them for readability.
-        const cavernMinWorldY = -5;
-        const cavernMaxWorldY = 2;
+        // Place flora in Lumina Depths (deep underground) on restricted materials.
+        const cavernMinWorldY = -40; // Bottom of chunk
+        const cavernMaxWorldY = -20; // Start of Lumina Depths
         const cavernMinY = Math.max(1, Math.floor(cavernMinWorldY - MESH_Y_OFFSET + PAD));
-        const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD)); // leave headroom checks
+        const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD));
         const maxFloraPerChunk = 60;
         let floraPlaced = 0;
 
@@ -306,7 +320,8 @@ export class TerrainService {
                 const wz = (z - PAD) + worldOffsetZ;
 
                 const biome = BiomeManager.getBiomeAt(wx, wz);
-                // Skip barren biomes for cavern flora
+                // Skip barren biomes for cavern flora logic if needed, but deep underground biome might be less relevant?
+                // Keeping check for now as optimization.
                 if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') continue;
 
                 // Low frequency noise to pick cluster centers
@@ -328,14 +343,19 @@ export class TerrainService {
                     if (idxAbove2 >= density.length || idxBelow < 0) continue;
 
                     if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL && density[idxAbove2] <= ISO_LEVEL) {
-                        // Interpolate for smoother placement on the floor
-                        const dAir = density[idx];
-                        const dSolid = density[idxBelow];
-                        const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                        centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
-                        centerYIndex = y;
-                        foundCenter = true;
-                        break;
+                        // Strict Material Check for Center Finding
+                        // We only want to start clusters on correct materials
+                        const matBelow = material[idxBelow];
+                        if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                            // Interpolate for smoother placement on the floor
+                            const dAir = density[idx];
+                            const dSolid = density[idxBelow];
+                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                            centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
+                            centerYIndex = y;
+                            foundCenter = true;
+                            break;
+                        }
                     }
                 }
 
@@ -375,12 +395,16 @@ export class TerrainService {
 
                         // Simple check: Air above, Solid below
                         if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL) {
-                            const dAir = density[idx];
-                            const dSolid = density[idxBelow];
-                            const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                            flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
-                            foundGround = true;
-                            break;
+                            // STRICT MATERIAL CHECK FOR INDIVIDUAL FLORA
+                            const matBelow = material[idxBelow];
+                            if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                                const dAir = density[idx];
+                                const dSolid = density[idxBelow];
+                                const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                                flowerY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
+                                foundGround = true;
+                                break;
+                            }
                         }
                     }
 

@@ -204,6 +204,11 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Generation**: Replaced old random cave logic in `TerrainService.ts` with a domain-warped `abs(noise) < threshold` density check.
   - **Deterministic Fade**: Implemented a height-based gradient (Y=30 to Y=10) to smoothly fade caves near the surface, preventing chunk popping and hard edges.
   - **Architecture**: Logic resides in `TerrainService.ts` (helper `getCavernDensity`) for clean separation, called during the generation loop. Verified via console logs showing successful generation of chunks with Lumina flora placement.
+- 2025-12-05: Improved RootHollow Generation.
+  - **Biome Restriction**: RootHollows now only spawn in `THE_GROVE`.
+  - **Constraints**: Added checks for surface proximity (preventing cave spawns) and terrain flatness (using `overhang/cliffNoise` < 1.5).
+  - **Visuals**: Increased stump scale to 1.3 for better gameplay visibility.
+  - **Verification**: Pending manual biome check.
 
 ### 8. Gameplay Mechanics (New)
 - **Tree Placement**: Implemented Jittered Grid Sampling in `terrainService.ts` to prevent tree clumping. Trees are now placed using a 4x4 voxel grid with random offsets, ensuring better distribution.
@@ -219,3 +224,21 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Graph Visibility**: In R3F, the default Camera is not strictly part of the Scene graph. Parenting a tool to the Camera hides it unless the Camera is explicitly added to the Scene.
   - **Solution**: Execute `scene.add(camera)` in the tool's useEffect (and remove on cleanup) to ensure children are rendered.
   - **Lighting**: Avoid `material-depthTest={false}` or `renderOrder` hacks for FPS tools. By placing them in the Scene graph (via camera), they receive proper world lighting and shadows. Added a local PointLight to the tool for fill.
+
+- 2025-12-05: Implemented Sound System with low-latency `AudioPool`.
+  - **Problem**: Direct `new Audio()` instantiation on click caused noticeable latency and dropped sounds due to garbage collection and disk I/O.
+  - **Solution**: Implemented `AudioPool` utility in `VoxelTerrain.tsx` that pre-loads N instances of each sound (Dig_1-3, Clunk) on mount and recycles them round-robin.
+  - **Features**:
+    - **Randomization**: 'DIG' action picks a random sound from the set and applies pitch variation (0.95 - 1.05) to reduce fatigue.
+    - **Contextual**: Plays "Clunk" sound when interacting with indestructible blocks (Bedrock) or trees without an axe.
+    - **Assets**: Integrated user-provided `Dig_*.wav` and procedurally generated `clunk.wav`.
+
+- 2025-12-05: Enhanced Pickaxe Animation.
+  - **Visuals**: Replaced simple rotation with a multi-phase "Strike Arc" animation.
+  - **Motion**: Axe now moves forward and back significantly (Z-axis) while chopping, mimicking a real swing reach.
+  - **Polish**: Added wrist roll (Z-rotation) and vertical dip (Y-translation) to create a natural, organic movement.
+  - **Timing**: Slowed down animation speed (15 -> 10) to make the weight and arc trajectory clearly visible.
+
+- 2025-12-05: Refined Cave Stone Moss Material.
+  - **Issue**: Users reported the moss overlay in caves looked "splotchy" with hard edges, disrupting the visual transition.
+  - **Fix**: Softened the `smoothstep` transition in `TriplanarMaterial.tsx` fragment shader. Widened the mix band from +/-0.1 to +/-0.4 to create a smoother, more organic gradient between stone and moss, eliminating sharp patches.
