@@ -265,3 +265,20 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Performance**: Refactored `TerrainService.ts` loop to iterate Z->X->Y, hoisting the expensive Biome/Climate calculation out of the vertical loop for column-based caching.
   - **Optimization**: Significant per-voxel CPU reduction (4 noise calls per column instead of per voxel).
   - **Tooling**: Added `MapDebug` component reachable via `?mode=map` to visualize the biome layout top-down on a 2D canvas 2D. Verified with `npm run build`.
+- 2025-12-05: Integrated Latitude-Based Temperature Gradient.
+  - **Issue**: Random noise temperature distribution placed cold biomes arbitrarily, lacking a realistic north/south feel. Also, centering "Equator" (Hot) at Spawn (0,0) caused biome confusion (players spawning in Savanna instead of Grove).
+  - **Fix**: Modified `BiomeManager.getClimate` to use a **South-to-North** gradient.
+  - **Logic**: `BaseTemp = -z * LATITUDE_SCALE`.
+    - **Z < 0 (South)**: Positive Temp (Hot -> Desert/Jungle).
+    - **Z = 0 (Spawn)**: Zero Temp (Temperate -> Grove/Plains).
+    - **Z > 0 (North)**: Negative Temp (Cold -> Snow/Ice).
+  - **Result**: Spawn is now reliably Temperate (The Grove), with physical progression to Hot (South) and Cold (North). Verified with `npm run build`.
+- 2025-12-05: Improved Lumina Flora Spawning in Deep Caves.
+  - **Issue**: Lumina Flora were too rare or missing because spawn logic included restrictive biome checks and a separate noise filter that didn't align with Obsidian generation.
+  - **Fix**: Removed biome restrictions (deep caves exist everywhere) and the secondary cluster-noise check. Now spawns flora solely based on the presence of Obsidian/Glowstone floor.
+  - **Refinement**: Relaxed the "headroom" check for cluster members (only needs 1 block air above) while keeping strict center-finding logic. Optimized scanning to target the `matBelow` directly.
+  - **Result**: Flora now reliably populate Obsidian/Glowstone caverns, providing the necessary resources for the Luma Axe quest. Verified with `npm run build`.
+- 2025-12-05: Fixed Lumina Depths Leaking to Surface.
+  - **Issue**: Deep ocean basins or low-lying valleys (low World Y) triggered the "Lumina Depths" obsidian generation logic, causing obsidian and alien flora to appear on the surface in broad daylight.
+  - **Fix**: Added a `depthFromSurface` check (`(surfaceHeight + overhang) - wy > 15.0`) to the Lumina logic.
+  - **Result**: Obsidian/Glowstone now only generates if the voxel is both deep in the world (Y < -20) AND buried at least 15 blocks below the terrain surface. Surface valleys remain grassy/sandy. Verified with `npm run build`.

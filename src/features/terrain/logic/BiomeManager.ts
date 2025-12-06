@@ -75,6 +75,7 @@ export class BiomeManager {
   static readonly HUMID_SCALE = 0.0008;
   static readonly CONT_SCALE = 0.0005; // Continents are huge
   static readonly EROSION_SCALE = 0.001; // Mountain ranges are large
+  static readonly LATITUDE_SCALE = 0.0002; // 1 unit temp change every 5000 blocks
 
   // Simple pseudo-random for seeding
   private static hash(n: number): number {
@@ -91,8 +92,24 @@ export class BiomeManager {
    * - erosion: -1 (Flat) .. 1 (Peaky/Mountainous)
    */
   static getClimate(x: number, z: number): { temp: number, humid: number, continent: number, erosion: number } {
-    // Normalize to -1..1 range (fast-simplex-noise usually returns -1..1)
-    const temp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
+    // 1. Temperature Gradient (Latitude)
+    // Z = 0 is Temperate (Spawn)
+    // Z < 0 (North/Up) -> Hot? No, usually Z+ is South/North depending on coord system.
+    // Let's do: Z negative = Hot (South), Z positive = Cold (North).
+    const latitude = -z * this.LATITUDE_SCALE;
+    let baseTemp = latitude;
+
+    // 2. Add Noise Variation
+    const noiseTemp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
+
+    // Mix: 70% Latitude, 30% Noise
+    let temp = baseTemp * 0.7 + noiseTemp * 0.3;
+
+    // Clamp to -1..1
+    if (temp > 1.0) temp = 1.0;
+    if (temp < -1.0) temp = -1.0;
+
+    // Normal Humidity/Etc
     const humid = this.humidNoise(x * this.HUMID_SCALE, z * this.HUMID_SCALE);
     const continent = this.continentalNoise(x * this.CONT_SCALE, z * this.CONT_SCALE);
     const erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);

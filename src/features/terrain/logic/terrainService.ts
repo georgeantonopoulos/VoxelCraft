@@ -254,7 +254,10 @@ export class TerrainService {
 
                     if (d > ISO_LEVEL) { // If solid
                         // --- Lumina Depths Logic (Deep Underground) ---
-                        if (wy < -20 && !isSkyIsland) {
+                        // Only applies if we are deep relative to the world AND deep relative to the local surface
+                        const depthFromSurface = (surfaceHeight + overhang) - wy;
+
+                        if (wy < -20 && !isSkyIsland && depthFromSurface > 15.0) {
                             const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                             const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
 
@@ -340,32 +343,28 @@ export class TerrainService {
                 const wx = (x - PAD) + worldOffsetX;
                 const wz = (z - PAD) + worldOffsetZ;
 
-                const biome = BiomeManager.getBiomeAt(wx, wz);
-                // Skip barren biomes for cavern flora logic if needed, but deep underground biome might be less relevant?
-                // Keeping check for now as optimization.
-                if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') continue;
-
-                // Low frequency noise to pick cluster centers
-                // Lower threshold (0.55) to allow more clusters
-                const clusterNoise = noise3D(wx * 0.15, 0, wz * 0.15);
-                if (clusterNoise < 0.55) continue;
+                // Removed Biome Check: Lumina caverns exist everywhere deep down.
+                // Removed Cluster Noise: We want to spawn wherever the material exists.
 
                 // Find a cavern floor within the target band (air with solid below and headroom above)
                 let centerFloorWy = Number.NEGATIVE_INFINITY;
                 let foundCenter = false;
                 let centerYIndex = -1;
 
+                // Scan the column for a valid floor
                 for (let y = cavernMaxY; y >= cavernMinY; y--) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
                     const idxBelow = idx - sizeX;
                     const idxAbove = idx + sizeX;
                     const idxAbove2 = idx + sizeX * 2;
 
+                    // Safety bounds
                     if (idxAbove2 >= density.length || idxBelow < 0) continue;
 
+                    // Check: Air at Y, Solid at Y-1, Air at Y+1, Air at Y+2 (Headroom)
                     if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL && density[idxAbove2] <= ISO_LEVEL) {
+
                         // Strict Material Check for Center Finding
-                        // We only want to start clusters on correct materials
                         const matBelow = material[idxBelow];
                         if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
                             // Interpolate for smoother placement on the floor
@@ -375,20 +374,21 @@ export class TerrainService {
                             centerFloorWy = (y - PAD - 1 + t) + MESH_Y_OFFSET;
                             centerYIndex = y;
                             foundCenter = true;
-                            break;
+                            break; // Stop at first valid floor from top of band
                         }
                     }
                 }
 
                 if (!foundCenter) continue;
 
+                // Use position hash for deterministic clustering
                 const seed = Math.abs(noise3D(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
-                const clusterCount = 4 + Math.floor(seed * 5); // 4..8 per cluster
-                const spread = 3.0 + seed * 2.0; // Wider spread
+                const clusterCount = 2 + Math.floor(seed * 4); // 2..6 per cluster (slightly reduced for density control)
+                const spread = 2.0 + seed * 2.5; // Compact spread
 
                 for (let i = 0; i < clusterCount && floraPlaced < maxFloraPerChunk; i++) {
                     const angle = seed * 12.9898 + i * 1.3;
-                    const r = spread * (0.3 + ((i + 1) / (clusterCount + 1))); // Don't start at 0
+                    const r = spread * (0.2 + ((i + 1) / (clusterCount + 1)));
                     const offX = Math.sin(angle) * r;
                     const offZ = Math.cos(angle) * r;
 
@@ -406,16 +406,22 @@ export class TerrainService {
                     const ix = Math.floor(candLocalX);
                     const iz = Math.floor(candLocalZ);
 
-                    const searchRange = 5; // Increased range to find ground on slopes
-                    const startY = Math.min(sizeY - 2, centerYIndex + searchRange);
+                    const searchRange = 5;
+                    const startY = Math.min(sizeY - 3, centerYIndex + searchRange); // Ensure headroom check stays within bounds
                     const endY = Math.max(1, centerYIndex - searchRange);
 
                     for (let fy = startY; fy >= endY; fy--) {
                         const idx = ix + fy * sizeX + iz * sizeX * sizeY;
                         const idxBelow = idx - sizeX;
+                        const idxAbove = idx + sizeX; // 1 block headroom check
 
-                        // Simple check: Air above, Solid below
-                        if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL) {
+                        // Bounds safety
+                        if (idxAbove >= density.length) continue;
+
+                        // Simple check: Air at Y, Solid Y-1, Air Y+1 
+                        // (Relaxed headroom check for cluster members - 1 block air above is enough for small flora)
+                        if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL) {
+
                             // STRICT MATERIAL CHECK FOR INDIVIDUAL FLORA
                             const matBelow = material[idxBelow];
                             if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
@@ -432,7 +438,7 @@ export class TerrainService {
                     if (foundGround) {
                         floraCandidates.push(
                             (candLocalX - PAD) + worldOffsetX,
-                            flowerY - 0.1, // Sink slightly into ground to avoid floating
+                            flowerY - 0.05, // reduced sink to -0.05 to avoid hiding inside mesh
                             (candLocalZ - PAD) + worldOffsetZ,
                             0
                         );
