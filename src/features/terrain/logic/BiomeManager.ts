@@ -13,6 +13,15 @@ export type BiomeType =
   | 'SKY_ISLANDS' // Special case
   | 'THE_GROVE'; // Default/Temperate
 
+export enum WorldType {
+  DEFAULT = 'DEFAULT',
+  SKY_ISLANDS = 'SKY_ISLANDS',
+  FROZEN = 'FROZEN',
+  LUSH = 'LUSH',
+  CHAOS = 'CHAOS'
+}
+
+
 export interface BiomeCaveSettings {
   scale: number;      // How "zoomed out" the noise is (lower = bigger caves)
   threshold: number;  // Cavity thickness (higher = wider tunnels)
@@ -59,6 +68,12 @@ const smooth = (t: number) => t * t * (3 - 2 * t);
 export class BiomeManager {
   // Using a fixed seed for now, could be passed in
   private static seed = 1337;
+  private static currentWorldType: WorldType = WorldType.DEFAULT;
+
+  static setWorldType(type: WorldType) {
+    this.currentWorldType = type;
+    console.log('[BiomeManager] World Type set to:', type);
+  }
 
   // 2D Noise functions for macro-climate
   private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
@@ -93,35 +108,66 @@ export class BiomeManager {
    */
   static getClimate(x: number, z: number): { temp: number, humid: number, continent: number, erosion: number } {
     // 1. Temperature Gradient (Latitude)
-    // Z = 0 is Temperate (Spawn)
-    // Z < 0 (North/Up) -> Hot? No, usually Z+ is South/North depending on coord system.
-    // Let's do: Z negative = Hot (South), Z positive = Cold (North).
     const latitude = -z * this.LATITUDE_SCALE;
     let baseTemp = latitude;
 
     // 2. Add Noise Variation
-    const noiseTemp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
+    let noiseTemp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
+    let humid = this.humidNoise(x * this.HUMID_SCALE, z * this.HUMID_SCALE);
 
-    // Mix: 70% Latitude, 30% Noise
+    // --- STRATEGY OVERRIDES ---
+    switch (this.currentWorldType) {
+      case WorldType.FROZEN:
+        // Force cold: -1.0 to -0.2 (never hot)
+        baseTemp = -0.6;
+        noiseTemp = noiseTemp * 0.4; // Low variance
+        break;
+
+      case WorldType.LUSH:
+        // Force temperate/hot: 0.0 to 0.8
+        baseTemp = 0.4;
+        noiseTemp = noiseTemp * 0.4;
+        // Bias humidity to be Wet
+        humid = Math.max(-0.2, humid + 0.4);
+        break;
+
+      case WorldType.CHAOS:
+        // Extreme noise scales
+        noiseTemp = this.tempNoise(x * this.TEMP_SCALE * 10, z * this.TEMP_SCALE * 10);
+        humid = this.humidNoise(x * this.HUMID_SCALE * 10, z * this.HUMID_SCALE * 10);
+        baseTemp = 0; // No latitude
+        break;
+
+      case WorldType.SKY_ISLANDS:
+      case WorldType.DEFAULT:
+      default:
+        // Existing logic (Latitude + Noise)
+        break;
+    }
+
+    // Mix: 70% Base, 30% Noise (Adjusted for chaos)
     let temp = baseTemp * 0.7 + noiseTemp * 0.3;
+
+    if (this.currentWorldType === WorldType.CHAOS) {
+      temp = noiseTemp; // Pure noise for chaos
+    }
 
     // Clamp to -1..1
     if (temp > 1.0) temp = 1.0;
     if (temp < -1.0) temp = -1.0;
 
-    // Normal Humidity/Etc
-    const humid = this.humidNoise(x * this.HUMID_SCALE, z * this.HUMID_SCALE);
-    const continent = this.continentalNoise(x * this.CONT_SCALE, z * this.CONT_SCALE);
-    const erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
+    // Continentalness & Erosion
+    let continent = this.continentalNoise(x * this.CONT_SCALE, z * this.CONT_SCALE);
+    let erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
 
     return { temp, humid, continent, erosion };
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {
+    if (this.currentWorldType === WorldType.SKY_ISLANDS) {
+      return 'SKY_ISLANDS';
+    }
     const { temp, humid } = this.getClimate(x, z);
-    // Note: We currently don't use 'continent' for Biome ID selection (e.g. OCEAN biome),
-    // because we don't have an OCEAN biome type yet. 
-    // Instead we use it to lower the terrain height in getTerrainParameters.
     return this.getBiomeFromClimate(temp, humid);
   }
 

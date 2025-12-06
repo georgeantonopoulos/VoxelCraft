@@ -240,6 +240,7 @@ interface VoxelTerrainProps {
   isInteracting: boolean;
   sunDirection?: THREE.Vector3;
   onInitialLoad?: () => void;
+  worldType: string;
 }
 
 // --- Audio Pool Helper ---
@@ -279,7 +280,7 @@ class AudioPool {
   }
 }
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad }) => {
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad, worldType }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
 
@@ -333,6 +334,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
 
     const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
     workerRef.current = worker;
+
+    // Send Configuration immediately
+    worker.postMessage({ type: 'CONFIGURE', payload: { worldType } });
 
     worker.onmessage = (e) => {
       const { type, payload } = e.data;

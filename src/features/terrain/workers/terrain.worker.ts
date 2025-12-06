@@ -18,7 +18,12 @@ ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
 
     try {
-        if (type === 'GENERATE') {
+        if (type === 'CONFIGURE') {
+            const { worldType } = payload;
+            BiomeManager.setWorldType(worldType);
+            console.log('[terrain.worker] Configured WorldType:', worldType);
+        } else if (type === 'GENERATE') {
+
             const { cx, cz } = payload;
             const t0 = performance.now();
             // console.log('[terrain.worker] GENERATE start', cx, cz);

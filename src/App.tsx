@@ -19,6 +19,8 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { setSnapEpsilon } from '@/constants';
 import { useWorldStore } from '@state/WorldStore';
 import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
+import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
+import { WorldType } from '@features/terrain/logic/BiomeManager';
 
 // Keyboard Map
 const keyboardMap = [
@@ -660,6 +662,7 @@ const App: React.FC = () => {
   const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
+  const [worldType, setWorldType] = useState<WorldType | null>(null);
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -700,11 +703,15 @@ const App: React.FC = () => {
       <Leva hidden={!debugMode} />
       {debugMode && <DebugControls />}
 
-      {!gameStarted && (
-        <StartupScreen
-          loaded={terrainLoaded}
-          onEnter={() => setGameStarted(true)}
-        />
+      {!worldType ? (
+        <WorldSelectionScreen onSelect={setWorldType} />
+      ) : (
+        !gameStarted && (
+          <StartupScreen
+            loaded={terrainLoaded}
+            onEnter={() => setGameStarted(true)}
+          />
+        )
       )}
       <KeyboardControls map={keyboardMap}>
         <Canvas
@@ -747,12 +754,15 @@ const App: React.FC = () => {
               {gameStarted && spawnPos && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
 
-              <VoxelTerrain
-                action={action}
-                isInteracting={isInteracting}
-                sunDirection={sunDirection}
-                onInitialLoad={() => setTerrainLoaded(true)}
-              />
+              {worldType && (
+                <VoxelTerrain
+                  action={action}
+                  isInteracting={isInteracting}
+                  sunDirection={sunDirection}
+                  onInitialLoad={() => setTerrainLoaded(true)}
+                  worldType={worldType}
+                />
+              )}
               <FloraPlacer />
               <BedrockPlane />
             </Physics>
