@@ -238,6 +238,13 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
       return createGrassGeo(6, 0.25, 0.2);
     };
 
+    // 3b. Broadleaf (Chunky Jungle Leaves)
+    // A short, wide clump to break up carpet uniformity.
+    const createBroadleafGeo = () => {
+      // Fewer blades, wider profile, a bit taller than fern.
+      return createGrassGeo(3, 0.45, 0.24);
+    };
+
     // 4. Shrub (Cluster of boxes)
     const createShrubGeo = () => {
       const pos: number[] = [];
@@ -279,6 +286,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
     geoMap.set('grass_carpet', createGrassGeo(12, 0.4, 0.05));
     geoMap.set('flower', createFlowerGeo()); // Updated internally below
     geoMap.set('fern', createFernGeo());
+    geoMap.set('broadleaf', createBroadleafGeo());
     geoMap.set('shrub', createShrubGeo());
 
     // Fallback
@@ -299,7 +307,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
       // Map config types to our new geo generators
       // Note: VegetationConfig types are numbers, we map them here manually or via config
       // For now, hardcode mapping based on known types:
-      // GRASS_LOW=0, GRASS_TALL=1, FLOWER_BLUE=2, DESERT_SHRUB=3, SNOW_GRASS=4, JUNGLE_FERN=5
+      // GRASS_LOW=0, GRASS_TALL=1, FLOWER_BLUE=2, DESERT_SHRUB=3, SNOW_GRASS=4, JUNGLE_FERN=5, JUNGLE_GRASS=6, GROVE_GRASS=7
+      // JUNGLE_BROADLEAF=8, JUNGLE_FLOWER=9, JUNGLE_VINE=10
       switch (typeId) {
         case 0: geoName = 'grass_low'; break;
         case 1: geoName = 'grass_tall'; break;
@@ -309,6 +318,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 5: geoName = 'fern'; break;
         case 6: geoName = 'grass_low'; break; // Jungle grass
         case 7: geoName = 'grass_carpet'; break; // Grove grass - CARPET MODE
+        case 8: geoName = 'broadleaf'; break; // Jungle broadleaf clumps
+        case 9: geoName = 'flower'; break; // Rare jungle flowers
+        case 10: geoName = 'grass_tall'; break; // Jungle vines (vertical accents)
       }
 
       return {

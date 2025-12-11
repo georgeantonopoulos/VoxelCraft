@@ -9,6 +9,11 @@ export enum VegetationType {
   JUNGLE_FERN = 5,
   JUNGLE_GRASS = 6,
   GROVE_GRASS = 7,
+  // --- Jungle Undergrowth Extensions ---
+  // Keep new IDs appended to avoid breaking any persisted type references.
+  JUNGLE_BROADLEAF = 8,
+  JUNGLE_FLOWER = 9,
+  JUNGLE_VINE = 10,
 }
 
 export enum TreeType {
@@ -36,6 +41,13 @@ export const VEGETATION_ASSETS: Record<number, {
   [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2, 1.5, 2], geometry: 'cross', sway: 0.8, roughness: 0.6 },
   [VegetationType.JUNGLE_GRASS]: { color: '#22aa22', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6, roughness: 0.5 }, // Matches JUNGLE_GRASS material
   [VegetationType.GROVE_GRASS]: { color: '#88ee44', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
+  // Jungle palette + silhouette variety:
+  // - Broadleaf plants add chunky, low canopy shapes.
+  // - Flowers are rare bright accents.
+  // - Vines add vertical texture between grass and trunks.
+  [VegetationType.JUNGLE_BROADLEAF]: { color: '#1f8f3a', scale: [2.2, 1.1, 2.2], geometry: 'cross', sway: 0.4, roughness: 0.45 },
+  [VegetationType.JUNGLE_FLOWER]: { color: '#f97316', scale: [0.9, 0.9, 0.9], geometry: 'cross', sway: 0.2, roughness: 0.7 },
+  [VegetationType.JUNGLE_VINE]: { color: '#0f6b2f', scale: [0.6, 1.8, 0.6], geometry: 'cross', sway: 1.1, roughness: 0.5 },
 };
 
 // Deterministic placement logic
@@ -61,7 +73,16 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
       if (noiseVal > 0.60) return VegetationType.SNOW_GRASS;
       break;
     case 'JUNGLE':
-      if (noiseVal > 0.10) return VegetationType.JUNGLE_FERN;
+      // Dense, varied undergrowth. Use a few bands to ensure clear silhouettes:
+      // 0.00-0.45  -> carpet grass
+      // 0.45-0.75  -> ferns
+      // 0.75-0.92  -> broadleaf clumps
+      // 0.92-0.98  -> vines (vertical accents)
+      // 0.98-1.00  -> rare jungle flowers
+      if (noiseVal > 0.98) return VegetationType.JUNGLE_FLOWER;
+      if (noiseVal > 0.92) return VegetationType.JUNGLE_VINE;
+      if (noiseVal > 0.75) return VegetationType.JUNGLE_BROADLEAF;
+      if (noiseVal > 0.45) return VegetationType.JUNGLE_FERN;
       return VegetationType.JUNGLE_GRASS; // Jungle is full of stuff
     case 'SAVANNA':
       if (noiseVal > 0.80) return VegetationType.GRASS_TALL;
@@ -98,5 +119,4 @@ export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | 
   }
   return TreeType.OAK;
 };
-
 

@@ -282,3 +282,8 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Issue**: Deep ocean basins or low-lying valleys (low World Y) triggered the "Lumina Depths" obsidian generation logic, causing obsidian and alien flora to appear on the surface in broad daylight.
   - **Fix**: Added a `depthFromSurface` check (`(surfaceHeight + overhang) - wy > 15.0`) to the Lumina logic.
   - **Result**: Obsidian/Glowstone now only generates if the voxel is both deep in the world (Y < -20) AND buried at least 15 blocks below the terrain surface. Surface valleys remain grassy/sandy. Verified with `npm run build`.
+
+- 2025-12-11: Improved Jungle biome undergrowth variety and look.
+  - **Change**: Added `JUNGLE_BROADLEAF`, `JUNGLE_FLOWER`, and `JUNGLE_VINE` vegetation types with distinct colors/scales, and updated jungle selection bands so ground cover mixes carpet grass, ferns, broadleaf clumps, vertical vines, and rare flowers.
+  - **Rendering**: Added a broadleaf geometry variant and mapped new type IDs in `VegetationLayer`.
+  - **Verification**: Ran `npm run build` (success) and `npm run dev` (server ready on `127.0.0.1:3000`, stopped after startup). No in-engine screenshot pass here due to Codex CLI limitations; please do a quick jungle fly-through and compare density/color/silhouette variation.
