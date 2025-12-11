@@ -11,6 +11,13 @@ import { create } from 'zustand';
 interface EnvironmentState {
   undergroundBlend: number;
   setUndergroundBlend: (blend: number) => void;
+  /**
+   * Discrete underground state with a timestamp (seconds since start).
+   * Used for timing one-off transitions like torch slide-in.
+   */
+  isUnderground: boolean;
+  undergroundChangedAt: number;
+  setUndergroundState: (isUnderground: boolean, changedAt: number) => void;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>((set) => ({
@@ -19,5 +26,14 @@ export const useEnvironmentStore = create<EnvironmentState>((set) => ({
     set({
       undergroundBlend: Math.min(1, Math.max(0, blend)),
     }),
+  isUnderground: false,
+  undergroundChangedAt: 0,
+  setUndergroundState: (isUnderground, changedAt) =>
+    set((state) => {
+      if (state.isUnderground === isUnderground) return state;
+      return {
+        isUnderground,
+        undergroundChangedAt: changedAt,
+      };
+    }),
 }));
-

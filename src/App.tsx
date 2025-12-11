@@ -549,6 +549,7 @@ const AtmosphereController: React.FC = () => {
 	  const undergroundBlendRef = useRef(0);
 	  const lastSentBlendRef = useRef(0);
 	  const setUndergroundBlend = useEnvironmentStore((s) => s.setUndergroundBlend);
+	  const setUndergroundState = useEnvironmentStore((s) => s.setUndergroundState);
 	
 	  // Cave palette: cool, dim, and slightly green-blue to complement lumina/glowstone
 	  const caveTop = useMemo(() => new THREE.Color('#020206'), []);
@@ -576,8 +577,12 @@ const AtmosphereController: React.FC = () => {
 	    const nextIsUnderground = isUndergroundRef.current
 	      ? depthFromSurface > 3.0
 	      : depthFromSurface > 6.0;
-	    isUndergroundRef.current = nextIsUnderground;
-	
+	    if (nextIsUnderground !== isUndergroundRef.current) {
+	      isUndergroundRef.current = nextIsUnderground;
+	      // Record the toggle time so other systems can delay effects (e.g., torch slide-in).
+	      setUndergroundState(nextIsUnderground, t);
+	    }
+
 	    const targetBlend = nextIsUnderground ? 1.0 : 0.0;
 	    undergroundBlendRef.current = THREE.MathUtils.lerp(
 	      undergroundBlendRef.current,
@@ -606,8 +611,10 @@ const AtmosphereController: React.FC = () => {
 	      fog.color.copy(mixedBottom);
 	
 	      // Underground: bring fog closer and reduce far distance for moody caves.
-	      fog.near = THREE.MathUtils.lerp(15, 5, blend);
-	      fog.far = THREE.MathUtils.lerp(150, 80, blend);
+	      // Keep caves moody but avoid a hard fog wall that cuts torch range.
+	      // Start fog a bit later underground and push far out so the spotlight can read distance.
+	      fog.near = THREE.MathUtils.lerp(15, 8.0, blend);
+	      fog.far = THREE.MathUtils.lerp(150, 260, blend);
 	    }
 	
 	    // Background color follows the same mix (still acts as fallback)
@@ -666,7 +673,8 @@ const AtmosphereController: React.FC = () => {
 	    if (!ambientRef.current) return;
 	
 	    // Underground: reduce ambient so emissives and local lights carry caves.
-	    ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.08, undergroundBlend);
+	    // Slightly higher cave floor to avoid pitch-black walls.
+	    ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend);
 	    ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
 	  });
 	

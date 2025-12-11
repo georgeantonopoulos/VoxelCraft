@@ -15,10 +15,13 @@ import { LuminaLayer } from './LuminaLayer';
 export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
-  const debugMode = useMemo(() => {
+  // Debug rendering modes are split:
+  // - `?debug` enables Leva/UI debug without changing materials.
+  // - `?normals` swaps terrain to normal material for geometry inspection.
+  const normalsMode = useMemo(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    return params.has('debug');
+    return params.has('normals');
   }, []);
 
   useFrame((_, delta) => {
@@ -66,7 +69,7 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
       {terrainGeometry && (
         <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
           <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
-            {debugMode ? <meshNormalMaterial /> : <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />}
+            {normalsMode ? <meshNormalMaterial /> : <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />}
           </mesh>
         </RigidBody>
       )}
