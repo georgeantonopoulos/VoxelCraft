@@ -9,9 +9,10 @@ interface TreeLayerProps {
 }
 
 export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
-    // Group data by type
+    // Group data by type (+ jungle variant)
     const batches = useMemo(() => {
-        const map = new Map<number, { positions: number[], count: number }>();
+        const map = new Map<string, { type: number, variant: number, positions: number[], count: number }>();
+        const JUNGLE_VARIANTS = 4; // Small set of deterministic templates for instancing
 
         for (let i = 0; i < data.length; i += 4) {
             const x = data[i];
@@ -19,10 +20,20 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
             const z = data[i + 2];
             const type = data[i + 3];
 
-            if (!map.has(type)) {
-                map.set(type, { positions: [], count: 0 });
+            // Deterministic variant selection for jungle trees so nearby trees
+            // share a few templates while still looking varied.
+            let variant = 0;
+            if (type === TreeType.JUNGLE) {
+                const seed = x * 12.9898 + z * 78.233;
+                const h = Math.abs(Math.sin(seed)) * 43758.5453;
+                variant = Math.floor((h % 1) * JUNGLE_VARIANTS);
             }
-            const batch = map.get(type)!;
+
+            const key = `${type}:${variant}`;
+            if (!map.has(key)) {
+                map.set(key, { type, variant, positions: [], count: 0 });
+            }
+            const batch = map.get(key)!;
             batch.positions.push(x, y, z);
             batch.count++;
         }
@@ -31,10 +42,11 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
 
     return (
         <group>
-            {Array.from(batches.entries()).map(([type, batch]) => (
+            {Array.from(batches.values()).map((batch) => (
                 <InstancedTreeBatch
-                    key={type}
-                    type={type}
+                    key={`${batch.type}:${batch.variant}`}
+                    type={batch.type}
+                    variant={batch.variant}
                     positions={batch.positions}
                     count={batch.count}
                 />
@@ -43,11 +55,11 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
     );
 });
 
-const InstancedTreeBatch: React.FC<{ type: number, positions: number[], count: number }> = ({ type, positions, count }) => {
+const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number }> = ({ type, variant, positions, count }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
 
-    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
+    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
 

@@ -287,3 +287,8 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Change**: Added `JUNGLE_BROADLEAF`, `JUNGLE_FLOWER`, and `JUNGLE_VINE` vegetation types with distinct colors/scales, and updated jungle selection bands so ground cover mixes carpet grass, ferns, broadleaf clumps, vertical vines, and rare flowers.
   - **Rendering**: Added a broadleaf geometry variant and mapped new type IDs in `VegetationLayer`.
   - **Verification**: Ran `npm run build` (success) and `npm run dev` (server ready on `127.0.0.1:3000`, stopped after startup). No in-engine screenshot pass here due to Codex CLI limitations; please do a quick jungle fly-through and compare density/color/silhouette variation.
+
+- 2025-12-11: Added deterministic jungle tree canopy + template variation.
+  - **Change**: `TreeGeometryFactory` now supports cached per-variant templates; jungle trees select one of 4 stable variants based on position seed. Variants adjust trunk height, recursion depth, canopy spread, and trunk-straightness so the jungle mixes emergent giants with shorter canopy fillers.
+  - **Canopy**: Added extra leaf clumps along upper branches (not only tips) to create a denser, continuous leaf ceiling.
+  - **Verification**: Ran `npm run build` (success) and `npm run dev` (server ready on `127.0.0.1:3000`, stopped after startup). Please visually check in a jungle: leaf volume should connect between trees; height/shape should vary noticeably.

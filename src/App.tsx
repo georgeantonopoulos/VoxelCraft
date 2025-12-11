@@ -16,11 +16,12 @@ import { HUD as UI } from '@ui/HUD';
 import { StartupScreen } from '@ui/StartupScreen';
 import { BedrockPlane } from '@features/terrain/components/BedrockPlane';
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { setSnapEpsilon } from '@/constants';
-import { useWorldStore } from '@state/WorldStore';
-import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
-import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
-import { WorldType } from '@features/terrain/logic/BiomeManager';
+	import { setSnapEpsilon } from '@/constants';
+	import { useWorldStore } from '@state/WorldStore';
+	import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
+	import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
+	import { WorldType } from '@features/terrain/logic/BiomeManager';
+	import { useEnvironmentStore } from '@state/EnvironmentStore';
 
 // Keyboard Map
 const keyboardMap = [
@@ -255,13 +256,14 @@ const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, botto
 
 
 const SunFollower: React.FC = () => {
-  const { camera } = useThree();
-  const lightRef = useRef<THREE.DirectionalLight>(null);
-  const sunMeshRef = useRef<THREE.Mesh>(null);
-  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
-  const glowMeshRef = useRef<THREE.Mesh>(null);
-  const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
-  const target = useMemo(() => new THREE.Object3D(), []);
+	  const { camera } = useThree();
+	  const lightRef = useRef<THREE.DirectionalLight>(null);
+	  const sunMeshRef = useRef<THREE.Mesh>(null);
+	  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+	  const glowMeshRef = useRef<THREE.Mesh>(null);
+	  const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
+	  const target = useMemo(() => new THREE.Object3D(), []);
+	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
   // Smooth position tracking to prevent choppy updates
   const smoothSunPos = useRef(new THREE.Vector3());
@@ -320,23 +322,28 @@ const SunFollower: React.FC = () => {
       // Update light color
       lightRef.current.color.copy(sunColor);
 
-      // Adjust intensity: fade out smoothly when below horizon
-      const normalizedHeight = sy / radius;
-      if (normalizedHeight < -0.15) {
-        // Deep night: darker
-        lightRef.current.intensity = 0.1;
-      } else if (normalizedHeight < 0.0) {
-        // Transition from Night to Sunset
-        const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
-        lightRef.current.intensity = 0.1 + (0.4 - 0.1) * t;
-      } else if (normalizedHeight < 0.3) {
-        // Sunset to Day
-        const t = normalizedHeight / 0.3; // 0 to 1
-        lightRef.current.intensity = 0.4 + (1.0 - 0.4) * t;
-      } else {
-        // Day: full intensity
-        lightRef.current.intensity = 1.0;
-      }
+	      // Adjust intensity: fade out smoothly when below horizon
+	      const normalizedHeight = sy / radius;
+	      let baseIntensity = 1.0;
+	      if (normalizedHeight < -0.15) {
+	        // Deep night: darker
+	        baseIntensity = 0.1;
+	      } else if (normalizedHeight < 0.0) {
+	        // Transition from Night to Sunset
+	        const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
+	        baseIntensity = 0.1 + (0.4 - 0.1) * t;
+	      } else if (normalizedHeight < 0.3) {
+	        // Sunset to Day
+	        const t = normalizedHeight / 0.3; // 0 to 1
+	        baseIntensity = 0.4 + (1.0 - 0.4) * t;
+	      } else {
+	        // Day: full intensity
+	        baseIntensity = 1.0;
+	      }
+	
+	      // Underground: smoothly dim sun so caves don't get sunset lighting
+	      const sunDimming = 1.0 - undergroundBlend;
+	      lightRef.current.intensity = baseIntensity * sunDimming;
 
       // Update Visual Sun color and glow
       if (sunMeshRef.current) {
@@ -346,21 +353,24 @@ const SunFollower: React.FC = () => {
 
         // Update sun material color
         if (sunMaterialRef.current) {
-          const sunMeshColor = sunColor.clone();
-          if (normalizedHeight < -0.15) {
-            // Deep night: make sun mesh dim
-            sunMeshColor.multiplyScalar(0.4);
-          } else if (normalizedHeight < 0.0) {
+	          const sunMeshColor = sunColor.clone();
+	          if (normalizedHeight < -0.15) {
+	            // Deep night: make sun mesh dim
+	            sunMeshColor.multiplyScalar(0.4);
+	          } else if (normalizedHeight < 0.0) {
             // Transition from sunset to night - fade smoothly
             const t = (normalizedHeight + 0.15) / 0.15;
             sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
           } else {
             // Day/sunrise: bright sun core
             sunMeshColor.multiplyScalar(1.5);
-          }
+	          }
+	
+	          // Underground: dim visual sun to prevent glow leaks through thin ceilings
+	          sunMeshColor.multiplyScalar(1.0 - undergroundBlend * 0.9);
 
-          sunMaterialRef.current.color.copy(sunMeshColor);
-        }
+	          sunMaterialRef.current.color.copy(sunMeshColor);
+	        }
 
         // Update glow - make it more visible during sunset
         if (glowMeshRef.current && glowMaterialRef.current) {
@@ -372,8 +382,11 @@ const SunFollower: React.FC = () => {
 
           // Calculate glow intensity and size based on sun position
           const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
-          const glowScale = isSunset ? 5.0 : 3.5;
-          const glowOpacity = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+	          const glowScale = isSunset ? 5.0 : 3.5;
+	          const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+	
+	          // Underground: reduce glow strength to keep caves moodier
+	          const glowOpacity = glowOpacityBase * (1.0 - undergroundBlend * 0.9);
 
           glowMeshRef.current.scale.setScalar(glowScale);
 
@@ -454,10 +467,11 @@ const SunFollower: React.FC = () => {
  * Moon is visible when above horizon and provides subtle night lighting.
  */
 const MoonFollower: React.FC = () => {
-  const { camera } = useThree();
-  const moonMeshRef = useRef<THREE.Mesh>(null);
-  const lightRef = useRef<THREE.DirectionalLight>(null);
-  const target = useMemo(() => new THREE.Object3D(), []);
+	  const { camera } = useThree();
+	  const moonMeshRef = useRef<THREE.Mesh>(null);
+	  const lightRef = useRef<THREE.DirectionalLight>(null);
+	  const target = useMemo(() => new THREE.Object3D(), []);
+	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
   useFrame(({ clock }) => {
     if (!moonMeshRef.current || !lightRef.current) return;
@@ -487,11 +501,17 @@ const MoonFollower: React.FC = () => {
     lightRef.current.target = target;
     lightRef.current.updateMatrixWorld();
 
-    // VISIBILITY: Only visible when above the horizon
-    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
-    moonMeshRef.current.visible = isAboveHorizon;
-    lightRef.current.intensity = isAboveHorizon ? 0.2 : 0; // Dim light
-  });
+	    // VISIBILITY: Only visible when above the horizon
+	    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
+	    moonMeshRef.current.visible = isAboveHorizon;
+	
+	    // Underground: moonlight shouldn't light caves much
+	    const moonDimming = 1.0 - undergroundBlend * 0.8;
+	    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming : 0; // Dim light
+	    if (undergroundBlend > 0.7) {
+	      moonMeshRef.current.visible = false;
+	    }
+	  });
 
   return (
     <>
@@ -517,15 +537,26 @@ const MoonFollower: React.FC = () => {
  * Renders the SkyDome with dynamic gradients and updates fog to match horizon color.
  */
 const AtmosphereController: React.FC = () => {
-  const { scene } = useThree();
-  const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
-  const gradientRef = useRef<{ top: THREE.Color, bottom: THREE.Color }>({
-    top: new THREE.Color('#87CEEB'),
-    bottom: new THREE.Color('#87CEEB')
-  });
+	  const { scene, camera } = useThree();
+	  const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
+	  const gradientRef = useRef<{ top: THREE.Color, bottom: THREE.Color }>({
+	    top: new THREE.Color('#87CEEB'),
+	    bottom: new THREE.Color('#87CEEB')
+	  });
+	
+	  // Smooth underground detection to avoid flicker near cave mouths
+	  const isUndergroundRef = useRef(false);
+	  const undergroundBlendRef = useRef(0);
+	  const lastSentBlendRef = useRef(0);
+	  const setUndergroundBlend = useEnvironmentStore((s) => s.setUndergroundBlend);
+	
+	  // Cave palette: cool, dim, and slightly green-blue to complement lumina/glowstone
+	  const caveTop = useMemo(() => new THREE.Color('#020206'), []);
+	  const caveBottom = useMemo(() => new THREE.Color('#0a0f14'), []);
+	  const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
 
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
+	  useFrame(({ clock }) => {
+	    const t = clock.getElapsedTime();
 
     // Use the same non-linear orbit calculation as SunFollower
     const speed = 0.025;
@@ -533,47 +564,116 @@ const AtmosphereController: React.FC = () => {
     const radius = 300;
     const sy = Math.cos(angle) * radius;
 
-    // Calculate sky gradient colors based on sun position
-    const { top, bottom } = getSkyGradient(sy, radius);
+	    // Calculate sky gradient colors based on sun position
+	    const { top, bottom } = getSkyGradient(sy, radius);
+	
+	    // --- Underground detection ---
+	    // Use TerrainService height approximation as a proxy for "surface above".
+	    const surfaceY = TerrainService.getHeightAt(camera.position.x, camera.position.z);
+	    const depthFromSurface = surfaceY - camera.position.y;
+	
+	    // Hysteresis band: enter caves deeper than 6u, exit when within 3u of surface.
+	    const nextIsUnderground = isUndergroundRef.current
+	      ? depthFromSurface > 3.0
+	      : depthFromSurface > 6.0;
+	    isUndergroundRef.current = nextIsUnderground;
+	
+	    const targetBlend = nextIsUnderground ? 1.0 : 0.0;
+	    undergroundBlendRef.current = THREE.MathUtils.lerp(
+	      undergroundBlendRef.current,
+	      targetBlend,
+	      0.05
+	    );
+	
+	    // Push blend into store only when meaningfully changed.
+	    const blend = undergroundBlendRef.current;
+	    if (Math.abs(blend - lastSentBlendRef.current) > 0.01) {
+	      lastSentBlendRef.current = blend;
+	      setUndergroundBlend(blend);
+	    }
+	
+	    // Mix sky gradient toward cave palette as we go underground.
+	    const mixedTop = top.clone().lerp(caveTop, blend);
+	    const mixedBottom = bottom.clone().lerp(caveBottom, blend);
 
-    // Update gradient ref for SkyDome
-    gradientRef.current.top.copy(top);
-    gradientRef.current.bottom.copy(bottom);
+	    // Update gradient ref for SkyDome
+	    gradientRef.current.top.copy(mixedTop);
+	    gradientRef.current.bottom.copy(mixedBottom);
 
-    // Update fog color to match horizon (bottom) color for seamless blending
-    const fog = scene.fog as THREE.Fog | undefined;
-    if (fog) {
-      fog.color.copy(bottom);
-    }
+	    // Update fog color to match horizon (bottom) color for seamless blending
+	    const fog = scene.fog as THREE.Fog | undefined;
+	    if (fog) {
+	      fog.color.copy(mixedBottom);
+	
+	      // Underground: bring fog closer and reduce far distance for moody caves.
+	      fog.near = THREE.MathUtils.lerp(15, 5, blend);
+	      fog.far = THREE.MathUtils.lerp(150, 80, blend);
+	    }
+	
+	    // Background color follows the same mix (still acts as fallback)
+	    if (scene.background && scene.background instanceof THREE.Color) {
+	      scene.background.copy(mixedBottom);
+	    }
 
-    // Update hemisphere light colors to match atmosphere
-    if (hemisphereLightRef.current) {
-      const normalizedHeight = sy / radius;
-      hemisphereLightRef.current.color.copy(top);
+	    // Update hemisphere light colors to match atmosphere
+	    if (hemisphereLightRef.current) {
+	      const normalizedHeight = sy / radius;
+	      hemisphereLightRef.current.color.copy(mixedTop);
 
-      if (normalizedHeight < -0.1) {
-        // Night: darker ground
-        hemisphereLightRef.current.groundColor.set(0x1a1a2a);
-      } else if (normalizedHeight < 0.2) {
-        // Sunrise/sunset: warmer ground
-        hemisphereLightRef.current.groundColor.set(0x3a2a2a);
-      } else {
-        // Day: darker ground for contrast
-        hemisphereLightRef.current.groundColor.set(0x2a2a4a);
-      }
-    }
-  });
+	      if (normalizedHeight < -0.1) {
+	        // Night: darker ground
+	        hemisphereLightRef.current.groundColor
+	          .set(0x1a1a2a)
+	          .lerp(caveGround, blend);
+	      } else if (normalizedHeight < 0.2) {
+	        // Sunrise/sunset: warmer ground
+	        hemisphereLightRef.current.groundColor
+	          .set(0x3a2a2a)
+	          .lerp(caveGround, blend);
+	      } else {
+	        // Day: darker ground for contrast
+	        hemisphereLightRef.current.groundColor
+	          .set(0x2a2a4a)
+	          .lerp(caveGround, blend);
+	      }
+	    }
+	  });
 
-  return (
-    <>
-      <hemisphereLight
-        ref={hemisphereLightRef}
-        args={['#87CEEB', '#2a2a4a', 0.5]}
-      />
-      <SkyDomeRefLink gradientRef={gradientRef} />
-    </>
-  );
-};
+	  return (
+	    <>
+	      {/* Ambient is controlled separately (see AmbientController) */}
+	      <hemisphereLight
+	        ref={hemisphereLightRef}
+	        args={['#87CEEB', '#2a2a4a', 0.5]}
+	      />
+	      <SkyDomeRefLink gradientRef={gradientRef} />
+	    </>
+	  );
+	};
+	
+	/**
+	 * AmbientController
+	 * Keeps surface ambient as-is, but smoothly darkens and cools it underground.
+	 * This helps caves feel less flat while preserving overground readability.
+	 */
+	const AmbientController: React.FC = () => {
+	  const ambientRef = useRef<THREE.AmbientLight>(null);
+	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+	  const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
+	  const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
+	
+	  useFrame(() => {
+	    if (!ambientRef.current) return;
+	
+	    // Underground: reduce ambient so emissives and local lights carry caves.
+	    ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.08, undergroundBlend);
+	    ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
+	  });
+	
+	  return (
+	    <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />
+	  );
+	};
 
 /**
  * Helper component to bridge the gradient ref to SkyDome.
@@ -735,8 +835,8 @@ const App: React.FC = () => {
           {/* Fog: Strong fog starting close to camera to hide terrain generation - color updated by AtmosphereController */}
           <fog attach="fog" args={['#87CEEB', 15, 150]} />
 
-          {/* Ambient: Softer base to let point lights shine */}
-          <ambientLight intensity={0.3} color="#ccccff" />
+	          {/* Ambient: Softer base to let point lights shine */}
+	          <AmbientController />
 
           {/* Atmosphere Controller: Renders gradient SkyDome and updates fog/hemisphere light colors */}
           <AtmosphereController />
