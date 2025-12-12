@@ -11,6 +11,10 @@ const vertexShader = `
   attribute vec4 aMatWeightsD;
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
+  attribute float aVoxelCavity;
+
+  uniform vec2 uWindDirXZ;
+  uniform float uNormalStrength;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -18,8 +22,77 @@ const vertexShader = `
   varying vec4 vWd;
   varying float vWetness;
   varying float vMossiness;
+  varying float vCavity;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
+  varying float vDominantChannel;
+  varying float vDominantWeight;
+
+  vec2 safeNormalize2(vec2 v) {
+    float len = length(v);
+    if (len < 0.0001) return vec2(1.0, 0.0);
+    return v / len;
+  }
+
+  // Procedural normal perturbation in the vertex stage.
+  // NOTE: This is intentionally "macro" scale (large wavelengths) to avoid shimmer.
+  vec3 applyDominantNormal(vec3 n, vec3 worldPos, float channel, float weight) {
+    vec3 nn = normalize(n);
+    vec2 wind = safeNormalize2(uWindDirXZ);
+
+    // Weighting keeps blends stable (dominant materials get the strongest shape cue).
+    float w = clamp(weight, 0.0, 1.0);
+    float base = uNormalStrength * (0.35 + 0.65 * w);
+
+    // Sand / Red Sand: wind-aligned ripples primarily on flatter surfaces.
+    if (channel == 5.0 || channel == 10.0) {
+      float flatness = pow(clamp(nn.y, 0.0, 1.0), 2.4);
+      float freq = 2.8;
+      float warp = sin(worldPos.x * 0.06 + worldPos.z * 0.05) * 0.55;
+      float phase = dot(worldPos.xz, wind) * freq + warp;
+      float c = cos(phase);
+      vec3 g = vec3(wind.x, 0.0, wind.y);
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (c * base * flatness * 0.35));
+    }
+    // Stone / Bedrock / Obsidian: subtle stratification bands.
+    else if (channel == 2.0 || channel == 1.0 || channel == 15.0) {
+      float freq = 1.4;
+      float phase = worldPos.y * freq + sin(dot(worldPos.xz, vec2(0.04, 0.05))) * 0.65;
+      float c = cos(phase);
+      vec3 g = vec3(0.0, 1.0, 0.0);
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (c * base * 0.18));
+    }
+    // Dirt / Clay / Terracotta: clumpy surface cue.
+    else if (channel == 3.0 || channel == 7.0 || channel == 11.0) {
+      float fx = 1.05;
+      float fz = 0.95;
+      float sx = sin(worldPos.x * fx);
+      float sz = sin(worldPos.z * fz);
+      vec3 g = vec3(cos(worldPos.x * fx) * sz, 0.0, sx * cos(worldPos.z * fz));
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (base * 0.06));
+    }
+    // Grass / Jungle Grass: very subtle fiber direction cue.
+    else if (channel == 4.0 || channel == 13.0) {
+      float phase = dot(worldPos.xz, wind.yx) * 2.2 + worldPos.y * 0.4;
+      float c = cos(phase);
+      vec3 g = vec3(wind.y, 0.0, wind.x);
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (c * base * 0.05));
+    }
+    // Snow / Ice: extremely subtle micro undulation (kept tiny to avoid sparkle shimmer).
+    else if (channel == 6.0 || channel == 12.0) {
+      float phase = worldPos.x * 1.8 + worldPos.z * 2.0;
+      float c = cos(phase);
+      vec3 g = vec3(1.0, 0.0, 1.0);
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (c * base * 0.02));
+    }
+
+    return nn;
+  }
 
   void main() {
     vWa = aMatWeightsA;
@@ -28,12 +101,34 @@ const vertexShader = `
     vWd = aMatWeightsD;
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
+    vCavity = aVoxelCavity;
     
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
+
+    // Find dominant channel for stable, low-shimmer procedural detail.
+    float wMax = vWa.x; float ch = 0.0;
+    if (vWa.y > wMax) { wMax = vWa.y; ch = 1.0; }
+    if (vWa.z > wMax) { wMax = vWa.z; ch = 2.0; }
+    if (vWa.w > wMax) { wMax = vWa.w; ch = 3.0; }
+    if (vWb.x > wMax) { wMax = vWb.x; ch = 4.0; }
+    if (vWb.y > wMax) { wMax = vWb.y; ch = 5.0; }
+    if (vWb.z > wMax) { wMax = vWb.z; ch = 6.0; }
+    if (vWb.w > wMax) { wMax = vWb.w; ch = 7.0; }
+    if (vWc.x > wMax) { wMax = vWc.x; ch = 8.0; }
+    if (vWc.y > wMax) { wMax = vWc.y; ch = 9.0; }
+    if (vWc.z > wMax) { wMax = vWc.z; ch = 10.0; }
+    if (vWc.w > wMax) { wMax = vWc.w; ch = 11.0; }
+    if (vWd.x > wMax) { wMax = vWd.x; ch = 12.0; }
+    if (vWd.y > wMax) { wMax = vWd.y; ch = 13.0; }
+    if (vWd.z > wMax) { wMax = vWd.z; ch = 14.0; }
+    if (vWd.w > wMax) { wMax = vWd.w; ch = 15.0; }
+    vDominantChannel = ch;
+    vDominantWeight = wMax;
     
     csm_Position = position;
-    csm_Normal = normal;
+    // Procedural macro normal perturbation (kept in vertex to stay stable in motion).
+    csm_Normal = applyDominantNormal(normal, vWorldPosition, vDominantChannel, vDominantWeight);
   }
 `;
 
@@ -75,6 +170,11 @@ const fragmentShader = `
 	  // Debug: visualize weight attributes to spot discontinuities at chunk seams.
 	  // 0 = off, 1 = snow, 2 = grass, 3 = snowMinusGrass, 4 = dominant
 	  uniform int uWeightsView;
+	  // Procedural detail controls (kept as uniforms for future tuning).
+	  uniform float uMacroStrength;
+	  uniform float uCavityStrength;
+	  uniform vec2 uWindDirXZ;
+	  uniform float uNormalStrength;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -82,8 +182,11 @@ const fragmentShader = `
   varying vec4 vWd;
   varying float vWetness;
   varying float vMossiness;
+  varying float vCavity;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
+  varying float vDominantChannel;
+  varying float vDominantWeight;
 
   // --- THE FIX: Safe Normalization ---
   // Prevents NaNs (flashing) when normals cancel out in sharp valleys
@@ -108,6 +211,12 @@ const fragmentShader = `
       vec4 zN = texture(uNoiseTexture, p.xyz + vec3(200.0));
 
       return xN * blend.x + yN * blend.y + zN * blend.z;
+  }
+
+  vec2 safeNormalize2(vec2 v) {
+      float len = length(v);
+      if (len < 0.0001) return vec2(1.0, 0.0);
+      return v / len;
   }
 
   struct MatInfo {
@@ -222,6 +331,9 @@ const fragmentShader = `
 	    vec4 nMid = getTriplanarNoise(N, 0.15);
 	    float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
 	    vec4 nHigh = getTriplanarNoise(N, highScale);
+	    // Volume-sampled macro noise (1 fetch) for large-scale tint/roughness variation.
+	    vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
+	    float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
 
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
@@ -328,6 +440,57 @@ const fragmentShader = `
 	    if (uWetnessEnabled > 0.5) {
 	      col = mix(col, col * 0.5, vWetness * 0.9);
 	    }
+
+	    // --- Macro Variation (all materials) ---
+	    // Breaks up large flat plains without adding extra texture lookups.
+	    col *= (1.0 + macro * 0.06);
+	    accRoughness += macro * 0.05;
+
+	    // --- Material-Specific Patterns (dominant material for stability) ---
+	    // We lean on dominant channel to avoid high-frequency shimmer when weights blend.
+	    int dom = int(floor(vDominantChannel + 0.5));
+	    vec2 wind = safeNormalize2(uWindDirXZ);
+	    if (dom == 5 || dom == 10) {
+	      // Sand / Red Sand: dune ripples + mottling.
+	      float rip = sin(dot(vWorldPosition.xz, wind) * 2.8 + (nMacro.g * 2.0 - 1.0) * 0.6);
+	      float mott = (nMid.g * 2.0 - 1.0);
+	      col *= 1.0 + (rip * 0.03 + mott * 0.02);
+	      accRoughness = mix(accRoughness, 0.92, 0.35);
+	    } else if (dom == 2 || dom == 1 || dom == 15) {
+	      // Stone / Bedrock / Obsidian: strata bands + crack veining.
+	      float bands = sin(vWorldPosition.y * 1.4 + (nMacro.b * 2.0 - 1.0) * 1.2);
+	      float cracks = pow(1.0 - abs(nHigh.g * 2.0 - 1.0), 3.5);
+	      col *= 1.0 + bands * 0.02;
+	      col *= 1.0 - cracks * 0.08;
+	      accRoughness += cracks * 0.08;
+	    } else if (dom == 3 || dom == 7 || dom == 11) {
+	      // Dirt / Clay / Terracotta: clumps + darker cavities.
+	      float clump = (nHigh.r * 2.0 - 1.0);
+	      col *= 1.0 + clump * 0.03;
+	      col *= 1.0 - smoothstep(0.2, 0.9, abs(clump)) * 0.06;
+	      accRoughness = mix(accRoughness, 0.95, 0.15);
+	    } else if (dom == 6) {
+	      // Snow: softer diffuse + higher roughness, slight blue shift.
+	      col = mix(col, col * vec3(0.92, 0.96, 1.04), 0.22);
+	      accRoughness = mix(accRoughness, 0.98, 0.45);
+	    } else if (dom == 12) {
+	      // Ice: glassy but not mirror-shiny; keep it smooth and slightly blue.
+	      col = mix(col, col * vec3(0.92, 0.98, 1.06), 0.18);
+	      accRoughness = mix(accRoughness, 0.12, 0.35);
+	    } else if (dom == 14) {
+	      // Glow stone: subtle mottling so emission isn't a flat fill.
+	      col *= 1.0 + (nMacro.a * 2.0 - 1.0) * 0.03;
+	    } else if (dom == 4 || dom == 13) {
+	      // Grass / Jungle Grass: patchy color variation.
+	      float patchiness = (nMacro.g * 2.0 - 1.0);
+	      col *= 1.0 + patchiness * 0.03;
+	    }
+
+	    // --- Cavity Darkening (micro-AO) ---
+	    float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
+	    col *= mix(1.0, 0.65, cav);
+	    accRoughness = mix(accRoughness, 1.0, cav * 0.25);
+
 	    col = clamp(col, 0.0, 5.0);
     
     // Add Emission
@@ -460,6 +623,11 @@ export const TriplanarMaterial: React.FC<{
 	    uMossEnabled: { value: 1.0 },
 	    uRoughnessMin: { value: 0.0 },
 	    uWeightsView: { value: 0 },
+	    // Procedural detail controls (kept conservative for stability/perf).
+	    uMacroStrength: { value: 1.0 },
+	    uCavityStrength: { value: 1.0 },
+	    uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
+	    uNormalStrength: { value: 1.0 },
 	  }), []);
 
   return (

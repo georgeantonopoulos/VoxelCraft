@@ -62,7 +62,8 @@ export const ChunkMesh: React.FC<{
     // Chunk fade-in can produce seam-like hard edges due to transparency sorting/depthWrite toggling.
     // Allow disabling in debug to confirm whether artifacts come from this path.
     if (!terrainFadeEnabled) return;
-    if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 2, 1));
+    // Smoother reveal (slower than the old 0.5s snap) to hide far-chunk pop-in.
+    if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 0.8, 1));
   });
 
   // If fade is disabled, force fully-opaque terrain.
@@ -85,6 +86,7 @@ export const ChunkMesh: React.FC<{
     ensureAttribute(chunk.meshMatWeightsD, 'aMatWeightsD', 4);
     ensureAttribute(chunk.meshWetness, 'aVoxelWetness', 1);
     ensureAttribute(chunk.meshMossiness, 'aVoxelMossiness', 1);
+    ensureAttribute(chunk.meshCavity, 'aVoxelCavity', 1);
     if (chunk.meshNormals?.length > 0) geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
     else geom.computeVertexNormals();
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));

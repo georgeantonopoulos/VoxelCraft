@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './index.css';
 
 // Suppress specific library warnings that are known to be benign
 const originalWarn = console.warn;

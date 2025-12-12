@@ -80,6 +80,7 @@ export function generateMesh(
   const tNorms: number[] = [];
   const tWets: number[] = [];
   const tMoss: number[] = [];
+  const tCavity: number[] = [];
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
@@ -248,6 +249,11 @@ export function generateMesh(
             let bestMoss = 0;
             let bestVal = -Infinity;
             let totalWeight = 0;
+            // Micro-occlusion: measure how "enclosed" this surface point is.
+            // We compute the fraction of nearby samples that are solid (density > ISO_LEVEL)
+            // using the same neighbor sweep as material splatting (no extra memory access pattern).
+            let occTotalW = 0;
+            let occSolidW = 0;
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
@@ -257,15 +263,17 @@ export function generateMesh(
                   const sz = centerZ + dz;
 
                   const val = getVal(density, sx, sy, sz);
+                  const distSq = dx * dx + dy * dy + dz * dz;
+                  const w = 1.0 / (distSq + 0.1); // Soft inverse square falloff
+                  occTotalW += w;
+                  if (val > ISO_LEVEL) occSolidW += w;
                   if (val > ISO_LEVEL) {
                     const mat = getMat(material, sx, sy, sz);
                     const channel = resolveChannel(mat);
                     // AIR and WATER are handled separately (water is a distinct mesh)
                     if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
-                      const distSq = dx * dx + dy * dy + dz * dz;
-                      const weight = 1.0 / (distSq + 0.1); // Soft inverse square falloff
-                      localWeights[channel] += weight;
-                      totalWeight += weight;
+                      localWeights[channel] += w;
+                      totalWeight += w;
                     }
 
                     if (val > bestVal) {
@@ -293,6 +301,11 @@ export function generateMesh(
             tWd.push(localWeights[12], localWeights[13], localWeights[14], localWeights[15]);
             tWets.push(bestWet / 255.0);
             tMoss.push(bestMoss / 255.0);
+            // Map local solidity fraction to a cavity factor (0=open, 1=enclosed).
+            // Open surface tends to be ~0.5; caves/creases trend higher.
+            const solidFrac = occTotalW > 0.0001 ? occSolidW / occTotalW : 0.5;
+            const cavity = Math.max(0, Math.min(1, (solidFrac - 0.55) / (0.9 - 0.55)));
+            tCavity.push(cavity);
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -437,6 +450,7 @@ export function generateMesh(
     matWeightsD: new Float32Array(tWd),
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
+    cavity: new Float32Array(tCavity),
     waterPositions: new Float32Array(waterVerts),
     waterIndices: new Uint32Array(waterInds),
     waterNormals: new Float32Array(waterNorms),

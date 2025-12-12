@@ -252,6 +252,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
+                meshCavity: mesh.cavity,
                 // Water is a distinct surface mesh (separate from terrain Surface-Nets geometry).
                 // Chunk state expects `meshWater*` keys so ChunkMesh can render it.
                 meshWaterPositions: mesh.waterPositions,
@@ -277,6 +278,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
+                mesh.cavity.buffer,
                 mesh.waterPositions.buffer,
                 mesh.waterIndices.buffer,
                 mesh.waterNormals.buffer
@@ -303,6 +305,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
+                meshCavity: mesh.cavity,
                 // Keep `meshWater*` naming consistent with ChunkState.
                 meshWaterPositions: mesh.waterPositions,
                 meshWaterIndices: mesh.waterIndices,
@@ -319,6 +322,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 mesh.normals.buffer,
                 mesh.wetness.buffer,
                 mesh.mossiness.buffer,
+                mesh.cavity.buffer,
                 mesh.waterPositions.buffer,
                 mesh.waterIndices.buffer,
                 mesh.waterNormals.buffer

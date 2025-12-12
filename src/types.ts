@@ -63,6 +63,7 @@ export interface MeshData {
   matWeightsD: Float32Array; // Materials 12-15
   wetness: Float32Array; // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
+  cavity: Float32Array; // Attribute for baked micro-occlusion (creases/cavities)
 
   // Water Mesh Data
   waterPositions: Float32Array;
@@ -96,6 +97,7 @@ export interface ChunkState {
   meshNormals: Float32Array;
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
+  meshCavity: Float32Array;
 
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
