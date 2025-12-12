@@ -9,6 +9,7 @@ interface LuminaLayerProps {
   cx: number;
   cz: number;
   opacity?: number;
+  opacityRef?: React.MutableRefObject<number>;
 }
 
 /**
@@ -16,7 +17,7 @@ interface LuminaLayerProps {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, opacity = 1.0 }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, opacity = 1.0, opacityRef }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   // const { camera } = useThree(); // Unused
@@ -74,13 +75,19 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     metalness: 0.1,
     toneMapped: false // Important for bloom
   }), []);
+  const lastTransparentRef = useRef<boolean | null>(null);
 
   // Fade lumina visuals with the owning chunk so they don't pop at render distance.
   useFrame(() => {
-    const isTransparent = opacity < 0.999;
-    mat.transparent = isTransparent;
-    mat.opacity = opacity;
-    mat.depthWrite = !isTransparent;
+    const resolvedOpacity = (opacityRef ? opacityRef.current : opacity);
+    const isTransparent = resolvedOpacity < 0.999;
+    mat.opacity = resolvedOpacity;
+    if (lastTransparentRef.current !== isTransparent) {
+      mat.transparent = isTransparent;
+      mat.depthWrite = !isTransparent;
+      mat.needsUpdate = true;
+      lastTransparentRef.current = isTransparent;
+    }
   });
 
   return (
@@ -99,7 +106,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
 
       {/* Clustered Lights - Distance Culled */}
       {lights.map((pos, i) => (
-        <DistanceCulledLight key={i} position={pos} intensityMul={opacity} />
+        <DistanceCulledLight key={i} position={pos} intensityMul={opacityRef ? opacityRef.current : opacity} />
       ))}
     </group>
   );

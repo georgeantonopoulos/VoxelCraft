@@ -6,6 +6,19 @@ import { shaderMaterial } from '@react-three/drei';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ } from '@/constants';
 
+// Fallback 1x1 shoreline mask so water can't disappear if a chunk has no computed mask.
+// This keeps edgeAlpha at 1.0 (fully visible) instead of discarding everything.
+const FALLBACK_SHORE_MASK = (() => {
+  const data = new Uint8Array([255]);
+  const tex = new THREE.DataTexture(data, 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+})();
+
 const WaterMeshShader = shaderMaterial(
   {
     uTime: 0,
@@ -14,7 +27,7 @@ const WaterMeshShader = shaderMaterial(
     uColorShallow: new THREE.Color('#3ea7d6'),
     uColorDeep: new THREE.Color('#0b3e63'),
     uNoiseTexture: noiseTexture,
-    uShoreMask: null as unknown as THREE.Texture,
+    uShoreMask: FALLBACK_SHORE_MASK,
     uShoreEdge: 0.06,
     uAlphaBase: 0.58,
     uFresnelAlpha: 0.22,
@@ -35,9 +48,9 @@ const WaterMeshShader = shaderMaterial(
     precision highp float;
 
     uniform float uTime;
-    out vec3 vWorldPos;
-    out vec3 vNormal;
-    out vec3 vViewPos;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+    varying vec3 vViewPos;
 
     void main() {
       vNormal = normalize(normalMatrix * normal);
@@ -75,11 +88,9 @@ const WaterMeshShader = shaderMaterial(
     uniform float uFogFar;
     uniform float uFade;
 
-    in vec3 vWorldPos;
-    in vec3 vNormal;
-    in vec3 vViewPos;
-
-    out vec4 fragColor;
+    varying vec3 vWorldPos;
+    varying vec3 vNormal;
+    varying vec3 vViewPos;
 
     vec3 getNormal(vec3 pos, vec3 baseNormal, float time) {
         float scale = 0.1;
@@ -100,7 +111,7 @@ const WaterMeshShader = shaderMaterial(
         // Shoreline mask: use world-position modulo chunk size to get stable 0..1 UV per chunk.
         // This avoids blocky geometry edges by fading/discarding pixels near the land boundary.
         vec2 uv = fract(vWorldPos.xz / max(uChunkSize, 0.0001));
-        float mask = texture(uShoreMask, uv).r;
+        float mask = texture2D(uShoreMask, uv).r;
         float edgeAlpha = smoothstep(0.5 - uShoreEdge, 0.5 + uShoreEdge, mask);
         if (edgeAlpha < 0.01) discard;
 
@@ -144,7 +155,7 @@ const WaterMeshShader = shaderMaterial(
         alpha = clamp(alpha + foam * 0.10, 0.0, 0.92);
 
         // IMPORTANT: Don't apply manual gamma here; Three.js renderer handles output color space.
-        fragColor = vec4(finalColor, alpha);
+        gl_FragColor = vec4(finalColor, alpha);
     }
   `
 );
@@ -154,6 +165,7 @@ extend({ WaterMeshShader });
 export interface WaterMaterialProps {
   sunDirection?: THREE.Vector3;
   fade?: number;
+  fadeRef?: React.MutableRefObject<number>;
   shoreMask?: THREE.Texture | null;
   shoreEdge?: number;
   alphaBase?: number;
@@ -167,6 +179,7 @@ export interface WaterMaterialProps {
 export const WaterMaterial: React.FC<WaterMaterialProps> = ({
   sunDirection,
   fade = 1,
+  fadeRef,
   shoreMask = null,
   shoreEdge = 0.06,
   alphaBase = 0.58,
@@ -180,7 +193,7 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({
     if (ref.current) {
       ref.current.uTime = clock.getElapsedTime();
       ref.current.uCamPos = camera.position;
-      ref.current.uFade = fade;
+      ref.current.uFade = fadeRef ? fadeRef.current : fade;
       ref.current.uShoreEdge = shoreEdge;
       ref.current.uAlphaBase = alphaBase;
       ref.current.uTexStrength = texStrength;
@@ -202,9 +215,9 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({
       if (ref.current.uNoiseTexture !== noiseTexture) {
         ref.current.uNoiseTexture = noiseTexture;
       }
-      if (shoreMask && ref.current.uShoreMask !== shoreMask) {
-        ref.current.uShoreMask = shoreMask;
-      }
+      // Ensure a valid shore mask is always bound (shader discards when mask is 0).
+      const nextMask = shoreMask ?? FALLBACK_SHORE_MASK;
+      if (ref.current.uShoreMask !== nextMask) ref.current.uShoreMask = nextMask;
     }
   });
 
@@ -215,7 +228,6 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({
       transparent
       side={THREE.DoubleSide} // Render backfaces for volume feel
       depthWrite={false} // Important for transparency sorting
-      glslVersion={THREE.GLSL3}
     />
   );
 };

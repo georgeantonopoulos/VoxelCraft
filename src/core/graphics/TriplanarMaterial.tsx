@@ -505,7 +505,7 @@ const fragmentShader = `
 	      col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
 	    }
 
-    csm_DiffuseColor = vec4(col, uOpacity);
+    csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     csm_Emissive = vec3(accEmission * accColor); // Pass emissive to standard material
 
 	    // Adjust roughness
@@ -525,6 +525,7 @@ const fragmentShader = `
 export const TriplanarMaterial: React.FC<{
   sunDirection?: THREE.Vector3;
   opacity?: number;
+  opacityRef?: React.MutableRefObject<number>;
   triplanarDetail?: number;
   shaderFogEnabled?: boolean;
   shaderFogStrength?: number;
@@ -540,6 +541,7 @@ export const TriplanarMaterial: React.FC<{
   wireframe?: boolean;
 }> = ({
   opacity = 1,
+  opacityRef,
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
   shaderFogStrength = 0.9,
@@ -555,39 +557,68 @@ export const TriplanarMaterial: React.FC<{
 }) => {
   const materialRef = useRef<any>(null);
   const { scene } = useThree();
+  const lastTransparentRef = useRef<boolean | null>(null);
+  const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
 
   useFrame(() => {
     if (materialRef.current) {
       const mat = materialRef.current;
-      mat.uniforms.uNoiseTexture.value = noiseTexture;
-      mat.uniforms.uOpacity.value = opacity;
-      mat.uniforms.uTriplanarDetail.value = triplanarDetail;
-      mat.uniforms.uShaderFogEnabled.value = shaderFogEnabled ? 1.0 : 0.0;
-      mat.uniforms.uShaderFogStrength.value = shaderFogStrength;
-      mat.uniforms.uWetnessEnabled.value = wetnessEnabled ? 1.0 : 0.0;
-      mat.uniforms.uMossEnabled.value = mossEnabled ? 1.0 : 0.0;
-      mat.uniforms.uRoughnessMin.value = roughnessMin;
+
+      // Hot path: update opacity from a ref (no React re-render during fades).
+      const resolvedOpacity = opacityRef ? opacityRef.current : opacity;
+      mat.uniforms.uOpacity.value = resolvedOpacity;
+
+      // Keep shared noise up to date (can change if resources are reloaded).
+      if (mat.uniforms.uNoiseTexture.value !== noiseTexture) mat.uniforms.uNoiseTexture.value = noiseTexture;
+
+      // Avoid per-frame churn: only touch uniforms when values actually change.
+      if (mat.uniforms.uTriplanarDetail.value !== triplanarDetail) mat.uniforms.uTriplanarDetail.value = triplanarDetail;
+      const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
+      if (mat.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) mat.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
+      if (mat.uniforms.uShaderFogStrength.value !== shaderFogStrength) mat.uniforms.uShaderFogStrength.value = shaderFogStrength;
+      const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
+      if (mat.uniforms.uWetnessEnabled.value !== wetnessEnabledF) mat.uniforms.uWetnessEnabled.value = wetnessEnabledF;
+      const mossEnabledF = mossEnabled ? 1.0 : 0.0;
+      if (mat.uniforms.uMossEnabled.value !== mossEnabledF) mat.uniforms.uMossEnabled.value = mossEnabledF;
+      if (mat.uniforms.uRoughnessMin.value !== roughnessMin) mat.uniforms.uRoughnessMin.value = roughnessMin;
       mat.polygonOffset = polygonOffsetEnabled;
       mat.polygonOffsetFactor = polygonOffsetFactor;
       mat.polygonOffsetUnits = polygonOffsetUnits;
       mat.wireframe = wireframe;
       const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-      mat.uniforms.uWeightsView.value = viewMap[weightsView] ?? 0;
+      const nextWeightsView = viewMap[weightsView] ?? 0;
+      if (mat.uniforms.uWeightsView.value !== nextWeightsView) mat.uniforms.uWeightsView.value = nextWeightsView;
       // Base material fog (MeshStandardMaterial) can stack with shader fog; allow toggling for isolation.
       mat.fog = threeFogEnabled;
-      const isTransparent = opacity < 0.999;
-      mat.transparent = isTransparent;
-      mat.depthWrite = !isTransparent;
+
+      // Restore smooth opacity fade (no dither).
+      // Only toggle render state when crossing opaque/transparent boundary.
+      const isTransparent = resolvedOpacity < 0.999;
+      if (lastTransparentRef.current !== isTransparent) {
+        mat.transparent = isTransparent;
+        // During fade, disable depthWrite to avoid hard edges from partial depth.
+        mat.depthWrite = !isTransparent;
+        lastTransparentRef.current = isTransparent;
+      }
 
       const fog = scene.fog as THREE.Fog | undefined;
       if (fog) {
-        mat.uniforms.uFogColor.value.copy(fog.color);
-        mat.uniforms.uFogNear.value = fog.near;
-        mat.uniforms.uFogFar.value = fog.far;
+        const colorHex = `#${fog.color.getHexString()}`;
+        const lastFog = lastFogRef.current;
+        if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
+          mat.uniforms.uFogColor.value.copy(fog.color);
+          mat.uniforms.uFogNear.value = fog.near;
+          mat.uniforms.uFogFar.value = fog.far;
+          lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
+        }
       } else {
-        mat.uniforms.uFogColor.value.set('#87CEEB');
-        mat.uniforms.uFogNear.value = 1e6;
-        mat.uniforms.uFogFar.value = 1e6 + 1.0;
+        const lastFog = lastFogRef.current;
+        if (!lastFog || lastFog.near !== 1e6 || lastFog.far !== 1e6 + 1.0 || lastFog.colorHex !== '#87CEEB') {
+          mat.uniforms.uFogColor.value.set('#87CEEB');
+          mat.uniforms.uFogNear.value = 1e6;
+          mat.uniforms.uFogFar.value = 1e6 + 1.0;
+          lastFogRef.current = { near: 1e6, far: 1e6 + 1.0, colorHex: '#87CEEB' };
+        }
       }
     }
   });

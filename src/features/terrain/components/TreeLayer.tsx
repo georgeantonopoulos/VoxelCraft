@@ -1,15 +1,17 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
+import { useFrame } from '@react-three/fiber';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type
     opacity?: number;
+    opacityRef?: React.MutableRefObject<number>;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, opacity = 1.0 }) => {
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, opacity = 1.0, opacityRef }) => {
     // Group data by type (+ jungle variant)
     const batches = useMemo(() => {
         const map = new Map<string, { type: number, variant: number, positions: number[], count: number }>();
@@ -51,15 +53,19 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, opacity =
                     positions={batch.positions}
                     count={batch.count}
                     opacity={opacity}
+                    opacityRef={opacityRef}
                 />
             ))}
         </group>
     );
 });
 
-const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number, opacity: number }> = ({ type, variant, positions, count, opacity }) => {
+const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number, opacity: number; opacityRef?: React.MutableRefObject<number> }> = ({ type, variant, positions, count, opacity, opacityRef }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
+    const woodMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+    const leafMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+    const lastTransparentRef = useRef<boolean | null>(null);
 
     const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
@@ -91,6 +97,30 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
         woodMesh.current.instanceMatrix.needsUpdate = true;
         if (leafMesh.current) leafMesh.current.instanceMatrix.needsUpdate = true;
     }, [positions, count]);
+
+    // Smooth fade without alpha hash / dither: update opacity via a ref to avoid re-rendering instanced batches.
+    useFrame(() => {
+        const resolvedOpacity = opacityRef ? opacityRef.current : opacity;
+        const isTransparent = resolvedOpacity < 0.999;
+
+        const apply = (mat: THREE.MeshStandardMaterial | null) => {
+            if (!mat) return;
+            mat.opacity = resolvedOpacity;
+            if (lastTransparentRef.current !== isTransparent) {
+                mat.transparent = isTransparent;
+                mat.depthWrite = !isTransparent;
+                mat.needsUpdate = true;
+            }
+        };
+
+        apply(woodMaterialRef.current);
+        apply(leafMaterialRef.current);
+
+        // Shared toggle state for both materials.
+        if (lastTransparentRef.current !== isTransparent) {
+            lastTransparentRef.current = isTransparent;
+        }
+    });
 
     // Prepare Physics Instances
     const rigidBodyGroups = useMemo(() => {
@@ -168,21 +198,23 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
         <group>
             <instancedMesh ref={woodMesh} args={[wood, undefined, count]} castShadow receiveShadow>
                 <meshStandardMaterial
+                    ref={woodMaterialRef}
                     color={colors.base}
                     roughness={0.9}
-                    transparent={opacity < 0.999}
-                    opacity={opacity}
-                    depthWrite={opacity >= 0.999}
+                    opacity={opacityRef ? opacityRef.current : opacity}
+                    transparent={false}
+                    depthWrite
                 />
             </instancedMesh>
             {leaves.getAttribute('position') && (
                 <instancedMesh ref={leafMesh} args={[leaves, undefined, count]} castShadow receiveShadow>
                     <meshStandardMaterial
+                        ref={leafMaterialRef}
                         color={colors.tip}
                         roughness={0.8}
-                        transparent={opacity < 0.999}
-                        opacity={opacity}
-                        depthWrite={opacity >= 0.999}
+                        opacity={opacityRef ? opacityRef.current : opacity}
+                        transparent={false}
+                        depthWrite
                     />
                 </instancedMesh>
             )}

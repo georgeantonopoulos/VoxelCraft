@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
@@ -18,6 +18,10 @@ interface RootHollowProps {
     position: [number, number, number];
     normal?: number[]; // [nx, ny, nz]
     opacity?: number;
+    opacityRef?: React.MutableRefObject<number>;
+    // Preferred: fade driven by owning chunk spawn time (avoids per-frame React re-renders).
+    spawnedAt?: number;
+    fadeEnabled?: boolean;
 }
 
 /**
@@ -27,7 +31,14 @@ interface RootHollowProps {
  * - Smooth, organic root flares matching slope
  * - High-poly geometry for clean displacement
  */
-export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1, 0], opacity = 1.0 }) => {
+export const RootHollow: React.FC<RootHollowProps> = ({
+    position,
+    normal = [0, 1, 0],
+    opacity = 1.0,
+    opacityRef,
+    spawnedAt,
+    fadeEnabled = true
+}) => {
     const [status, setStatus] = useState<'IDLE' | 'GROWING'>('IDLE');
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
@@ -112,9 +123,34 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
         };
     }, [scene]);
 
-    // Fade with chunk fog/reveal so stumps don't pop at render distance.
-    useEffect(() => {
-        const isTransparent = opacity < 0.999;
+    // Fade with chunk reveal so stumps don't pop at render distance.
+    // NOTE: RootHollow instances are rendered outside `ChunkMesh`, so we must update opacity here
+    // (ChunkMesh no longer drives per-frame React updates after the fade perf refactor).
+    const lastTransparentRef = useRef<boolean | null>(null);
+    const lastOpacityRef = useRef<number>(opacity);
+
+    useFrame(() => {
+        const now = performance.now() / 1000;
+        // Prefer: opacityRef (shared with ChunkMesh fade), otherwise compute from spawnedAt, otherwise use prop.
+        let resolvedOpacity = opacity;
+        if (typeof opacityRef?.current === 'number') {
+            resolvedOpacity = opacityRef.current;
+        } else if (fadeEnabled !== false && typeof spawnedAt === 'number') {
+            const FADE_SECONDS = 1.0;
+            resolvedOpacity = THREE.MathUtils.clamp((now - spawnedAt) / Math.max(FADE_SECONDS, 0.0001), 0, 1);
+        } else if (fadeEnabled === false) {
+            resolvedOpacity = 1.0;
+        }
+
+        const isTransparent = resolvedOpacity < 0.999;
+        if (lastTransparentRef.current === isTransparent && Math.abs(lastOpacityRef.current - resolvedOpacity) < 0.001) {
+            // Avoid unnecessary traversals when opacity hasn't meaningfully changed.
+            return;
+        }
+
+        lastOpacityRef.current = resolvedOpacity;
+        lastTransparentRef.current = isTransparent;
+
         stumpModel.traverse((child) => {
             if (!(child as THREE.Mesh).isMesh) return;
             const mesh = child as THREE.Mesh;
@@ -122,16 +158,16 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
             const apply = (mat: any) => {
                 if (!mat) return;
                 if (typeof mat.opacity === 'number') {
+                    // Smooth alpha fade (no dither / alpha hash).
+                    mat.opacity = resolvedOpacity;
                     mat.transparent = isTransparent;
-                    mat.opacity = opacity;
                     mat.depthWrite = !isTransparent;
-                    mat.needsUpdate = true;
                 }
             };
             if (Array.isArray(material)) material.forEach(apply);
             else apply(material);
         });
-    }, [stumpModel, opacity]);
+    });
 
     useFrame(() => {
         if (status !== 'IDLE') return;

@@ -424,6 +424,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
+  const [playerChunk, setPlayerChunk] = useState<{ cx: number; cz: number }>({ cx: 0, cz: 0 });
+  const lastPlayerChunkRef = useRef<{ cx: number; cz: number }>({ cx: 0, cz: 0 });
 
   // Initialize Audio Pool once
   const audioPool = useMemo(() => {
@@ -453,6 +455,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const chunksRef = useRef<Record<string, ChunkState>>({});
   const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
+  const generateQueue = useRef<Array<{ cx: number; cz: number; key: string }>>([]);
 
   // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
   const [particleState, setParticleState] = useState<{
@@ -587,6 +590,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
     const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
+    if (px !== lastPlayerChunkRef.current.cx || pz !== lastPlayerChunkRef.current.cz) {
+      lastPlayerChunkRef.current = { cx: px, cz: pz };
+      setPlayerChunk({ cx: px, cz: pz });
+    }
 
     // Update simulation player position
     simulationManager.updatePlayerPosition(px, pz);
@@ -603,9 +610,32 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
         if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
           pendingChunks.current.add(key);
-          workerRef.current.postMessage({ type: 'GENERATE', payload: { cx, cz } });
+          generateQueue.current.push({ cx, cz, key });
         }
       }
+    }
+
+    // Drain a small number of chunk generates per frame to smooth streaming hitches.
+    // The worker does the heavy math, but the main thread still pays to upload buffers + build colliders.
+    const maxGeneratesPerFrame = 2;
+    for (let i = 0; i < maxGeneratesPerFrame; i++) {
+      // Prefer nearest-to-player jobs first so "close" chunks don't stay in a half-loaded state.
+      // This is intentionally O(n) selection with a tiny `maxGeneratesPerFrame` to avoid full sorts.
+      let bestIndex = -1;
+      let bestDist2 = Infinity;
+      for (let j = 0; j < generateQueue.current.length; j++) {
+        const job = generateQueue.current[j];
+        const dx = job.cx - px;
+        const dz = job.cz - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          bestIndex = j;
+        }
+      }
+      const job = bestIndex >= 0 ? generateQueue.current.splice(bestIndex, 1)[0] : undefined;
+      if (!job) break;
+      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
     const newChunks = { ...chunksRef.current };
@@ -1160,6 +1190,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         <React.Fragment key={chunk.key}>
           <ChunkMesh
             chunk={chunk}
+            playerCx={playerChunk.cx}
+            playerCz={playerChunk.cz}
             sunDirection={sunDirection}
             triplanarDetail={triplanarDetail}
             terrainShaderFogEnabled={terrainShaderFogEnabled}
@@ -1179,16 +1211,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
             // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
             Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
-              (() => {
-                // Match the chunk time-fade behavior used in ChunkMesh so stumps don't pop.
-                const now = performance.now() / 1000;
-                const FADE_SECONDS = 1.25;
-                const timeFade = terrainFadeEnabled
-                  ? THREE.MathUtils.clamp((now - (chunk.spawnedAt ?? now)) / FADE_SECONDS, 0, 1)
-                  : 1.0;
-                const rootOpacity = timeFade;
-
-                return (
+              (
                   <RootHollow
                 key={`${chunk.key}-root-${i}`}
                 position={[
@@ -1201,10 +1224,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                   chunk.rootHollowPositions![i * 6 + 4],
                   chunk.rootHollowPositions![i * 6 + 5]
                 ]}
-                    opacity={rootOpacity}
+                    spawnedAt={chunk.spawnedAt}
+                    fadeEnabled={terrainFadeEnabled}
                   />
-                );
-              })()
+              )
             ))
           )}
         </React.Fragment>

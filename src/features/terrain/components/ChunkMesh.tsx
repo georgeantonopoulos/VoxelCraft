@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
@@ -14,6 +14,8 @@ import { LuminaLayer } from './LuminaLayer';
 
 export const ChunkMesh: React.FC<{
   chunk: ChunkState;
+  playerCx?: number;
+  playerCz?: number;
   sunDirection?: THREE.Vector3;
   triplanarDetail?: number;
   terrainShaderFogEnabled?: boolean;
@@ -31,6 +33,8 @@ export const ChunkMesh: React.FC<{
   terrainWeightsView?: string;
 }> = React.memo(({
   chunk,
+  playerCx = 0,
+  playerCz = 0,
   sunDirection,
   triplanarDetail = 1.0,
   terrainShaderFogEnabled = true,
@@ -48,7 +52,12 @@ export const ChunkMesh: React.FC<{
   terrainWeightsView = 'off'
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  const [opacity, setOpacity] = useState(0);
+  // Fade is updated per-frame without triggering React re-renders.
+  // This avoids per-chunk state churn when streaming in new terrain.
+  const opacityRef = useRef(terrainFadeEnabled ? 0 : 1);
+
+  // NOTE: Keep fade conservative to hide pop-in without lingering transparency.
+  const FADE_SECONDS = 1.0;
   // Debug rendering modes are split:
   // - `?debug` enables Leva/UI debug without changing materials.
   // - `?normals` swaps terrain to normal material for geometry inspection.
@@ -58,22 +67,29 @@ export const ChunkMesh: React.FC<{
     return params.has('normals');
   }, []);
 
-  useFrame((state, delta) => {
+  useFrame(() => {
     // Chunk fade-in can produce seam-like hard edges due to transparency sorting/depthWrite toggling.
     // Allow disabling in debug to confirm whether artifacts come from this path.
-    if (terrainFadeEnabled) {
-      // Smoother reveal (slower than the old 0.5s snap) to hide far-chunk pop-in.
-      if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 0.8, 1));
+    if (!terrainFadeEnabled) {
+      opacityRef.current = 1.0;
+      return;
     }
 
+    const now = performance.now() / 1000;
+    const startedAt = chunk.spawnedAt ?? now;
+    const t = (now - startedAt) / Math.max(FADE_SECONDS, 0.0001);
+    opacityRef.current = THREE.MathUtils.clamp(t, 0, 1);
   });
 
   // If fade is disabled, force fully-opaque terrain.
   useEffect(() => {
-    if (!terrainFadeEnabled) setOpacity(1);
+    if (!terrainFadeEnabled) opacityRef.current = 1.0;
   }, [terrainFadeEnabled]);
 
-  const combinedOpacity = terrainFadeEnabled ? opacity : 1.0;
+  // Only build expensive trimesh colliders near the player to avoid hitches
+  // when streaming in new chunks at the render distance.
+  const physicsEnabled =
+    Math.abs(chunk.cx - playerCx) <= 1 && Math.abs(chunk.cz - playerCz) <= 1;
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
@@ -259,8 +275,6 @@ export const ChunkMesh: React.FC<{
     return tex;
   }, [chunk.visualVersion]);
 
-  if (!terrainGeometry && !waterGeometry) return null;
-  const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
   const chunkTintColor = useMemo(() => {
     // Deterministic color per chunk to expose overlap/z-fighting (you'll see both colors).
     const h = ((chunk.cx * 73856093) ^ (chunk.cz * 19349663)) >>> 0;
@@ -270,24 +284,54 @@ export const ChunkMesh: React.FC<{
     return c;
   }, [chunk.cx, chunk.cz]);
 
+  if (!terrainGeometry && !waterGeometry) return null;
+  const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
+
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (
-        <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
+        physicsEnabled ? (
+          <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
+            <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
+              {normalsMode ? (
+                <meshNormalMaterial />
+              ) : terrainChunkTintEnabled ? (
+                <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
+              ) : (
+                <TriplanarMaterial
+                  sunDirection={sunDirection}
+                  opacityRef={opacityRef}
+                  triplanarDetail={triplanarDetail}
+                  shaderFogEnabled={terrainShaderFogEnabled}
+                  shaderFogStrength={terrainShaderFogStrength}
+                  threeFogEnabled={terrainThreeFogEnabled}
+                  wetnessEnabled={terrainWetnessEnabled}
+                  mossEnabled={terrainMossEnabled}
+                  roughnessMin={terrainRoughnessMin}
+                  polygonOffsetEnabled={terrainPolygonOffsetEnabled}
+                  polygonOffsetFactor={terrainPolygonOffsetFactor}
+                  polygonOffsetUnits={terrainPolygonOffsetUnits}
+                  weightsView={terrainWeightsView}
+                  wireframe={terrainWireframeEnabled}
+                />
+              )}
+            </mesh>
+          </RigidBody>
+        ) : (
           <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
             {normalsMode ? (
               <meshNormalMaterial />
             ) : terrainChunkTintEnabled ? (
               <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
-            ) : (
-              <TriplanarMaterial
-                sunDirection={sunDirection}
-                opacity={combinedOpacity}
-                triplanarDetail={triplanarDetail}
-                shaderFogEnabled={terrainShaderFogEnabled}
-                shaderFogStrength={terrainShaderFogStrength}
-                threeFogEnabled={terrainThreeFogEnabled}
-                wetnessEnabled={terrainWetnessEnabled}
+              ) : (
+                <TriplanarMaterial
+                  sunDirection={sunDirection}
+                  opacityRef={opacityRef}
+                  triplanarDetail={triplanarDetail}
+                  shaderFogEnabled={terrainShaderFogEnabled}
+                  shaderFogStrength={terrainShaderFogStrength}
+                  threeFogEnabled={terrainThreeFogEnabled}
+                  wetnessEnabled={terrainWetnessEnabled}
                 mossEnabled={terrainMossEnabled}
                 roughnessMin={terrainRoughnessMin}
                 polygonOffsetEnabled={terrainPolygonOffsetEnabled}
@@ -298,13 +342,13 @@ export const ChunkMesh: React.FC<{
               />
             )}
           </mesh>
-        </RigidBody>
+        )
       )}
       {waterGeometry && (
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
           <WaterMaterial
             sunDirection={sunDirection}
-            fade={combinedOpacity}
+            fadeRef={opacityRef}
             shoreMask={waterShoreMask}
             shoreEdge={0.07}
             alphaBase={0.58}
@@ -315,15 +359,15 @@ export const ChunkMesh: React.FC<{
       )}
 
       {chunk.vegetationData && (
-        <VegetationLayer data={chunk.vegetationData} opacity={combinedOpacity} />
+        <VegetationLayer data={chunk.vegetationData} opacityRef={opacityRef} />
       )}
 
       {chunk.treePositions && chunk.treePositions.length > 0 && (
-        <TreeLayer data={chunk.treePositions} opacity={combinedOpacity} />
+        <TreeLayer data={chunk.treePositions} opacityRef={opacityRef} />
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} opacity={combinedOpacity} />
+        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} opacityRef={opacityRef} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}
