@@ -59,7 +59,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                     const worldZ = cz * CHUNK_SIZE_XZ + z;
 
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
-                    const biomeDensity = BiomeManager.getVegetationDensity(worldX, worldZ);
+                    let biomeDensity = BiomeManager.getVegetationDensity(worldX, worldZ);
+                    // Beaches should read as clean shoreline; reduce ambient ground clutter and avoid
+                    // paying for unnecessary surface scans in the worker.
+                    if (biome === 'BEACH') biomeDensity *= 0.1;
 
                     // 1. Density Noise (Smaller, more frequent patches)
                     // Scale 0.15 = ~6-7 blocks per cycle (much smaller patches)

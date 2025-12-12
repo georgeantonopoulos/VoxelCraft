@@ -532,8 +532,10 @@ const SunFollower: React.FC = () => {
 	        baseIntensity = 1.0;
 	      }
 	
-	      // Underground: smoothly dim sun so caves don't get sunset lighting
-	      const sunDimming = 1.0 - undergroundBlend;
+	      // Underground: keep outside readable by not hard-killing the sun globally.
+	      // We only dim moderately at depth to reduce "sun in caves" artifacts.
+	      const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+	      const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
 	      lightRef.current.intensity = baseIntensity * sunDimming;
 
       // Update Visual Sun color and glow
@@ -557,8 +559,9 @@ const SunFollower: React.FC = () => {
             sunMeshColor.multiplyScalar(1.5);
 	          }
 	
-	          // Underground: dim visual sun to prevent glow leaks through thin ceilings
-	          sunMeshColor.multiplyScalar(1.0 - undergroundBlend * 0.9);
+	          // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
+	          const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+	          sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
 
 	          sunMaterialRef.current.color.copy(sunMeshColor);
 	        }
@@ -577,7 +580,8 @@ const SunFollower: React.FC = () => {
 	          const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
 	
 	          // Underground: reduce glow strength to keep caves moodier
-	          const glowOpacity = glowOpacityBase * (1.0 - undergroundBlend * 0.9);
+	          const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+	          const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
 
           glowMeshRef.current.scale.setScalar(glowScale);
 
@@ -696,12 +700,11 @@ const MoonFollower: React.FC = () => {
 	    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
 	    moonMeshRef.current.visible = isAboveHorizon;
 	
-	    // Underground: moonlight shouldn't light caves much
-	    const moonDimming = 1.0 - undergroundBlend * 0.8;
+	    // Underground: keep outside moon/sky readable but reduce cave bleed.
+	    const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+	    const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
 	    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming : 0; // Dim light
-	    if (undergroundBlend > 0.7) {
-	      moonMeshRef.current.visible = false;
-	    }
+	    if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
 	  });
 
   return (
@@ -750,17 +753,15 @@ const AtmosphereController: React.FC = () => {
 	  const setUnderwaterBlend = useEnvironmentStore((s) => s.setUnderwaterBlend);
 	  const setUnderwaterState = useEnvironmentStore((s) => s.setUnderwaterState);
 	
-	  // Cave palette: cool, dim, and slightly green-blue to complement lumina/glowstone
-	  const caveTop = useMemo(() => new THREE.Color('#020206'), []);
-	  const caveBottom = useMemo(() => new THREE.Color('#0a0f14'), []);
+	  // Cave palette is used only for ground bounce/ambient cues.
 	  const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
 	
 	  // Underwater palette: cooler and denser (applied after sky/cave palette).
 	  const waterTop = useMemo(() => new THREE.Color('#061526'), []);
 	  const waterBottom = useMemo(() => new THREE.Color('#063047'), []);
 
-	  useFrame(({ clock }) => {
-	    const t = clock.getElapsedTime();
+	  useFrame((state, delta) => {
+	    const t = state.clock.getElapsedTime();
 
     // Use the same non-linear orbit calculation as SunFollower
     const speed = 0.025;
@@ -776,7 +777,7 @@ const AtmosphereController: React.FC = () => {
 	    const surfaceY = TerrainService.getHeightAt(camera.position.x, camera.position.z);
 	    const depthFromSurface = surfaceY - camera.position.y;
 	
-	    // Hysteresis band: enter caves deeper than 6u, exit when within 3u of surface.
+	    // Hysteresis band: used for discrete "entered cave" events (torch, SFX).
 	    const nextIsUnderground = isUndergroundRef.current
 	      ? depthFromSurface > 3.0
 	      : depthFromSurface > 6.0;
@@ -786,11 +787,18 @@ const AtmosphereController: React.FC = () => {
 	      setUndergroundState(nextIsUnderground, t);
 	    }
 
-	    const targetBlend = nextIsUnderground ? 1.0 : 0.0;
-	    undergroundBlendRef.current = THREE.MathUtils.lerp(
+	    // Continuous underground blend: 0 near surface -> 1 deep underground.
+	    // This makes lighting transition gradual as you move deeper into enclosed space.
+	    const targetBlend = THREE.MathUtils.clamp(
+	      THREE.MathUtils.smoothstep(depthFromSurface, 2.0, 18.0),
+	      0,
+	      1
+	    );
+	    undergroundBlendRef.current = THREE.MathUtils.damp(
 	      undergroundBlendRef.current,
 	      targetBlend,
-	      0.05
+	      6.0,
+	      delta
 	    );
 	
 	    // Push blend into store only when meaningfully changed.
@@ -824,13 +832,10 @@ const AtmosphereController: React.FC = () => {
 	      setUnderwaterBlend(uwBlend);
 	    }
 	
-	    // Mix sky gradient toward cave palette as we go underground.
-	    const mixedTop = top.clone().lerp(caveTop, blend);
-	    const mixedBottom = bottom.clone().lerp(caveBottom, blend);
-	
-	    // If underwater, push the whole palette toward underwater tones.
-	    const finalTop = mixedTop.clone().lerp(waterTop, uwBlend);
-	    const finalBottom = mixedBottom.clone().lerp(waterBottom, uwBlend);
+	    // Keep sky/fog driven by the sun even when underground so looking out remains bright.
+	    // Underwater is the only state that should override the whole palette.
+	    const finalTop = top.clone().lerp(waterTop, uwBlend);
+	    const finalBottom = bottom.clone().lerp(waterBottom, uwBlend);
 
 	    // Update gradient ref for SkyDome
 	    gradientRef.current.top.copy(finalTop);
@@ -840,13 +845,11 @@ const AtmosphereController: React.FC = () => {
 	    const fog = scene.fog as THREE.Fog | undefined;
 	    if (fog) {
 	      fog.color.copy(finalBottom);
-	
-	      // Underground: bring fog closer and reduce far distance for moody caves.
-	      // Keep caves moody but avoid a hard fog wall that cuts torch range.
-	      // Start fog a bit later underground and push far out so the spotlight can read distance.
-	      const caveNear = THREE.MathUtils.lerp(15, 8.0, blend);
+		
+	      // Underground: adjust fog distances gradually with depth (but keep outdoor color).
+	      const caveNear = THREE.MathUtils.lerp(15, 10.0, blend);
 	      const caveFar = THREE.MathUtils.lerp(150, 260, blend);
-	
+		
 	      // Underwater: much denser fog to sell immersion.
 	      fog.near = THREE.MathUtils.lerp(caveNear, 2.0, uwBlend);
 	      fog.far = THREE.MathUtils.lerp(caveFar, 60.0, uwBlend);
@@ -919,6 +922,23 @@ const AtmosphereController: React.FC = () => {
 	  return (
 	    <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />
 	  );
+	};
+
+	/**
+	 * ExposureToneMapping
+	 * Simple exposure shift so when you're in a dark cavern, looking outside remains bright/over-exposed.
+	 * We raise exposure with underground depth; underwater keeps a lower exposure for readability.
+	 */
+	const ExposureToneMapping: React.FC = () => {
+	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+	  const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+	
+	  // Cave: higher exposure to adapt to darkness (outside sky clips brighter).
+	  const caveExposure = THREE.MathUtils.lerp(1.0, 1.55, undergroundBlend);
+	  // Underwater: reduce exposure slightly to avoid blowing out fog.
+	  const exposure = THREE.MathUtils.lerp(caveExposure, 0.9, underwaterBlend);
+	
+	  return <ToneMapping exposure={exposure} />;
 	};
 
 /**
@@ -1220,8 +1240,8 @@ const App: React.FC = () => {
               {/* Bloom: Gentle glow for sky and water highlights */}
               <Bloom luminanceThreshold={0.8} mipmapBlur intensity={0.6} />
 
-              {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
-              <ToneMapping />
+	              {/* ToneMapping: Exposure shifts in caves for natural "looking out" brightness */}
+	              <ExposureToneMapping />
             </EffectComposer>
           ) : null}
 

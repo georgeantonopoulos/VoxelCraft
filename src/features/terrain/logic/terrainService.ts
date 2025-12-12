@@ -137,7 +137,17 @@ export class TerrainService {
                     const ditheredTemp = climate.temp + ditherNoise * DITHER_AMP;
                     const ditheredHumid = climate.humid + ditherNoise * DITHER_AMP;
 
-                    const biome = BiomeManager.getBiomeFromClimate(ditheredTemp, ditheredHumid);
+                    // IMPORTANT:
+                    // Biome selection must include continentalness/erosion intercepts (e.g. BEACH),
+                    // otherwise shoreline materials never switch to sand.
+                    // We keep the existing Y-dithered temp/humid for 3D seam hiding, while using
+                    // column-constant continent/erosion to keep coastlines coherent.
+                    const biome = BiomeManager.getBiomeFromMetrics(
+                        ditheredTemp,
+                        ditheredHumid,
+                        climate.continent,
+                        climate.erosion
+                    );
 
                     let d = 0;
                     let surfaceHeight = 0;
@@ -303,7 +313,14 @@ export class TerrainService {
 
                             } else {
                                 // --- SURFACE SOIL ---
-                                if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
+                                if (biome === 'BEACH') {
+                                    // Beaches need a thicker sand cap than deserts for smooth meshing:
+                                    // material weights are neighborhood-splatted, so a 1-2 voxel cap often
+                                    // blends away into dirt/stone and becomes visually "green" at the shore.
+                                    const sandDepth = 6.0 + soilNoise * 2.0; // 6..8 voxels
+                                    material[idx] = MaterialType.SAND;
+                                    if (depth > sandDepth) material[idx] = MaterialType.STONE;
+                                } else if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
                                     material[idx] = biomeMat;
                                     if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
                                 } else if (biomeMat === MaterialType.SNOW || biomeMat === MaterialType.ICE) {
@@ -541,6 +558,9 @@ export class TerrainService {
                     treeThreshold = 0.3; // Much higher density for Jungle
                 } else if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
                     treeThreshold = 0.98; // Very sparse
+                } else if (biome === 'BEACH') {
+                    // Beaches should have sparse trees (palms) and no dense forest at the shoreline.
+                    treeThreshold = 0.95;
                 } else if (biome === 'SAVANNA') {
                     treeThreshold = 0.8;
                 }
@@ -579,7 +599,9 @@ export class TerrainService {
                         if (wy <= WATER_LEVEL + 0.25) continue;
 
                         const hash = Math.abs(noise3D(wx * 12.3, wy * 12.3, wz * 12.3));
-                        const treeType = getTreeForBiome(biome, hash) || 0;
+                        // getTreeForBiome can return null to indicate "no tree for this biome/noise".
+                        const treeType = getTreeForBiome(biome, hash);
+                        if (treeType === null) continue;
 
                         treeCandidates.push(
                             (localX - PAD) + (hash * 0.4 - 0.2),

@@ -10,6 +10,7 @@ export type BiomeType =
   | 'SAVANNA'
   | 'ICE_SPIKES'
   | 'RED_DESERT'
+  | 'BEACH'
   | 'SKY_ISLANDS' // Special case
   | 'THE_GROVE'; // Default/Temperate
 
@@ -41,6 +42,8 @@ export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
   THE_GROVE: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 },
   SAVANNA: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.3 },
   JUNGLE: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.35 },
+  // BEACH: Similar to PLAINS, but slightly lower breach chance to keep shorelines cleaner.
+  BEACH: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.12 },
 
   DESERT: { scale: 0.02, threshold: 0.16, frequency: 0.5, surfaceBreachChance: 0.25 },
   RED_DESERT: { scale: 0.02, threshold: 0.16, frequency: 0.5, surfaceBreachChance: 0.25 },
@@ -164,11 +167,48 @@ export class BiomeManager {
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {
+    const { temp, humid, continent, erosion } = this.getClimate(x, z);
+    return this.getBiomeFromMetrics(temp, humid, continent, erosion);
+  }
+
+  /**
+   * Applies temperature/humidity biomes, then intercepts special cases that depend on
+   * physical metrics (continentalness/erosion) or world type.
+   *
+   * Note: TerrainService uses this variant so it can keep its existing Y-dithered temp/humid
+   * while still producing consistent coastlines from column-constant continent/erosion.
+   */
+  static getBiomeFromMetrics(temp: number, humid: number, continent: number, erosion: number): BiomeType {
     if (this.currentWorldType === WorldType.SKY_ISLANDS) {
       return 'SKY_ISLANDS';
     }
-    const { temp, humid } = this.getClimate(x, z);
-    return this.getBiomeFromClimate(temp, humid);
+
+    // Base biomes are determined from temperature/humidity, then we optionally intercept
+    // "special" regions (like coasts) using physical reality metrics.
+    const baseBiome = this.getBiomeFromClimate(temp, humid);
+
+    // --- Coastal Beach Biome ---
+    // Continentalness pivots at 0.1 in getTerrainParametersFromMetrics:
+    // - continent < -0.3: deep ocean
+    // - -0.3..0.1: coast transition
+    // - 0.1..1.0: land
+    //
+    // Beaches should appear in the coast-transition band (plus a small inland buffer),
+    // and only when erosion indicates relatively flat terrain (otherwise you get cliffs).
+    //
+    // IMPORTANT: The lower bound must include the ocean-side of the transition (-0.3..),
+    // otherwise the shoreline can end up with no sand at all.
+    const isCoastal = continent > -0.25 && continent < 0.20;
+    const erosion01 = (erosion + 1) / 2; // -1..1 -> 0..1
+    const isFlat = erosion01 < 0.50;
+    const isNotFrozen = baseBiome !== 'SNOW' && baseBiome !== 'ICE_SPIKES';
+
+    if (isCoastal && isFlat && isNotFrozen) {
+      return 'BEACH';
+    }
+    // --------------------------
+
+    return baseBiome;
   }
 
   static getBiomeFromClimate(temp: number, humid: number): BiomeType {
@@ -192,6 +232,7 @@ export class BiomeManager {
 
   static getSurfaceMaterial(biome: BiomeType): MaterialType {
     switch (biome) {
+      case 'BEACH': return MaterialType.SAND;
       case 'DESERT': return MaterialType.SAND;
       case 'RED_DESERT': return MaterialType.RED_SAND;
       case 'SNOW': return MaterialType.SNOW;
@@ -210,6 +251,9 @@ export class BiomeManager {
 
   static getUndergroundMaterials(biome: BiomeType): { primary: MaterialType, secondary: MaterialType } {
     switch (biome) {
+      case 'BEACH':
+        // Common shoreline profile: sand on top with stone underneath.
+        return { primary: MaterialType.STONE, secondary: MaterialType.SAND };
       case 'DESERT':
       case 'SAVANNA':
         return { primary: MaterialType.TERRACOTTA, secondary: MaterialType.SAND };

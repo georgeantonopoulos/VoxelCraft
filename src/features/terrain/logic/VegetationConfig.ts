@@ -54,6 +54,12 @@ export const VEGETATION_ASSETS: Record<number, {
 export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): VegetationType | null => {
   // noiseVal is 0..1
   switch (biome) {
+    case 'BEACH':
+      // Beaches should be mostly empty. Use a very sparse band so the coast reads as sand.
+      // Note: Tree placement is handled separately via getTreeForBiome.
+      if (noiseVal > 0.985) return VegetationType.DESERT_SHRUB; // Driftwood / scrub
+      if (noiseVal > 0.93) return VegetationType.GRASS_LOW; // Occasional dune grass
+      return null;
     case 'THE_GROVE':
       // Distinct, safe zone: More flowers, dense lush grass
       if (noiseVal > 0.95) return VegetationType.FLOWER_BLUE; // Occasional flowers
@@ -101,6 +107,10 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
 
 export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | null => {
   switch (biome) {
+    case 'BEACH':
+      // Sparse palms: allow the terrain tree spawner to skip placement when null is returned.
+      if (noiseVal > 0.95) return TreeType.PALM;
+      return null;
     case 'THE_GROVE':
     case 'PLAINS':
     case 'SKY_ISLANDS':
@@ -119,4 +129,3 @@ export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | 
   }
   return TreeType.OAK;
 };
-
