@@ -363,11 +363,11 @@ export function generateMesh(
     }
   }
 
-  // --- 3. Water Surface Mesh (Sea-level surface, greedy meshed) ---
+  // --- 3. Water Surface Mesh (Sea-level surface + shoreline mask) ---
   //
   // Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
-  // We emit only the top surface at `WATER_LEVEL` for columns that contain liquid directly under
-  // that plane (and are not already liquid above), and we greedy-merge tiles to keep geometry light.
+  // We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
+  // a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
   //
   // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
   // material grid at runtime rather than relying on physics for water.
@@ -390,6 +390,7 @@ export function generateMesh(
   const waterW = CHUNK_SIZE_XZ;
   const waterH = CHUNK_SIZE_XZ;
   const waterMask = new Uint8Array(waterW * waterH);
+  let hasAnyWater = false;
 
   for (let lz = 0; lz < waterH; lz++) {
     const gz = PAD + lz;
@@ -397,71 +398,33 @@ export function generateMesh(
       const gx = PAD + lx;
       const hasLiquid = isLiquidCell(gx, seaGridY, gz);
       const hasLiquidAbove = isLiquidCell(gx, seaGridY + 1, gz);
-      waterMask[lx + lz * waterW] = hasLiquid && !hasLiquidAbove ? 1 : 0;
+      const v = hasLiquid && !hasLiquidAbove ? 1 : 0;
+      waterMask[lx + lz * waterW] = v;
+      if (v) hasAnyWater = true;
     }
   }
 
-  // Greedy merge the 2D mask into rectangles.
-  // This is the standard "greedy meshing" approach on a binary grid.
-  for (let z = 0; z < waterH; z++) {
-    for (let x = 0; x < waterW;) {
-      const idx2D = x + z * waterW;
-      if (waterMask[idx2D] === 0) {
-        x++;
-        continue;
-      }
-
-      // Measure width
-      let width = 1;
-      while (x + width < waterW && waterMask[idx2D + width] === 1) width++;
-
-      // Measure height
-      let height = 1;
-      outer: while (z + height < waterH) {
-        const row = idx2D + height * waterW;
-        for (let k = 0; k < width; k++) {
-          if (waterMask[row + k] === 0) break outer;
-        }
-        height++;
-      }
-
-      // Clear merged area
-      for (let dz = 0; dz < height; dz++) {
-        const row = idx2D + dz * waterW;
-        waterMask.fill(0, row, row + width);
-      }
-
-      // Emit a single quad for this rectangle at sea level.
-      const x0 = x;
-      const x1 = x + width;
-      const z0 = z;
-      const z1 = z + height;
-      const y = WATER_LEVEL;
-
-      const base = waterVerts.length / 3;
-      waterVerts.push(
-        x0, y, z0,
-        x1, y, z0,
-        x0, y, z1,
-        x1, y, z1
-      );
-
-      // Up normals
-      waterNorms.push(
-        0, 1, 0,
-        0, 1, 0,
-        0, 1, 0,
-        0, 1, 0
-      );
-
-      // Winding for +Y normal (top surface)
-      waterInds.push(
-        base + 0, base + 2, base + 1,
-        base + 2, base + 3, base + 1
-      );
-
-      x += width;
-    }
+  // Emit a chunk-wide sea-level quad only if this chunk actually has sea-level water.
+  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple and smooth.
+  if (hasAnyWater) {
+    const base = waterVerts.length / 3;
+    const y = WATER_LEVEL;
+    waterVerts.push(
+      0, y, 0,
+      CHUNK_SIZE_XZ, y, 0,
+      0, y, CHUNK_SIZE_XZ,
+      CHUNK_SIZE_XZ, y, CHUNK_SIZE_XZ
+    );
+    waterNorms.push(
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0
+    );
+    waterInds.push(
+      base + 0, base + 2, base + 1,
+      base + 2, base + 3, base + 1
+    );
   }
 
   return {

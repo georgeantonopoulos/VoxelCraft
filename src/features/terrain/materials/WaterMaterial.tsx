@@ -4,14 +4,26 @@ import React, { useRef } from 'react';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import { noiseTexture } from '@core/memory/sharedResources';
+import { CHUNK_SIZE_XZ } from '@/constants';
 
 const WaterMeshShader = shaderMaterial(
   {
     uTime: 0,
     uSunDir: new THREE.Vector3(0.5, 0.8, 0.3).normalize(),
-    uColorShallow: new THREE.Color('#6ec2f7'),
-    uColorDeep: new THREE.Color('#2d688f'),
+    // Base water colors (tuned to avoid "milky white" surface washout).
+    uColorShallow: new THREE.Color('#3ea7d6'),
+    uColorDeep: new THREE.Color('#0b3e63'),
     uNoiseTexture: noiseTexture,
+    uShoreMask: null as unknown as THREE.Texture,
+    uShoreEdge: 0.06,
+    uAlphaBase: 0.58,
+    uFresnelAlpha: 0.22,
+    // Static texture detail (not time-dependent) to break up flatness.
+    uTexScale: 0.06,
+    uTexStrength: 0.12,
+    // Subtle foam/brightening near shore.
+    uFoamStrength: 0.22,
+    uChunkSize: CHUNK_SIZE_XZ,
     uCamPos: new THREE.Vector3(),
     uFogColor: new THREE.Color('#87CEEB'),
     uFogNear: 30,
@@ -42,12 +54,21 @@ const WaterMeshShader = shaderMaterial(
   `
     precision highp float;
     precision highp sampler3D;
+    precision highp sampler2D;
 
     uniform float uTime;
     uniform vec3 uSunDir;
     uniform vec3 uColorShallow;
     uniform vec3 uColorDeep;
     uniform sampler3D uNoiseTexture;
+    uniform sampler2D uShoreMask;
+    uniform float uShoreEdge;
+    uniform float uAlphaBase;
+    uniform float uFresnelAlpha;
+    uniform float uTexScale;
+    uniform float uTexStrength;
+    uniform float uFoamStrength;
+    uniform float uChunkSize;
     uniform vec3 uCamPos;
     uniform vec3 uFogColor;
     uniform float uFogNear;
@@ -76,6 +97,13 @@ const WaterMeshShader = shaderMaterial(
     }
 
     void main() {
+        // Shoreline mask: use world-position modulo chunk size to get stable 0..1 UV per chunk.
+        // This avoids blocky geometry edges by fading/discarding pixels near the land boundary.
+        vec2 uv = fract(vWorldPos.xz / max(uChunkSize, 0.0001));
+        float mask = texture(uShoreMask, uv).r;
+        float edgeAlpha = smoothstep(0.5 - uShoreEdge, 0.5 + uShoreEdge, mask);
+        if (edgeAlpha < 0.01) discard;
+
         vec3 viewDir = normalize(uCamPos - vWorldPos);
         vec3 normal = getNormal(vWorldPos, vNormal, uTime);
 
@@ -88,9 +116,23 @@ const WaterMeshShader = shaderMaterial(
         // Fresnel
         float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
 
-        vec3 albedo = mix(uColorDeep, uColorShallow, fresnel * 0.5 + 0.3);
+        // Static water "texture" (non-animated): subtle color variation using the shared noise volume.
+        // This keeps water from looking like a flat plastic sheet even when waves are subtle.
+        vec3 texP = vec3(vWorldPos.xz * uTexScale, 0.25);
+        vec3 nTex = texture(uNoiseTexture, texP).rgb;
+        float texVal = (nTex.r + nTex.g) * 0.5; // 0..1
+        float texSigned = (texVal - 0.5) * 2.0; // -1..1
+
+        vec3 albedo = mix(uColorDeep, uColorShallow, fresnel * 0.5 + 0.25);
+        albedo *= 1.0 + texSigned * uTexStrength;
+
+        // Foam/brightening near shore: strongest near the boundary (mask ~ 0.5) on the water side.
+        float shoreT = clamp((mask - 0.5) / max(uShoreEdge * 2.0, 0.0001), 0.0, 1.0);
+        float foam = (1.0 - smoothstep(0.0, 1.0, shoreT));
+        foam *= (0.6 + 0.4 * nTex.b);
 
         vec3 shaded = albedo + vec3(specular);
+        shaded = mix(shaded, vec3(1.0), foam * uFoamStrength);
         shaded = mix(uFogColor, shaded, uFade);
 
         float distanceToCam = distance(uCamPos, vWorldPos);
@@ -98,10 +140,11 @@ const WaterMeshShader = shaderMaterial(
         fogFactor = pow(fogFactor, 1.25);
 
         vec3 finalColor = mix(shaded, uFogColor, fogFactor * 0.6);
-        float alpha = (0.75 + fresnel * 0.2) * uFade;
+        float alpha = (uAlphaBase + fresnel * uFresnelAlpha) * uFade * edgeAlpha;
+        alpha = clamp(alpha + foam * 0.10, 0.0, 0.92);
 
+        // IMPORTANT: Don't apply manual gamma here; Three.js renderer handles output color space.
         fragColor = vec4(finalColor, alpha);
-        fragColor.rgb = pow(fragColor.rgb, vec3(1.0 / 2.2));
     }
   `
 );
@@ -111,12 +154,25 @@ extend({ WaterMeshShader });
 export interface WaterMaterialProps {
   sunDirection?: THREE.Vector3;
   fade?: number;
+  shoreMask?: THREE.Texture | null;
+  shoreEdge?: number;
+  alphaBase?: number;
+  texStrength?: number;
+  foamStrength?: number;
 }
 
 /**
  * Water material component with fade support for chunk opacity transitions.
  */
-export const WaterMaterial: React.FC<WaterMaterialProps> = ({ sunDirection, fade = 1 }) => {
+export const WaterMaterial: React.FC<WaterMaterialProps> = ({
+  sunDirection,
+  fade = 1,
+  shoreMask = null,
+  shoreEdge = 0.06,
+  alphaBase = 0.58,
+  texStrength = 0.12,
+  foamStrength = 0.22
+}) => {
   const ref = useRef<any>(null);
   const { camera, scene } = useThree();
 
@@ -125,6 +181,11 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({ sunDirection, fade
       ref.current.uTime = clock.getElapsedTime();
       ref.current.uCamPos = camera.position;
       ref.current.uFade = fade;
+      ref.current.uShoreEdge = shoreEdge;
+      ref.current.uAlphaBase = alphaBase;
+      ref.current.uTexStrength = texStrength;
+      ref.current.uFoamStrength = foamStrength;
+      ref.current.uChunkSize = CHUNK_SIZE_XZ;
 
       const fog = scene.fog as THREE.Fog | undefined;
       if (fog) {
@@ -140,6 +201,9 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({ sunDirection, fade
       if (sunDirection) ref.current.uSunDir = sunDirection;
       if (ref.current.uNoiseTexture !== noiseTexture) {
         ref.current.uNoiseTexture = noiseTexture;
+      }
+      if (shoreMask && ref.current.uShoreMask !== shoreMask) {
+        ref.current.uShoreMask = shoreMask;
       }
     }
   });

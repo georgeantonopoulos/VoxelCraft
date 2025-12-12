@@ -572,6 +572,12 @@ export class TerrainService {
 
                     if (surfaceY !== -1) {
                         const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
+
+                        // Don't spawn trees in/near sea-level water.
+                        // Water fill is a post-pass, so we use the waterline heuristic here (fast + stable).
+                        // This prevents trees from appearing inside oceans/lakes.
+                        if (wy <= WATER_LEVEL + 0.25) continue;
+
                         const hash = Math.abs(noise3D(wx * 12.3, wy * 12.3, wz * 12.3));
                         const treeType = getTreeForBiome(biome, hash) || 0;
 

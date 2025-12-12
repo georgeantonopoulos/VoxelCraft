@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
-import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
+import { VOXEL_SCALE, CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET, ISO_LEVEL, WATER_LEVEL } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
@@ -103,6 +103,156 @@ export const ChunkMesh: React.FC<{
     return geom;
   }, [chunk.meshWaterPositions, chunk.visualVersion]);
 
+  const waterShoreMask = useMemo(() => {
+    if (!chunk.material?.length || !chunk.density?.length) return null;
+
+    // Shore mask encodes signed distance to shoreline in [0..1], where 0.5 is the boundary.
+    // We compute it on the CPU once per chunk update and sample it in the water shader to avoid blocky edges.
+    const w = CHUNK_SIZE_XZ;
+    const h = CHUNK_SIZE_XZ;
+    const mask = new Uint8Array(w * h);
+
+    const sizeX = TOTAL_SIZE_XZ;
+    const sizeY = TOTAL_SIZE_Y;
+    const sizeZ = TOTAL_SIZE_XZ;
+
+    const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
+    const seaGridY = Math.max(0, Math.min(sizeY - 2, seaGridYRaw));
+
+    const idx3 = (x: number, y: number, z: number) => x + y * sizeX + z * sizeX * sizeY;
+    const isLiquidCell = (x: number, y: number, z: number) => {
+      if (x < 0 || y < 0 || z < 0 || x >= sizeX || y >= sizeY || z >= sizeZ) return false;
+      const mat = chunk.material[idx3(x, y, z)];
+      // WATER or ICE (match MaterialType enum values without importing to keep ChunkMesh light).
+      if (mat !== 8 && mat !== 13) return false;
+      return chunk.density[idx3(x, y, z)] <= ISO_LEVEL;
+    };
+
+    // Binary water-present mask at sea level (same rule as water mesher).
+    const waterBin = new Uint8Array(w * h);
+    let any = false;
+    for (let z = 0; z < h; z++) {
+      const gz = PAD + z;
+      for (let x = 0; x < w; x++) {
+        const gx = PAD + x;
+        const hasLiquid = isLiquidCell(gx, seaGridY, gz);
+        const hasLiquidAbove = isLiquidCell(gx, seaGridY + 1, gz);
+        const v = hasLiquid && !hasLiquidAbove ? 1 : 0;
+        waterBin[x + z * w] = v;
+        if (v) any = true;
+      }
+    }
+    if (!any) return null;
+
+    // Identify boundary water/land cells (4-neighborhood).
+    const INF = 0x3fff;
+    const insideDist = new Int16Array(w * h);
+    const outsideDist = new Int16Array(w * h);
+    insideDist.fill(INF);
+    outsideDist.fill(INF);
+
+    const qx: number[] = [];
+    const qz: number[] = [];
+    let qh = 0;
+    const push = (x: number, z: number) => { qx.push(x); qz.push(z); };
+
+    const isWater = (x: number, z: number) => waterBin[x + z * w] === 1;
+    const hasDiffNeighbor = (x: number, z: number) => {
+      const v = isWater(x, z);
+      if (x > 0 && isWater(x - 1, z) !== v) return true;
+      if (x < w - 1 && isWater(x + 1, z) !== v) return true;
+      if (z > 0 && isWater(x, z - 1) !== v) return true;
+      if (z < h - 1 && isWater(x, z + 1) !== v) return true;
+      return false;
+    };
+
+    // Seed boundary queues: distance 0 at shoreline on each side.
+    for (let z = 0; z < h; z++) {
+      for (let x = 0; x < w; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (isWater(x, z)) {
+          insideDist[x + z * w] = 0;
+          push(x, z);
+        }
+      }
+    }
+
+    // BFS inside water
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = insideDist[x + z * w];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= w || nz >= h) return;
+        if (!isWater(nx, nz)) return;
+        const i = nx + nz * w;
+        if (insideDist[i] <= nd) return;
+        insideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z);
+      step(x + 1, z);
+      step(x, z - 1);
+      step(x, z + 1);
+    }
+
+    // Reset queue for outside
+    qx.length = 0; qz.length = 0; qh = 0;
+    for (let z = 0; z < h; z++) {
+      for (let x = 0; x < w; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (!isWater(x, z)) {
+          outsideDist[x + z * w] = 0;
+          push(x, z);
+        }
+      }
+    }
+
+    // BFS outside water (land)
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = outsideDist[x + z * w];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= w || nz >= h) return;
+        if (isWater(nx, nz)) return;
+        const i = nx + nz * w;
+        if (outsideDist[i] <= nd) return;
+        outsideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z);
+      step(x + 1, z);
+      step(x, z - 1);
+      step(x, z + 1);
+    }
+
+    // Encode signed distance: water cells positive, land negative. Boundary = 0.
+    const maxDist = 10.0;
+    for (let z = 0; z < h; z++) {
+      for (let x = 0; x < w; x++) {
+        const i = x + z * w;
+        const sdf = isWater(x, z)
+          ? Math.min(maxDist, insideDist[i])
+          : -Math.min(maxDist, outsideDist[i]);
+        const n = THREE.MathUtils.clamp(0.5 + (sdf / maxDist) * 0.5, 0, 1);
+        mask[i] = Math.floor(n * 255);
+      }
+    }
+
+    const tex = new THREE.DataTexture(mask, w, h, THREE.RedFormat, THREE.UnsignedByteType);
+    tex.needsUpdate = true;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    return tex;
+  }, [chunk.visualVersion]);
+
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
   const chunkTintColor = useMemo(() => {
@@ -146,7 +296,15 @@ export const ChunkMesh: React.FC<{
       )}
       {waterGeometry && (
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
-          <WaterMaterial sunDirection={sunDirection} fade={opacity} />
+          <WaterMaterial
+            sunDirection={sunDirection}
+            fade={opacity}
+            shoreMask={waterShoreMask}
+            shoreEdge={0.07}
+            alphaBase={0.58}
+            texStrength={0.12}
+            foamStrength={0.22}
+          />
         </mesh>
       )}
 
