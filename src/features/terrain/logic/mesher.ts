@@ -315,15 +315,16 @@ export function generateMesh(
     }
   };
 
-  for (let z = start; z <= endX; z++) {
-    for (let y = start; y <= endY; y++) {
-      for (let x = start; x <= endX; x++) {
+  // Seam ownership rule (crack-free, overlap-free):
+  // - Only emit quads for interior cells: [PAD .. PAD+CHUNK_SIZE) (half-open).
+  // - Still sample the neighbor side via PAD when reading x+1 / z+1.
+  // This ensures exactly one chunk owns the shared border plane.
+  for (let z = start; z < endX; z++) {
+    for (let y = start; y < endY; y++) {
+      for (let x = start; x < endX; x++) {
         const val = getVal(density, x, y, z);
 
-        // Emit quads on the MAX X border as well (uses PAD neighbor samples).
-        // The MIN border is intentionally omitted by starting at `PAD`, so the seam plane is owned
-        // by exactly one chunk (prevents both overlap and holes).
-        if (x <= endX) {
+        if (x < endX) {
           const vX = getVal(density, x + 1, y, z);
           if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
             pushQuad(
@@ -345,8 +346,7 @@ export function generateMesh(
           }
         }
 
-        // Same ownership rule for MAX Z border.
-        if (z <= endX) {
+        if (z < endX) {
           const vZ = getVal(density, x, y, z + 1);
           if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
             // Swapped indices 1 and 2 for Z-face winding
