@@ -37,7 +37,8 @@
     .crosshair::after {
       content: '';
       position: absolute;
-      background: rgba(255, 255, 255, 0.85);
+      /* Use a CSS variable so gameplay can flash/fade per-impact. */
+      background: var(--crosshair-color, rgba(255, 255, 255, 0.85));
       border-radius: 1px;
     }
 
@@ -53,6 +54,14 @@
       left: 6px;
       width: 2px;
       height: 14px;
+    }
+
+    /* Quick hit flash to make interactions feel "connected". */
+    .crosshair.hit {
+      opacity: 0.95;
+      transform: translate(-50%, -50%) scale(1.22);
+      filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.45));
+      transition: transform 80ms ease, opacity 120ms ease;
     }
   </style>
   <script type="importmap">

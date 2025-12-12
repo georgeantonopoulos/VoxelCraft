@@ -8,7 +8,7 @@ import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore, FloraHotspot } from '@state/WorldStore';
-import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
+import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
 import { MaterialType, ChunkState } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
@@ -36,6 +36,35 @@ const getMaterialColor = (matId: number) => {
     case MaterialType.MOSSY_STONE: return '#5c8a3c';
     default: return '#888888';
   }
+};
+
+// Sample the terrain voxel material at a world-space point.
+// This is used for "material-aware" feedback (particles + smart build).
+const sampleMaterialAtWorldPoint = (
+  chunks: Record<string, ChunkState>,
+  worldPoint: THREE.Vector3
+): MaterialType => {
+  const cx = Math.floor(worldPoint.x / CHUNK_SIZE_XZ);
+  const cz = Math.floor(worldPoint.z / CHUNK_SIZE_XZ);
+  const key = `${cx},${cz}`;
+  const chunk = chunks[key];
+  if (!chunk) return MaterialType.DIRT;
+
+  const localX = worldPoint.x - cx * CHUNK_SIZE_XZ;
+  const localY = worldPoint.y;
+  const localZ = worldPoint.z - cz * CHUNK_SIZE_XZ;
+
+  // TerrainService grid mapping:
+  // hx = localX + PAD
+  // hy = localY - MESH_Y_OFFSET + PAD
+  // hz = localZ + PAD
+  const ix = THREE.MathUtils.clamp(Math.floor(localX) + PAD, 0, TOTAL_SIZE_XZ - 1);
+  const iy = THREE.MathUtils.clamp(Math.floor(localY - MESH_Y_OFFSET) + PAD, 0, TOTAL_SIZE_Y - 1);
+  const iz = THREE.MathUtils.clamp(Math.floor(localZ) + PAD, 0, TOTAL_SIZE_XZ - 1);
+
+  const idx = ix + iy * TOTAL_SIZE_XZ + iz * TOTAL_SIZE_XZ * TOTAL_SIZE_Y;
+  const mat = chunk.material[idx] ?? MaterialType.DIRT;
+  return mat as MaterialType;
 };
 
 const isTerrainCollider = (collider: Collider): boolean => {
@@ -173,16 +202,19 @@ const LeafPickupEffect = ({
   );
 };
 
-const Particles = ({ active, position, color }: { active: boolean; position: THREE.Vector3; color: string }) => {
+const Particles = ({ burstId, active, position, color }: { burstId: number; active: boolean; position: THREE.Vector3; color: string }) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const count = 20;
   const lifetimes = useRef<number[]>(new Array(count).fill(0));
-  const velocities = useRef<THREE.Vector3[]>(new Array(count).fill(new THREE.Vector3()));
+  // IMPORTANT: Do not use fill(new Vector3()) because it creates shared references.
+  const velocities = useRef<THREE.Vector3[]>(Array.from({ length: count }, () => new THREE.Vector3()));
   const meshMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   useEffect(() => {
-    if (active && mesh.current && meshMatRef.current) {
+    // Ignore the initial mount (burstId starts at 0).
+    if (burstId === 0) return;
+    if (mesh.current && meshMatRef.current) {
       mesh.current.visible = true;
       meshMatRef.current.color.set(color);
       meshMatRef.current.emissive.set(color);
@@ -204,7 +236,8 @@ const Particles = ({ active, position, color }: { active: boolean; position: THR
       }
       mesh.current.instanceMatrix.needsUpdate = true;
     }
-  }, [active, position, color, dummy]);
+    // NOTE: We intentionally key this effect off burstId so repeated clicks always re-trigger the burst.
+  }, [burstId, position, color, dummy]);
 
   useFrame((_, delta) => {
     if (!mesh.current || !mesh.current.visible) return;
@@ -333,16 +366,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   }, []);
 
   const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
+  // Track if the user manually picked a build material; when active, we don't auto-switch.
+  const manualBuildMatUntilMs = useRef(0);
   const remeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
   const treeDamageRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === '1') setBuildMat(MaterialType.DIRT);
-      if (e.key === '2') setBuildMat(MaterialType.STONE);
-      if (e.key === '3') setBuildMat(MaterialType.WATER);
-      if (e.key === '4') setBuildMat(MaterialType.MOSSY_STONE);
+      // Manual material selection (hotkeys). This temporarily disables smart auto-selection.
+      if (e.key === '1') { setBuildMat(MaterialType.DIRT); manualBuildMatUntilMs.current = Date.now() + 15000; }
+      if (e.key === '2') { setBuildMat(MaterialType.STONE); manualBuildMatUntilMs.current = Date.now() + 15000; }
+      if (e.key === '3') { setBuildMat(MaterialType.WATER); manualBuildMatUntilMs.current = Date.now() + 15000; }
+      if (e.key === '4') { setBuildMat(MaterialType.MOSSY_STONE); manualBuildMatUntilMs.current = Date.now() + 15000; }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -353,10 +389,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
 
-  const [particleState, setParticleState] = useState<{ active: boolean; pos: THREE.Vector3; color: string }>({
-    active: false,
+  // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
+  const [particleState, setParticleState] = useState<{ burstId: number; pos: THREE.Vector3; color: string; active: boolean }>({
+    burstId: 0,
     pos: new THREE.Vector3(),
-    color: '#fff'
+    color: '#fff',
+    active: false
   });
   const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
 
@@ -585,6 +623,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     if (terrainHit) {
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
+      // Sample slightly inside the surface so particles/build reflect what we actually hit.
+      const samplePoint = impactPoint.clone().addScaledVector(direction, 0.2);
+      const sampledMat = sampleMaterialAtWorldPoint(chunksRef.current, samplePoint);
 
       let isNearTree = false;
 
@@ -727,12 +768,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                 treeDamageRef.current.set(treeId, currentDamage);
 
                 // Particles for hit
-                setParticleState({
+                setParticleState(prev => ({
+                  burstId: prev.burstId + 1,
                   active: true,
                   pos: new THREE.Vector3(x, y + 1, z),
                   color: '#8B4513' // Wood color
-                });
-                setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
+                }));
+                setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
 
                 if (currentDamage >= 5) {
                   hitIndices.push(i);
@@ -810,11 +852,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
                   // Particles
                   const asset = VEGETATION_ASSETS[typeId];
-                  setParticleState({
+                  setParticleState(prev => ({
+                    burstId: prev.burstId + 1,
                     active: true,
                     pos: new THREE.Vector3(x, y + 0.5, z),
                     color: asset ? asset.color : '#00ff00'
-                  });
+                  }));
                 }
               }
 
@@ -867,6 +910,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       if (isNearTree && action === 'DIG') {
         // Play a "thud" to indicate blocking
         audioPool.play(clunkUrl, 0.4, 0.5);
+        window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
         return;
       }
 
@@ -893,6 +937,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       let anyModified = false;
       let primaryMat = MaterialType.DIRT;
       const affectedChunks: string[] = [];
+      // Smart build: if user hasn't manually selected a material recently, build what you're looking at.
+      const nowMs = Date.now();
+      const allowAutoMat = nowMs > manualBuildMatUntilMs.current;
+      const effectiveBuildMat =
+        action === 'BUILD' && allowAutoMat && buildMat === MaterialType.STONE && sampledMat !== MaterialType.AIR && sampledMat !== MaterialType.WATER
+          ? sampledMat
+          : buildMat;
 
       for (let cx = minCx; cx <= maxCx; cx++) {
         for (let cz = minCz; cz <= maxCz; cz++) {
@@ -904,7 +955,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             const localZ = hitPoint.z - (cz * CHUNK_SIZE_XZ);
 
             const metadata = metadataDB.getChunk(key);
-            const isPlacingWater = action === 'BUILD' && buildMat === MaterialType.WATER;
+            const isPlacingWater = action === 'BUILD' && effectiveBuildMat === MaterialType.WATER;
 
             const modified = isPlacingWater
               ? TerrainService.paintLiquid(
@@ -921,7 +972,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                 { x: localX, y: localY, z: localZ },
                 radius,
                 delta,
-                buildMat,
+                effectiveBuildMat,
                 cx, // Pass World Coords
                 cz
               );
@@ -931,8 +982,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
               affectedChunks.push(key);
               if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {
-                if (action === 'BUILD') primaryMat = buildMat;
-                else primaryMat = MaterialType.DIRT;
+                if (action === 'BUILD') primaryMat = effectiveBuildMat;
+                else primaryMat = sampledMat;
               }
             }
           }
@@ -972,8 +1023,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           }
         });
 
-        setParticleState({ active: true, pos: hitPoint, color: getMaterialColor(primaryMat) });
-        setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
+        // Auto-switch build material to whatever we just dug (unless user manually picked recently).
+        // This makes BUILD feel context-sensitive without taking away manual hotkeys.
+        if (action === 'DIG' && allowAutoMat && sampledMat !== MaterialType.AIR && sampledMat !== MaterialType.WATER) {
+          setBuildMat(sampledMat);
+        }
+
+        setParticleState(prev => ({ burstId: prev.burstId + 1, active: true, pos: hitPoint, color: getMaterialColor(primaryMat) }));
+        // Let the burst breathe a bit longer so it actually reads as impact.
+        setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
+        window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true, color: getMaterialColor(primaryMat) } }));
       } else if (!anyModified && action === 'DIG') {
         // Tried to dig but nothing changed -> Indestructible (Bedrock)
         // Only play if we actually hit something (terrainHit exists)
@@ -984,12 +1043,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           audio.play().catch(() => { });
 
           // AAA FIX: Visual Feedback for Invincible Blocks
-          setParticleState({
+          setParticleState(prev => ({
+            burstId: prev.burstId + 1,
             active: true,
             pos: hitPoint,
             color: '#555555' // Grey sparks
-          });
-          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 50);
+          }));
+          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
+          window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
         }
       }
     }
@@ -1037,7 +1098,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           )}
         </React.Fragment>
       ))}
-      <Particles active={particleState.active} position={particleState.pos} color={particleState.color} />
+      <Particles burstId={particleState.burstId} active={particleState.active} position={particleState.pos} color={particleState.color} />
       {fallingTrees.map(tree => (
         <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
       ))}

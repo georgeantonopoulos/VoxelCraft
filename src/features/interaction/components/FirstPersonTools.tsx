@@ -19,6 +19,7 @@ useGLTF.preload(pickaxeUrl);
 	    const axeRef = useRef<THREE.Group>(null);
 	    const torchRef = useRef<THREE.Group>(null);
 	    const hasAxe = useInventoryStore(state => state.hasAxe);
+	    const currentTool = useInventoryStore(state => state.currentTool);
 	    const isUnderground = useEnvironmentStore((s) => s.isUnderground);
 	    const undergroundChangedAt = useEnvironmentStore((s) => s.undergroundChangedAt);
 	
@@ -52,7 +53,10 @@ useGLTF.preload(pickaxeUrl);
 	    const isDigging = useRef(false);
 	    const digProgress = useRef(0);
 	    const digSpeed = 10.0; // Slower, heavier feel
-	
+	    // Impact kick (synced to actual terrain hits, not just mouse input).
+	    const impactKick = useRef(0);
+	    const impactKickTarget = useRef(0);
+
 	    // Torch slide animation state (0 hidden -> 1 fully shown)
 	    const torchProgress = useRef(0);
 	    const torchDelayActive = useRef(false);
@@ -75,14 +79,37 @@ useGLTF.preload(pickaxeUrl);
 
     useEffect(() => {
         const handleMouseDown = (e: MouseEvent) => {
-            if (e.button === 0 && hasAxe && !isDigging.current) {
+            // Only swing when pointer is locked (gameplay) and when using the pickaxe tool.
+            if (!document.pointerLockElement) return;
+            if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
             }
         };
         window.addEventListener('mousedown', handleMouseDown);
         return () => window.removeEventListener('mousedown', handleMouseDown);
-    }, [hasAxe]);
+    }, [currentTool, hasAxe]);
+
+    // Sync tool motion to actual terrain impacts (hit/clunk/build).
+    // This makes the pickaxe feel connected to the world, even if interaction rate changes.
+    useEffect(() => {
+        const handleImpact = (e: Event) => {
+            const ce = e as CustomEvent;
+            const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
+            if (!document.pointerLockElement) return;
+            // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
+            if (detail.action === 'DIG' && currentTool === 'pickaxe') {
+                isDigging.current = true;
+                digProgress.current = 0;
+                // Kick stronger on failures (e.g. bedrock/clunk) to make it readable.
+                impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
+            } else if (detail.action === 'BUILD' && currentTool === 'pickaxe') {
+                impactKickTarget.current = 0.25;
+            }
+        };
+        window.addEventListener('tool-impact', handleImpact as EventListener);
+        return () => window.removeEventListener('tool-impact', handleImpact as EventListener);
+    }, [currentTool]);
 
     // Hard Camera Attachment - The only way to get ZERO jitter
     // We attach the group to the camera object so it moves 1:1 with the camera matrix.
@@ -151,6 +178,14 @@ useGLTF.preload(pickaxeUrl);
             // Idle rotation
             rotationZ += Math.sin(time * 2) * 0.02;
         }
+
+        // Impact kick is a small positional/rotational impulse on contact.
+        // It’s intentionally separate from the swing animation so it works for both hits and clunks.
+        impactKick.current = THREE.MathUtils.lerp(impactKick.current, impactKickTarget.current, 1 - Math.pow(0.10, delta * 60));
+        impactKickTarget.current = THREE.MathUtils.lerp(impactKickTarget.current, 0.0, 1 - Math.pow(0.02, delta * 60));
+        const kick = impactKick.current;
+        positionZ += kick * 0.06;  // Tiny pull-back
+        rotationX += kick * 0.10;  // Tiny upward recoil
 
         // Apply transforms to the inner Axe group (local offsets)
         axeRef.current.position.set(positionX, positionY, positionZ);

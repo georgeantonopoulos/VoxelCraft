@@ -166,6 +166,8 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 export const HUD: React.FC = () => {
   const inventoryCount = useGameStore((state) => state.inventoryCount);
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
+  const [crosshairHit, setCrosshairHit] = useState(false);
+  const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');
 
   // Quick hack to get camera position: App.tsx will update a DOM element or Custom Event
   useEffect(() => {
@@ -176,10 +178,36 @@ export const HUD: React.FC = () => {
     return () => window.removeEventListener('player-moved', handlePosUpdate as EventListener);
   }, []);
 
+  // Tool feedback: flash crosshair on terrain/tool impacts.
+  useEffect(() => {
+    let timeoutId: number | null = null;
+
+    const handleImpact = (e: Event) => {
+      const ce = e as CustomEvent;
+      const detail = (ce.detail ?? {}) as { color?: string; ok?: boolean };
+      // Slightly red-tint failed actions; otherwise use the material color from the terrain system.
+      const color = detail.ok === false ? 'rgba(255, 120, 120, 0.95)' : (detail.color ?? 'rgba(255, 255, 255, 0.85)');
+      setCrosshairColor(color);
+      setCrosshairHit(true);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => setCrosshairHit(false), 110);
+    };
+
+    window.addEventListener('tool-impact', handleImpact as EventListener);
+    return () => {
+      window.removeEventListener('tool-impact', handleImpact as EventListener);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+    };
+  }, []);
+
   return (
     <div className="absolute inset-0 pointer-events-none select-none">
       {/* Center Crosshair */}
-      <div className="crosshair" />
+      <div
+        className={`crosshair ${crosshairHit ? 'hit' : ''}`}
+        // Use CSS var so pseudo-elements can inherit the impact color.
+        style={{ ['--crosshair-color' as any]: crosshairColor }}
+      />
 
       {/* Top Left: Controls Info */}
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
