@@ -525,7 +525,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           treePositions,  // Surface trees
           rootHollowPositions, // Persist root hollow positions
           terrainVersion: 0,
-          visualVersion: 0
+          visualVersion: 0,
+          // Used to time-fade chunks into view (hides render-distance pop-in).
+          spawnedAt: performance.now() / 1000
         };
         // Register chunk arrays for runtime queries (water, interaction probes, etc).
         terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
@@ -1177,7 +1179,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
             // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
             Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
-              <RootHollow
+              (() => {
+                // Match the chunk time-fade behavior used in ChunkMesh so stumps don't pop.
+                const now = performance.now() / 1000;
+                const FADE_SECONDS = 1.25;
+                const timeFade = terrainFadeEnabled
+                  ? THREE.MathUtils.clamp((now - (chunk.spawnedAt ?? now)) / FADE_SECONDS, 0, 1)
+                  : 1.0;
+                const rootOpacity = timeFade;
+
+                return (
+                  <RootHollow
                 key={`${chunk.key}-root-${i}`}
                 position={[
                   chunk.rootHollowPositions![i * 6] + chunk.cx * CHUNK_SIZE_XZ,
@@ -1189,7 +1201,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                   chunk.rootHollowPositions![i * 6 + 4],
                   chunk.rootHollowPositions![i * 6 + 5]
                 ]}
-              />
+                    opacity={rootOpacity}
+                  />
+                );
+              })()
             ))
           )}
         </React.Fragment>

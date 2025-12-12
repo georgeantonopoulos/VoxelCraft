@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
@@ -17,6 +17,7 @@ const STUMP_CONFIG = {
 interface RootHollowProps {
     position: [number, number, number];
     normal?: number[]; // [nx, ny, nz]
+    opacity?: number;
 }
 
 /**
@@ -26,7 +27,7 @@ interface RootHollowProps {
  * - Smooth, organic root flares matching slope
  * - High-poly geometry for clean displacement
  */
-export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1, 0] }) => {
+export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1, 0], opacity = 1.0 }) => {
     const [status, setStatus] = useState<'IDLE' | 'GROWING'>('IDLE');
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
@@ -110,6 +111,27 @@ export const RootHollow: React.FC<RootHollowProps> = ({ position, normal = [0, 1
             height: finalSize.y || targetHeight
         };
     }, [scene]);
+
+    // Fade with chunk fog/reveal so stumps don't pop at render distance.
+    useEffect(() => {
+        const isTransparent = opacity < 0.999;
+        stumpModel.traverse((child) => {
+            if (!(child as THREE.Mesh).isMesh) return;
+            const mesh = child as THREE.Mesh;
+            const material = mesh.material as THREE.Material | THREE.Material[];
+            const apply = (mat: any) => {
+                if (!mat) return;
+                if (typeof mat.opacity === 'number') {
+                    mat.transparent = isTransparent;
+                    mat.opacity = opacity;
+                    mat.depthWrite = !isTransparent;
+                    mat.needsUpdate = true;
+                }
+            };
+            if (Array.isArray(material)) material.forEach(apply);
+            else apply(material);
+        });
+    }, [stumpModel, opacity]);
 
     useFrame(() => {
         if (status !== 'IDLE') return;

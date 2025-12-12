@@ -58,18 +58,22 @@ export const ChunkMesh: React.FC<{
     return params.has('normals');
   }, []);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     // Chunk fade-in can produce seam-like hard edges due to transparency sorting/depthWrite toggling.
     // Allow disabling in debug to confirm whether artifacts come from this path.
-    if (!terrainFadeEnabled) return;
-    // Smoother reveal (slower than the old 0.5s snap) to hide far-chunk pop-in.
-    if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 0.8, 1));
+    if (terrainFadeEnabled) {
+      // Smoother reveal (slower than the old 0.5s snap) to hide far-chunk pop-in.
+      if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 0.8, 1));
+    }
+
   });
 
   // If fade is disabled, force fully-opaque terrain.
   useEffect(() => {
     if (!terrainFadeEnabled) setOpacity(1);
   }, [terrainFadeEnabled]);
+
+  const combinedOpacity = terrainFadeEnabled ? opacity : 1.0;
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
@@ -278,7 +282,7 @@ export const ChunkMesh: React.FC<{
             ) : (
               <TriplanarMaterial
                 sunDirection={sunDirection}
-                opacity={terrainFadeEnabled ? opacity : 1.0}
+                opacity={combinedOpacity}
                 triplanarDetail={triplanarDetail}
                 shaderFogEnabled={terrainShaderFogEnabled}
                 shaderFogStrength={terrainShaderFogStrength}
@@ -300,7 +304,7 @@ export const ChunkMesh: React.FC<{
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
           <WaterMaterial
             sunDirection={sunDirection}
-            fade={opacity}
+            fade={combinedOpacity}
             shoreMask={waterShoreMask}
             shoreEdge={0.07}
             alphaBase={0.58}
@@ -311,15 +315,15 @@ export const ChunkMesh: React.FC<{
       )}
 
       {chunk.vegetationData && (
-        <VegetationLayer data={chunk.vegetationData} />
+        <VegetationLayer data={chunk.vegetationData} opacity={combinedOpacity} />
       )}
 
       {chunk.treePositions && chunk.treePositions.length > 0 && (
-        <TreeLayer data={chunk.treePositions} />
+        <TreeLayer data={chunk.treePositions} opacity={combinedOpacity} />
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} />
+        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} opacity={combinedOpacity} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

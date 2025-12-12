@@ -8,6 +8,7 @@ interface LuminaLayerProps {
   lightPositions?: Float32Array; // stride 3: x, y, z
   cx: number;
   cz: number;
+  opacity?: number;
 }
 
 /**
@@ -15,7 +16,7 @@ interface LuminaLayerProps {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, opacity = 1.0 }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   // const { camera } = useThree(); // Unused
@@ -74,6 +75,14 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     toneMapped: false // Important for bloom
   }), []);
 
+  // Fade lumina visuals with the owning chunk so they don't pop at render distance.
+  useFrame(() => {
+    const isTransparent = opacity < 0.999;
+    mat.transparent = isTransparent;
+    mat.opacity = opacity;
+    mat.depthWrite = !isTransparent;
+  });
+
   return (
     <group>
       {/* Flora Mesh - Frustum Culling Disabled to fix visibility */}
@@ -90,7 +99,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
 
       {/* Clustered Lights - Distance Culled */}
       {lights.map((pos, i) => (
-        <DistanceCulledLight key={i} position={pos} />
+        <DistanceCulledLight key={i} position={pos} intensityMul={opacity} />
       ))}
     </group>
   );
@@ -102,7 +111,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
  * to avoid overhead. Actually, conditionally rendering the PointLight is better for Three.js
  * state management if we have many.
  */
-const DistanceCulledLight: React.FC<{ position: THREE.Vector3 }> = ({ position }) => {
+const DistanceCulledLight: React.FC<{ position: THREE.Vector3; intensityMul: number }> = ({ position, intensityMul }) => {
   // const ref = useRef<THREE.PointLight>(null); // Unused
   const [visible, setVisible] = useState(false);
 
@@ -123,7 +132,7 @@ const DistanceCulledLight: React.FC<{ position: THREE.Vector3 }> = ({ position }
     <pointLight
       position={position}
       color="#00e5ff"
-      intensity={2.0}
+      intensity={2.0 * intensityMul}
       distance={12}
       decay={2}
       castShadow={false} // No shadows for performance

@@ -6,9 +6,10 @@ import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type
+    opacity?: number;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, opacity = 1.0 }) => {
     // Group data by type (+ jungle variant)
     const batches = useMemo(() => {
         const map = new Map<string, { type: number, variant: number, positions: number[], count: number }>();
@@ -49,13 +50,14 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
                     variant={batch.variant}
                     positions={batch.positions}
                     count={batch.count}
+                    opacity={opacity}
                 />
             ))}
         </group>
     );
 });
 
-const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number }> = ({ type, variant, positions, count }) => {
+const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number, opacity: number }> = ({ type, variant, positions, count, opacity }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
 
@@ -165,11 +167,23 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
     return (
         <group>
             <instancedMesh ref={woodMesh} args={[wood, undefined, count]} castShadow receiveShadow>
-                <meshStandardMaterial color={colors.base} roughness={0.9} />
+                <meshStandardMaterial
+                    color={colors.base}
+                    roughness={0.9}
+                    transparent={opacity < 0.999}
+                    opacity={opacity}
+                    depthWrite={opacity >= 0.999}
+                />
             </instancedMesh>
             {leaves.getAttribute('position') && (
                 <instancedMesh ref={leafMesh} args={[leaves, undefined, count]} castShadow receiveShadow>
-                    <meshStandardMaterial color={colors.tip} roughness={0.8} />
+                    <meshStandardMaterial
+                        color={colors.tip}
+                        roughness={0.8}
+                        transparent={opacity < 0.999}
+                        opacity={opacity}
+                        depthWrite={opacity >= 0.999}
+                    />
                 </instancedMesh>
             )}
 

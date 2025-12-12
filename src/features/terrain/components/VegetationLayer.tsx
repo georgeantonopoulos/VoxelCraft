@@ -52,6 +52,7 @@ const VEGETATION_SHADER = {
   }
 `,
   fragment: `
+    uniform float uOpacity;
     varying vec3 vWorldPos;
     varying vec2 vUv;
     
@@ -73,16 +74,17 @@ const VEGETATION_SHADER = {
        vec3 rootCol = col * 0.75; // Much brighter roots (was 0.5)
        col = mix(rootCol, col * 1.1, gradient); // Tips slightly brighter
 
-       csm_DiffuseColor = vec4(col, 1.0);
+       csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     }
   `
 };
 
 interface VegetationLayerProps {
   data: Record<string, Float32Array>; // vegetationData from worker
+  opacity?: number;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data }) => {
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, opacity = 1.0 }) => {
   const materials = useRef<THREE.ShaderMaterial[]>([]);
 
   // Update time uniform every frame
@@ -90,6 +92,12 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
     const t = clock.getElapsedTime();
     materials.current.forEach(mat => {
       if (mat && mat.uniforms?.uTime) mat.uniforms.uTime.value = t;
+      if (mat && mat.uniforms?.uOpacity) mat.uniforms.uOpacity.value = opacity;
+      if (mat) {
+        const isTransparent = opacity < 0.999;
+        mat.transparent = isTransparent;
+        mat.depthWrite = !isTransparent;
+      }
     });
   });
 
@@ -350,6 +358,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
             uniforms={{
               uTime: { value: 0 },
               uSway: { value: batch!.asset.sway },
+              uOpacity: { value: opacity },
             }}
             color={batch!.asset.color}
             roughness={batch!.asset.roughness}

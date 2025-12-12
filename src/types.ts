@@ -83,6 +83,9 @@ export interface ChunkState {
   key: ChunkKey;
   cx: number;
   cz: number;
+  // Timestamp (seconds) when the chunk first became renderable.
+  // Used for time-based fade-in to hide pop-in at render distance.
+  spawnedAt?: number;
   density: Float32Array;
   material: Uint8Array;
   terrainVersion: number; // Triggers Physics Rebuild
