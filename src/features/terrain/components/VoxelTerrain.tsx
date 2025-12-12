@@ -202,14 +202,33 @@ const LeafPickupEffect = ({
   );
 };
 
-const Particles = ({ burstId, active, position, color }: { burstId: number; active: boolean; position: THREE.Vector3; color: string }) => {
+type ParticleKind = 'debris' | 'spark';
+
+const Particles = ({
+  burstId,
+  active,
+  position,
+  color,
+  direction,
+  kind
+}: {
+  burstId: number;
+  active: boolean;
+  position: THREE.Vector3;
+  color: string;
+  // Direction of ejection (usually from the surface toward the camera).
+  direction: THREE.Vector3;
+  kind: ParticleKind;
+}) => {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const count = 20;
+  const count = 28;
   const lifetimes = useRef<number[]>(new Array(count).fill(0));
   // IMPORTANT: Do not use fill(new Vector3()) because it creates shared references.
   const velocities = useRef<THREE.Vector3[]>(Array.from({ length: count }, () => new THREE.Vector3()));
+  const baseScales = useRef<number[]>(new Array(count).fill(1));
   const meshMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const tmpDir = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
     // Ignore the initial mount (burstId starts at 0).
@@ -218,26 +237,57 @@ const Particles = ({ burstId, active, position, color }: { burstId: number; acti
       mesh.current.visible = true;
       meshMatRef.current.color.set(color);
       meshMatRef.current.emissive.set(color);
-      meshMatRef.current.emissiveIntensity = 0.2;
+      // Make sparks read clearly even in bright scenes.
+      meshMatRef.current.emissiveIntensity = kind === 'spark' ? 1.35 : 0.35;
+      meshMatRef.current.transparent = kind === 'spark';
+      meshMatRef.current.opacity = kind === 'spark' ? 0.95 : 1.0;
+      meshMatRef.current.depthWrite = kind !== 'spark';
+      meshMatRef.current.blending = kind === 'spark' ? THREE.AdditiveBlending : THREE.NormalBlending;
+      meshMatRef.current.roughness = kind === 'spark' ? 0.15 : 0.8;
+      meshMatRef.current.metalness = kind === 'spark' ? 0.25 : 0.0;
+      meshMatRef.current.needsUpdate = true;
+
+      // Normalize direction once per burst.
+      tmpDir.copy(direction);
+      if (tmpDir.lengthSq() < 1e-6) tmpDir.set(0, 1, 0);
+      tmpDir.normalize();
+
       for (let i = 0; i < count; i++) {
         dummy.position.copy(position);
-        dummy.position.x += (Math.random() - 0.5);
-        dummy.position.y += (Math.random() - 0.5);
-        dummy.position.z += (Math.random() - 0.5);
-        dummy.scale.setScalar(Math.random() * 0.3 + 0.1);
+        // Small spatial jitter so the burst isn't a single point.
+        const jitter = kind === 'spark' ? 0.10 : 0.22;
+        dummy.position.x += (Math.random() - 0.5) * jitter;
+        dummy.position.y += (Math.random() - 0.5) * jitter;
+        dummy.position.z += (Math.random() - 0.5) * jitter;
+        // Sparks are thinner; debris are chunkier.
+        const baseScale = kind === 'spark' ? 0.06 : 0.14;
+        const scaleVar = kind === 'spark' ? 0.05 : 0.18;
+        const s = baseScale + Math.random() * scaleVar;
+        baseScales.current[i] = s;
+        dummy.scale.setScalar(s);
         dummy.updateMatrix();
         mesh.current.setMatrixAt(i, dummy.matrix);
-        lifetimes.current[i] = 0.3 + Math.random() * 0.4;
-        velocities.current[i] = new THREE.Vector3(
-          (Math.random() - 0.5) * 8,
-          Math.random() * 8 + 4,
-          (Math.random() - 0.5) * 8
-        );
+        lifetimes.current[i] = (kind === 'spark' ? 0.16 : 0.28) + Math.random() * (kind === 'spark' ? 0.18 : 0.42);
+
+        // Reuse velocity objects to avoid per-burst GC.
+        const v = velocities.current[i];
+        // Burst mostly outward from the hit point with some spread.
+        const spread = kind === 'spark' ? 0.7 : 1.1;
+        v.copy(tmpDir).multiplyScalar(kind === 'spark' ? 10.5 : 7.5);
+        // Avoid per-particle allocations in hot paths.
+        const randX = (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
+        const randY = (Math.random() * 1.0) * spread * (kind === 'spark' ? 2.6 : 3.2);
+        const randZ = (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
+        v.x += randX;
+        v.y += randY;
+        v.z += randZ;
+        // Ensure some upward lift so debris doesn't immediately vanish into the surface.
+        v.y = Math.max(v.y, kind === 'spark' ? 2.0 : 3.0);
       }
       mesh.current.instanceMatrix.needsUpdate = true;
     }
     // NOTE: We intentionally key this effect off burstId so repeated clicks always re-trigger the burst.
-  }, [burstId, position, color, dummy]);
+  }, [burstId, position, color, direction, kind, dummy, tmpDir]);
 
   useFrame((_, delta) => {
     if (!mesh.current || !mesh.current.visible) return;
@@ -247,11 +297,25 @@ const Particles = ({ burstId, active, position, color }: { burstId: number; acti
         lifetimes.current[i] -= delta;
         mesh.current.getMatrixAt(i, dummy.matrix);
         dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
-        velocities.current[i].y -= 25.0 * delta;
-        dummy.position.addScaledVector(velocities.current[i], delta);
-        dummy.rotation.x += delta * 10;
-        dummy.rotation.z += delta * 5;
-        dummy.scale.setScalar(Math.max(0, lifetimes.current[i]));
+        const v = velocities.current[i];
+        // Gravity + simple drag. Sparks fall faster and damp quicker.
+        const gravity = kind === 'spark' ? 32.0 : 25.0;
+        v.y -= gravity * delta;
+        const drag = kind === 'spark' ? 6.0 : 3.5;
+        v.multiplyScalar(Math.max(0, 1.0 - drag * delta));
+
+        dummy.position.addScaledVector(v, delta);
+
+        // Spin debris more; sparks can be subtle.
+        if (kind !== 'spark') {
+          dummy.rotation.x += delta * 10;
+          dummy.rotation.z += delta * 5;
+        }
+
+        // Fade out via scale to avoid per-instance opacity.
+        const t = Math.max(0, lifetimes.current[i]);
+        const fade = kind === 'spark' ? t * t : t;
+        dummy.scale.setScalar(baseScales.current[i] * Math.max(0.0, Math.min(1.0, fade)));
         dummy.updateMatrix();
         mesh.current.setMatrixAt(i, dummy.matrix);
         activeCount++;
@@ -262,8 +326,9 @@ const Particles = ({ burstId, active, position, color }: { burstId: number; acti
   });
 
   return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, count]} visible={false}>
-      <boxGeometry args={[0.15, 0.15, 0.15]} />
+    <instancedMesh ref={mesh} args={[undefined, undefined, count]} visible={false} frustumCulled={false}>
+      {/* Slightly more organic than cubes (better read at small sizes). */}
+      <icosahedronGeometry args={[0.12, 0]} />
       <meshStandardMaterial ref={meshMatRef} color="#fff" roughness={0.8} toneMapped={false} />
     </instancedMesh>
   );
@@ -390,10 +455,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const pendingChunks = useRef<Set<string>>(new Set());
 
   // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
-  const [particleState, setParticleState] = useState<{ burstId: number; pos: THREE.Vector3; color: string; active: boolean }>({
+  const [particleState, setParticleState] = useState<{
+    burstId: number;
+    pos: THREE.Vector3;
+    dir: THREE.Vector3;
+    color: string;
+    kind: ParticleKind;
+    active: boolean;
+  }>({
     burstId: 0,
     pos: new THREE.Vector3(),
+    dir: new THREE.Vector3(0, 1, 0),
     color: '#fff',
+    kind: 'debris',
     active: false
   });
   const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
@@ -768,10 +842,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                 treeDamageRef.current.set(treeId, currentDamage);
 
                 // Particles for hit
+                const woodPos = new THREE.Vector3(x, y + 1, z);
+                const woodDir = origin.clone().sub(woodPos).normalize();
                 setParticleState(prev => ({
                   burstId: prev.burstId + 1,
                   active: true,
-                  pos: new THREE.Vector3(x, y + 1, z),
+                  pos: woodPos,
+                  dir: woodDir,
+                  kind: 'debris',
                   color: '#8B4513' // Wood color
                 }));
                 setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
@@ -852,10 +930,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
                   // Particles
                   const asset = VEGETATION_ASSETS[typeId];
+                  const vegPos = new THREE.Vector3(x, y + 0.5, z);
+                  const vegDir = origin.clone().sub(vegPos).normalize();
                   setParticleState(prev => ({
                     burstId: prev.burstId + 1,
                     active: true,
-                    pos: new THREE.Vector3(x, y + 0.5, z),
+                    pos: vegPos,
+                    dir: vegDir,
+                    kind: 'debris',
                     color: asset ? asset.color : '#00ff00'
                   }));
                 }
@@ -920,7 +1002,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const digOffset = 0.6;
       const offset = action === 'DIG' ? digOffset : -0.1;
 
-      const hitPoint = impactPoint.addScaledVector(direction, offset);
+      // IMPORTANT: keep impactPoint as the *surface* point (don't mutate it).
+      const hitPoint = impactPoint.clone().addScaledVector(direction, offset);
+      // Particles should spawn on/just above the visible surface (not at the brush center which may be inside terrain).
+      const particlePos = impactPoint.clone().addScaledVector(direction, -0.08);
+      const particleDir = direction.clone().multiplyScalar(-1);
       const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
@@ -1029,7 +1115,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           setBuildMat(sampledMat);
         }
 
-        setParticleState(prev => ({ burstId: prev.burstId + 1, active: true, pos: hitPoint, color: getMaterialColor(primaryMat) }));
+        setParticleState(prev => ({
+          burstId: prev.burstId + 1,
+          active: true,
+          pos: particlePos,
+          dir: particleDir,
+          kind: action === 'DIG' ? 'debris' : 'debris',
+          color: getMaterialColor(primaryMat)
+        }));
         // Let the burst breathe a bit longer so it actually reads as impact.
         setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
         window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true, color: getMaterialColor(primaryMat) } }));
@@ -1046,8 +1139,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           setParticleState(prev => ({
             burstId: prev.burstId + 1,
             active: true,
-            pos: hitPoint,
-            color: '#555555' // Grey sparks
+            pos: particlePos,
+            dir: particleDir,
+            kind: 'spark',
+            color: '#bbbbbb' // Bright sparks
           }));
           setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
           window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
@@ -1098,7 +1193,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           )}
         </React.Fragment>
       ))}
-      <Particles burstId={particleState.burstId} active={particleState.active} position={particleState.pos} color={particleState.color} />
+      <Particles
+        burstId={particleState.burstId}
+        active={particleState.active}
+        position={particleState.pos}
+        direction={particleState.dir}
+        kind={particleState.kind}
+        color={particleState.color}
+      />
       {fallingTrees.map(tree => (
         <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
       ))}
