@@ -82,32 +82,16 @@ const VEGETATION_SHADER = {
 
 interface VegetationLayerProps {
   data: Record<string, Float32Array>; // vegetationData from worker
-  opacity?: number;
-  opacityRef?: React.MutableRefObject<number>;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, opacity = 1.0, opacityRef }) => {
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data }) => {
   const materials = useRef<THREE.ShaderMaterial[]>([]);
-  const lastTransparentRef = useRef<boolean | null>(null);
 
   // Update time uniform every frame
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
-    const resolvedOpacity = opacityRef ? opacityRef.current : opacity;
-    const isTransparent = resolvedOpacity < 0.999;
     materials.current.forEach(mat => {
       if (mat && mat.uniforms?.uTime) mat.uniforms.uTime.value = t;
-      if (mat && mat.uniforms?.uOpacity) mat.uniforms.uOpacity.value = resolvedOpacity;
-      if (mat) {
-        // Smooth alpha fade: only toggle render state on boundary crossings.
-        // This keeps the hot path to a single uniform update per frame.
-        if (lastTransparentRef.current !== isTransparent) {
-          mat.transparent = isTransparent;
-          mat.depthWrite = !isTransparent;
-          mat.needsUpdate = true;
-          lastTransparentRef.current = isTransparent;
-        }
-      }
     });
   });
 
@@ -368,7 +352,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
             uniforms={{
               uTime: { value: 0 },
               uSway: { value: batch!.asset.sway },
-              uOpacity: { value: opacityRef ? opacityRef.current : opacity },
+              // Chunk opacity fade is intentionally disabled; rely on fog to hide streaming pop-in.
+              uOpacity: { value: 1.0 },
             }}
             color={batch!.asset.color}
             roughness={batch!.asset.roughness}

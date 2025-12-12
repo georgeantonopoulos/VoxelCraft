@@ -17,11 +17,6 @@ const STUMP_CONFIG = {
 interface RootHollowProps {
     position: [number, number, number];
     normal?: number[]; // [nx, ny, nz]
-    opacity?: number;
-    opacityRef?: React.MutableRefObject<number>;
-    // Preferred: fade driven by owning chunk spawn time (avoids per-frame React re-renders).
-    spawnedAt?: number;
-    fadeEnabled?: boolean;
 }
 
 /**
@@ -33,11 +28,7 @@ interface RootHollowProps {
  */
 export const RootHollow: React.FC<RootHollowProps> = ({
     position,
-    normal = [0, 1, 0],
-    opacity = 1.0,
-    opacityRef,
-    spawnedAt,
-    fadeEnabled = true
+    normal = [0, 1, 0]
 }) => {
     const [status, setStatus] = useState<'IDLE' | 'GROWING'>('IDLE');
     const removeEntity = useWorldStore(s => s.removeEntity);
@@ -123,51 +114,9 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         };
     }, [scene]);
 
-    // Fade with chunk reveal so stumps don't pop at render distance.
-    // NOTE: RootHollow instances are rendered outside `ChunkMesh`, so we must update opacity here
-    // (ChunkMesh no longer drives per-frame React updates after the fade perf refactor).
-    const lastTransparentRef = useRef<boolean | null>(null);
-    const lastOpacityRef = useRef<number>(opacity);
-
-    useFrame(() => {
-        const now = performance.now() / 1000;
-        // Prefer: opacityRef (shared with ChunkMesh fade), otherwise compute from spawnedAt, otherwise use prop.
-        let resolvedOpacity = opacity;
-        if (typeof opacityRef?.current === 'number') {
-            resolvedOpacity = opacityRef.current;
-        } else if (fadeEnabled !== false && typeof spawnedAt === 'number') {
-            const FADE_SECONDS = 1.0;
-            resolvedOpacity = THREE.MathUtils.clamp((now - spawnedAt) / Math.max(FADE_SECONDS, 0.0001), 0, 1);
-        } else if (fadeEnabled === false) {
-            resolvedOpacity = 1.0;
-        }
-
-        const isTransparent = resolvedOpacity < 0.999;
-        if (lastTransparentRef.current === isTransparent && Math.abs(lastOpacityRef.current - resolvedOpacity) < 0.001) {
-            // Avoid unnecessary traversals when opacity hasn't meaningfully changed.
-            return;
-        }
-
-        lastOpacityRef.current = resolvedOpacity;
-        lastTransparentRef.current = isTransparent;
-
-        stumpModel.traverse((child) => {
-            if (!(child as THREE.Mesh).isMesh) return;
-            const mesh = child as THREE.Mesh;
-            const material = mesh.material as THREE.Material | THREE.Material[];
-            const apply = (mat: any) => {
-                if (!mat) return;
-                if (typeof mat.opacity === 'number') {
-                    // Smooth alpha fade (no dither / alpha hash).
-                    mat.opacity = resolvedOpacity;
-                    mat.transparent = isTransparent;
-                    mat.depthWrite = !isTransparent;
-                }
-            };
-            if (Array.isArray(material)) material.forEach(apply);
-            else apply(material);
-        });
-    });
+    // NOTE:
+    // Chunk opacity fade was removed because the transparent render path can introduce
+    // noticeable hitches while streaming. RootHollows remain fully opaque; fog hides pop-in.
 
     useFrame(() => {
         if (status !== 'IDLE') return;

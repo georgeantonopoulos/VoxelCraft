@@ -8,6 +8,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      // Enable cross-origin isolation so workers can use SharedArrayBuffer for chunk voxel fields.
+      // This avoids main-thread cloning/copying during frequent remeshes.
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      },
+    },
+    preview: {
+      // Keep preview consistent with dev for SharedArrayBuffer usage.
+      headers: {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      },
     },
     plugins: [react()],
     define: {

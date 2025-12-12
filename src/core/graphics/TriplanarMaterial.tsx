@@ -524,8 +524,6 @@ const fragmentShader = `
 
 export const TriplanarMaterial: React.FC<{
   sunDirection?: THREE.Vector3;
-  opacity?: number;
-  opacityRef?: React.MutableRefObject<number>;
   triplanarDetail?: number;
   shaderFogEnabled?: boolean;
   shaderFogStrength?: number;
@@ -540,8 +538,6 @@ export const TriplanarMaterial: React.FC<{
   weightsView?: string;
   wireframe?: boolean;
 }> = ({
-  opacity = 1,
-  opacityRef,
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
   shaderFogStrength = 0.9,
@@ -557,16 +553,16 @@ export const TriplanarMaterial: React.FC<{
 }) => {
   const materialRef = useRef<any>(null);
   const { scene } = useThree();
-  const lastTransparentRef = useRef<boolean | null>(null);
   const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
 
   useFrame(() => {
     if (materialRef.current) {
       const mat = materialRef.current;
 
-      // Hot path: update opacity from a ref (no React re-render during fades).
-      const resolvedOpacity = opacityRef ? opacityRef.current : opacity;
-      mat.uniforms.uOpacity.value = resolvedOpacity;
+      // NOTE:
+      // Chunk-level opacity fade was removed to avoid transparency-induced hitches during streaming.
+      // Keep the shader uniform at 1.0 (fully opaque).
+      if (mat.uniforms.uOpacity.value !== 1.0) mat.uniforms.uOpacity.value = 1.0;
 
       // Keep shared noise up to date (can change if resources are reloaded).
       if (mat.uniforms.uNoiseTexture.value !== noiseTexture) mat.uniforms.uNoiseTexture.value = noiseTexture;
@@ -591,15 +587,9 @@ export const TriplanarMaterial: React.FC<{
       // Base material fog (MeshStandardMaterial) can stack with shader fog; allow toggling for isolation.
       mat.fog = threeFogEnabled;
 
-      // Restore smooth opacity fade (no dither).
-      // Only toggle render state when crossing opaque/transparent boundary.
-      const isTransparent = resolvedOpacity < 0.999;
-      if (lastTransparentRef.current !== isTransparent) {
-        mat.transparent = isTransparent;
-        // During fade, disable depthWrite to avoid hard edges from partial depth.
-        mat.depthWrite = !isTransparent;
-        lastTransparentRef.current = isTransparent;
-      }
+      // Always keep terrain opaque; fog hides chunk streaming at distance.
+      mat.transparent = false;
+      mat.depthWrite = true;
 
       const fog = scene.fog as THREE.Fog | undefined;
       if (fog) {

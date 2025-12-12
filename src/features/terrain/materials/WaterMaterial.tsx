@@ -164,8 +164,6 @@ extend({ WaterMeshShader });
 
 export interface WaterMaterialProps {
   sunDirection?: THREE.Vector3;
-  fade?: number;
-  fadeRef?: React.MutableRefObject<number>;
   shoreMask?: THREE.Texture | null;
   shoreEdge?: number;
   alphaBase?: number;
@@ -174,12 +172,10 @@ export interface WaterMaterialProps {
 }
 
 /**
- * Water material component with fade support for chunk opacity transitions.
+ * Water material component.
  */
 export const WaterMaterial: React.FC<WaterMaterialProps> = ({
   sunDirection,
-  fade = 1,
-  fadeRef,
   shoreMask = null,
   shoreEdge = 0.06,
   alphaBase = 0.58,
@@ -193,7 +189,8 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = ({
     if (ref.current) {
       ref.current.uTime = clock.getElapsedTime();
       ref.current.uCamPos = camera.position;
-      ref.current.uFade = fadeRef ? fadeRef.current : fade;
+      // Chunk opacity fade was removed; keep water fully active and let fog handle distance.
+      ref.current.uFade = 1.0;
       ref.current.uShoreEdge = shoreEdge;
       ref.current.uAlphaBase = alphaBase;
       ref.current.uTexStrength = texStrength;

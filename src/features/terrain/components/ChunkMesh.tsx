@@ -1,6 +1,5 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
@@ -52,12 +51,11 @@ export const ChunkMesh: React.FC<{
   terrainWeightsView = 'off'
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
-  // Fade is updated per-frame without triggering React re-renders.
-  // This avoids per-chunk state churn when streaming in new terrain.
-  const opacityRef = useRef(terrainFadeEnabled ? 0 : 1);
-
-  // NOTE: Keep fade conservative to hide pop-in without lingering transparency.
-  const FADE_SECONDS = 1.0;
+  // NOTE:
+  // Chunk opacity fade was removed because the transparent render path can introduce
+  // noticeable hitches (sorting + depthWrite toggling) while streaming in new terrain.
+  // We now rely on fog + a shorter effective view distance to hide chunk generation.
+  // `terrainFadeEnabled` remains as a debug flag, but is intentionally a no-op.
   // Debug rendering modes are split:
   // - `?debug` enables Leva/UI debug without changing materials.
   // - `?normals` swaps terrain to normal material for geometry inspection.
@@ -66,24 +64,8 @@ export const ChunkMesh: React.FC<{
     const params = new URLSearchParams(window.location.search);
     return params.has('normals');
   }, []);
-
-  useFrame(() => {
-    // Chunk fade-in can produce seam-like hard edges due to transparency sorting/depthWrite toggling.
-    // Allow disabling in debug to confirm whether artifacts come from this path.
-    if (!terrainFadeEnabled) {
-      opacityRef.current = 1.0;
-      return;
-    }
-
-    const now = performance.now() / 1000;
-    const startedAt = chunk.spawnedAt ?? now;
-    const t = (now - startedAt) / Math.max(FADE_SECONDS, 0.0001);
-    opacityRef.current = THREE.MathUtils.clamp(t, 0, 1);
-  });
-
-  // If fade is disabled, force fully-opaque terrain.
   useEffect(() => {
-    if (!terrainFadeEnabled) opacityRef.current = 1.0;
+    void terrainFadeEnabled;
   }, [terrainFadeEnabled]);
 
   // Only build expensive trimesh colliders near the player to avoid hitches
@@ -300,7 +282,6 @@ export const ChunkMesh: React.FC<{
               ) : (
                 <TriplanarMaterial
                   sunDirection={sunDirection}
-                  opacityRef={opacityRef}
                   triplanarDetail={triplanarDetail}
                   shaderFogEnabled={terrainShaderFogEnabled}
                   shaderFogStrength={terrainShaderFogStrength}
@@ -326,7 +307,6 @@ export const ChunkMesh: React.FC<{
               ) : (
                 <TriplanarMaterial
                   sunDirection={sunDirection}
-                  opacityRef={opacityRef}
                   triplanarDetail={triplanarDetail}
                   shaderFogEnabled={terrainShaderFogEnabled}
                   shaderFogStrength={terrainShaderFogStrength}
@@ -348,7 +328,6 @@ export const ChunkMesh: React.FC<{
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
           <WaterMaterial
             sunDirection={sunDirection}
-            fadeRef={opacityRef}
             shoreMask={waterShoreMask}
             shoreEdge={0.07}
             alphaBase={0.58}
@@ -359,15 +338,15 @@ export const ChunkMesh: React.FC<{
       )}
 
       {chunk.vegetationData && (
-        <VegetationLayer data={chunk.vegetationData} opacityRef={opacityRef} />
+        <VegetationLayer data={chunk.vegetationData} />
       )}
 
       {chunk.treePositions && chunk.treePositions.length > 0 && (
-        <TreeLayer data={chunk.treePositions} opacityRef={opacityRef} />
+        <TreeLayer data={chunk.treePositions} />
       )}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} opacityRef={opacityRef} />
+        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

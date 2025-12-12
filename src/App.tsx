@@ -148,8 +148,9 @@ const DebugControls: React.FC<{
         sunIntensity: { value: 0.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
         ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setAmbientIntensityMul(v), label: 'Ambient Intensity' },
         moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: (v) => setMoonIntensityMul(v), label: 'Moon Intensity' },
-        fogNear: { value: 13, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
-        fogFar: { value: 120, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
+        // Keep fog relatively close so chunk streaming happens "inside" fog.
+        fogNear: { value: 10, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
+        fogFar: { value: 90, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
         exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: (v) => setExposureSurface(v), label: 'Exposure (Surface)' },
         exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: (v) => setExposureCaveMax(v), label: 'Exposure (Cave Max)' },
         exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: (v) => setExposureUnderwater(v), label: 'Exposure (Underwater)' },
@@ -1015,8 +1016,8 @@ const App: React.FC = () => {
   const [terrainWeightsView, setTerrainWeightsView] = useState('off');
   // Debug lighting controls (Leva in ?debug).
   // Defaults match the requested screenshot.
-  const [fogNear, setFogNear] = useState(13);
-  const [fogFar, setFogFar] = useState(120);
+  const [fogNear, setFogNear] = useState(10);
+  const [fogFar, setFogFar] = useState(90);
   const [sunIntensityMul, setSunIntensityMul] = useState(0.0);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
@@ -1147,7 +1148,8 @@ const App: React.FC = () => {
             // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
-          camera={{ fov: 75, near: 0.1, far: 400 }}
+          // Keep far plane modest; fog should hide distant chunk generation.
+          camera={{ fov: 75, near: 0.1, far: 220 }}
         >
           <DebugGL skipPost={skipPost} />
 

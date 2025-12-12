@@ -8,8 +8,6 @@ interface LuminaLayerProps {
   lightPositions?: Float32Array; // stride 3: x, y, z
   cx: number;
   cz: number;
-  opacity?: number;
-  opacityRef?: React.MutableRefObject<number>;
 }
 
 /**
@@ -17,7 +15,7 @@ interface LuminaLayerProps {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, opacity = 1.0, opacityRef }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   // const { camera } = useThree(); // Unused
@@ -75,20 +73,9 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     metalness: 0.1,
     toneMapped: false // Important for bloom
   }), []);
-  const lastTransparentRef = useRef<boolean | null>(null);
-
-  // Fade lumina visuals with the owning chunk so they don't pop at render distance.
-  useFrame(() => {
-    const resolvedOpacity = (opacityRef ? opacityRef.current : opacity);
-    const isTransparent = resolvedOpacity < 0.999;
-    mat.opacity = resolvedOpacity;
-    if (lastTransparentRef.current !== isTransparent) {
-      mat.transparent = isTransparent;
-      mat.depthWrite = !isTransparent;
-      mat.needsUpdate = true;
-      lastTransparentRef.current = isTransparent;
-    }
-  });
+  // NOTE:
+  // Chunk opacity fade was removed because the transparent render path can introduce
+  // noticeable hitches while streaming. Lumina remains fully opaque; fog hides pop-in.
 
   return (
     <group>
@@ -106,7 +93,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
 
       {/* Clustered Lights - Distance Culled */}
       {lights.map((pos, i) => (
-        <DistanceCulledLight key={i} position={pos} intensityMul={opacityRef ? opacityRef.current : opacity} />
+        <DistanceCulledLight key={i} position={pos} intensityMul={1.0} />
       ))}
     </group>
   );

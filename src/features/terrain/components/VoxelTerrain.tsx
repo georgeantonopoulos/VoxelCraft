@@ -15,6 +15,7 @@ import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { TerrainWorkers } from '@features/terrain/workers/TerrainWorkers';
 
 
 // Sounds
@@ -453,7 +454,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
   const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
   const chunksRef = useRef<Record<string, ChunkState>>({});
-  const workerRef = useRef<Worker | null>(null);
+  const terrainWorkersRef = useRef<TerrainWorkers | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
   const generateQueue = useRef<Array<{ cx: number; cz: number; key: string }>>([]);
 
@@ -490,16 +491,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       });
     });
 
-    const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
-    workerRef.current = worker;
-
-    // Send Configuration immediately
-    worker.postMessage({ type: 'CONFIGURE', payload: { worldType } });
-
-    worker.onmessage = (e) => {
-      const { type, payload } = e.data;
-
-      if (type === 'GENERATED') {
+    const handleGeneratedBase = (payload: any, terrainWorkers: TerrainWorkers) => {
         const { key, metadata, material, floraPositions, treePositions, rootHollowPositions } = payload;
         pendingChunks.current.delete(key);
 
@@ -536,13 +528,36 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
-      } else if (type === 'REMESHED') {
-        const { key, meshPositions, meshIndices, meshMatWeightsA, meshMatWeightsB, meshMatWeightsC, meshMatWeightsD, meshNormals, meshWetness, meshMossiness, meshCavity, meshWaterPositions, meshWaterIndices, meshWaterNormals } = payload;
+
+        // Pipeline mode meshes separately; legacy mode already included mesh buffers.
+        if (terrainWorkers.mode === 'pipeline' && metadata) {
+          terrainWorkers.meshGenerate(key, payload.density, payload.material, metadata.wetness, metadata.mossiness);
+        }
+    };
+
+    const handleMeshDone = (payload: any) => {
+        const {
+          key,
+          meshPositions,
+          meshIndices,
+          meshMatWeightsA,
+          meshMatWeightsB,
+          meshMatWeightsC,
+          meshMatWeightsD,
+          meshNormals,
+          meshWetness,
+          meshMossiness,
+          meshCavity,
+          meshWaterPositions,
+          meshWaterIndices,
+          meshWaterNormals
+        } = payload;
+
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
             ...current,
-            terrainVersion: current.terrainVersion + 1, // Assume geometry change for remesh
+            terrainVersion: current.terrainVersion + 1, // Assume geometry change for mesh update
             visualVersion: current.visualVersion + 1,
             meshPositions,
             meshIndices,
@@ -561,10 +576,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           chunksRef.current[key] = updatedChunk;
           setChunks(prev => ({ ...prev, [key]: updatedChunk }));
         }
-      }
     };
 
-    return () => worker.terminate();
+    const terrainWorkers = new TerrainWorkers({
+      onGeneratedBase: (payload) => handleGeneratedBase(payload, terrainWorkers),
+      onMeshDone: (payload) => handleMeshDone(payload),
+      // Legacy worker events (combined generate + mesh).
+      onLegacyGenerated: (payload) => {
+        // Legacy payload contains voxel fields + mesh buffers.
+        handleGeneratedBase(payload, terrainWorkers);
+        handleMeshDone(payload);
+      },
+      onLegacyRemeshed: (payload) => {
+        // Legacy remesh maps to mesh-done path.
+        handleMeshDone(payload);
+      }
+    });
+
+    terrainWorkers.start(worldType);
+    terrainWorkersRef.current = terrainWorkers;
+
+    return () => terrainWorkers.terminate();
   }, []);
 
   useEffect(() => {
@@ -586,7 +618,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   }, [chunks, onInitialLoad]);
 
   useFrame(() => {
-    if (!camera || !workerRef.current) return;
+    if (!camera || !terrainWorkersRef.current) return;
+    const terrainWorkers = terrainWorkersRef.current;
 
     const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
@@ -635,7 +668,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       }
       const job = bestIndex >= 0 ? generateQueue.current.splice(bestIndex, 1)[0] : undefined;
       if (!job) break;
-      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
+      terrainWorkers.generate(job.cx, job.cz);
     }
 
     const newChunks = { ...chunksRef.current };
@@ -666,19 +699,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         const metadata = metadataDB.getChunk(key);
 
         if (chunk && metadata) {
-          workerRef.current.postMessage({
-            type: 'REMESH',
-            payload: {
-              key,
-              cx: chunk.cx,
-              cz: chunk.cz,
-              density: chunk.density,
-              material: chunk.material,
-              wetness: metadata['wetness'],
-              mossiness: metadata['mossiness'],
-              version: chunk.terrainVersion // Pass current version (will be echoed but we ignore it)
-            }
-          });
+          terrainWorkers.remesh(key, chunk.cx, chunk.cz, chunk.density, chunk.material, metadata['wetness'], metadata['mossiness'], chunk.terrainVersion);
         }
       }
     }
@@ -1109,7 +1130,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         }
       }
 
-      if (anyModified && workerRef.current) {
+      if (anyModified && terrainWorkersRef.current) {
         // Play Dig Sound
         if (action === 'DIG') {
           const sounds = [dig1Url, dig2Url, dig3Url];
@@ -1126,19 +1147,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           if (chunk && metadata) {
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
             remeshQueue.current.add(key);
-            workerRef.current!.postMessage({
-              type: 'REMESH',
-              payload: {
-                key,
-                cx: chunk.cx,
-                cz: chunk.cz,
-                density: chunk.density,
-                material: chunk.material,
-                wetness: metadata.wetness,
-                mossiness: metadata.mossiness,
-                version: chunk.terrainVersion // Pass version (ignored on return)
-              }
-            });
+            terrainWorkersRef.current!.remesh(key, chunk.cx, chunk.cz, chunk.density, chunk.material, metadata.wetness, metadata.mossiness, chunk.terrainVersion);
           }
         });
 
@@ -1224,8 +1233,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
                   chunk.rootHollowPositions![i * 6 + 4],
                   chunk.rootHollowPositions![i * 6 + 5]
                 ]}
-                    spawnedAt={chunk.spawnedAt}
-                    fadeEnabled={terrainFadeEnabled}
                   />
               )
             ))
