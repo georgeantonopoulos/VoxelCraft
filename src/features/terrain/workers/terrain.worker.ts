@@ -249,9 +249,11 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
-                waterPositions: mesh.waterPositions,
-                waterIndices: mesh.waterIndices,
-                waterNormals: mesh.waterNormals
+                // Water is a distinct surface mesh (separate from terrain Surface-Nets geometry).
+                // Chunk state expects `meshWater*` keys so ChunkMesh can render it.
+                meshWaterPositions: mesh.waterPositions,
+                meshWaterIndices: mesh.waterIndices,
+                meshWaterNormals: mesh.waterNormals
             };
 
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
@@ -298,9 +300,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshNormals: mesh.normals,
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
-                waterPositions: mesh.waterPositions,
-                waterIndices: mesh.waterIndices,
-                waterNormals: mesh.waterNormals
+                // Keep `meshWater*` naming consistent with ChunkState.
+                meshWaterPositions: mesh.waterPositions,
+                meshWaterIndices: mesh.waterIndices,
+                meshWaterNormals: mesh.waterNormals
             };
 
             ctx.postMessage({ type: 'REMESHED', payload: response }, [

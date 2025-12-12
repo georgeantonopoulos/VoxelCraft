@@ -318,18 +318,67 @@ export class TerrainService {
                             }
                         }
                     } else {
-                        // --- Water / Air ---
-                        if (wy <= WATER_LEVEL && !isSkyIsland) {
-                            if (biome === 'SNOW' || biome === 'ICE_SPIKES') {
-                                material[idx] = MaterialType.ICE; // Frozen ocean
-                            } else {
-                                material[idx] = MaterialType.WATER;
-                                wetness[idx] = 255;
-                            }
-                        } else {
-                            material[idx] = MaterialType.AIR;
-                        }
+                        // --- Air (Water is filled in a post-pass) ---
+                        // IMPORTANT:
+                        // We avoid "fill every air voxel below sea level" here because it floods sealed caves.
+                        // Instead, we place sea-level water in a post-pass that only fills columns that are
+                        // vertically open to the sky at sea level.
+                        material[idx] = MaterialType.AIR;
 
+                    }
+                }
+            }
+        }
+
+        // --- 3.25 Sea-level water fill (Post-Pass) ---
+        // Fill only columns that are open to the sky at sea level to avoid flooding sealed caves.
+        // This is an intentionally simple rule for V1 (no dynamic fluid sim yet).
+        //
+        // Grid worldY = (yIndex - PAD) + MESH_Y_OFFSET  =>  yIndex = worldY - MESH_Y_OFFSET + PAD.
+        const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
+        const seaGridY = Math.max(PAD, Math.min(sizeY - PAD - 2, seaGridYRaw));
+
+        for (let z = PAD; z < PAD + CHUNK_SIZE_XZ; z++) {
+            for (let x = PAD; x < PAD + CHUNK_SIZE_XZ; x++) {
+                const wx = (x - PAD) + worldOffsetX;
+                const wz = (z - PAD) + worldOffsetZ;
+
+                // No oceans for sky islands.
+                const columnBiome = BiomeManager.getBiomeAt(wx, wz);
+                if (columnBiome === 'SKY_ISLANDS') continue;
+
+                const waterMat = (columnBiome === 'SNOW' || columnBiome === 'ICE_SPIKES')
+                    ? MaterialType.ICE
+                    : MaterialType.WATER;
+
+                // 1) Must be vertically open to the sky above sea level (prevents flooding under overhangs).
+                let skyVisible = true;
+                for (let y = sizeY - PAD - 1; y > seaGridY; y--) {
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+                    if (density[idx] > ISO_LEVEL) {
+                        skyVisible = false;
+                        break;
+                    }
+                }
+                if (!skyVisible) continue;
+
+                // 2) Find the top-most solid at/below sea level.
+                let topSolidY = -1;
+                for (let y = seaGridY; y >= PAD; y--) {
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+                    if (density[idx] > ISO_LEVEL) {
+                        topSolidY = y;
+                        break;
+                    }
+                }
+                if (topSolidY < 0) continue;
+
+                // 3) Fill air from just above the surface up to sea level.
+                for (let y = topSolidY + 1; y <= seaGridY; y++) {
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+                    if (density[idx] <= ISO_LEVEL && material[idx] === MaterialType.AIR) {
+                        material[idx] = waterMat;
+                        wetness[idx] = 255;
                     }
                 }
             }
@@ -702,6 +751,72 @@ export class TerrainService {
                 }
             }
         }
+        return modified;
+    }
+
+    /**
+     * Paint a liquid material into empty space within a spherical brush.
+     * This does NOT alter density, so it will not create new terrain surface geometry.
+     *
+     * Intended for V1 water placement:
+     * - Player can place water into air without needing a full fluid simulation.
+     * - Water rendering is handled by the water surface mesher (separate mesh).
+     *
+     * @param density - Chunk density field (padded)
+     * @param materialData - Chunk material field (padded)
+     * @param wetness - Optional wetness metadata layer (padded). If provided, painted water sets wetness to 255.
+     * @param localPoint - Chunk-local point (x,z relative to chunk origin, y in world-space)
+     * @param radius - Brush radius
+     * @param liquidMaterial - Material to paint (WATER or ICE)
+     */
+    static paintLiquid(
+        density: Float32Array,
+        materialData: Uint8Array,
+        wetness: Uint8Array | undefined,
+        localPoint: { x: number, y: number, z: number },
+        radius: number,
+        liquidMaterial: MaterialType = MaterialType.WATER
+    ): boolean {
+        const sizeX = TOTAL_SIZE_XZ;
+        const sizeY = TOTAL_SIZE_Y;
+        const sizeZ = TOTAL_SIZE_XZ;
+
+        const hx = localPoint.x + PAD;
+        const hy = localPoint.y - MESH_Y_OFFSET + PAD;
+        const hz = localPoint.z + PAD;
+
+        const rSq = radius * radius;
+        const iRad = Math.ceil(radius + 0.5);
+        const minX = Math.max(0, Math.floor(hx - iRad));
+        const maxX = Math.min(sizeX - 1, Math.ceil(hx + iRad));
+        const minY = Math.max(0, Math.floor(hy - iRad));
+        const maxY = Math.min(sizeY - 1, Math.ceil(hy + iRad));
+        const minZ = Math.max(0, Math.floor(hz - iRad));
+        const maxZ = Math.min(sizeZ - 1, Math.ceil(hz + iRad));
+
+        let modified = false;
+
+        for (let z = minZ; z <= maxZ; z++) {
+            for (let y = minY; y <= maxY; y++) {
+                for (let x = minX; x <= maxX; x++) {
+                    const dx = x - hx;
+                    const dy = y - hy;
+                    const dz = z - hz;
+                    const distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq >= rSq) continue;
+
+                    const idx = x + y * sizeX + z * sizeX * sizeY;
+
+                    // Only paint into air-space (no density edits).
+                    if (density[idx] <= ISO_LEVEL && materialData[idx] === MaterialType.AIR) {
+                        materialData[idx] = liquidMaterial;
+                        if (wetness) wetness[idx] = 255;
+                        modified = true;
+                    }
+                }
+            }
+        }
+
         return modified;
     }
 }

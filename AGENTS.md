@@ -322,3 +322,11 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Change**: `TreeGeometryFactory` now supports cached per-variant templates; jungle trees select one of 4 stable variants based on position seed. Variants adjust trunk height, recursion depth, canopy spread, and trunk-straightness so the jungle mixes emergent giants with shorter canopy fillers.
   - **Canopy**: Added extra leaf clumps along upper branches (not only tips) to create a denser, continuous leaf ceiling.
   - **Verification**: Ran `npm run build` (success) and `npm run dev` (server ready on `127.0.0.1:3000`, stopped after startup). Please visually check in a jungle: leaf volume should connect between trees; height/shape should vary noticeably.
+
+- 2025-12-12: Implemented V1 water end-to-end (render + gameplay probes) without enabling full fluid sim.
+  - **Plumbing Fix**: Worker payload now uses `meshWaterPositions/meshWaterIndices/meshWaterNormals` so `ChunkMesh` can render water via `WaterMaterial`.
+  - **Geometry**: `mesher.ts` now generates a greedy-meshed sea-level water surface at `WATER_LEVEL` by reading liquid voxels (WATER/ICE) under the sea plane.
+  - **Generation**: `terrainService.ts` sea-level fill is now a post-pass that only fills columns vertically open to the sky at sea level, preventing sealed caves from being pre-flooded.
+  - **Gameplay**: Added `TerrainRuntime` runtime voxel query service (wired into `VoxelTerrain` chunk load/unload). `Player` now supports swim/drag/buoyancy in water, and `AtmosphereController` applies underwater fog/palette based on camera voxel water queries.
+  - **Interaction**: BUILD with WATER now paints liquid into air-space (`paintLiquid`) instead of trying to “build” solid density.
+  - **Verification**: Ran `npm run build` (success); `npm run dev` starts successfully (auto-selected `http://localhost:3001/` because `:3000` was in use; stopped after ~20s by CLI timeout). Visual inspection still required in-game: wait 10s then take 4 screenshots (shoreline seam across chunks, ocean surface across multiple chunks, underwater fog/palette, and player-placed water near an edit) and confirm: no chunk-edge cracks on the water surface and no unexpected cave flooding.

@@ -18,6 +18,21 @@ interface EnvironmentState {
   isUnderground: boolean;
   undergroundChangedAt: number;
   setUndergroundState: (isUnderground: boolean, changedAt: number) => void;
+
+  /**
+   * Underwater blend factor from 0 (not underwater) to 1 (fully underwater).
+   * AtmosphereController updates it based on camera position + voxel water queries,
+   * and gameplay systems can optionally read it for effects.
+   */
+  underwaterBlend: number;
+  setUnderwaterBlend: (blend: number) => void;
+  /**
+   * Discrete underwater state with a timestamp (seconds since start).
+   * Used for timing effects or audio transitions.
+   */
+  isUnderwater: boolean;
+  underwaterChangedAt: number;
+  setUnderwaterState: (isUnderwater: boolean, changedAt: number) => void;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>((set) => ({
@@ -34,6 +49,22 @@ export const useEnvironmentStore = create<EnvironmentState>((set) => ({
       return {
         isUnderground,
         undergroundChangedAt: changedAt,
+      };
+    }),
+
+  underwaterBlend: 0,
+  setUnderwaterBlend: (blend) =>
+    set({
+      underwaterBlend: Math.min(1, Math.max(0, blend)),
+    }),
+  isUnderwater: false,
+  underwaterChangedAt: 0,
+  setUnderwaterState: (isUnderwater, changedAt) =>
+    set((state) => {
+      if (state.isUnderwater === isUnderwater) return state;
+      return {
+        isUnderwater,
+        underwaterChangedAt: changedAt,
       };
     }),
 }));

@@ -22,6 +22,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 	import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 	import { WorldType } from '@features/terrain/logic/BiomeManager';
 	import { useEnvironmentStore } from '@state/EnvironmentStore';
+	import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 
 // Keyboard Map
 const keyboardMap = [
@@ -740,11 +741,23 @@ const AtmosphereController: React.FC = () => {
 	  const lastSentBlendRef = useRef(0);
 	  const setUndergroundBlend = useEnvironmentStore((s) => s.setUndergroundBlend);
 	  const setUndergroundState = useEnvironmentStore((s) => s.setUndergroundState);
+
+	  // Smooth underwater detection to avoid flicker at the waterline.
+	  // Uses runtime voxel water queries at the camera position.
+	  const isUnderwaterRef = useRef(false);
+	  const underwaterBlendRef = useRef(0);
+	  const lastSentUnderwaterBlendRef = useRef(0);
+	  const setUnderwaterBlend = useEnvironmentStore((s) => s.setUnderwaterBlend);
+	  const setUnderwaterState = useEnvironmentStore((s) => s.setUnderwaterState);
 	
 	  // Cave palette: cool, dim, and slightly green-blue to complement lumina/glowstone
 	  const caveTop = useMemo(() => new THREE.Color('#020206'), []);
 	  const caveBottom = useMemo(() => new THREE.Color('#0a0f14'), []);
 	  const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
+	
+	  // Underwater palette: cooler and denser (applied after sky/cave palette).
+	  const waterTop = useMemo(() => new THREE.Color('#061526'), []);
+	  const waterBottom = useMemo(() => new THREE.Color('#063047'), []);
 
 	  useFrame(({ clock }) => {
 	    const t = clock.getElapsedTime();
@@ -786,52 +799,87 @@ const AtmosphereController: React.FC = () => {
 	      lastSentBlendRef.current = blend;
 	      setUndergroundBlend(blend);
 	    }
+
+	    // --- Underwater detection ---
+	    const nextIsUnderwater = terrainRuntime.isLiquidAtWorld(
+	      camera.position.x,
+	      camera.position.y,
+	      camera.position.z
+	    );
+	    if (nextIsUnderwater !== isUnderwaterRef.current) {
+	      isUnderwaterRef.current = nextIsUnderwater;
+	      setUnderwaterState(nextIsUnderwater, t);
+	    }
+
+	    const targetUnderwaterBlend = nextIsUnderwater ? 1.0 : 0.0;
+	    underwaterBlendRef.current = THREE.MathUtils.lerp(
+	      underwaterBlendRef.current,
+	      targetUnderwaterBlend,
+	      0.08
+	    );
+
+	    const uwBlend = underwaterBlendRef.current;
+	    if (Math.abs(uwBlend - lastSentUnderwaterBlendRef.current) > 0.01) {
+	      lastSentUnderwaterBlendRef.current = uwBlend;
+	      setUnderwaterBlend(uwBlend);
+	    }
 	
 	    // Mix sky gradient toward cave palette as we go underground.
 	    const mixedTop = top.clone().lerp(caveTop, blend);
 	    const mixedBottom = bottom.clone().lerp(caveBottom, blend);
+	
+	    // If underwater, push the whole palette toward underwater tones.
+	    const finalTop = mixedTop.clone().lerp(waterTop, uwBlend);
+	    const finalBottom = mixedBottom.clone().lerp(waterBottom, uwBlend);
 
 	    // Update gradient ref for SkyDome
-	    gradientRef.current.top.copy(mixedTop);
-	    gradientRef.current.bottom.copy(mixedBottom);
+	    gradientRef.current.top.copy(finalTop);
+	    gradientRef.current.bottom.copy(finalBottom);
 
 	    // Update fog color to match horizon (bottom) color for seamless blending
 	    const fog = scene.fog as THREE.Fog | undefined;
 	    if (fog) {
-	      fog.color.copy(mixedBottom);
+	      fog.color.copy(finalBottom);
 	
 	      // Underground: bring fog closer and reduce far distance for moody caves.
 	      // Keep caves moody but avoid a hard fog wall that cuts torch range.
 	      // Start fog a bit later underground and push far out so the spotlight can read distance.
-	      fog.near = THREE.MathUtils.lerp(15, 8.0, blend);
-	      fog.far = THREE.MathUtils.lerp(150, 260, blend);
+	      const caveNear = THREE.MathUtils.lerp(15, 8.0, blend);
+	      const caveFar = THREE.MathUtils.lerp(150, 260, blend);
+	
+	      // Underwater: much denser fog to sell immersion.
+	      fog.near = THREE.MathUtils.lerp(caveNear, 2.0, uwBlend);
+	      fog.far = THREE.MathUtils.lerp(caveFar, 60.0, uwBlend);
 	    }
 	
 	    // Background color follows the same mix (still acts as fallback)
 	    if (scene.background && scene.background instanceof THREE.Color) {
-	      scene.background.copy(mixedBottom);
+	      scene.background.copy(finalBottom);
 	    }
 
 	    // Update hemisphere light colors to match atmosphere
 	    if (hemisphereLightRef.current) {
 	      const normalizedHeight = sy / radius;
-	      hemisphereLightRef.current.color.copy(mixedTop);
+	      hemisphereLightRef.current.color.copy(finalTop);
 
 	      if (normalizedHeight < -0.1) {
 	        // Night: darker ground
 	        hemisphereLightRef.current.groundColor
 	          .set(0x1a1a2a)
-	          .lerp(caveGround, blend);
+	          .lerp(caveGround, blend)
+	          .lerp(waterBottom, uwBlend);
 	      } else if (normalizedHeight < 0.2) {
 	        // Sunrise/sunset: warmer ground
 	        hemisphereLightRef.current.groundColor
 	          .set(0x3a2a2a)
-	          .lerp(caveGround, blend);
+	          .lerp(caveGround, blend)
+	          .lerp(waterBottom, uwBlend);
 	      } else {
 	        // Day: darker ground for contrast
 	        hemisphereLightRef.current.groundColor
 	          .set(0x2a2a4a)
-	          .lerp(caveGround, blend);
+	          .lerp(caveGround, blend)
+	          .lerp(waterBottom, uwBlend);
 	      }
 	    }
 	  });

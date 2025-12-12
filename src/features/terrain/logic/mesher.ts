@@ -1,4 +1,4 @@
-import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
+import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
 
 const SIZE_X = TOTAL_SIZE_XZ;
@@ -58,6 +58,8 @@ const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
   if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return 0;
   return arr[bufIdx(x, y, z)];
 };
+
+const isLiquidMaterial = (mat: number) => mat === MaterialType.WATER || mat === MaterialType.ICE;
 
 export function generateMesh(
   density: Float32Array,
@@ -361,6 +363,107 @@ export function generateMesh(
     }
   }
 
+  // --- 3. Water Surface Mesh (Sea-level surface, greedy meshed) ---
+  //
+  // Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
+  // We emit only the top surface at `WATER_LEVEL` for columns that contain liquid directly under
+  // that plane (and are not already liquid above), and we greedy-merge tiles to keep geometry light.
+  //
+  // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
+  // material grid at runtime rather than relying on physics for water.
+  const waterVerts: number[] = [];
+  const waterInds: number[] = [];
+  const waterNorms: number[] = [];
+
+  // Convert world-space sea level to the chunk's padded grid Y index.
+  // Grid worldY = (yIndex - PAD) + MESH_Y_OFFSET  =>  yIndex = worldY - MESH_Y_OFFSET + PAD.
+  const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
+  const seaGridY = Math.max(0, Math.min(SIZE_Y - 2, seaGridYRaw));
+
+  const isLiquidCell = (x: number, y: number, z: number) => {
+    const mat = getMat(material, x, y, z);
+    if (!isLiquidMaterial(mat)) return false;
+    return getVal(density, x, y, z) <= ISO_LEVEL;
+  };
+
+  // Build a 2D mask of water-present columns at the sea-level plane.
+  const waterW = CHUNK_SIZE_XZ;
+  const waterH = CHUNK_SIZE_XZ;
+  const waterMask = new Uint8Array(waterW * waterH);
+
+  for (let lz = 0; lz < waterH; lz++) {
+    const gz = PAD + lz;
+    for (let lx = 0; lx < waterW; lx++) {
+      const gx = PAD + lx;
+      const hasLiquid = isLiquidCell(gx, seaGridY, gz);
+      const hasLiquidAbove = isLiquidCell(gx, seaGridY + 1, gz);
+      waterMask[lx + lz * waterW] = hasLiquid && !hasLiquidAbove ? 1 : 0;
+    }
+  }
+
+  // Greedy merge the 2D mask into rectangles.
+  // This is the standard "greedy meshing" approach on a binary grid.
+  for (let z = 0; z < waterH; z++) {
+    for (let x = 0; x < waterW;) {
+      const idx2D = x + z * waterW;
+      if (waterMask[idx2D] === 0) {
+        x++;
+        continue;
+      }
+
+      // Measure width
+      let width = 1;
+      while (x + width < waterW && waterMask[idx2D + width] === 1) width++;
+
+      // Measure height
+      let height = 1;
+      outer: while (z + height < waterH) {
+        const row = idx2D + height * waterW;
+        for (let k = 0; k < width; k++) {
+          if (waterMask[row + k] === 0) break outer;
+        }
+        height++;
+      }
+
+      // Clear merged area
+      for (let dz = 0; dz < height; dz++) {
+        const row = idx2D + dz * waterW;
+        waterMask.fill(0, row, row + width);
+      }
+
+      // Emit a single quad for this rectangle at sea level.
+      const x0 = x;
+      const x1 = x + width;
+      const z0 = z;
+      const z1 = z + height;
+      const y = WATER_LEVEL;
+
+      const base = waterVerts.length / 3;
+      waterVerts.push(
+        x0, y, z0,
+        x1, y, z0,
+        x0, y, z1,
+        x1, y, z1
+      );
+
+      // Up normals
+      waterNorms.push(
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0,
+        0, 1, 0
+      );
+
+      // Winding for +Y normal (top surface)
+      waterInds.push(
+        base + 0, base + 2, base + 1,
+        base + 2, base + 3, base + 1
+      );
+
+      x += width;
+    }
+  }
+
   return {
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
@@ -371,9 +474,8 @@ export function generateMesh(
     matWeightsD: new Float32Array(tWd),
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
-    // Return empty arrays for water to satisfy types without generating bad mesh
-    waterPositions: new Float32Array(0),
-    waterIndices: new Uint32Array(0),
-    waterNormals: new Float32Array(0),
+    waterPositions: new Float32Array(waterVerts),
+    waterIndices: new Uint32Array(waterInds),
+    waterNormals: new Float32Array(waterNorms),
   } as MeshData;
 }

@@ -14,6 +14,7 @@ import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
+import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 
 
 // Sounds
@@ -414,6 +415,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           terrainVersion: 0,
           visualVersion: 0
         };
+        // Register chunk arrays for runtime queries (water, interaction probes, etc).
+        terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
@@ -495,6 +498,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       if (!neededKeys.has(key)) {
         simulationManager.removeChunk(key);
         useWorldStore.getState().clearFloraHotspots(key);
+        terrainRuntime.unregisterChunk(key);
         delete newChunks[key];
         changed = true;
       }
@@ -899,16 +903,28 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             const localY = hitPoint.y;
             const localZ = hitPoint.z - (cz * CHUNK_SIZE_XZ);
 
-            const modified = TerrainService.modifyChunk(
-              chunk.density,
-              chunk.material,
-              { x: localX, y: localY, z: localZ },
-              radius,
-              delta,
-              buildMat,
-              cx, // Pass World Coords
-              cz
-            );
+            const metadata = metadataDB.getChunk(key);
+            const isPlacingWater = action === 'BUILD' && buildMat === MaterialType.WATER;
+
+            const modified = isPlacingWater
+              ? TerrainService.paintLiquid(
+                chunk.density,
+                chunk.material,
+                metadata?.wetness,
+                { x: localX, y: localY, z: localZ },
+                radius,
+                MaterialType.WATER
+              )
+              : TerrainService.modifyChunk(
+                chunk.density,
+                chunk.material,
+                { x: localX, y: localY, z: localZ },
+                radius,
+                delta,
+                buildMat,
+                cx, // Pass World Coords
+                cz
+              );
 
             if (modified) {
               anyModified = true;
