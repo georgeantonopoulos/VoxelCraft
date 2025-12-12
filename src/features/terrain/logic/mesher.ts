@@ -82,9 +82,14 @@ export function generateMesh(
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
   const snapEpsilon = 0.02;
+  // Prevent coplanar duplicate surfaces between adjacent chunks:
+  // - Min boundary snaps to exact edge (owned by this chunk)
+  // - Max boundary snaps slightly *inside* the chunk so the neighbor owns the exact plane
+  // This avoids view-dependent Z-fighting shimmer along chunk seams.
+  const maxBoundaryInset = 0.001;
   const snapBoundary = (v: number, limit: number) => {
     if (Math.abs(v - PAD) < snapEpsilon) return PAD;
-    if (Math.abs(v - (PAD + limit)) < snapEpsilon) return PAD + limit;
+    if (Math.abs(v - (PAD + limit)) < snapEpsilon) return PAD + limit - maxBoundaryInset;
     return v;
   };
 

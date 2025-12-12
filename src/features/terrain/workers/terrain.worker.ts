@@ -277,10 +277,12 @@ ctx.onmessage = async (e: MessageEvent) => {
                 mesh.waterNormals.buffer
             ]);
         } else if (type === 'REMESH') {
-            const { density, material, key, cx, cz, version } = payload;
+            const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
 
             // console.log('[terrain.worker] REMESH start', key, 'v', version);
-            const mesh = generateMesh(density, material) as MeshData;
+            // Keep overlay continuity on remesh by reusing simulation metadata.
+            // Without this, wet/moss weights silently reset and look like texture blending glitches.
+            const mesh = generateMesh(density, material, wetness, mossiness) as MeshData;
             // console.log('[terrain.worker] REMESH done', key);
 
             const response = {
