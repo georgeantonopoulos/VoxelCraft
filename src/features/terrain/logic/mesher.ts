@@ -83,20 +83,19 @@ export function generateMesh(
 
   // Snap epsilon is tuned via Leva in `App.tsx` through `setSnapEpsilon(...)`.
   // This is used to close seams by snapping vertices near chunk borders.
+  //
+  // IMPORTANT: Do NOT clamp vertices to the chunk interior. Surface-Nets-style vertices can land
+  // slightly outside the chunk due to averaging edge intersections, and hard clamping can literally
+  // "cut" the surface at the border, producing visible holes into caverns. Instead, we only snap
+  // very-near-boundary vertices onto the exact plane and rely on seam ownership (index emission)
+  // + optional polygonOffset (debug) to mitigate any Z-fighting from overlaps.
   const snapEpsilon = SNAP_EPSILON;
-  // Prevent overlapping chunk geometry:
-  // - Meshing uses PAD voxels of neighbor data, but geometry must NOT extend into neighbor space.
-  // - Clamp vertices to [PAD, PAD+limit], and bias the MAX edge slightly inward so adjacent chunks
-  //   don't produce coplanar triangles on the shared border plane (Z-fighting).
-  const maxBoundaryInset = 0.001;
-  const clampToChunk = (v: number, limit: number) => {
+  const snapBoundary = (v: number, limit: number) => {
     const minV = PAD;
-    const maxV = PAD + limit - maxBoundaryInset;
-    const clamped = Math.min(Math.max(v, minV), maxV);
-    // Optional snap band (hysteresis) around the borders to encourage exact seam closure.
-    if (Math.abs(clamped - minV) < snapEpsilon) return minV;
-    if (Math.abs(clamped - maxV) < snapEpsilon) return maxV;
-    return clamped;
+    const maxV = PAD + limit;
+    if (Math.abs(v - minV) < snapEpsilon) return minV;
+    if (Math.abs(v - maxV) < snapEpsilon) return maxV;
+    return v;
   };
 
   // 1. Vertex Generation
@@ -173,9 +172,9 @@ export function generateMesh(
             avgY /= edgeCount;
             avgZ /= edgeCount;
 
-            const px = clampToChunk(avgX, CHUNK_SIZE_XZ) - PAD;
-            const py = clampToChunk(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
-            const pz = clampToChunk(avgZ, CHUNK_SIZE_XZ) - PAD;
+            const px = snapBoundary(avgX, CHUNK_SIZE_XZ) - PAD;
+            const py = snapBoundary(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
+            const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
 
             tVerts.push(px, py, pz);
             const centerX = Math.round(avgX);
@@ -321,7 +320,10 @@ export function generateMesh(
       for (let x = start; x <= endX; x++) {
         const val = getVal(density, x, y, z);
 
-        if (x < endX) {
+        // Emit quads on the MAX X border as well (uses PAD neighbor samples).
+        // The MIN border is intentionally omitted by starting at `PAD`, so the seam plane is owned
+        // by exactly one chunk (prevents both overlap and holes).
+        if (x <= endX) {
           const vX = getVal(density, x + 1, y, z);
           if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
             pushQuad(
@@ -343,7 +345,8 @@ export function generateMesh(
           }
         }
 
-        if (z < endX) {
+        // Same ownership rule for MAX Z border.
+        if (z <= endX) {
           const vZ = getVal(density, x, y, z + 1);
           if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
             // Swapped indices 1 and 2 for Z-face winding

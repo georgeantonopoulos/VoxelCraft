@@ -103,6 +103,11 @@ export class TerrainService {
         const worldOffsetX = cx * CHUNK_SIZE_XZ;
         const worldOffsetZ = cz * CHUNK_SIZE_XZ;
 
+        // NOTE: Avoid large generation-time hysteresis around ISO_LEVEL.
+        // A big band can move the surface differently per chunk and create real cracks at borders.
+        // If we need to avoid exact-ISO degenerates, use a tiny deterministic nudge instead.
+        const ISO_NUDGE = 0.0001;
+
         for (let z = 0; z < sizeZ; z++) {
             for (let x = 0; x < sizeX; x++) {
                 // Column Setup
@@ -217,10 +222,12 @@ export class TerrainService {
                     }
 
                     // --- GEN HYSTERESIS ---
-                    if (Math.abs(d - ISO_LEVEL) < SNAP_EPSILON) {
-                        d = (d < ISO_LEVEL)
-                            ? ISO_LEVEL - SNAP_EPSILON
-                            : ISO_LEVEL + SNAP_EPSILON;
+                    // Keep the SDF continuous across chunks. Use a tiny deterministic nudge so both
+                    // sides of a chunk border make the same decision for the same (wx,wy,wz).
+                    if (Math.abs(d - ISO_LEVEL) < ISO_NUDGE) {
+                        // Integer-ish hash (deterministic, cheap, stable across workers)
+                        const seed = ((wx * 73856093) ^ (wy * 19349663) ^ (wz * 83492791)) | 0;
+                        d = ISO_LEVEL + ((seed & 1) === 0 ? -ISO_NUDGE : ISO_NUDGE);
                     }
 
                     density[idx] = d;
