@@ -66,8 +66,198 @@ const InteractionLayer: React.FC<{
   return null;
 };
 
-const DebugControls = () => {
+const DebugControls: React.FC<{
+  setDebugShadowsEnabled: (v: boolean) => void;
+  setTriplanarDetail: (v: number) => void;
+  setPostProcessingEnabled: (v: boolean) => void;
+  setAoEnabled: (v: boolean) => void;
+  setAoIntensity: (v: number) => void;
+  setTerrainShaderFogEnabled: (v: boolean) => void;
+  setTerrainShaderFogStrength: (v: number) => void;
+  setTerrainThreeFogEnabled: (v: boolean) => void;
+  setTerrainFadeEnabled: (v: boolean) => void;
+  setTerrainWetnessEnabled: (v: boolean) => void;
+  setTerrainMossEnabled: (v: boolean) => void;
+  setTerrainRoughnessMin: (v: number) => void;
+  setBedrockPlaneEnabled: (v: boolean) => void;
+  setTerrainPolygonOffsetEnabled: (v: boolean) => void;
+  setTerrainPolygonOffsetFactor: (v: number) => void;
+  setTerrainPolygonOffsetUnits: (v: number) => void;
+  setLevaScale: (v: number) => void;
+  setLevaWidth: (v: number) => void;
+  setTerrainChunkTintEnabled: (v: boolean) => void;
+  setTerrainWireframeEnabled: (v: boolean) => void;
+  setTerrainWeightsView: (v: string) => void;
+}> = ({
+  setDebugShadowsEnabled,
+  setTriplanarDetail,
+  setPostProcessingEnabled,
+  setAoEnabled,
+  setAoIntensity,
+  setTerrainShaderFogEnabled,
+  setTerrainShaderFogStrength,
+  setTerrainThreeFogEnabled,
+  setTerrainFadeEnabled
+  ,
+  setTerrainWetnessEnabled,
+  setTerrainMossEnabled,
+  setTerrainRoughnessMin,
+  setBedrockPlaneEnabled,
+  setTerrainPolygonOffsetEnabled,
+  setTerrainPolygonOffsetFactor,
+  setTerrainPolygonOffsetUnits,
+  setLevaScale,
+  setLevaWidth,
+  setTerrainChunkTintEnabled,
+  setTerrainWireframeEnabled,
+  setTerrainWeightsView
+}) => {
   useControls({
+    levaWidth: {
+      value: 520,
+      min: 320,
+      max: 900,
+      step: 10,
+      onChange: (v) => setLevaWidth(v),
+      label: 'Leva Width'
+    },
+    levaScale: {
+      value: 1.15,
+      min: 0.8,
+      max: 1.8,
+      step: 0.05,
+      onChange: (v) => setLevaScale(v),
+      label: 'Leva Scale'
+    },
+    terrainChunkTint: {
+      value: false,
+      onChange: (v) => setTerrainChunkTintEnabled(!!v),
+      // If the line is overlap/Z-fighting, tinting makes it obvious (you'll see both colors).
+      label: 'Terrain Chunk Tint'
+    },
+    terrainWireframe: {
+      value: false,
+      onChange: (v) => setTerrainWireframeEnabled(!!v),
+      label: 'Terrain Wireframe'
+    },
+    terrainWeightsView: {
+      value: 'off',
+      options: {
+        Off: 'off',
+        Snow: 'snow',
+        Grass: 'grass',
+        'Snow - Grass': 'snowMinusGrass',
+        Dominant: 'dominant'
+      },
+      onChange: (v) => setTerrainWeightsView(String(v)),
+      // Shows per-vertex material weights (helps detect discontinuities at chunk seams).
+      label: 'Terrain Weights View'
+    },
+    shadowsEnabled: {
+      value: true,
+      onChange: (v) => setDebugShadowsEnabled(!!v),
+      label: 'Shadows Enabled'
+    },
+    terrainFadeEnabled: {
+      value: true,
+      onChange: (v) => setTerrainFadeEnabled(!!v),
+      // Chunk fade uses transparency + depthWrite toggling and can create seam-like hard edges.
+      label: 'Terrain Fade (Chunk)'
+    },
+    terrainWetnessEnabled: {
+      value: true,
+      onChange: (v) => setTerrainWetnessEnabled(!!v),
+      // Wetness modulates roughness/darkening and can cause specular shimmer when low.
+      label: 'Terrain Wetness'
+    },
+    terrainMossEnabled: {
+      value: true,
+      onChange: (v) => setTerrainMossEnabled(!!v),
+      // Moss overlay uses noise-thresholding; disable to isolate overlay artifacts.
+      label: 'Terrain Moss'
+    },
+    terrainRoughnessMin: {
+      value: 0.0,
+      min: 0.0,
+      max: 1.0,
+      step: 0.01,
+      // Raising this reduces specular aliasing/shimmer in low-light (e.g. caves).
+      label: 'Terrain Roughness Min',
+      onChange: (v) => setTerrainRoughnessMin(v)
+    },
+    bedrockPlaneEnabled: {
+      value: true,
+      onChange: (v) => setBedrockPlaneEnabled(!!v),
+      // BedrockPlane is a giant mesh; if terrain intersects it, it can create Z-fighting artifacts.
+      label: 'Bedrock Plane'
+    },
+    terrainPolygonOffsetEnabled: {
+      value: false,
+      onChange: (v) => setTerrainPolygonOffsetEnabled(!!v),
+      // If this makes the flicker disappear, you're looking at Z-fighting with another surface.
+      label: 'Terrain Polygon Offset'
+    },
+    terrainPolygonOffsetFactor: {
+      value: -1.0,
+      min: -10.0,
+      max: 10.0,
+      step: 0.1,
+      onChange: (v) => setTerrainPolygonOffsetFactor(v),
+      label: 'Poly Offset Factor'
+    },
+    terrainPolygonOffsetUnits: {
+      value: -1.0,
+      min: -10.0,
+      max: 10.0,
+      step: 0.1,
+      onChange: (v) => setTerrainPolygonOffsetUnits(v),
+      label: 'Poly Offset Units'
+    },
+    postProcessingEnabled: {
+      value: true,
+      onChange: (v) => setPostProcessingEnabled(!!v),
+      label: 'Post Processing'
+    },
+    aoEnabled: {
+      value: true,
+      onChange: (v) => setAoEnabled(!!v),
+      label: 'N8AO Enabled'
+    },
+    aoIntensity: {
+      value: 2.0,
+      min: 0.0,
+      max: 6.0,
+      step: 0.1,
+      onChange: (v) => setAoIntensity(v),
+      label: 'N8AO Intensity'
+    },
+    triplanarDetail: {
+      value: 1.0,
+      min: 0.0,
+      max: 1.0,
+      step: 0.01,
+      // 0 = minimal high-frequency detail, 1 = current/default detail.
+      onChange: (v) => setTriplanarDetail(v),
+      label: 'Triplanar Detail'
+    },
+    terrainShaderFogEnabled: {
+      value: true,
+      onChange: (v) => setTerrainShaderFogEnabled(!!v),
+      label: 'Terrain Shader Fog'
+    },
+    terrainShaderFogStrength: {
+      value: 0.9,
+      min: 0.0,
+      max: 1.5,
+      step: 0.05,
+      onChange: (v) => setTerrainShaderFogStrength(v),
+      label: 'Terrain Fog Strength'
+    },
+    terrainThreeFogEnabled: {
+      value: true,
+      onChange: (v) => setTerrainThreeFogEnabled(!!v),
+      label: 'Terrain Three Fog'
+    },
     snapEpsilon: {
       value: 0.02,
       min: 0.01,
@@ -771,6 +961,27 @@ const App: React.FC = () => {
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
+  const [debugShadowsEnabled, setDebugShadowsEnabled] = useState(true);
+  const [triplanarDetail, setTriplanarDetail] = useState(1.0);
+  const [postProcessingEnabled, setPostProcessingEnabled] = useState(true);
+  const [aoEnabled, setAoEnabled] = useState(true);
+  const [aoIntensity, setAoIntensity] = useState(2.0);
+  const [terrainShaderFogEnabled, setTerrainShaderFogEnabled] = useState(true);
+  const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.9);
+  const [terrainThreeFogEnabled, setTerrainThreeFogEnabled] = useState(true);
+  const [terrainFadeEnabled, setTerrainFadeEnabled] = useState(true);
+  const [terrainWetnessEnabled, setTerrainWetnessEnabled] = useState(true);
+  const [terrainMossEnabled, setTerrainMossEnabled] = useState(true);
+  const [terrainRoughnessMin, setTerrainRoughnessMin] = useState(0.0);
+  const [bedrockPlaneEnabled, setBedrockPlaneEnabled] = useState(true);
+  const [terrainPolygonOffsetEnabled, setTerrainPolygonOffsetEnabled] = useState(false);
+  const [terrainPolygonOffsetFactor, setTerrainPolygonOffsetFactor] = useState(-1.0);
+  const [terrainPolygonOffsetUnits, setTerrainPolygonOffsetUnits] = useState(-1.0);
+  const [levaScale, setLevaScale] = useState(1.15);
+  const [levaWidth, setLevaWidth] = useState(520);
+  const [terrainChunkTintEnabled, setTerrainChunkTintEnabled] = useState(false);
+  const [terrainWireframeEnabled, setTerrainWireframeEnabled] = useState(false);
+  const [terrainWeightsView, setTerrainWeightsView] = useState('off');
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -805,11 +1016,56 @@ const App: React.FC = () => {
     return <MapDebug />;
   }
 
+  // Leva UI scaling is applied via CSS transform on the Leva root.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--vc-leva-scale', String(levaScale));
+  }, [levaScale]);
+
   return (
     <div className="w-full h-full relative bg-sky-300">
+      {/* Leva sizing/scaling helpers for readability in debug mode */}
+      {debugMode && (
+        <style>{`
+          #leva__root {
+            transform: scale(var(--vc-leva-scale, 1));
+            transform-origin: top right;
+          }
+        `}</style>
+      )}
       {/* Leva controls - visible only in debug mode or if you prefer always on in dev */}
-      <Leva hidden={!debugMode} />
-      {debugMode && <DebugControls />}
+      <Leva
+        hidden={!debugMode}
+        theme={{
+          // Wider + slightly larger base text for readability.
+          sizes: { rootWidth: `${levaWidth}px` },
+          fontSizes: { root: '14px' }
+        }}
+      />
+      {debugMode && (
+        <DebugControls
+          setDebugShadowsEnabled={setDebugShadowsEnabled}
+          setTriplanarDetail={setTriplanarDetail}
+          setPostProcessingEnabled={setPostProcessingEnabled}
+          setAoEnabled={setAoEnabled}
+          setAoIntensity={setAoIntensity}
+          setTerrainShaderFogEnabled={setTerrainShaderFogEnabled}
+          setTerrainShaderFogStrength={setTerrainShaderFogStrength}
+          setTerrainThreeFogEnabled={setTerrainThreeFogEnabled}
+          setTerrainFadeEnabled={setTerrainFadeEnabled}
+          setTerrainWetnessEnabled={setTerrainWetnessEnabled}
+          setTerrainMossEnabled={setTerrainMossEnabled}
+          setTerrainRoughnessMin={setTerrainRoughnessMin}
+          setBedrockPlaneEnabled={setBedrockPlaneEnabled}
+          setTerrainPolygonOffsetEnabled={setTerrainPolygonOffsetEnabled}
+          setTerrainPolygonOffsetFactor={setTerrainPolygonOffsetFactor}
+          setTerrainPolygonOffsetUnits={setTerrainPolygonOffsetUnits}
+          setLevaScale={setLevaScale}
+          setLevaWidth={setLevaWidth}
+          setTerrainChunkTintEnabled={setTerrainChunkTintEnabled}
+          setTerrainWireframeEnabled={setTerrainWireframeEnabled}
+          setTerrainWeightsView={setTerrainWeightsView}
+        />
+      )}
 
       {!worldType ? (
         <WorldSelectionScreen onSelect={setWorldType} />
@@ -823,7 +1079,8 @@ const App: React.FC = () => {
       )}
       <KeyboardControls map={keyboardMap}>
         <Canvas
-          shadows
+          // Debug: allow toggling shadows to isolate shadow-map shimmer vs shader noise.
+          shadows={debugShadowsEnabled}
           dpr={[1, 2]}
           gl={{
             antialias: false, // Post-processing handles AA usually, keeps edges crisp
@@ -867,33 +1124,50 @@ const App: React.FC = () => {
                   action={action}
                   isInteracting={isInteracting}
                   sunDirection={sunDirection}
+                  triplanarDetail={triplanarDetail}
+                  terrainShaderFogEnabled={terrainShaderFogEnabled}
+                  terrainShaderFogStrength={terrainShaderFogStrength}
+                  terrainThreeFogEnabled={terrainThreeFogEnabled}
+                  terrainFadeEnabled={terrainFadeEnabled}
+                  terrainWetnessEnabled={terrainWetnessEnabled}
+                  terrainMossEnabled={terrainMossEnabled}
+                  terrainRoughnessMin={terrainRoughnessMin}
+                  terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
+                  terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}
+                  terrainPolygonOffsetUnits={terrainPolygonOffsetUnits}
+                  terrainChunkTintEnabled={terrainChunkTintEnabled}
+                  terrainWireframeEnabled={terrainWireframeEnabled}
+                  terrainWeightsView={terrainWeightsView}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}
                 />
               )}
               <FloraPlacer />
-              <BedrockPlane />
+              {bedrockPlaneEnabled && <BedrockPlane />}
             </Physics>
             {/* Add FirstPersonTools here, outside Physics but inside Canvas/Suspense if needed, or just inside Canvas */}
             <FirstPersonTools />
           </Suspense>
 
           {/* --- 3. POST-PROCESSING (Vibrant Polish) --- */}
-          {!skipPost ? (
+          {/* Debug: allow toggling postprocessing to isolate N8AO/bloom shimmer vs base shading. */}
+          {!skipPost && postProcessingEnabled ? (
             <EffectComposer>
               {/* N8AO: Adds depth to the voxels without darkening the whole screen too much.
                    distanceFalloff helps prevent artifacts at sky/infinity. 
                    halfRes fixes black frame issues on high-DPI/Mac devices.
                */}
-              <N8AO
-                halfRes
-                quality="performance"
-                intensity={2.0}
-                color="black"
-                aoRadius={2.0}
-                distanceFalloff={200}
-                screenSpaceRadius={false}
-              />
+              {aoEnabled && (
+                <N8AO
+                  halfRes
+                  quality="performance"
+                  intensity={aoIntensity}
+                  color="black"
+                  aoRadius={2.0}
+                  distanceFalloff={200}
+                  screenSpaceRadius={false}
+                />
+              )}
 
               {/* Bloom: Gentle glow for sky and water highlights */}
               <Bloom luminanceThreshold={0.8} mipmapBlur intensity={0.6} />
@@ -901,9 +1175,7 @@ const App: React.FC = () => {
               {/* ToneMapping: Handles High Dynamic Range without washing out colors */}
               <ToneMapping />
             </EffectComposer>
-          ) : (
-            <primitive object={null} />
-          )}
+          ) : null}
 
           {gameStarted && <PointerLockControls onUnlock={handleUnlock} />}
         </Canvas>

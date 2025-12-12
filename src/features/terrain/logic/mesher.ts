@@ -1,4 +1,4 @@
-import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET } from '@/constants';
+import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
 
 const SIZE_X = TOTAL_SIZE_XZ;
@@ -81,16 +81,22 @@ export function generateMesh(
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
-  const snapEpsilon = 0.02;
-  // Prevent coplanar duplicate surfaces between adjacent chunks:
-  // - Min boundary snaps to exact edge (owned by this chunk)
-  // - Max boundary snaps slightly *inside* the chunk so the neighbor owns the exact plane
-  // This avoids view-dependent Z-fighting shimmer along chunk seams.
+  // Snap epsilon is tuned via Leva in `App.tsx` through `setSnapEpsilon(...)`.
+  // This is used to close seams by snapping vertices near chunk borders.
+  const snapEpsilon = SNAP_EPSILON;
+  // Prevent overlapping chunk geometry:
+  // - Meshing uses PAD voxels of neighbor data, but geometry must NOT extend into neighbor space.
+  // - Clamp vertices to [PAD, PAD+limit], and bias the MAX edge slightly inward so adjacent chunks
+  //   don't produce coplanar triangles on the shared border plane (Z-fighting).
   const maxBoundaryInset = 0.001;
-  const snapBoundary = (v: number, limit: number) => {
-    if (Math.abs(v - PAD) < snapEpsilon) return PAD;
-    if (Math.abs(v - (PAD + limit)) < snapEpsilon) return PAD + limit - maxBoundaryInset;
-    return v;
+  const clampToChunk = (v: number, limit: number) => {
+    const minV = PAD;
+    const maxV = PAD + limit - maxBoundaryInset;
+    const clamped = Math.min(Math.max(v, minV), maxV);
+    // Optional snap band (hysteresis) around the borders to encourage exact seam closure.
+    if (Math.abs(clamped - minV) < snapEpsilon) return minV;
+    if (Math.abs(clamped - maxV) < snapEpsilon) return maxV;
+    return clamped;
   };
 
   // 1. Vertex Generation
@@ -167,9 +173,9 @@ export function generateMesh(
             avgY /= edgeCount;
             avgZ /= edgeCount;
 
-            const px = snapBoundary(avgX, CHUNK_SIZE_XZ) - PAD;
-            const py = snapBoundary(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
-            const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
+            const px = clampToChunk(avgX, CHUNK_SIZE_XZ) - PAD;
+            const py = clampToChunk(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
+            const pz = clampToChunk(avgZ, CHUNK_SIZE_XZ) - PAD;
 
             tVerts.push(px, py, pz);
             const centerX = Math.round(avgX);

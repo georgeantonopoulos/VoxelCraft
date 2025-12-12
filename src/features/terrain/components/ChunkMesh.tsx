@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
@@ -12,7 +12,41 @@ import { LuminaLayer } from './LuminaLayer';
 
 
 
-export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vector3 }> = React.memo(({ chunk, sunDirection }) => {
+export const ChunkMesh: React.FC<{
+  chunk: ChunkState;
+  sunDirection?: THREE.Vector3;
+  triplanarDetail?: number;
+  terrainShaderFogEnabled?: boolean;
+  terrainShaderFogStrength?: number;
+  terrainThreeFogEnabled?: boolean;
+  terrainFadeEnabled?: boolean;
+  terrainWetnessEnabled?: boolean;
+  terrainMossEnabled?: boolean;
+  terrainRoughnessMin?: number;
+  terrainPolygonOffsetEnabled?: boolean;
+  terrainPolygonOffsetFactor?: number;
+  terrainPolygonOffsetUnits?: number;
+  terrainChunkTintEnabled?: boolean;
+  terrainWireframeEnabled?: boolean;
+  terrainWeightsView?: string;
+}> = React.memo(({
+  chunk,
+  sunDirection,
+  triplanarDetail = 1.0,
+  terrainShaderFogEnabled = true,
+  terrainShaderFogStrength = 0.9,
+  terrainThreeFogEnabled = true,
+  terrainFadeEnabled = true,
+  terrainWetnessEnabled = true,
+  terrainMossEnabled = true,
+  terrainRoughnessMin = 0.0,
+  terrainPolygonOffsetEnabled = false,
+  terrainPolygonOffsetFactor = -1.0,
+  terrainPolygonOffsetUnits = -1.0,
+  terrainChunkTintEnabled = false,
+  terrainWireframeEnabled = false,
+  terrainWeightsView = 'off'
+}) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [opacity, setOpacity] = useState(0);
   // Debug rendering modes are split:
@@ -25,8 +59,16 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
   }, []);
 
   useFrame((_, delta) => {
+    // Chunk fade-in can produce seam-like hard edges due to transparency sorting/depthWrite toggling.
+    // Allow disabling in debug to confirm whether artifacts come from this path.
+    if (!terrainFadeEnabled) return;
     if (opacity < 1) setOpacity(prev => Math.min(prev + delta * 2, 1));
   });
+
+  // If fade is disabled, force fully-opaque terrain.
+  useEffect(() => {
+    if (!terrainFadeEnabled) setOpacity(1);
+  }, [terrainFadeEnabled]);
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
@@ -63,13 +105,42 @@ export const ChunkMesh: React.FC<{ chunk: ChunkState; sunDirection?: THREE.Vecto
 
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
+  const chunkTintColor = useMemo(() => {
+    // Deterministic color per chunk to expose overlap/z-fighting (you'll see both colors).
+    const h = ((chunk.cx * 73856093) ^ (chunk.cz * 19349663)) >>> 0;
+    const hue = (h % 360) / 360;
+    const c = new THREE.Color();
+    c.setHSL(hue, 0.65, 0.55);
+    return c;
+  }, [chunk.cx, chunk.cz]);
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (
         <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
           <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
-            {normalsMode ? <meshNormalMaterial /> : <TriplanarMaterial sunDirection={sunDirection} opacity={opacity} />}
+            {normalsMode ? (
+              <meshNormalMaterial />
+            ) : terrainChunkTintEnabled ? (
+              <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
+            ) : (
+              <TriplanarMaterial
+                sunDirection={sunDirection}
+                opacity={terrainFadeEnabled ? opacity : 1.0}
+                triplanarDetail={triplanarDetail}
+                shaderFogEnabled={terrainShaderFogEnabled}
+                shaderFogStrength={terrainShaderFogStrength}
+                threeFogEnabled={terrainThreeFogEnabled}
+                wetnessEnabled={terrainWetnessEnabled}
+                mossEnabled={terrainMossEnabled}
+                roughnessMin={terrainRoughnessMin}
+                polygonOffsetEnabled={terrainPolygonOffsetEnabled}
+                polygonOffsetFactor={terrainPolygonOffsetFactor}
+                polygonOffsetUnits={terrainPolygonOffsetUnits}
+                weightsView={terrainWeightsView}
+                wireframe={terrainWireframeEnabled}
+              />
+            )}
           </mesh>
         </RigidBody>
       )}

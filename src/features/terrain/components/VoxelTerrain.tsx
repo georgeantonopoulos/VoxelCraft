@@ -239,6 +239,28 @@ interface VoxelTerrainProps {
   action: 'DIG' | 'BUILD' | null;
   isInteracting: boolean;
   sunDirection?: THREE.Vector3;
+  // Debug: 0..1 slider to reduce high-frequency triplanar noise contribution in the shader.
+  triplanarDetail?: number;
+  // Debug: independently toggle the terrain's fog paths.
+  // - "Shader fog" is the custom fog mix inside TriplanarMaterial.
+  // - "Three fog" is the base MeshStandardMaterial fog (can stack with shader fog).
+  terrainShaderFogEnabled?: boolean;
+  terrainShaderFogStrength?: number;
+  terrainThreeFogEnabled?: boolean;
+  // Debug: disable chunk fade-in to isolate transparency/depth sorting seam artifacts.
+  terrainFadeEnabled?: boolean;
+  // Debug: isolate shading overlays and specular shimmer sources.
+  terrainWetnessEnabled?: boolean;
+  terrainMossEnabled?: boolean;
+  terrainRoughnessMin?: number;
+  // Debug: Z-fighting probe.
+  terrainPolygonOffsetEnabled?: boolean;
+  terrainPolygonOffsetFactor?: number;
+  terrainPolygonOffsetUnits?: number;
+  // Debug: visualize chunk overlap/material weights.
+  terrainChunkTintEnabled?: boolean;
+  terrainWireframeEnabled?: boolean;
+  terrainWeightsView?: string;
   onInitialLoad?: () => void;
   worldType: string;
 }
@@ -280,7 +302,27 @@ class AudioPool {
   }
 }
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteracting, sunDirection, onInitialLoad, worldType }) => {
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
+  action,
+  isInteracting,
+  sunDirection,
+  triplanarDetail = 1.0,
+  terrainShaderFogEnabled = true,
+  terrainShaderFogStrength = 0.9,
+  terrainThreeFogEnabled = true,
+  terrainFadeEnabled = true,
+  terrainWetnessEnabled = true,
+  terrainMossEnabled = true,
+  terrainRoughnessMin = 0.0,
+  terrainPolygonOffsetEnabled = false,
+  terrainPolygonOffsetFactor = -1.0,
+  terrainPolygonOffsetUnits = -1.0,
+  terrainChunkTintEnabled = false,
+  terrainWireframeEnabled = false,
+  terrainWeightsView = 'off',
+  onInitialLoad,
+  worldType
+}) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
 
@@ -941,7 +983,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({ action, isInteractin
     <group>
       {Object.values(chunks).map(chunk => (
         <React.Fragment key={chunk.key}>
-          <ChunkMesh chunk={chunk} sunDirection={sunDirection} />
+          <ChunkMesh
+            chunk={chunk}
+            sunDirection={sunDirection}
+            triplanarDetail={triplanarDetail}
+            terrainShaderFogEnabled={terrainShaderFogEnabled}
+            terrainShaderFogStrength={terrainShaderFogStrength}
+            terrainThreeFogEnabled={terrainThreeFogEnabled}
+            terrainFadeEnabled={terrainFadeEnabled}
+            terrainWetnessEnabled={terrainWetnessEnabled}
+            terrainMossEnabled={terrainMossEnabled}
+            terrainRoughnessMin={terrainRoughnessMin}
+            terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
+            terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}
+            terrainPolygonOffsetUnits={terrainPolygonOffsetUnits}
+            terrainChunkTintEnabled={terrainChunkTintEnabled}
+            terrainWireframeEnabled={terrainWireframeEnabled}
+            terrainWeightsView={terrainWeightsView}
+          />
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
             // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
             Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (

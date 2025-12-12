@@ -59,10 +59,22 @@ const fragmentShader = `
   uniform vec3 uColorGlowStone;
   uniform vec3 uColorObsidian;
 
-  uniform vec3 uFogColor;
-  uniform float uFogNear;
-  uniform float uFogFar;
-  uniform float uOpacity;
+	  uniform vec3 uFogColor;
+	  uniform float uFogNear;
+	  uniform float uFogFar;
+	  uniform float uOpacity;
+	  // Debug: 0..1 slider to reduce high-frequency triplanar noise (helps diagnose shimmer).
+	  uniform float uTriplanarDetail;
+	  // Debug: allow isolating fog-related artifacts (banding/flicker) by disabling shader fog.
+	  uniform float uShaderFogEnabled;
+	  uniform float uShaderFogStrength;
+	  // Debug: isolate overlay-driven shimmer (wetness darkening/roughness, moss overlay).
+	  uniform float uWetnessEnabled;
+	  uniform float uMossEnabled;
+	  uniform float uRoughnessMin;
+	  // Debug: visualize weight attributes to spot discontinuities at chunk seams.
+	  // 0 = off, 1 = snow, 2 = grass, 3 = snowMinusGrass, 4 = dominant
+	  uniform int uWeightsView;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -205,10 +217,11 @@ const fragmentShader = `
     }
   }
 
-  void main() {
-    vec3 N = safeNormalize(vWorldNormal);
-    vec4 nMid = getTriplanarNoise(N, 0.15);
-    vec4 nHigh = getTriplanarNoise(N, 0.6);
+	  void main() {
+	    vec3 N = safeNormalize(vWorldNormal);
+	    vec4 nMid = getTriplanarNoise(N, 0.15);
+	    float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
+	    vec4 nHigh = getTriplanarNoise(N, highScale);
 
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
@@ -250,7 +263,37 @@ const fragmentShader = `
     }
 
     float intensity = 0.6 + 0.6 * accNoise;
-    vec3 col = accColor * intensity;
+	    vec3 col = accColor * intensity;
+
+	    // Debug views (material weights)
+	    // Channel mapping: Grass = 4 (vWb.x), Snow = 6 (vWb.z)
+	    if (uWeightsView != 0) {
+	      float grassW = vWb.x;
+	      float snowW = vWb.z;
+	      if (uWeightsView == 1) {
+	        col = vec3(snowW);
+	      } else if (uWeightsView == 2) {
+	        col = vec3(grassW);
+	      } else if (uWeightsView == 3) {
+	        float v = clamp((snowW - grassW) * 2.0 + 0.5, 0.0, 1.0);
+	        col = vec3(v);
+	      } else if (uWeightsView == 4) {
+	        // Dominant among a few common surface channels: stone(2), dirt(3), grass(4), snow(6)
+	        float stoneW = vWa.z;
+	        float dirtW = vWa.w;
+	        float maxW = stoneW;
+	        vec3 c = vec3(0.5); // stone gray
+	        if (dirtW > maxW) { maxW = dirtW; c = vec3(0.35, 0.25, 0.15); }
+	        if (grassW > maxW) { maxW = grassW; c = vec3(0.1, 0.6, 0.1); }
+	        if (snowW > maxW) { maxW = snowW; c = vec3(0.9); }
+	        col = c;
+	      }
+	      csm_DiffuseColor = vec4(col, uOpacity);
+	      csm_Emissive = vec3(0.0);
+	      csm_Roughness = 1.0;
+	      csm_Metalness = 0.0;
+	      return;
+	    }
 
     // --- Overlays ---
     // AAA FIX: Ramp-based organic moss
@@ -260,8 +303,8 @@ const fragmentShader = `
     // Combine simulation mossiness with painted moss material
     float effectiveMoss = max(vMossiness, mossMatWeight);
 
-    if (effectiveMoss > 0.001) {
-        vec3 mossColor = uColorMoss;
+	    if (uMossEnabled > 0.5 && effectiveMoss > 0.001) {
+	        vec3 mossColor = uColorMoss;
         
         // Multi-scale noise for detail (Mid + High)
         float organicNoise = mix(nMid.r, nHigh.g, 0.4); 
@@ -282,32 +325,71 @@ const fragmentShader = `
         accRoughness = mix(accRoughness, 0.9, mossMix);
     }
 
-    col = mix(col, col * 0.5, vWetness * 0.9);
-    col = clamp(col, 0.0, 5.0);
+	    if (uWetnessEnabled > 0.5) {
+	      col = mix(col, col * 0.5, vWetness * 0.9);
+	    }
+	    col = clamp(col, 0.0, 5.0);
     
     // Add Emission
     col += accEmission * accColor; 
 
-    // Apply strong distance fog to blend toward the sky color and hide terrain generation
-    float fogDist = length(vWorldPosition - cameraPosition);
-    float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
-    fogAmt = pow(fogAmt, 1.1); // slightly sharper transition for stronger fog
-    col = mix(col, uFogColor, fogAmt * 0.9); // stronger fog intensity
+	    // Apply strong distance fog to blend toward the sky color and hide terrain generation.
+	    // Note: Three.js base fog may also be enabled on the material; use debug toggles to isolate stacking.
+	    if (uShaderFogEnabled > 0.5) {
+	      float fogDist = length(vWorldPosition - cameraPosition);
+	      float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
+	      fogAmt = pow(fogAmt, 1.1); // slightly sharper transition for stronger fog
+	      col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
+	    }
 
     csm_DiffuseColor = vec4(col, uOpacity);
     csm_Emissive = vec3(accEmission * accColor); // Pass emissive to standard material
 
-    // Adjust roughness
-    accRoughness -= (nHigh.r * 0.1);
-    accRoughness = mix(accRoughness, 0.2, vWetness);
-    if (dominantChannel == 8) accRoughness = 0.1;
+	    // Adjust roughness
+	    accRoughness -= (nHigh.r * 0.1);
+	    if (uWetnessEnabled > 0.5) {
+	      accRoughness = mix(accRoughness, 0.2, vWetness);
+	    }
+	    // Debug: clamp minimum roughness to reduce specular aliasing/shimmer in motion.
+	    accRoughness = max(accRoughness, clamp(uRoughnessMin, 0.0, 1.0));
+	    if (dominantChannel == 8) accRoughness = 0.1;
     
     csm_Roughness = accRoughness;
     csm_Metalness = 0.0;
   }
 `;
 
-export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity?: number }> = ({ opacity = 1 }) => {
+export const TriplanarMaterial: React.FC<{
+  sunDirection?: THREE.Vector3;
+  opacity?: number;
+  triplanarDetail?: number;
+  shaderFogEnabled?: boolean;
+  shaderFogStrength?: number;
+  threeFogEnabled?: boolean;
+  wetnessEnabled?: boolean;
+  mossEnabled?: boolean;
+  roughnessMin?: number;
+  // Debug: Z-fighting probe.
+  polygonOffsetEnabled?: boolean;
+  polygonOffsetFactor?: number;
+  polygonOffsetUnits?: number;
+  weightsView?: string;
+  wireframe?: boolean;
+}> = ({
+  opacity = 1,
+  triplanarDetail = 1.0,
+  shaderFogEnabled = true,
+  shaderFogStrength = 0.9,
+  threeFogEnabled = true,
+  wetnessEnabled = true,
+  mossEnabled = true,
+  roughnessMin = 0.0,
+  polygonOffsetEnabled = false,
+  polygonOffsetFactor = -1.0,
+  polygonOffsetUnits = -1.0,
+  weightsView = 'off',
+  wireframe = false
+}) => {
   const materialRef = useRef<any>(null);
   const { scene } = useThree();
 
@@ -316,6 +398,20 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
       const mat = materialRef.current;
       mat.uniforms.uNoiseTexture.value = noiseTexture;
       mat.uniforms.uOpacity.value = opacity;
+      mat.uniforms.uTriplanarDetail.value = triplanarDetail;
+      mat.uniforms.uShaderFogEnabled.value = shaderFogEnabled ? 1.0 : 0.0;
+      mat.uniforms.uShaderFogStrength.value = shaderFogStrength;
+      mat.uniforms.uWetnessEnabled.value = wetnessEnabled ? 1.0 : 0.0;
+      mat.uniforms.uMossEnabled.value = mossEnabled ? 1.0 : 0.0;
+      mat.uniforms.uRoughnessMin.value = roughnessMin;
+      mat.polygonOffset = polygonOffsetEnabled;
+      mat.polygonOffsetFactor = polygonOffsetFactor;
+      mat.polygonOffsetUnits = polygonOffsetUnits;
+      mat.wireframe = wireframe;
+      const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+      mat.uniforms.uWeightsView.value = viewMap[weightsView] ?? 0;
+      // Base material fog (MeshStandardMaterial) can stack with shader fog; allow toggling for isolation.
+      mat.fog = threeFogEnabled;
       const isTransparent = opacity < 0.999;
       mat.transparent = isTransparent;
       mat.depthWrite = !isTransparent;
@@ -353,11 +449,18 @@ export const TriplanarMaterial: React.FC<{ sunDirection?: THREE.Vector3; opacity
     uColorGlowStone: { value: new THREE.Color('#00e5ff') }, // Tune: Cyan/Teal Luma
     uColorObsidian: { value: new THREE.Color('#0a0814') }, // Tune: Deepest Black/Purple
 
-    uFogColor: { value: new THREE.Color('#87CEEB') },
-    uFogNear: { value: 30 },
-    uFogFar: { value: 400 },
-    uOpacity: { value: 1 },
-  }), []);
+	    uFogColor: { value: new THREE.Color('#87CEEB') },
+	    uFogNear: { value: 30 },
+	    uFogFar: { value: 400 },
+	    uOpacity: { value: 1 },
+	    uTriplanarDetail: { value: 1.0 },
+	    uShaderFogEnabled: { value: 1.0 },
+	    uShaderFogStrength: { value: 0.9 },
+	    uWetnessEnabled: { value: 1.0 },
+	    uMossEnabled: { value: 1.0 },
+	    uRoughnessMin: { value: 0.0 },
+	    uWeightsView: { value: 0 },
+	  }), []);
 
   return (
     <CustomShaderMaterial
