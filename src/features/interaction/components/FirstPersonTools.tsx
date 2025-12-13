@@ -6,6 +6,7 @@ import { useControls } from 'leva';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
 import { TorchTool } from './TorchTool';
+import { FloraTool } from './FloraTool';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 
@@ -197,10 +198,11 @@ export const FirstPersonTools: React.FC = () => {
             rotationZ
         );
 
-        // Torch Logic: Driven by Inventory Selection
-        const isTorchSelected = inventorySlots[selectedSlotIndex] === 'torch';
+        // Left-hand item logic: driven by Inventory Selection
+        const selectedLeftItem = inventorySlots[selectedSlotIndex];
+        const isLeftItemSelected = selectedLeftItem === 'torch' || selectedLeftItem === 'flora';
 
-        const targetShown = isTorchSelected;
+        const targetShown = isLeftItemSelected;
         const speedIn = 2.2;  // ~0.45s in
         const speedOut = 2.8; // slightly faster out
         const targetProg = targetShown ? 1 : 0;
@@ -286,7 +288,13 @@ export const FirstPersonTools: React.FC = () => {
 
             {/* Left-hand torch for caves. Positioned/rotated in useFrame above. */}
             <group ref={torchRef}>
-                <TorchTool />
+                {/* Swap held left-hand item based on inventory selection (same pose/animation). */}
+                <group visible={inventorySlots[selectedSlotIndex] === 'torch'}>
+                    <TorchTool />
+                </group>
+                <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
+                    <FloraTool />
+                </group>
             </group>
 
             <group ref={axeRef}>

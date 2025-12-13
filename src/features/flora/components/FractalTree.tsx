@@ -111,8 +111,10 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         const pos = new THREE.Vector3();
         const quat = new THREE.Quaternion();
         const scale = new THREE.Vector3();
-        const baseOffset = worldPosition ? worldPosition.clone() : position.clone();
-        const baseQuat = (worldQuaternion || orientation)?.clone() || new THREE.Quaternion();
+        // IMPORTANT:
+        // This component is typically placed under a parent transform (e.g. RootHollow),
+        // so all physics should be authored in LOCAL space. Converting to world space here
+        // would double-apply the parent and can make collisions appear "missing".
 
         const count = matrices.length / 16;
         for (let i = 0; i < count; i++) {
@@ -121,8 +123,6 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
 
             tempMatrix.fromArray(matrices, i * 16);
             tempMatrix.decompose(pos, quat, scale);
-            pos.applyQuaternion(baseQuat).add(baseOffset);
-            quat.premultiply(baseQuat);
 
             // Clone vectors to avoid shared reference bug
             const finalPos = pos.clone();
@@ -152,8 +152,6 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
             for (let i = 0; i < leafCount; i++) {
                 tempMatrix.fromArray(data.leafMatrices, i * 16);
                 tempMatrix.decompose(pos, quat, scale);
-                pos.applyQuaternion(baseQuat).add(baseOffset);
-                quat.premultiply(baseQuat);
 
                 // Clone vectors to avoid shared reference bug
                 const finalPos = pos.clone();
@@ -333,11 +331,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                 <RigidBody
                     type="fixed"
                     colliders={false}
-                    position={interactionBounds.center
-                        .clone()
-                        .applyQuaternion((worldQuaternion || orientation) ?? new THREE.Quaternion())
-                        .add(worldPosition || position)}
-                    quaternion={worldQuaternion || orientation}
+                    position={interactionBounds.center}
                     userData={userData}
                 >
                     {/* Sensor collider so DIG rays hitting leaves/canopy still grant the axe */}
