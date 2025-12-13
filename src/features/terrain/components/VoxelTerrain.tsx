@@ -453,6 +453,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const chunksRef = useRef<Record<string, ChunkState>>({});
   const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
+  // Queue chunk generation requests so we can throttle how many we send per frame.
+  // This spreads out the worker responses and main-thread geometry/collider work.
+  const generateQueue = useRef<Array<{ cx: number; cz: number; key: string }>>([]);
 
   // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
   const [particleState, setParticleState] = useState<{
@@ -552,7 +555,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           meshCavity,
           meshWaterPositions,
           meshWaterIndices,
-          meshWaterNormals
+          meshWaterNormals,
+          meshWaterShoreMask
         } = payload;
 
         const current = chunksRef.current[key];
@@ -573,7 +577,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             meshCavity: meshCavity || current.meshCavity, // Fallback if missing
             meshWaterPositions,
             meshWaterIndices,
-            meshWaterNormals
+            meshWaterNormals,
+            meshWaterShoreMask: meshWaterShoreMask || current.meshWaterShoreMask
           };
           chunksRef.current[key] = updatedChunk;
           setChunks(prev => ({ ...prev, [key]: updatedChunk }));
@@ -623,9 +628,29 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
         if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
           pendingChunks.current.add(key);
-          workerRef.current.postMessage({ type: 'GENERATE', payload: { cx, cz } });
+          generateQueue.current.push({ cx, cz, key });
         }
       }
+    }
+
+    // Throttle chunk generation: only send 1 request per frame to spread out
+    // worker responses and main-thread geometry/collider build work.
+    // Prefer nearest-to-player chunks first.
+    if (generateQueue.current.length > 0) {
+      let bestIndex = 0;
+      let bestDist2 = Infinity;
+      for (let i = 0; i < generateQueue.current.length; i++) {
+        const job = generateQueue.current[i];
+        const dx = job.cx - px;
+        const dz = job.cz - pz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          bestIndex = i;
+        }
+      }
+      const job = generateQueue.current.splice(bestIndex, 1)[0];
+      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
     const newChunks = { ...chunksRef.current };

@@ -440,6 +440,101 @@ export function generateMesh(
     );
   }
 
+  // --- Compute shoreline SDF mask in the worker so main thread doesn't run BFS ---
+  const shoreMask = new Uint8Array(waterW * waterH);
+  if (hasAnyWater) {
+    const INF = 0x3fff;
+    const insideDist = new Int16Array(waterW * waterH);
+    const outsideDist = new Int16Array(waterW * waterH);
+    insideDist.fill(INF);
+    outsideDist.fill(INF);
+
+    const qx: number[] = [];
+    const qz: number[] = [];
+    let qh = 0;
+    const push = (x: number, z: number) => { qx.push(x); qz.push(z); };
+    const isWater = (x: number, z: number) => waterMask[x + z * waterW] === 1;
+
+    const hasDiffNeighbor = (x: number, z: number) => {
+      const v = isWater(x, z);
+      if (x > 0 && isWater(x - 1, z) !== v) return true;
+      if (x < waterW - 1 && isWater(x + 1, z) !== v) return true;
+      if (z > 0 && isWater(x, z - 1) !== v) return true;
+      if (z < waterH - 1 && isWater(x, z + 1) !== v) return true;
+      return false;
+    };
+
+    // Seed inside-water boundary cells
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (isWater(x, z)) {
+          insideDist[x + z * waterW] = 0;
+          push(x, z);
+        }
+      }
+    }
+    // BFS inside water
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = insideDist[x + z * waterW];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
+        if (!isWater(nx, nz)) return;
+        const i = nx + nz * waterW;
+        if (insideDist[i] <= nd) return;
+        insideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
+    }
+
+    // Reset queue for outside (land)
+    qx.length = 0; qz.length = 0; qh = 0;
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (!isWater(x, z)) {
+          outsideDist[x + z * waterW] = 0;
+          push(x, z);
+        }
+      }
+    }
+    // BFS outside water
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = outsideDist[x + z * waterW];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
+        if (isWater(nx, nz)) return;
+        const i = nx + nz * waterW;
+        if (outsideDist[i] <= nd) return;
+        outsideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
+    }
+
+    // Encode signed distance: water positive, land negative, boundary = 0.5
+    const maxDist = 10.0;
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        const i = x + z * waterW;
+        const sdf = isWater(x, z)
+          ? Math.min(maxDist, insideDist[i])
+          : -Math.min(maxDist, outsideDist[i]);
+        const n = Math.max(0, Math.min(1, 0.5 + (sdf / maxDist) * 0.5));
+        shoreMask[i] = Math.floor(n * 255);
+      }
+    }
+  }
+
   return {
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
@@ -454,5 +549,6 @@ export function generateMesh(
     waterPositions: new Float32Array(waterVerts),
     waterIndices: new Uint32Array(waterInds),
     waterNormals: new Float32Array(waterNorms),
+    waterShoreMask: shoreMask,
   } as MeshData;
 }

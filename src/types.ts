@@ -69,6 +69,9 @@ export interface MeshData {
   waterPositions: Float32Array;
   waterIndices: Uint32Array;
   waterNormals: Float32Array;
+  // Pre-computed shoreline SDF mask (CHUNK_SIZE_XZ x CHUNK_SIZE_XZ Uint8).
+  // Computed in worker so main thread doesn't run the BFS.
+  waterShoreMask: Uint8Array;
 }
 
 export enum ToolMode {
@@ -110,6 +113,8 @@ export interface ChunkState {
   meshWaterPositions: Float32Array;
   meshWaterIndices: Uint32Array;
   meshWaterNormals: Float32Array;
+  // Pre-computed shoreline SDF mask (32x32 Uint8Array) — computed in worker to avoid main-thread BFS.
+  meshWaterShoreMask?: Uint8Array;
 
   lightPositions?: Float32Array;
 }

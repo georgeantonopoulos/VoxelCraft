@@ -257,7 +257,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                 // Chunk state expects `meshWater*` keys so ChunkMesh can render it.
                 meshWaterPositions: mesh.waterPositions,
                 meshWaterIndices: mesh.waterIndices,
-                meshWaterNormals: mesh.waterNormals
+                meshWaterNormals: mesh.waterNormals,
+                // Pre-computed shoreline SDF mask (avoids main-thread BFS).
+                meshWaterShoreMask: mesh.waterShoreMask
             };
 
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
@@ -281,7 +283,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 mesh.cavity.buffer,
                 mesh.waterPositions.buffer,
                 mesh.waterIndices.buffer,
-                mesh.waterNormals.buffer
+                mesh.waterNormals.buffer,
+                mesh.waterShoreMask.buffer
             ]);
         } else if (type === 'REMESH') {
             const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
@@ -309,7 +312,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 // Keep `meshWater*` naming consistent with ChunkState.
                 meshWaterPositions: mesh.waterPositions,
                 meshWaterIndices: mesh.waterIndices,
-                meshWaterNormals: mesh.waterNormals
+                meshWaterNormals: mesh.waterNormals,
+                meshWaterShoreMask: mesh.waterShoreMask
             };
 
             ctx.postMessage({ type: 'REMESHED', payload: response }, [
@@ -325,7 +329,8 @@ ctx.onmessage = async (e: MessageEvent) => {
                 mesh.cavity.buffer,
                 mesh.waterPositions.buffer,
                 mesh.waterIndices.buffer,
-                mesh.waterNormals.buffer
+                mesh.waterNormals.buffer,
+                mesh.waterShoreMask.buffer
             ]);
         }
     } catch (error) {
