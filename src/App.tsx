@@ -677,10 +677,10 @@ const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 
       />
       <primitive object={target} />
 
-      {/* Simple White Sphere */}
+      {/* Simple White Sphere - fog={false} so scene fog doesn't hide the moon */}
       <mesh ref={moonMeshRef}>
         <sphereGeometry args={[20, 32, 32]} />
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color="#ffffff" fog={false} />
       </mesh>
     </>
   );
@@ -937,6 +937,7 @@ const SkyDomeRefLink: React.FC<{
       <shaderMaterial
         side={THREE.BackSide}
         depthWrite={false}
+        fog={false}
         uniforms={uniforms}
         vertexShader={`
           varying vec3 vWorldPosition;
