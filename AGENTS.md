@@ -155,6 +155,11 @@ The project follows a domain-driven architecture to improve scalability and main
 
 ### 7. Recent Findings
 
+- 2025-12-13: Fixed `refreshFogUniforms` crash from `FogDeer` shader material.
+  - **Root Cause**: Three.js will call `refreshFogUniforms()` whenever `material.fog === true`; if a `ShaderMaterial` lacks `fogColor/fogNear/fogFar` uniforms, it can crash with `Cannot read properties of undefined (reading 'value')`.
+  - **Fix**: `src/features/creatures/FogDeer.tsx` now clones `THREE.UniformsLib.fog` explicitly into the shader uniforms and defensively ensures `fogColor/fogNear/fogFar` exist before the first program compile.
+  - **Verification**: Ran `npm run build` (success) and `npm run dev -- --host 127.0.0.1 --port 3000` (server ready on `http://127.0.0.1:3000/`, stopped after ~20s by CLI timeout). Visual inspection required: confirm the console error is gone and fog deer silhouettes still render in the distance.
+
 - 2025-12-13: Changed flora pickup + placement hotkeys, and added world torch placement.
   - **Pickup**: Flora is no longer harvested via DIG (which could grab multiple nearby). New `Q` hotkey performs a single-target ray pickup (placed `FLORA` entities + generated lumina flora), increments flora count, and plays a fly-to-player pickup effect. Generated lumina removal now “hides” a single instance (keeps array length stable) and `LuminaLayer` uses deterministic per-instance transforms so other bulbs don’t reshuffle on pickup.
   - **Placement**: `E` now places the currently selected inventory item. If the torch slot is selected, a world-placed torch is spawned and oriented to face away from the hit surface normal; if the flora slot is selected, one flora is consumed and placed as before.

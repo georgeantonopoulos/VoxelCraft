@@ -17,12 +17,13 @@ import { HUD as UI } from '@ui/HUD';
 import { StartupScreen } from '@ui/StartupScreen';
 import { BedrockPlane } from '@features/terrain/components/BedrockPlane';
 import { TerrainService } from '@features/terrain/logic/terrainService';
+import { AmbientLife } from '@features/environment/AmbientLife';
 	import { setSnapEpsilon } from '@/constants';
 	import { useWorldStore } from '@state/WorldStore';
 	import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
 	import { InventoryInput } from '@features/interaction/components/InventoryInput';
 	import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
-	import { WorldType } from '@features/terrain/logic/BiomeManager';
+	import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
 	import { useEnvironmentStore } from '@state/EnvironmentStore';
 	import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 
@@ -1018,8 +1019,18 @@ const App: React.FC = () => {
   const [terrainWeightsView, setTerrainWeightsView] = useState('off');
   // Debug lighting controls (Leva in ?debug).
   // Defaults match the requested screenshot.
-  const [fogNear, setFogNear] = useState(10);
-  const [fogFar, setFogFar] = useState(90);
+  const [fogNear, setFogNear] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get('vcFogNear');
+    const n = v != null ? Number(v) : 10;
+    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 0, 200) : 10;
+  });
+  const [fogFar, setFogFar] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get('vcFogFar');
+    const n = v != null ? Number(v) : 90;
+    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 90;
+  });
   const [sunIntensityMul, setSunIntensityMul] = useState(0.0);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
@@ -1043,19 +1054,84 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     return params.get('mode') === 'map';
   }, []);
+  const autoStart = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('autostart');
+  }, []);
 
   useEffect(() => {
     console.log('[WorldStore] Initialized', useWorldStore.getState());
   }, []);
 
+  // Debug/automation hooks (used by scripted visual inspection).
+  // These are intentionally global so external tools can poll readiness without DOM coupling.
+  useEffect(() => {
+    (window as any).__vcTerrainLoaded = terrainLoaded;
+    (window as any).__vcGameStarted = gameStarted;
+  }, [terrainLoaded, gameStarted]);
+
+  useEffect(() => {
+    // Keep the title informative so screenshots/logs can be correlated to load state.
+    document.title = `VoxelCraft ${terrainLoaded ? 'Loaded' : 'Loading'} ${gameStarted ? 'Started' : 'Menu'}`;
+  }, [terrainLoaded, gameStarted]);
+
   // Sun direction is updated live by SunFollower (mutable vector).
   // This keeps water highlights + future IBL in sync with the actual sun orbit.
   const sunDirection = useMemo(() => new THREE.Vector3(50, 100, 30).normalize(), []);
 
-  useEffect(() => {
-    const h = TerrainService.getHeightAt(16, 16);
-    setSpawnPos([16, h + 5, 16]);
+  /**
+   * Finds a deterministic-ish spawn point for a requested biome by scanning a small area
+   * around the origin. This exists purely for debugging/verification (e.g. headless captures).
+   */
+  const findSpawnForBiome = useCallback((target: BiomeType): { x: number; z: number } | null => {
+    const MAX_RADIUS = 4096;
+    const STEP = 64;
+    const originX = 16;
+    const originZ = 16;
+
+    // Spiral-ish scan (rings) so we find close hits first.
+    for (let r = 0; r <= MAX_RADIUS; r += STEP) {
+      for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
+        const x = originX + Math.cos(a) * r;
+        const z = originZ + Math.sin(a) * r;
+        const biome = BiomeManager.getBiomeAt(x, z);
+        if (biome === target) return { x, z };
+      }
+    }
+    return null;
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedBiome = params.get('vcSpawnBiome') as BiomeType | null;
+
+    let x = 16;
+    let z = 16;
+
+    if (requestedBiome) {
+      const found = findSpawnForBiome(requestedBiome);
+      if (found) {
+        x = found.x;
+        z = found.z;
+      }
+    }
+
+    const h = TerrainService.getHeightAt(x, z);
+    setSpawnPos([x, h + 5, z]);
+  }, [findSpawnForBiome]);
+
+  // Debug flow: allow bypassing the world selection + enter click for automated checks.
+  useEffect(() => {
+    if (!autoStart) return;
+    if (!worldType) setWorldType(WorldType.DEFAULT);
+  }, [autoStart, worldType]);
+
+  useEffect(() => {
+    if (!autoStart) return;
+    if (!worldType) return;
+    if (!terrainLoaded) return;
+    if (!gameStarted) setGameStarted(true);
+  }, [autoStart, worldType, terrainLoaded, gameStarted]);
 
   const handleUnlock = useCallback(() => {
     setIsInteracting(false);
@@ -1184,6 +1260,9 @@ const App: React.FC = () => {
             <Physics gravity={[0, -20, 0]}>
               {gameStarted && spawnPos && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
+
+              {/* Ambient life: fireflies + distant fog deer silhouettes (no new assets). */}
+              <AmbientLife enabled={gameStarted} />
 
               {worldType && (
                 <VoxelTerrain
