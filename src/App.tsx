@@ -20,6 +20,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 	import { setSnapEpsilon } from '@/constants';
 	import { useWorldStore } from '@state/WorldStore';
 	import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
+	import { InventoryInput } from '@features/interaction/components/InventoryInput';
 	import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 	import { WorldType } from '@features/terrain/logic/BiomeManager';
 	import { useEnvironmentStore } from '@state/EnvironmentStore';
@@ -1252,6 +1253,7 @@ const App: React.FC = () => {
         {gameStarted && (
           <>
             <InteractionLayer setInteracting={setIsInteracting} setAction={setAction} />
+            <InventoryInput enabled={gameStarted} />
             <UI />
           </>
         )}

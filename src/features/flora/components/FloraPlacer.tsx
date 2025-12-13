@@ -2,8 +2,15 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { useThree } from '@react-three/fiber';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore } from '@state/WorldStore';
-import { Vector2, Vector3, Object3D } from 'three';
+import { Vector2, Vector3, Object3D, Matrix3, Quaternion } from 'three';
 import { LuminaFlora } from '@features/flora/components/LuminaFlora';
+import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
+
+function isTextInputTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tag = target.tagName.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || target.isContentEditable;
+}
 
 export const FloraPlacer: React.FC = () => {
     const { camera, scene, raycaster } = useThree();
@@ -11,8 +18,23 @@ export const FloraPlacer: React.FC = () => {
     const addEntity = useWorldStore(s => s.addEntity);
     const floraEntities = useWorldStore(s => s.entities);
     const floras = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'FLORA'), [floraEntities]);
+    const torches = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'TORCH'), [floraEntities]);
     const lastPlaceTime = useRef(0);
     const terrainTargets = useRef<Object3D[]>([]);
+    const debugMode = useMemo(() => {
+        // Enable via `?debug`, `localStorage.vcDebugPlacement = "1"`, or `window.__vcDebugPlacement = true`.
+        // Using multiple toggles helps when URL params aren't convenient during testing.
+        const params = new URLSearchParams(window.location.search);
+        const viaQuery = params.has('debug');
+        const viaWindow = (window as any).__vcDebugPlacement === true;
+        let viaStorage = false;
+        try {
+            viaStorage = window.localStorage.getItem('vcDebugPlacement') === '1';
+        } catch {
+            viaStorage = false;
+        }
+        return viaQuery || viaWindow || viaStorage;
+    }, []);
 
     useEffect(() => {
         /**
@@ -27,16 +49,38 @@ export const FloraPlacer: React.FC = () => {
             return false;
         };
 
+        const emitDebug = (message: string) => {
+            if (!debugMode) return;
+            // Visible debug hook (HUD can subscribe) + console breadcrumbs.
+            window.dispatchEvent(new CustomEvent('vc-placement-debug', { detail: { message, t: Date.now() } }));
+            console.log('[FloraPlacer]', message);
+        };
+
         const handleDown = (e: KeyboardEvent) => {
             if (e.code !== 'KeyE') return;
+            if (debugMode) {
+                // Breadcrumb so it's obvious the listener is mounted.
+                console.log('[FloraPlacer] KeyE received');
+            }
+            // Avoid stealing focus from UI inputs/debug panels.
+            if (isTextInputTarget(e.target)) return;
+            e.preventDefault();
+            emitDebug('KeyE received');
 
             const state = useGameStore.getState();
-            const hasLuminous = state.luminousFloraCount > 0;
-            const hasNormal = state.inventoryCount > 0;
+            const selectedItem = state.inventorySlots[state.selectedSlotIndex];
+            emitDebug(`selectedSlot=${state.selectedSlotIndex} selectedItem=${selectedItem}`);
 
-            if (hasLuminous || hasNormal) {
+            // Torches are stackable and are consumed when placed.
+            const wantsTorch = selectedItem === 'torch';
+            const wantsFlora = selectedItem === 'flora';
+            const hasFlora = state.inventoryCount > 0;
+            const hasTorch = state.getItemCount('torch') > 0;
+
+            if ((wantsTorch && hasTorch) || (wantsFlora && hasFlora)) {
                 const now = performance.now();
                 if (now - lastPlaceTime.current < 200) return; // Debounce
+                emitDebug('placement attempt');
 
                 raycaster.setFromCamera(new Vector2(0, 0), camera);
                 // Limit raycast to terrain meshes (ancestor-aware) to reduce work without breaking hits
@@ -46,46 +90,77 @@ export const FloraPlacer: React.FC = () => {
                         terrainTargets.current.push(obj);
                     }
                 });
+                emitDebug(`terrainTargets=${terrainTargets.current.length}`);
 
                 scene.updateMatrixWorld();
                 raycaster.far = 24;
                 const intersects = terrainTargets.current.length > 0
                     ? raycaster.intersectObjects(terrainTargets.current, false)
                     : raycaster.intersectObjects(scene.children, true);
+                emitDebug(`intersects=${intersects.length}`);
 
                 // Filter for terrain
                 const terrainHit = intersects.find(hit => isTerrain(hit.object));
 
                 if (terrainHit) {
-                    const normal = terrainHit.face?.normal || new Vector3(0, 1, 0);
-                    // Place slightly off surface
-                    const pos = terrainHit.point.clone().add(normal.multiplyScalar(0.5));
+                    emitDebug('terrainHit found');
+                    // Face normal is in local space; transform it to world space for correct placement orientation.
+                    const localNormal = terrainHit.face?.normal?.clone() || new Vector3(0, 1, 0);
+                    const normalMatrix = new Matrix3().getNormalMatrix(terrainHit.object.matrixWorld);
+                    const worldNormal = localNormal.applyMatrix3(normalMatrix).normalize();
 
-                    // Create a stable ref for the new flora
-                    const bodyRef = React.createRef<any>();
+                    // Create stable refs/IDs for new entities
                     const id = Math.random().toString(36).substr(2, 9);
 
-                    addEntity({
-                        id,
-                        type: 'FLORA',
-                        position: pos,
-                        bodyRef,
-                    });
+                    if (wantsTorch) {
+                        // Torch base sits on the surface; torch axis points away from the surface.
+                        const pos = terrainHit.point.clone().add(worldNormal.clone().multiplyScalar(0.02));
+                        const rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), worldNormal);
 
-                    if (hasLuminous) {
-                        state.removeLuminousFlora();
-                        console.log("Placed Luminous Flora");
+                        addEntity({
+                            id,
+                            type: 'TORCH',
+                            position: pos,
+                            rotation
+                        });
+                        emitDebug(`Placed Torch id=${id}`);
+                        // Consume a torch and stop holding it (back to slot 1 / empty).
+                        state.removeItem('torch', 1);
+                        state.setSelectedSlotIndex(0);
                     } else {
-                        state.removeFlora();
-                        console.log("Placed Normal Flora");
+                        // Place slightly off surface so physics settles cleanly.
+                        const pos = terrainHit.point.clone().add(worldNormal.clone().multiplyScalar(0.5));
+
+                        const bodyRef = React.createRef<any>();
+                        addEntity({
+                            id,
+                            type: 'FLORA',
+                            position: pos,
+                            bodyRef,
+                        });
+
+                        // Consume one flora.
+                        state.removeItem('flora', 1);
+                        emitDebug(`Placed Flora id=${id}`);
                     }
                     lastPlaceTime.current = now;
+                } else {
+                    emitDebug('no terrainHit (check terrain mesh userData tagging)');
                 }
             }
         };
-        window.addEventListener('keydown', handleDown);
-        return () => window.removeEventListener('keydown', handleDown);
-    }, [camera, scene, raycaster, addEntity]);
+        // Capture phase ensures we still receive the key even if another handler stops propagation.
+        // We attach to both `window` and `document` because some pointer-lock/controls setups
+        // can behave differently across browsers.
+        const opts: AddEventListenerOptions = { capture: true };
+        window.addEventListener('keydown', handleDown, opts);
+        document.addEventListener('keydown', handleDown, opts);
+        emitDebug('mounted (keydown listener active on window+document, capture=true)');
+        return () => {
+            window.removeEventListener('keydown', handleDown, opts);
+            document.removeEventListener('keydown', handleDown, opts);
+        };
+    }, [camera, scene, raycaster, addEntity, debugMode]);
 
     return (
         <>
@@ -96,6 +171,15 @@ export const FloraPlacer: React.FC = () => {
                     position={[flora.position.x, flora.position.y, flora.position.z]}
                     bodyRef={flora.bodyRef}
                 />
+            ))}
+            {torches.map(torch => (
+                torch.rotation ? (
+                    <PlacedTorch
+                        key={torch.id}
+                        position={torch.position}
+                        rotation={torch.rotation}
+                    />
+                ) : null
             ))}
         </>
     );

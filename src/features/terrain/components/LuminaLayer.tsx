@@ -43,21 +43,31 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     const originX = cx * CHUNK_SIZE_XZ;
     const originZ = cz * CHUNK_SIZE_XZ;
 
+    // Deterministic pseudo-random for stable instance transforms (no "all bulbs change" on updates).
+    // We avoid Math.random() here because any data refresh (pickup/removal) would reshuffle everything.
+    const hash01 = (x: number, y: number, z: number, salt: number) => {
+      const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + salt * 19.19) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
     for (let i = 0; i < count; i++) {
       // Data is in WORLD SPACE, but we are inside a group at [originX, 0, originZ]
       // So we must subtract the origin to get local space.
-      const x = data[i * 4] - originX;
-      const y = data[i * 4 + 1];
-      const z = data[i * 4 + 2] - originZ;
+      const wx = data[i * 4];
+      const wy = data[i * 4 + 1];
+      const wz = data[i * 4 + 2];
+      const x = wx - originX;
+      const y = wy;
+      const z = wz - originZ;
 
       dummy.position.set(x, y, z);
       // Randomize scale slightly
-      const scale = 0.3 + Math.random() * 0.15;
+      const scale = 0.3 + hash01(wx, wy, wz, 0) * 0.15;
       dummy.scale.setScalar(scale);
 
       // Random rotation
-      dummy.rotation.y = Math.random() * Math.PI * 2;
-      dummy.rotation.x = (Math.random() - 0.5) * 0.5;
+      dummy.rotation.y = hash01(wx, wy, wz, 1) * Math.PI * 2;
+      dummy.rotation.x = (hash01(wx, wy, wz, 2) - 0.5) * 0.5;
 
       dummy.updateMatrix();
       meshRef.current.setMatrixAt(i, dummy.matrix);

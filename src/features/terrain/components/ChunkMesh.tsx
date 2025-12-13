@@ -131,7 +131,16 @@ export const ChunkMesh: React.FC<{
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (
         <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
-          <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
+          <mesh
+            ref={meshRef}
+            // Tag the actual render mesh so non-physics raycasters (e.g. placement tools) can reliably detect terrain hits.
+            userData={{ type: 'terrain', key: chunk.key }}
+            scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
+            castShadow
+            receiveShadow
+            frustumCulled
+            geometry={terrainGeometry}
+          >
             {normalsMode ? (
               <meshNormalMaterial />
             ) : terrainChunkTintEnabled ? (

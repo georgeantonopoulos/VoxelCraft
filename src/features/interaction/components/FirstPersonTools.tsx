@@ -1,81 +1,80 @@
 
-	import React, { useRef, useEffect, useMemo } from 'react';
-	import { useFrame, useThree } from '@react-three/fiber';
-	import { useGLTF } from '@react-three/drei';
-	import { useControls } from 'leva';
-	import * as THREE from 'three';
-	import { useInventoryStore } from '@state/InventoryStore';
-	import { TorchTool } from './TorchTool';
-	import { useEnvironmentStore } from '@state/EnvironmentStore';
-	// Import the GLB URL explicitly
-	import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
+import React, { useRef, useEffect, useMemo } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import { useGLTF } from '@react-three/drei';
+import { useControls } from 'leva';
+import * as THREE from 'three';
+import { useInventoryStore } from '@state/InventoryStore';
+import { TorchTool } from './TorchTool';
+// Import the GLB URL explicitly
+import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 
 // Preload the model
 useGLTF.preload(pickaxeUrl);
 
-	export const FirstPersonTools: React.FC = () => {
-	    const { camera, scene } = useThree(); // Needed for parenting
-	    const groupRef = useRef<THREE.Group>(null);
-	    const axeRef = useRef<THREE.Group>(null);
-	    const torchRef = useRef<THREE.Group>(null);
-	    const hasAxe = useInventoryStore(state => state.hasAxe);
-	    const currentTool = useInventoryStore(state => state.currentTool);
-	    const isUnderground = useEnvironmentStore((s) => s.isUnderground);
-	    const undergroundChangedAt = useEnvironmentStore((s) => s.undergroundChangedAt);
-	
-	    // Debug UI for torch pose. Enabled with ?debug (same as Leva panel in App).
-	    const debugMode = useMemo(() => {
-	        const params = new URLSearchParams(window.location.search);
-	        return params.has('debug');
-	    }, []);
-	
-	    const torchPoseDebug = useControls(
-	        'Torch Pose',
-	        {
-	            // Defaults based on latest tuning screenshot.
-	            posX: { value: -0.5, min: -1.5, max: 0.0, step: 0.01 },
-	            posY: { value: -0.3, min: -1.0, max: 0.5, step: 0.01 },
-	            posZ: { value: -0.4, min: -2.0, max: -0.2, step: 0.01 },
-	            // Rotations in degrees for easier tuning.
-	            rotXDeg: { value: 14, min: -180, max: 180, step: 1 },
-	            rotYDeg: { value: -175, min: -180, max: 180, step: 1 },
-	            rotZDeg: { value: 28, min: -180, max: 180, step: 1 },
-	            scale: { value: 0.41, min: 0.2, max: 1.5, step: 0.01 },
-	            hiddenYOffset: { value: -0.8, min: -2.0, max: -0.2, step: 0.01 },
-	        },
-	        { hidden: !debugMode }
-	    );
+export const FirstPersonTools: React.FC = () => {
+    const { camera, scene } = useThree(); // Needed for parenting
+    const groupRef = useRef<THREE.Group>(null);
+    const axeRef = useRef<THREE.Group>(null);
+    const torchRef = useRef<THREE.Group>(null);
+    const hasAxe = useInventoryStore(state => state.hasAxe);
+    const currentTool = useInventoryStore(state => state.currentTool);
+
+    // Inventory State
+    const inventorySlots = useInventoryStore(state => state.inventorySlots);
+    const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
+
+    // Debug UI for torch pose. Enabled with ?debug (same as Leva panel in App).
+    const debugMode = useMemo(() => {
+        const params = new URLSearchParams(window.location.search);
+        return params.has('debug');
+    }, []);
+
+    const torchPoseDebug = useControls(
+        'Torch Pose',
+        {
+            // Defaults based on latest tuning screenshot.
+            posX: { value: -0.5, min: -1.5, max: 0.0, step: 0.01 },
+            posY: { value: -0.3, min: -1.0, max: 0.5, step: 0.01 },
+            posZ: { value: -0.4, min: -2.0, max: -0.2, step: 0.01 },
+            // Rotations in degrees for easier tuning.
+            rotXDeg: { value: 14, min: -180, max: 180, step: 1 },
+            rotYDeg: { value: -175, min: -180, max: 180, step: 1 },
+            rotZDeg: { value: 28, min: -180, max: 180, step: 1 },
+            scale: { value: 0.41, min: 0.2, max: 1.5, step: 0.01 },
+            hiddenYOffset: { value: -0.8, min: -2.0, max: -0.2, step: 0.01 },
+        },
+        { hidden: !debugMode }
+    );
 
     // Load the GLB model using the imported URL
     const { scene: modelScene } = useGLTF(pickaxeUrl);
 
-	    // Animation state
-	    const isDigging = useRef(false);
-	    const digProgress = useRef(0);
-	    const digSpeed = 10.0; // Slower, heavier feel
-	    // Impact kick (synced to actual terrain hits, not just mouse input).
-	    const impactKick = useRef(0);
-	    const impactKickTarget = useRef(0);
+    // Animation state
+    const isDigging = useRef(false);
+    const digProgress = useRef(0);
+    const digSpeed = 10.0; // Slower, heavier feel
+    // Impact kick (synced to actual terrain hits, not just mouse input).
+    const impactKick = useRef(0);
+    const impactKickTarget = useRef(0);
 
-	    // Torch slide animation state (0 hidden -> 1 fully shown)
-	    const torchProgress = useRef(0);
-	    const torchDelayActive = useRef(false);
-	    const torchDelayUntil = useRef(0);
-		    // Non-debug defaults should match the tuned Torch Pose defaults.
-		    const torchTargetPos = useRef(new THREE.Vector3(-0.5, -0.3, -0.4));
-		    const torchHiddenPos = useRef(new THREE.Vector3(-0.5, -1.10, -0.4));
-		    const torchPosTemp = useRef(new THREE.Vector3());
-		    const torchRotDefault = useRef(
-		        new THREE.Euler(
-		            THREE.MathUtils.degToRad(14),
-		            THREE.MathUtils.degToRad(-175),
-		            THREE.MathUtils.degToRad(28)
-		        )
-		    );
-		    const torchScaleDefault = useRef(0.41);
+    // Torch slide animation state (0 hidden -> 1 fully shown)
+    const torchProgress = useRef(0);
+    // Non-debug defaults should match the tuned Torch Pose defaults.
+    const torchTargetPos = useRef(new THREE.Vector3(-0.5, -0.3, -0.4));
+    const torchHiddenPos = useRef(new THREE.Vector3(-0.5, -1.10, -0.4));
+    const torchPosTemp = useRef(new THREE.Vector3());
+    const torchRotDefault = useRef(
+        new THREE.Euler(
+            THREE.MathUtils.degToRad(14),
+            THREE.MathUtils.degToRad(-175),
+            THREE.MathUtils.degToRad(28)
+        )
+    );
+    const torchScaleDefault = useRef(0.41);
 
-	    // Debug controls ENABLED
-	    const { debugPos, debugRot } = usePickaxeDebug();
+    // Debug controls ENABLED
+    const { debugPos, debugRot } = usePickaxeDebug();
 
     useEffect(() => {
         const handleMouseDown = (e: MouseEvent) => {
@@ -86,8 +85,11 @@ useGLTF.preload(pickaxeUrl);
                 digProgress.current = 0;
             }
         };
+
         window.addEventListener('mousedown', handleMouseDown);
-        return () => window.removeEventListener('mousedown', handleMouseDown);
+        return () => {
+            window.removeEventListener('mousedown', handleMouseDown);
+        };
     }, [currentTool, hasAxe]);
 
     // Sync tool motion to actual terrain impacts (hit/clunk/build).
@@ -132,8 +134,8 @@ useGLTF.preload(pickaxeUrl);
 
     // Priority 1 ensures this runs AFTER the camera controller updates
     // This eliminates the jitter/lag between camera and tool
-	    useFrame((state, delta) => {
-	        if (!axeRef.current) return;
+    useFrame((state, delta) => {
+        if (!axeRef.current) return;
 
         // Calculate sway/animations relative to the camera-locked group
 
@@ -189,61 +191,54 @@ useGLTF.preload(pickaxeUrl);
 
         // Apply transforms to the inner Axe group (local offsets)
         axeRef.current.position.set(positionX, positionY, positionZ);
-	        axeRef.current.rotation.set(
-	            rotationX,
-	            rotationY,
-	            rotationZ
-	        );
-	
-	        // Torch timing: when entering caves, wait 1s then animate in.
-	        const now = state.clock.getElapsedTime();
-	        if (isUnderground && !torchDelayActive.current) {
-	            torchDelayActive.current = true;
-	            torchDelayUntil.current = undergroundChangedAt + 1.0;
-	        }
-	        if (!isUnderground) {
-	            torchDelayActive.current = false;
-	            torchDelayUntil.current = 0;
-	        }
-	
-	        const targetShown = isUnderground && now >= torchDelayUntil.current;
-	        const speedIn = 2.2;  // ~0.45s in
-	        const speedOut = 2.8; // slightly faster out
-	        const targetProg = targetShown ? 1 : 0;
-	        torchProgress.current = THREE.MathUtils.lerp(
-	            torchProgress.current,
-	            targetProg,
-	            (targetShown ? speedIn : speedOut) * delta
-	        );
-	        const p = torchProgress.current;
-	        const ease = p * p * (3 - 2 * p); // smoothstep
-	
-	        // Keep torch on left, match pickaxe height/angle, and slide from below camera.
-	        if (torchRef.current) {
-	            const time2 = now;
-	
-	            // Update target/hidden pose from debug sliders if enabled.
-	            if (debugMode) {
-	                torchTargetPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY, torchPoseDebug.posZ);
-	                torchHiddenPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
-	            }
-	
-	            // Target pose (mirrors pickaxe feel but left side).
-	            torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
-	            torchRef.current.position.copy(torchPosTemp.current);
-		            torchRef.current.rotation.set(
-		                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotXDeg) : torchRotDefault.current.x) + Math.sin(time2 * 1.4) * 0.012,
-		                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotYDeg) : torchRotDefault.current.y) + Math.cos(time2 * 1.1) * 0.012,
-		                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotZDeg) : torchRotDefault.current.z)
-		            );
-	            // Slight bob only when visible.
-	            if (ease > 0.01) {
-	                torchRef.current.position.y += Math.sin(time2 * 2.0) * 0.01;
-	            }
-		            torchRef.current.scale.setScalar(debugMode ? torchPoseDebug.scale : torchScaleDefault.current);
-		            torchRef.current.visible = ease > 0.01;
-		        }
-		    });
+        axeRef.current.rotation.set(
+            rotationX,
+            rotationY,
+            rotationZ
+        );
+
+        // Torch Logic: Driven by Inventory Selection
+        const isTorchSelected = inventorySlots[selectedSlotIndex] === 'torch';
+
+        const targetShown = isTorchSelected;
+        const speedIn = 2.2;  // ~0.45s in
+        const speedOut = 2.8; // slightly faster out
+        const targetProg = targetShown ? 1 : 0;
+        torchProgress.current = THREE.MathUtils.lerp(
+            torchProgress.current,
+            targetProg,
+            (targetShown ? speedIn : speedOut) * delta
+        );
+        const p = torchProgress.current;
+        const ease = p * p * (3 - 2 * p); // smoothstep
+
+        // Keep torch on left, match pickaxe height/angle, and slide from below camera.
+        if (torchRef.current) {
+            // Re-declare ‘now’ for animation usage using state.clock
+            const now = state.clock.getElapsedTime();
+
+            // Update target/hidden pose from debug sliders if enabled.
+            if (debugMode) {
+                torchTargetPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY, torchPoseDebug.posZ);
+                torchHiddenPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
+            }
+
+            // Target pose (mirrors pickaxe feel but left side).
+            torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
+            torchRef.current.position.copy(torchPosTemp.current);
+            torchRef.current.rotation.set(
+                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotXDeg) : torchRotDefault.current.x) + Math.sin(now * 1.4) * 0.012,
+                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotYDeg) : torchRotDefault.current.y) + Math.cos(now * 1.1) * 0.012,
+                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotZDeg) : torchRotDefault.current.z)
+            );
+            // Slight bob only when visible.
+            if (ease > 0.01) {
+                torchRef.current.position.y += Math.sin(now * 2.0) * 0.01;
+            }
+            torchRef.current.scale.setScalar(debugMode ? torchPoseDebug.scale : torchScaleDefault.current);
+            torchRef.current.visible = ease > 0.01;
+        }
+    });
 
     // Ensure model catches light and shadows
     useEffect(() => {
@@ -284,19 +279,19 @@ useGLTF.preload(pickaxeUrl);
 
     // Compute offset to center the model if needed (based on logs, but we'll try a visual offset adjustment wrapper)
 
-	    return (
-	        <group ref={groupRef}>
-	            {/* Ambient light for the tool itself to ensure it's never pitch black */}
-	            <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
-	
-	            {/* Left-hand torch for caves. Positioned/rotated in useFrame above. */}
-	            <group ref={torchRef}>
-	                <TorchTool />
-	            </group>
+    return (
+        <group ref={groupRef}>
+            {/* Ambient light for the tool itself to ensure it's never pitch black */}
+            <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
 
-	            <group ref={axeRef}>
-	                <group>
-	                    {/* Move model down/center if it was high up? We will check logs. 
+            {/* Left-hand torch for caves. Positioned/rotated in useFrame above. */}
+            <group ref={torchRef}>
+                <TorchTool />
+            </group>
+
+            <group ref={axeRef}>
+                <group>
+                    {/* Move model down/center if it was high up? We will check logs. 
 	                         For now, just render it as is, we have the Red Box as reference. */}
                     <primitive
                         object={modelScene}

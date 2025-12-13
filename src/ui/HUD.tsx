@@ -3,6 +3,7 @@ import { Vector3 } from 'three';
 import { useInventoryStore as useGameStore } from '@/state/InventoryStore';
 import { useWorldStore } from '@/state/WorldStore';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
+import { InventoryBar } from '@/ui/InventoryBar';
 
 // --- Minimap Configuration ---
 const MAP_SIZE = 128; // Pixel width/height of the map
@@ -20,6 +21,7 @@ const BIOME_COLORS: Record<BiomeType, string> = {
   'SAVANNA': '#a3e635',     // lime-400
   'THE_GROVE': '#10b981',   // emerald-500
   'SKY_ISLANDS': '#0ea5e9', // sky-500
+  'BEACH': '#fde68a',       // amber-200
 };
 
 const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, z: pz, rotation }) => {
@@ -168,6 +170,19 @@ export const HUD: React.FC = () => {
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
   const [crosshairHit, setCrosshairHit] = useState(false);
   const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');
+  const [placementDebug, setPlacementDebug] = useState<string>('');
+  const debugMode = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const viaQuery = params.has('debug');
+    const viaWindow = (window as any).__vcDebugPlacement === true;
+    let viaStorage = false;
+    try {
+      viaStorage = window.localStorage.getItem('vcDebugPlacement') === '1';
+    } catch {
+      viaStorage = false;
+    }
+    return viaQuery || viaWindow || viaStorage;
+  }, []);
 
   // Quick hack to get camera position: App.tsx will update a DOM element or Custom Event
   useEffect(() => {
@@ -177,6 +192,25 @@ export const HUD: React.FC = () => {
     window.addEventListener('player-moved', handlePosUpdate as EventListener);
     return () => window.removeEventListener('player-moved', handlePosUpdate as EventListener);
   }, []);
+
+  // Placement debugging (enabled with ?debug).
+  useEffect(() => {
+    if (!debugMode) return;
+    let timeoutId: number | null = null;
+    const handlePlacementDebug = (e: Event) => {
+      const ce = e as CustomEvent;
+      const msg = (ce.detail?.message as string | undefined) ?? '';
+      if (!msg) return;
+      setPlacementDebug(msg);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => setPlacementDebug(''), 1200);
+    };
+    window.addEventListener('vc-placement-debug', handlePlacementDebug as EventListener);
+    return () => {
+      window.removeEventListener('vc-placement-debug', handlePlacementDebug as EventListener);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+    };
+  }, [debugMode]);
 
   // Tool feedback: flash crosshair on terrain/tool impacts.
   useEffect(() => {
@@ -216,12 +250,22 @@ export const HUD: React.FC = () => {
           <p>WASD + Space to move</p>
           <p>Left Click: <span className="text-red-500 font-semibold">DIG</span></p>
           <p>Right Click: <span className="text-emerald-600 font-semibold">BUILD</span></p>
-          <p>E: <span className="text-cyan-600 font-semibold">Place Flora</span> (Inv: {inventoryCount})</p>
+          <p>E: <span className="text-cyan-600 font-semibold">Place Selected</span></p>
+          <p>Q: <span className="text-cyan-600 font-semibold">Pick Up Flora</span> (Inv: {inventoryCount})</p>
+          <p>Scroll: <span className="text-amber-500 font-semibold">Inventory</span></p>
         </div>
+        {debugMode && placementDebug && (
+          <div className="mt-1 text-[10px] font-mono text-slate-700">
+            place: {placementDebug}
+          </div>
+        )}
         <div className="mt-2 pt-2 border-t border-slate-300 text-[10px] font-mono opacity-80">
           POS: {coords.x.toFixed(1)}, {coords.y.toFixed(1)}, {coords.z.toFixed(1)}
         </div>
       </div>
+
+      {/* Bottom Left: Inventory Bar */}
+      <InventoryBar />
 
       {/* Bottom Right: Minimap */}
       <div className="absolute bottom-6 right-6 pointer-events-auto">

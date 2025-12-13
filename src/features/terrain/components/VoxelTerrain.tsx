@@ -112,6 +112,91 @@ const rayHitsFlora = (
   return closestId;
 };
 
+// Small helper to test ray vs placed torches (world entities)
+const rayHitsTorch = (
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxDist: number,
+  torchRadius = 0.55
+): { id: string; t: number; position: THREE.Vector3 } | null => {
+  const state = useWorldStore.getState();
+  let closest: { id: string; t: number; position: THREE.Vector3 } | null = null;
+  let closestT = maxDist + 1;
+  const tmp = new THREE.Vector3();
+  const proj = new THREE.Vector3();
+  const p = new THREE.Vector3();
+
+  for (const ent of state.entities.values()) {
+    if (ent.type !== 'TORCH') continue;
+    p.copy(ent.position);
+    tmp.copy(p).sub(origin);
+    const t = tmp.dot(dir);
+    if (t < 0 || t > maxDist) continue;
+    if (t >= closestT) continue;
+    proj.copy(dir).multiplyScalar(t);
+    tmp.sub(proj);
+    const distSq = tmp.lengthSq();
+    if (distSq <= torchRadius * torchRadius) {
+      closestT = t;
+      closest = { id: ent.id, t, position: p.clone() };
+    }
+  }
+
+  return closest;
+};
+
+/**
+ * Ray-hit test against generated lumina flora (chunk `floraPositions`).
+ * Returns the closest hit along the ray (single-target pickup).
+ */
+const rayHitsGeneratedLuminaFlora = (
+  chunks: Record<string, ChunkState>,
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxDist: number,
+  floraRadius = 0.55
+): { key: string; index: number; t: number; position: THREE.Vector3 } | null => {
+  const tmp = new THREE.Vector3();
+  const proj = new THREE.Vector3();
+  const hitPos = new THREE.Vector3();
+
+  const minCx = Math.floor((origin.x - maxDist) / CHUNK_SIZE_XZ);
+  const maxCx = Math.floor((origin.x + maxDist) / CHUNK_SIZE_XZ);
+  const minCz = Math.floor((origin.z - maxDist) / CHUNK_SIZE_XZ);
+  const maxCz = Math.floor((origin.z + maxDist) / CHUNK_SIZE_XZ);
+
+  let best: { key: string; index: number; t: number; position: THREE.Vector3 } | null = null;
+  let bestT = maxDist + 1;
+
+  for (let cx = minCx; cx <= maxCx; cx++) {
+    for (let cz = minCz; cz <= maxCz; cz++) {
+      const key = `${cx},${cz}`;
+      const chunk = chunks[key];
+      if (!chunk?.floraPositions || chunk.floraPositions.length === 0) continue;
+
+      const positions = chunk.floraPositions;
+      for (let i = 0; i < positions.length; i += 4) {
+        // Positions are already world space; do not add chunk origin again.
+        if (positions[i + 1] < -9999) continue;
+        hitPos.set(positions[i], positions[i + 1], positions[i + 2]);
+        tmp.copy(hitPos).sub(origin);
+        const t = tmp.dot(dir);
+        if (t < 0 || t > maxDist) continue;
+        if (t >= bestT) continue;
+        proj.copy(dir).multiplyScalar(t);
+        tmp.sub(proj);
+        const distSq = tmp.lengthSq();
+        if (distSq <= floraRadius * floraRadius) {
+          bestT = t;
+          best = { key, index: i, t, position: hitPos.clone() };
+        }
+      }
+    }
+  }
+
+  return best;
+};
+
 /**
  * Convert chunk-local flora positions into world-space hotspots for UI overlays.
  */
@@ -123,6 +208,9 @@ const buildFloraHotspots = (
   const hotspots: FloraHotspot[] = [];
 
   for (let i = 0; i < positions.length; i += 4) {
+    // Picked/removed lumina flora is "hidden" by sending it far below the world.
+    // Skip those entries so UI hotspots remain accurate.
+    if (positions[i + 1] < -9999) continue;
     hotspots.push({
       x: positions[i],
       z: positions[i + 2]
@@ -135,10 +223,12 @@ const buildFloraHotspots = (
 const LeafPickupEffect = ({
   start,
   color = '#00FFFF',
+  geometry = 'octahedron',
   onDone
 }: {
   start: THREE.Vector3;
   color?: string;
+  geometry?: 'octahedron' | 'sphere';
   onDone: () => void;
 }) => {
   const { camera } = useThree();
@@ -189,7 +279,11 @@ const LeafPickupEffect = ({
 
   return (
     <mesh ref={meshRef} castShadow receiveShadow>
-      <octahedronGeometry args={[0.15, 0]} />
+      {geometry === 'sphere' ? (
+        <sphereGeometry args={[0.13, 12, 10]} />
+      ) : (
+        <octahedronGeometry args={[0.15, 0]} />
+      )}
       <meshStandardMaterial
         color={color}
         emissive={color}
@@ -474,6 +568,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     active: false
   });
   const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
+  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
 
@@ -700,6 +795,108 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   });
 
   useEffect(() => {
+    let lastPickupMs = 0;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyQ') return;
+      // Only pick up items when in gameplay (pointer lock).
+      if (!document.pointerLockElement) return;
+      e.preventDefault();
+
+      const now = performance.now();
+      if (now - lastPickupMs < 160) return; // Debounce to avoid repeats on key hold
+      lastPickupMs = now;
+
+      const origin = camera.position.clone();
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+      const maxDist = 10.0;
+
+      // Pick a single closest target along the ray:
+      // 1) placed flora entities (WorldStore)
+      // 2) placed torches (WorldStore)
+      // 2) generated lumina flora (chunk floraPositions)
+      const placedId = rayHitsFlora(origin, dir, maxDist, 0.55);
+      const torchHit = rayHitsTorch(origin, dir, maxDist, 0.55);
+      const luminaHit = rayHitsGeneratedLuminaFlora(chunksRef.current, origin, dir, maxDist, 0.55);
+
+      const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
+        const key = hit.key;
+        const chunk = chunksRef.current[key];
+        if (!chunk?.floraPositions) return;
+        const positions = chunk.floraPositions;
+        if (positions.length < 4) return;
+
+        // Keep array length stable and just "hide" the picked entry.
+        // This avoids reindexing artifacts for instanced rendering.
+        const next = new Float32Array(positions); // Clone
+        // stride 4: x, y, z, type
+        next[hit.index + 1] = -10000;
+
+        const updatedChunk = { ...chunk, floraPositions: next };
+        chunksRef.current[key] = updatedChunk;
+        setChunks((prev) => ({ ...prev, [key]: updatedChunk }));
+        useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
+      };
+
+      let pickedStart: THREE.Vector3 | null = null;
+      let pickedTorch = false;
+
+      // Determine closest along ray (torch vs flora vs lumina).
+      const tTorch = torchHit?.t ?? Infinity;
+
+      const entPlaced = placedId ? useWorldStore.getState().entities.get(placedId) : null;
+      const pPlaced = entPlaced?.bodyRef?.current ? entPlaced.bodyRef.current.translation() : entPlaced?.position;
+      const placedPos = pPlaced ? new THREE.Vector3(pPlaced.x, pPlaced.y, pPlaced.z) : null;
+      const tPlaced = placedPos ? placedPos.clone().sub(origin).dot(dir) : Infinity;
+      const tLumina = luminaHit?.t ?? Infinity;
+
+      if (tTorch <= tPlaced && tTorch <= tLumina && torchHit) {
+        pickedTorch = true;
+        pickedStart = torchHit.position;
+        useWorldStore.getState().removeEntity(torchHit.id);
+      } else if (placedId && luminaHit) {
+        if (placedPos) {
+          if (tPlaced <= luminaHit.t) {
+            pickedStart = placedPos;
+            useWorldStore.getState().removeEntity(placedId);
+          } else {
+            pickedStart = luminaHit.position;
+            removeLumina(luminaHit);
+          }
+        } else {
+          // Fallback: treat as lumina if we can't read the placed entity position.
+          pickedStart = luminaHit.position;
+          removeLumina(luminaHit);
+        }
+      } else if (placedId) {
+        const ent = useWorldStore.getState().entities.get(placedId);
+        const p = ent?.bodyRef?.current ? ent.bodyRef.current.translation() : ent?.position;
+        if (p) {
+          pickedStart = new THREE.Vector3(p.x, p.y, p.z);
+        }
+        useWorldStore.getState().removeEntity(placedId);
+      } else if (luminaHit) {
+        pickedStart = luminaHit.position;
+        removeLumina(luminaHit);
+      }
+
+      if (pickedStart) {
+        // Add item to inventory and play a fly-to-player pickup effect.
+        if (pickedTorch) {
+          useGameStore.getState().addItem('torch', 1);
+        } else {
+          useGameStore.getState().addItem('flora', 1);
+        }
+        const effectId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color: pickedTorch ? '#ffdbb1' : '#00FFFF' }]);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [camera]);
+
+  useEffect(() => {
     if (!isInteracting || !action) return;
 
     const origin = camera.position.clone();
@@ -708,15 +905,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
     const ray = new rapier.Ray(origin, direction);
 
-    // 0. CHECK FOR PLACED FLORA INTERACTION (HARVEST) — stop if we hit flora first (physics-free check)
-    if (action === 'DIG') {
-      const floraId = rayHitsFlora(origin, direction, maxRayDistance);
-      if (floraId) {
-        useWorldStore.getState().removeEntity(floraId);
-        useGameStore.getState().harvestFlora();
-        return;
-      }
-    }
+    // NOTE: Flora pickup is handled by the Q hotkey (single-target ray pickup).
+    // DIG should not "vacuum" multiple flora items into inventory.
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
@@ -766,7 +956,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         ];
 
         let anyFloraHit = false;
-        let anyLuminaHit = false;
 
         for (const key of checkKeys) {
           const chunk = chunksRef.current[key];
@@ -780,59 +969,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           const dist = origin.distanceTo(impactPoint);
           const digRadius = (dist < 3.0) ? 1.5 : DIG_RADIUS;
 
-          // 1. Check Lumina Flora (generated caverns) via chunk data (no physics bodies)
-          if (chunk.floraPositions) {
-            const positions = chunk.floraPositions;
-            const hitIndices: number[] = [];
-
-            for (let i = 0; i < positions.length; i += 4) {
-              // POSITIONS ARE ALREADY WORLD SPACE
-              // Do NOT add chunkOriginX/Z again!
-              const x = positions[i];
-              const y = positions[i + 1];
-              const z = positions[i + 2];
-
-              const dx = impactPoint.x - x;
-              const dz = impactPoint.z - z;
-              const dy = impactPoint.y - y;
-
-              // Lumina bulbs are small; allow a bit more Y tolerance
-              // AAA FIX: Tighter Radius for Flora Removal
-              // Was (digRadius + 0.6), which is huge. Reduced to digRadius * 0.7 to only remove what we touch.
-              const removalRadius = digRadius * 0.7;
-              const distSq = dx * dx + dz * dz + (dy > 0 && dy < 2.0 ? 0 : dy * dy);
-              if (distSq < removalRadius * removalRadius) {
-                hitIndices.push(i);
-              }
-            }
-
-            if (hitIndices.length > 0) {
-              anyFloraHit = true;
-              anyLuminaHit = true;
-
-              const newCount = (positions.length / 4) - hitIndices.length;
-              const newPositions = new Float32Array(newCount * 4);
-              let destIdx = 0;
-              let currentHitIdx = 0;
-              hitIndices.sort((a, b) => a - b);
-
-              for (let i = 0; i < positions.length; i += 4) {
-                if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
-                  currentHitIdx++;
-                  continue;
-                }
-                newPositions[destIdx] = positions[i];
-                newPositions[destIdx + 1] = positions[i + 1];
-                newPositions[destIdx + 2] = positions[i + 2];
-                newPositions[destIdx + 3] = positions[i + 3];
-                destIdx += 4;
-              }
-
-              const updatedChunk = { ...chunk, floraPositions: newPositions, visualVersion: chunk.visualVersion + 1 };
-              chunksRef.current[key] = updatedChunk;
-              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-            }
-          }
+          // 1. Generated lumina flora pickup uses Q (single-target ray pickup).
+          // Keeping DIG from deleting it avoids "vacuum" pickup and accidental multi-removals.
 
           // 2. Check Trees
           if (chunk.treePositions) {
@@ -1019,10 +1157,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
               setChunks(prev => ({ ...prev, [key]: updatedChunk }));
             }
           }
-        }
-
-        if (anyLuminaHit) {
-          useGameStore.getState().harvestFlora();
         }
 
         if (anyFloraHit) {
@@ -1249,6 +1383,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           }}
         />
       )}
+      {floraPickups.map((fx) => (
+        <LeafPickupEffect
+          key={fx.id}
+          start={fx.start}
+          color={fx.color}
+          geometry="sphere"
+          onDone={() => {
+            setFloraPickups((prev) => prev.filter((p) => p.id !== fx.id));
+          }}
+        />
+      ))}
     </group>
   );
 };

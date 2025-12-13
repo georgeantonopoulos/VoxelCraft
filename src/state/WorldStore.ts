@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import React from 'react';
 import { getChunkKeyFromPos, getNeighborKeys } from '@utils/spatial';
 
@@ -8,12 +8,15 @@ export interface FloraHotspot {
   z: number;
 }
 
-export type EntityType = 'FLORA' | 'TREE_STUMP' | 'BEE';
+export type EntityType = 'FLORA' | 'TORCH' | 'TREE_STUMP' | 'BEE';
 
 export interface EntityData {
   id: string;
   type: EntityType;
   position: Vector3;
+  // Optional orientation for entities that need to "stick" to geometry (e.g. wall torches).
+  // We store a quaternion to avoid recomputing on every render.
+  rotation?: Quaternion;
   // Storing the ref here allows systems to access physics bodies
   // without needing to pass props down through React.
   bodyRef?: React.RefObject<any>;
