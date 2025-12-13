@@ -15,7 +15,6 @@ import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
-import { TerrainWorkers } from '@features/terrain/workers/TerrainWorkers';
 
 
 // Sounds
@@ -425,8 +424,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
-  const [playerChunk, setPlayerChunk] = useState<{ cx: number; cz: number }>({ cx: 0, cz: 0 });
-  const lastPlayerChunkRef = useRef<{ cx: number; cz: number }>({ cx: 0, cz: 0 });
 
   // Initialize Audio Pool once
   const audioPool = useMemo(() => {
@@ -454,9 +451,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
   const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
   const chunksRef = useRef<Record<string, ChunkState>>({});
-  const terrainWorkersRef = useRef<TerrainWorkers | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
-  const generateQueue = useRef<Array<{ cx: number; cz: number; key: string }>>([]);
 
   // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
   const [particleState, setParticleState] = useState<{
@@ -491,7 +487,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       });
     });
 
-    const handleGeneratedBase = (payload: any, terrainWorkers: TerrainWorkers) => {
+    // Restore the simpler worker model (as of 8d1ef30): a single `terrain.worker.ts`
+    // generates voxel fields + meshes. This avoids chunk-boundary React rerenders introduced by
+    // collider-gating and reduces pipeline complexity while we chase streaming hitches.
+    const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
+    workerRef.current = worker;
+
+    // Send configuration immediately
+    worker.postMessage({ type: 'CONFIGURE', payload: { worldType } });
+
+    worker.onmessage = (e) => {
+      const { type, payload } = e.data;
+
+      if (type === 'GENERATED') {
         const { key, metadata, material, floraPositions, treePositions, rootHollowPositions } = payload;
         pendingChunks.current.delete(key);
 
@@ -524,18 +532,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           // Used to time-fade chunks into view (hides render-distance pop-in).
           spawnedAt: performance.now() / 1000
         };
+
         // Register chunk arrays for runtime queries (water, interaction probes, etc).
         terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
         chunksRef.current[key] = newChunk;
         setChunks(prev => ({ ...prev, [key]: newChunk }));
-
-        // Pipeline mode meshes separately; legacy mode already included mesh buffers.
-        if (terrainWorkers.mode === 'pipeline' && metadata) {
-          terrainWorkers.meshGenerate(key, payload.density, payload.material, metadata.wetness, metadata.mossiness);
-        }
-    };
-
-    const handleMeshDone = (payload: any) => {
+      } else if (type === 'REMESHED') {
         const {
           key,
           meshPositions,
@@ -557,7 +559,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         if (current) {
           const updatedChunk = {
             ...current,
-            terrainVersion: current.terrainVersion + 1, // Assume geometry change for mesh update
+            terrainVersion: current.terrainVersion + 1, // Assume geometry change for remesh
             visualVersion: current.visualVersion + 1,
             meshPositions,
             meshIndices,
@@ -576,27 +578,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           chunksRef.current[key] = updatedChunk;
           setChunks(prev => ({ ...prev, [key]: updatedChunk }));
         }
+      }
     };
 
-    const terrainWorkers = new TerrainWorkers({
-      onGeneratedBase: (payload) => handleGeneratedBase(payload, terrainWorkers),
-      onMeshDone: (payload) => handleMeshDone(payload),
-      // Legacy worker events (combined generate + mesh).
-      onLegacyGenerated: (payload) => {
-        // Legacy payload contains voxel fields + mesh buffers.
-        handleGeneratedBase(payload, terrainWorkers);
-        handleMeshDone(payload);
-      },
-      onLegacyRemeshed: (payload) => {
-        // Legacy remesh maps to mesh-done path.
-        handleMeshDone(payload);
-      }
-    });
-
-    terrainWorkers.start(worldType);
-    terrainWorkersRef.current = terrainWorkers;
-
-    return () => terrainWorkers.terminate();
+    return () => worker.terminate();
   }, []);
 
   useEffect(() => {
@@ -618,15 +603,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   }, [chunks, onInitialLoad]);
 
   useFrame(() => {
-    if (!camera || !terrainWorkersRef.current) return;
-    const terrainWorkers = terrainWorkersRef.current;
+    if (!camera || !workerRef.current) return;
 
     const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
-    if (px !== lastPlayerChunkRef.current.cx || pz !== lastPlayerChunkRef.current.cz) {
-      lastPlayerChunkRef.current = { cx: px, cz: pz };
-      setPlayerChunk({ cx: px, cz: pz });
-    }
 
     // Update simulation player position
     simulationManager.updatePlayerPosition(px, pz);
@@ -643,32 +623,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
         if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
           pendingChunks.current.add(key);
-          generateQueue.current.push({ cx, cz, key });
+          workerRef.current.postMessage({ type: 'GENERATE', payload: { cx, cz } });
         }
       }
-    }
-
-    // Drain a small number of chunk generates per frame to smooth streaming hitches.
-    // The worker does the heavy math, but the main thread still pays to upload buffers + build colliders.
-    const maxGeneratesPerFrame = 2;
-    for (let i = 0; i < maxGeneratesPerFrame; i++) {
-      // Prefer nearest-to-player jobs first so "close" chunks don't stay in a half-loaded state.
-      // This is intentionally O(n) selection with a tiny `maxGeneratesPerFrame` to avoid full sorts.
-      let bestIndex = -1;
-      let bestDist2 = Infinity;
-      for (let j = 0; j < generateQueue.current.length; j++) {
-        const job = generateQueue.current[j];
-        const dx = job.cx - px;
-        const dz = job.cz - pz;
-        const d2 = dx * dx + dz * dz;
-        if (d2 < bestDist2) {
-          bestDist2 = d2;
-          bestIndex = j;
-        }
-      }
-      const job = bestIndex >= 0 ? generateQueue.current.splice(bestIndex, 1)[0] : undefined;
-      if (!job) break;
-      terrainWorkers.generate(job.cx, job.cz);
     }
 
     const newChunks = { ...chunksRef.current };
@@ -699,7 +656,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         const metadata = metadataDB.getChunk(key);
 
         if (chunk && metadata) {
-          terrainWorkers.remesh(key, chunk.cx, chunk.cz, chunk.density, chunk.material, metadata['wetness'], metadata['mossiness'], chunk.terrainVersion);
+          workerRef.current.postMessage({
+            type: 'REMESH',
+            payload: {
+              key,
+              cx: chunk.cx,
+              cz: chunk.cz,
+              density: chunk.density,
+              material: chunk.material,
+              wetness: metadata['wetness'],
+              mossiness: metadata['mossiness'],
+              version: chunk.terrainVersion // Pass current version (will be echoed but we ignore it)
+            }
+          });
         }
       }
     }
@@ -1130,7 +1099,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         }
       }
 
-      if (anyModified && terrainWorkersRef.current) {
+      if (anyModified && workerRef.current) {
         // Play Dig Sound
         if (action === 'DIG') {
           const sounds = [dig1Url, dig2Url, dig3Url];
@@ -1147,7 +1116,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           if (chunk && metadata) {
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
             remeshQueue.current.add(key);
-            terrainWorkersRef.current!.remesh(key, chunk.cx, chunk.cz, chunk.density, chunk.material, metadata.wetness, metadata.mossiness, chunk.terrainVersion);
           }
         });
 
@@ -1199,8 +1167,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         <React.Fragment key={chunk.key}>
           <ChunkMesh
             chunk={chunk}
-            playerCx={playerChunk.cx}
-            playerCz={playerChunk.cz}
             sunDirection={sunDirection}
             triplanarDetail={triplanarDetail}
             terrainShaderFogEnabled={terrainShaderFogEnabled}

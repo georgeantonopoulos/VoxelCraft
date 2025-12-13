@@ -13,8 +13,6 @@ import { LuminaLayer } from './LuminaLayer';
 
 export const ChunkMesh: React.FC<{
   chunk: ChunkState;
-  playerCx?: number;
-  playerCz?: number;
   sunDirection?: THREE.Vector3;
   triplanarDetail?: number;
   terrainShaderFogEnabled?: boolean;
@@ -32,8 +30,6 @@ export const ChunkMesh: React.FC<{
   terrainWeightsView?: string;
 }> = React.memo(({
   chunk,
-  playerCx = 0,
-  playerCz = 0,
   sunDirection,
   triplanarDetail = 1.0,
   terrainShaderFogEnabled = true,
@@ -67,11 +63,6 @@ export const ChunkMesh: React.FC<{
   useEffect(() => {
     void terrainFadeEnabled;
   }, [terrainFadeEnabled]);
-
-  // Only build expensive trimesh colliders near the player to avoid hitches
-  // when streaming in new chunks at the render distance.
-  const physicsEnabled =
-    Math.abs(chunk.cx - playerCx) <= 1 && Math.abs(chunk.cz - playerCz) <= 1;
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
@@ -272,33 +263,7 @@ export const ChunkMesh: React.FC<{
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (
-        physicsEnabled ? (
-          <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
-            <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
-              {normalsMode ? (
-                <meshNormalMaterial />
-              ) : terrainChunkTintEnabled ? (
-                <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
-              ) : (
-                <TriplanarMaterial
-                  sunDirection={sunDirection}
-                  triplanarDetail={triplanarDetail}
-                  shaderFogEnabled={terrainShaderFogEnabled}
-                  shaderFogStrength={terrainShaderFogStrength}
-                  threeFogEnabled={terrainThreeFogEnabled}
-                  wetnessEnabled={terrainWetnessEnabled}
-                  mossEnabled={terrainMossEnabled}
-                  roughnessMin={terrainRoughnessMin}
-                  polygonOffsetEnabled={terrainPolygonOffsetEnabled}
-                  polygonOffsetFactor={terrainPolygonOffsetFactor}
-                  polygonOffsetUnits={terrainPolygonOffsetUnits}
-                  weightsView={terrainWeightsView}
-                  wireframe={terrainWireframeEnabled}
-                />
-              )}
-            </mesh>
-          </RigidBody>
-        ) : (
+        <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
           <mesh ref={meshRef} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} castShadow receiveShadow frustumCulled geometry={terrainGeometry}>
             {normalsMode ? (
               <meshNormalMaterial />
@@ -322,7 +287,7 @@ export const ChunkMesh: React.FC<{
               />
             )}
           </mesh>
-        )
+        </RigidBody>
       )}
       {waterGeometry && (
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
