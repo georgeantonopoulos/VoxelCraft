@@ -5,6 +5,7 @@ import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
 import { FractalTree } from '@features/flora/components/FractalTree';
+import { LumaSwarm } from '@features/flora/components/LumaSwarm';
 import stumpUrl from '@assets/models/tree_stump.glb?url';
 
 // AAA Visual Config - Matching the reference image
@@ -30,7 +31,9 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     position,
     normal = [0, 1, 0]
 }) => {
-    const [status, setStatus] = useState<'IDLE' | 'GROWING'>('IDLE');
+    const [status, setStatus] = useState<'IDLE' | 'CHARGING' | 'GROWING'>('IDLE');
+    const [swarmVisible, setSwarmVisible] = useState(false);
+
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
@@ -114,9 +117,22 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         };
     }, [scene]);
 
-    // NOTE:
-    // Chunk opacity fade was removed because the transparent render path can introduce
-    // noticeable hitches while streaming. RootHollows remain fully opaque; fog hides pop-in.
+    // Transition Logic
+    useEffect(() => {
+        if (status === 'CHARGING') {
+            // Wait 10 seconds for particle formation
+            const growTimer = setTimeout(() => {
+                setStatus('GROWING');
+
+                // Keep particles for dissipation (e.g. 3s) then cleanup
+                setTimeout(() => {
+                    setSwarmVisible(false);
+                }, 3000);
+            }, 10000);
+
+            return () => clearTimeout(growTimer);
+        }
+    }, [status]);
 
     useFrame(() => {
         if (status !== 'IDLE') return;
@@ -135,7 +151,8 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 const vel = body.linvel();
                 if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
                     removeEntity(entity.id);
-                    setStatus('GROWING');
+                    setStatus('CHARGING');
+                    setSwarmVisible(true);
                 }
             }
         }
@@ -163,6 +180,13 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 </group>
                 <primitive object={stumpModel} />
             </RigidBody>
+
+            {/* Luma Swarm Animation (Charging Phase) */}
+            {swarmVisible && (
+                <group position={[0, 1.5, 0]}> {/* Lift slightly above stump */}
+                    <LumaSwarm dissipating={status === 'GROWING'} />
+                </group>
+            )}
 
             {status === 'GROWING' && (
                 <FractalTree
