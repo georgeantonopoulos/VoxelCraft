@@ -30,8 +30,9 @@ const EMIT_JITTER = 4.0; // Random motion amplitude during spread
 const FORM_JITTER = 0.8; // Residual randomness during convergence (fades out)
 
 // Final silhouette dimensions (big representation of the PNG).
-const SHAPE_WIDTH = EST_FLORA_TREE_WIDTH;
-const SHAPE_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.15;
+// We keep aspect ratio from the actual image and size it to roughly half of the previous silhouette.
+const SHAPE_SCALE = 0.5;
+const SHAPE_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.15 * SHAPE_SCALE;
 
 // Debug controls (keep off by default to avoid console spam/perf hits in-game)
 const DEBUG_LUMA_SWARM = false;
@@ -77,6 +78,10 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         const targets: number[] = []; // x, y, z
         const randoms: number[] = []; // random offsets for start/noise
 
+        // Preserve the PNG aspect ratio while scaling it to our desired world size.
+        const imageAspect = texture.image.width > 0 ? (texture.image.width / texture.image.height) : 1.0;
+        const shapeWidth = SHAPE_HEIGHT * imageAspect;
+
         for (let y = 0; y < SAMPLE_RESOLUTION; y++) {
             for (let x = 0; x < SAMPLE_RESOLUTION; x++) {
                 const i = (y * SAMPLE_RESOLUTION + x) * 4;
@@ -93,7 +98,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                     const nY01 = 1.0 - (y / SAMPLE_RESOLUTION); // Flip Y to 0..1 (base at 0, top at 1)
 
                     // Make the silhouette BIG and upright: X is centered, Y is anchored at base (0..height).
-                    targets.push(nX * SHAPE_WIDTH, nY01 * SHAPE_HEIGHT, 0); // Z=0 plane (faces camera during convergence)
+                    targets.push(nX * shapeWidth, nY01 * SHAPE_HEIGHT, 0); // Z=0 plane (faces camera during convergence)
                     randoms.push(Math.random(), Math.random(), Math.random());
                 }
             }
@@ -313,41 +318,56 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             // Particles originate at the core, then expand upward into a tall volume roughly
                             // matching the space a fully-grown flora tree occupies.
                             float spreadT = clamp(uProgress / EMIT_PHASE, 0.0, 1.0);
-                            // Faster “initial velocity” via ease-out.
-                            float spreadEase = 1.0 - pow(1.0 - spreadT, 3.0);
+                            // Ease-in-out so we don't rocket to the top immediately; feels more "etheric".
+                            float spreadEase = smoothstep(0.0, 1.0, spreadT);
 
                             // Random radial direction (XZ), with an outward radius bias.
                             vec2 dir2 = normalize((aRandom.xy - 0.5) * 2.0 + vec2(0.0001, 0.0002));
                             float radial = pow(aRandom.z, 0.65) * EMIT_RADIUS;
 
                             // Spiraling motion: per-particle spin speed + phase.
-                            float spinSpeed = mix(6.0, 14.0, aRandom.y); // faster + more variance
+                            float spinSpeed = mix(0.8, 2.2, aRandom.y); // gentle swirl (butterfly-like)
                             float angle = uTime * spinSpeed + aRandom.x * 6.28318530718;
                             vec2 spiralDir = rot2(angle) * dir2;
 
                             // Add a subtle secondary wobble to avoid perfectly smooth rings.
-                            float wobble = sin(uTime * 4.0 + aRandom.z * 12.0) * 0.8;
+                            float wobble = sin(uTime * 1.1 + aRandom.z * 12.0) * 0.8;
                             vec2 wobbleDir = vec2(cos(wobble), sin(wobble));
 
-                            // Random “flutter” so the spread feels alive/chaotic before convergence.
-                            // This is deterministic per-particle but time-varying.
-                            vec3 flutterA = (hash3(vec3(aRandom.xy * 37.0, uTime * 0.65)) - 0.5) * 2.0;
-                            vec3 flutterB = (hash3(vec3(aRandom.yz * 83.0, uTime * 1.25)) - 0.5) * 2.0;
-                            vec3 flutter = (flutterA * 0.65 + flutterB * 0.35) * EMIT_JITTER;
+                            // Smooth turbulence (avoid "fast jitter"): layered sin/cos with per-particle phases.
+                            float t0 = uTime * 0.35 + aRandom.x * 12.0;
+                            float t1 = uTime * 0.22 + aRandom.y * 17.0;
+                            float t2 = uTime * 0.28 + aRandom.z * 9.0;
+                            vec3 flutter = vec3(
+                                sin(t0) + 0.5 * cos(t1),
+                                sin(t1) + 0.5 * cos(t2),
+                                sin(t2) + 0.5 * cos(t0)
+                            );
+                            flutter = normalize(flutter) * EMIT_JITTER;
+
+                            // Spread should occupy the full vertical range (not all particles stuck at the top).
+                            float height01 = pow(aRandom.z, 0.9);
+                            float targetY = height01 * EMIT_HEIGHT;
+                            float startY = 0.25; // just above the luma core
 
                             vec3 spreadPos = vec3(0.0);
                             // Expand fast and keep adding turbulence as we rise.
-                            spreadPos.xz = (spiralDir * radial * spreadEase) + wobbleDir * (0.5 * spreadEase);
-                            spreadPos.xz += flutter.xz * (0.25 + 0.75 * spreadEase);
-                            spreadPos.y = EMIT_HEIGHT * spreadEase + flutter.y * (0.2 + 0.8 * spreadEase);
+                            float cone = mix(0.5, 1.0, height01); // slightly wider at the top
+                            spreadPos.xz = (spiralDir * radial * cone * spreadEase) + wobbleDir * (0.6 * spreadEase);
+                            spreadPos.xz += flutter.xz * (0.35 + 0.65 * spreadEase);
+
+                            // Rise into a distributed target Y; keep a gentle vertical bob.
+                            float bob = sin(uTime * 0.9 + aRandom.x * 9.0) * 0.35;
+                            spreadPos.y = mix(startY, targetY, spreadEase) + bob * spreadEase;
+
                             // Give some true 3D thickness during spread so it doesn't feel like a flat sheet.
-                            spreadPos.z += (flutter.x * 0.65 + flutterB.z * 0.35) * (0.15 + 0.85 * spreadEase);
+                            spreadPos.z += flutter.x * (0.18 + 0.82 * spreadEase);
 
                             // Cache the end-of-spread position so the formation phase transitions smoothly.
                             vec3 spreadEndPos = vec3(0.0);
-                            spreadEndPos.xz = spiralDir * radial + wobbleDir * 0.5 + flutter.xz;
-                            spreadEndPos.y = EMIT_HEIGHT + flutter.y * 0.35;
-                            spreadEndPos.z = (flutter.x * 0.65 + flutterB.z * 0.35);
+                            spreadEndPos.xz = spiralDir * radial * cone + wobbleDir * 0.6 + flutter.xz;
+                            spreadEndPos.y = targetY + bob;
+                            spreadEndPos.z = flutter.x;
 
                             // 2. Target Position (The Shape)
                             // Add some wobble to target
@@ -368,7 +388,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             // Keep some randomness as particles begin to converge, then let it “lock in”.
                             // This avoids an immediate, perfectly smooth snap into the silhouette.
                             float settle = 1.0 - ease;
-                            vec3 convergeJitter = (hash3(vec3(aRandom.xy * 91.0, uTime * 0.6)) - 0.5) * 2.0;
+                            vec3 convergeJitter = (hash3(vec3(aRandom.xy * 91.0, uTime * 0.22)) - 0.5) * 2.0;
                             pos += convergeJitter * FORM_JITTER * settle;
 
                             // 4. Dissipation (Explode/Scatter)

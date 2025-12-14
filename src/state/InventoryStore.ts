@@ -15,6 +15,18 @@ const SLOT_COUNT = 5;
 const TORCH_SLOT_INDEX = 1;
 const FLORA_SLOT_INDEX = 2;
 
+const getDebugModeEnabled = (): boolean => {
+  // In-game debug mode is enabled via `?debug` (see HUD/App).
+  // Keep this guard so this store can be imported safely.
+  try {
+    return typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+  } catch {
+    return false;
+  }
+};
+
+const INITIAL_FLORA_COUNT = getDebugModeEnabled() ? 10 : 0;
+
 const computeSlots = (state: Pick<GameState, 'inventoryCount' | 'torchCount'>): InventoryItemId[] => {
   const slots: InventoryItemId[] = new Array(SLOT_COUNT).fill(null);
   if (state.torchCount > 0) slots[TORCH_SLOT_INDEX] = 'torch';
@@ -61,14 +73,15 @@ interface GameState {
 }
 
 export const useInventoryStore = create<GameState>((set) => ({
-  inventoryCount: 0,
+  // "Flora" starts empty in normal play. In `?debug` mode, start with some for fast iteration.
+  inventoryCount: INITIAL_FLORA_COUNT,
   torchCount: 1, // Start with one torch.
   luminousFloraCount: 0,
   hasAxe: true,
   currentTool: 'pickaxe',
   // New Inventory System
   // Slots are stable; unlocks (like `hasAxe`) control whether some items are usable.
-  inventorySlots: computeSlots({ inventoryCount: 0, torchCount: 1 }),
+  inventorySlots: computeSlots({ inventoryCount: INITIAL_FLORA_COUNT, torchCount: 1 }),
   // Start on slot 1 (index 0). Torch stays in slot 2 (index 1).
   selectedSlotIndex: 0,
 

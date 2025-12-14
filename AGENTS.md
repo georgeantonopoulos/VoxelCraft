@@ -217,6 +217,17 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Additional**: Scaled the PNG target positions to an estimated full RootHollow flora-tree volume (`~9.1` units tall, `~6.0` wide, based on `fractal.worker.ts` type=0 parameters) and anchored the silhouette Y at the base (0..height).
   - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: confirm spread and silhouette occupy the full tree-sized space and do not collapse back into the core.
 
+- 2025-12-14: LumaSwarm tuning — smoother “etheric” turbulence + full-height occupancy; `?debug` starts with flora.
+  - **Issue 1**: The spread-phase turbulence/jitter frequency was too fast and felt noisy, not “spiritual/etheric”.
+  - **Issue 2**: Particles shot to the top and stayed there because the spread endpoint used a single top-level Y (`EMIT_HEIGHT`) rather than distributing per-particle heights.
+  - **Fix (Swarm)**: `LumaSwarm.tsx` now:
+    - Uses smoother, low-frequency layered sin/cos turbulence.
+    - Distributes particle heights during the spread (`targetY = height01 * EMIT_HEIGHT`) so the swarm occupies the full vertical range from just above the core to the top of the tree.
+    - Keeps a gentle vertical bob to add “grace”.
+    - Preserves PNG aspect ratio from the actual texture and scales the silhouette down via `SHAPE_SCALE` while keeping it upright (Y anchored at base).
+  - **Fix (Debug)**: `src/state/InventoryStore.ts` now starts with `10` flora when `?debug` is present for faster iteration.
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: wait 10 seconds then take 4 screenshots while charging in RootHollow to confirm the swarm fills the full height range and feels smooth/etheric.
+
 - 2025-12-13: Fixed `refreshFogUniforms` crash from `FogDeer` shader material.
   - **Root Cause**: Three.js will call `refreshFogUniforms()` whenever `material.fog === true`; if a `ShaderMaterial` lacks `fogColor/fogNear/fogFar` uniforms, it can crash with `Cannot read properties of undefined (reading 'value')`.
   - **Fix**: `src/features/creatures/FogDeer.tsx` now clones `THREE.UniformsLib.fog` explicitly into the shader uniforms and defensively ensures `fogColor/fogNear/fogFar` exist before the first program compile.
