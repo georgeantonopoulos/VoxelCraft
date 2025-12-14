@@ -1048,7 +1048,7 @@ const App: React.FC = () => {
   const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
-  const [caOffset, setCaOffset] = useState(0.0003); // Subtle default (Simulates slight lens/motion imperfection)
+  const [caOffset, setCaOffset] = useState(0.00001); // Subtle default (Simulates slight lens/motion imperfection)
   const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1334,12 +1334,12 @@ const App: React.FC = () => {
                 underwaterExposure={exposureUnderwater}
               />
 
-              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
-              <ChromaticAberration
-                offset={[caOffset, caOffset]}
-                radialModulation={false}
-                modulationOffset={0}
-              />
+	              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
+	              <ChromaticAberration
+	                offset={[caOffset * 0.1, caOffset * 0.1]}
+	                radialModulation={true}
+	                modulationOffset={0}
+	              />
 
               {/* Vignette: Focuses eyes on center, premium feel */}
               <Vignette eskil={false} offset={0.1} darkness={vignetteDarkness} />
