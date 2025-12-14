@@ -11,7 +11,7 @@ interface LumaSwarmProps {
 // Tuning
 const SAMPLE_RESOLUTION = 64; // Scan 64x64 grid
 const PARTICLE_SIZE = 0.015;  // 1/10th size: keeps the swarm feeling like particles, not blobs
-const FORMATION_DURATION = 10.0; // Seconds to fully form
+const FORMATION_DURATION = 7.0; // Seconds to fully form (3s faster than previous 10s)
 const DISSIPATION_SPEED = 1.0;
 
 // Approximate "fully grown" RootHollow flora-tree size.
@@ -26,8 +26,8 @@ const EST_FLORA_TREE_WIDTH = 6.0; // Typical canopy span (heuristic); adjust by 
 const EMIT_PHASE = 0.55; // Fraction of formation spent “spreading” before converging
 const EMIT_RADIUS = EST_FLORA_TREE_WIDTH * 0.8;
 const EMIT_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.2;
-const EMIT_JITTER = 1.75; // Random motion amplitude during spread (kept gentle/etheric)
-const FORM_JITTER = 0.8; // Residual randomness during convergence (fades out)
+const EMIT_JITTER = 1.2; // Random motion amplitude during spread (kept gentle/etheric)
+const FORM_JITTER = 0.25; // Residual randomness during convergence (fades out)
 
 // Final silhouette dimensions (big representation of the PNG).
 // We keep aspect ratio from the actual image and size it to roughly half of the previous silhouette.
@@ -143,7 +143,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                 new THREE.InstancedBufferAttribute(particleData.randoms, 3)
             );
             if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Instance attributes set (aTargetPos, aRandom)');
-            
+
             // Debug: Log first few particle positions
             if (DEBUG_LUMA_SWARM) {
                 console.log('[LumaSwarm] Sample target positions:', particleData.targets.slice(0, 15));
@@ -155,15 +155,15 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     // 3. Animation Loop
     useFrame(({ clock, camera }) => {
         if (!materialRef.current || !meshRef.current) return;
-        
+
         const currentTime = clock.getElapsedTime();
-        
+
         // Set start time on first frame (not on mount)
         if (startTimeRef.current === null) {
             startTimeRef.current = currentTime;
             console.log('[LumaSwarm] Animation start time set on first frame:', startTimeRef.current);
         }
-        
+
         const elapsed = currentTime - startTimeRef.current;
 
         // Update Uniforms
@@ -225,7 +225,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         if (DEBUG_LUMA_SWARM) console.warn('[LumaSwarm] No particle data, returning null');
         return null;
     }
-    
+
     if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Rendering with', particleData.count, 'particles');
 
     const debugSphere = DEBUG_LUMA_SWARM ? (
@@ -239,7 +239,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         <group>
             {/* DEBUG: Red sphere at swarm origin */}
             {debugSphere}
-            
+
             {/* The Core Luma (Visual Clone) */}
             <group ref={coreRef}>
                 <pointLight color="#4deeea" distance={10} decay={2} intensity={2} />
@@ -271,16 +271,16 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         toneMapped={false}
                     />
                 ) : (
-                <CustomShaderMaterial
-                    ref={materialRef}
-                    baseMaterial={THREE.MeshStandardMaterial}
-                    transparent
-                    depthWrite={false} // Don't write to depth buffer for transparency
-                    uniforms={uniforms}
-                    toneMapped={false}
-                    emissive="#4deeea"
-                    emissiveIntensity={2.0}
-                    vertexShader={`
+                    <CustomShaderMaterial
+                        ref={materialRef}
+                        baseMaterial={THREE.MeshStandardMaterial}
+                        transparent
+                        depthWrite={false} // Don't write to depth buffer for transparency
+                        uniforms={uniforms}
+                        toneMapped={false}
+                        emissive="#4deeea"
+                        emissiveIntensity={2.0}
+                        vertexShader={`
                         attribute vec3 aTargetPos;
                         attribute vec3 aRandom;
 
@@ -292,13 +292,12 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         varying float vFadeSeed;
 
                         // Formation staging
-                        // - First, particles "emit" from the core and spread upward into a tall volume (tree-sized).
-                        // - Then, they converge into the 2D PNG silhouette (existing behavior).
-                        const float EMIT_PHASE = ${EMIT_PHASE.toFixed(3)};   // 0..1 fraction of uProgress reserved for the spread phase
-                        const float EMIT_RADIUS = ${EMIT_RADIUS.toFixed(3)}; // Horizontal spread radius (world units)
-                        const float EMIT_HEIGHT = ${EMIT_HEIGHT.toFixed(3)}; // Upward spread height (world units)
-                        const float EMIT_JITTER = ${EMIT_JITTER.toFixed(3)}; // Random motion amplitude during spread
-                        const float FORM_JITTER = ${FORM_JITTER.toFixed(3)}; // Residual randomness during convergence
+                        const float EMIT_PHASE = ${EMIT_PHASE.toFixed(3)};
+                        const float EMIT_RADIUS = ${EMIT_RADIUS.toFixed(3)};
+                        const float EMIT_HEIGHT = ${EMIT_HEIGHT.toFixed(3)};
+                        // Reduced jitter amplitudes for smoother Triple-A fluid look
+                        const float EMIT_JITTER = ${EMIT_JITTER.toFixed(3)}; 
+                        const float FORM_JITTER = ${FORM_JITTER.toFixed(3)}; 
 
                         mat2 rot2(float a) {
                             float c = cos(a);
@@ -306,122 +305,97 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             return mat2(c, -s, s, c);
                         }
 
-                        // Simplex-ish noise
-                        vec3 hash3(vec3 p) {
-                            p = vec3(dot(p,vec3(127.1,311.7, 74.7)),
-                                     dot(p,vec3(269.5,183.3,246.1)),
-                                     dot(p,vec3(113.5,271.9,124.6)));
-                            return fract(sin(p)*43758.5453123);
+                        // Smooth layered sine noise (fluid-like) instead of harsh white noise
+                        vec3 smoothNoise(vec3 p, float t) {
+                            return vec3(
+                                sin(p.y * 1.5 + t) * 0.5 + sin(p.z * 0.7 + t * 0.8) * 0.2,
+                                sin(p.z * 1.2 + t * 0.9) * 0.5 + cos(p.x * 1.1 + t) * 0.2,
+                                cos(p.x * 1.4 + t * 0.7) * 0.5 + sin(p.y * 0.9 + t * 1.1) * 0.2
+                            );
                         }
 
                         void main() {
                             vFadeSeed = aRandom.x;
 
                             // 1) Emission / spread phase:
-                            // Particles originate at the core, then expand upward into a tall volume roughly
-                            // matching the space a fully-grown flora tree occupies.
                             float spreadT = clamp(uProgress / EMIT_PHASE, 0.0, 1.0);
-                            // Stagger emission so particles feel independent (not a single rigid point cloud).
-                            float delay = aRandom.y * 0.18;
+                            
+                            // Stagger emission
+                            float delay = aRandom.y * 0.15;
                             float spreadLocalT = clamp((spreadT - delay) / max(0.0001, (1.0 - delay)), 0.0, 1.0);
-                            // True ease-in/ease-out (smoother than a single smoothstep call in practice).
-                            float spreadEase = spreadLocalT * spreadLocalT * (3.0 - 2.0 * spreadLocalT);
+                            // Cubic ease-out
+                            float spreadEase = 1.0 - pow(1.0 - spreadLocalT, 3.0);
 
-                            // Random radial direction (XZ), with an outward radius bias.
+                            // Base Spiral Motion
                             vec2 dir2 = normalize((aRandom.xy - 0.5) * 2.0 + vec2(0.0001, 0.0002));
                             float radial = pow(aRandom.z, 0.65) * EMIT_RADIUS;
 
-                            // Spiraling motion: per-particle spin speed + phase.
-                            float spinSpeed = mix(0.5, 1.4, aRandom.y); // gentle swirl (butterfly-like)
-                            float angle = uTime * spinSpeed + aRandom.x * 6.28318530718;
+                            // More coherent, fluid spiral
+                            float spinSpeed = mix(0.8, 1.2, aRandom.y); 
+                            float angle = uTime * spinSpeed + aRandom.x * 6.28;
+                            
+                            // Apply rotation
                             vec2 spiralDir = rot2(angle) * dir2;
 
-                            // Add a subtle secondary wobble to avoid perfectly smooth rings.
-                            float wobble = sin(uTime * 0.55 + aRandom.z * 12.0) * 0.8;
-                            vec2 wobbleDir = vec2(cos(wobble), sin(wobble));
+                            // Fluid Turbulence (Replaces erratic flutter)
+                            // We use the particle's random seed + time to sample a smooth vector field
+                            vec3 fluidOffset = smoothNoise(aRandom * 5.0, uTime * 0.5) * EMIT_JITTER;
 
-                            // Smooth turbulence (avoid "fast jitter"): layered sin/cos with per-particle phases.
-                            float t0 = uTime * 0.18 + aRandom.x * 12.0;
-                            float t1 = uTime * 0.12 + aRandom.y * 17.0;
-                            float t2 = uTime * 0.15 + aRandom.z * 9.0;
-                            vec3 flutter = vec3(
-                                sin(t0) + 0.5 * cos(t1),
-                                sin(t1) + 0.5 * cos(t2),
-                                sin(t2) + 0.5 * cos(t0)
-                            );
-                            flutter = normalize(flutter) * EMIT_JITTER;
-
-                            // Spread should occupy the full vertical range (not all particles stuck at the top).
+                            // Height distribution
                             float height01 = pow(aRandom.z, 0.85);
                             float targetY = height01 * EMIT_HEIGHT;
-                            float startY = 0.05; // inside/near the luma core
+                            float startY = 0.05;
 
+                            // Build Spread Position
                             vec3 spreadPos = vec3(0.0);
-                            // Expand outward more slowly than we rise, so the first moment reads as "emitting upward".
-                            float xzEase = smoothstep(0.10, 1.0, spreadLocalT);
-                            float cone = mix(0.55, 1.0, height01); // slightly wider at the top
-                            spreadPos.xz = (spiralDir * radial * cone * xzEase) + wobbleDir * (0.55 * xzEase);
+                            
+                            // XZ Motion: Expand outward with spiral + fluid noise
+                            float cone = mix(0.4, 1.0, height01); 
+                            spreadPos.xz = (spiralDir * radial * cone * spreadEase) + (fluidOffset.xy * spreadEase);
+                            
+                            // Y Motion: Rise with fluid vertical drift
+                            spreadPos.y = mix(startY, targetY, spreadEase) + (fluidOffset.z * spreadEase * 0.5);
 
-                            // "Initial velocity" kick: quick upward impulse that fades early.
-                            float kick = (1.0 - smoothstep(0.0, 0.28, spreadLocalT)) * (0.6 + 1.1 * aRandom.x);
-
-                            // Rise into a distributed target Y with ease-in/out, plus a gentle bob.
-                            float bob = sin(uTime * 0.38 + aRandom.x * 9.0) * 0.28;
-                            // Slightly bias upward early, but keep ease-in/out overall.
-                            float yEase = mix(spreadEase, (1.0 - pow(1.0 - spreadEase, 2.2)), 0.55);
-                            spreadPos.y = mix(startY, targetY, yEase) + (kick + bob) * spreadEase;
-
-                            // Turbulence should feel like drifting in a volume, not snapping.
-                            // Multiply by 'spreadEase' so particles genuinely emit from the core (no instant offset at t=0).
-                            spreadPos += flutter * spreadEase;
-                            // Give some true 3D thickness during spread so it doesn't feel like a flat sheet.
-                            spreadPos.z += flutter.x * 0.35 * spreadEase;
-
-                            // Cache the end-of-spread position so the formation phase transitions smoothly.
+                            // Cache end position for blending
                             vec3 spreadEndPos = vec3(0.0);
-                            spreadEndPos.xz = spiralDir * radial * cone + wobbleDir * 0.6 + flutter.xz;
-                            spreadEndPos.y = targetY + bob;
-                            spreadEndPos.z = flutter.x;
+                            spreadEndPos.xz = spiralDir * radial * cone + fluidOffset.xy;
+                            spreadEndPos.y = targetY + fluidOffset.z * 0.5;
 
-                            // 2. Target Position (The Shape)
-                            // Add some wobble to target
-                            vec3 targetPos = aTargetPos;
-                            targetPos.z += sin(uTime * 2.0 + aRandom.x * 10.0) * 0.1; // Breathing Z
-                            targetPos.x += cos(uTime * 1.5 + aRandom.y * 10.0) * 0.05;
-
-                            // 3) Formation phase: converge from the spread volume to the PNG silhouette.
+                            // 2) Formation phase: converge
                             float formT = (uProgress - EMIT_PHASE) / (1.0 - EMIT_PHASE);
                             formT = clamp(formT, 0.0, 1.0);
-                            // Ease-in/ease-out convergence for a smoother "gathering" feel.
-                            float ease = formT * formT * (3.0 - 2.0 * formT);
+                            
+                            // Smooth Quartic ease-in-out for solid locking
+                            float ease = formT < 0.5 ? 8.0 * formT * formT * formT * formT : 1.0 - pow(-2.0 * formT + 2.0, 4.0) / 2.0;
 
-                            vec3 pos = (uProgress < EMIT_PHASE)
-                                ? spreadPos
-                                : mix(spreadEndPos, targetPos, ease);
+                            // Target Shape Position
+                            vec3 targetPos = aTargetPos;
+                            // Add very subtle "living" breath to the final shape (smooth, not jittery)
+                            vec3 breath = smoothNoise(aTargetPos * 2.0, uTime * 1.5) * 0.15;
+                            targetPos += breath;
 
-                            // Keep some randomness as particles begin to converge, then let it “lock in”.
-                            // This avoids an immediate, perfectly smooth snap into the silhouette.
+                            // Blend
+                            vec3 pos = mix(spreadPos, targetPos, ease);
+
+                            // Add residual "floating" instability that fades out as we lock in
+                            // This replaces the white-noise jitter
                             float settle = 1.0 - ease;
-                            vec3 convergeJitter = (hash3(vec3(aRandom.xy * 91.0, uTime * 0.22)) - 0.5) * 2.0;
-                            pos += convergeJitter * FORM_JITTER * settle;
+                            vec3 floatDrift = smoothNoise(pos * 0.5, uTime * 0.8) * FORM_JITTER;
+                            pos += floatDrift * settle;
 
-                            // 4. Dissipation (Explode/Scatter)
+                            // 4) Dissipation
                             if (uDissipate > 0.0) {
                                 float len = length(pos);
-                                vec3 outward = (len > 0.0001) ? (pos / len) : normalize(aRandom - 0.5);
-                                vec3 dir = outward + (aRandom - 0.5); // Outward + Chaos
-                                pos += dir * uDissipate * 5.0; // Fly away
+                                vec3 outward = (len > 0.0001) ? (pos / len) : vec3(0.0, 1.0, 0.0);
+                                vec3 chaos = smoothNoise(pos, uTime * 2.0);
+                                pos += (outward + chaos) * uDissipate * 8.0;
                             }
 
-                            // Calculate Alpha for fade
                             vAlpha = 1.0 - uDissipate;
-
-                            // Keep the sphere geometry and offset per-instance by our swarm position.
-                            // (If we set the position to 'pos' directly, the sphere collapses into a single point.)
                             csm_Position = position + pos;
                         }
                     `}
-                    fragmentShader={`
+                        fragmentShader={`
                         uniform vec3 uColor;
                         varying float vAlpha;
                         varying float vFadeSeed;
@@ -439,7 +413,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             if (csm_DiffuseColor.a < 0.01) discard;
                         }
                     `}
-                />
+                    />
                 )}
             </instancedMesh>
         </group>

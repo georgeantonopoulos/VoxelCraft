@@ -498,3 +498,12 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Root Cause**: `AmbientLife` fireflies used an anchor-wrapped procedural field; as you walked across snapped anchor cells they would repick heights/biome gating and feel like they were “regenerating” in place.
   - **Fix**: Firefly mote positions are now generated during chunk generation (`TerrainService.generateChunk`) as small swarms biased near trees and in local low points, then streamed via the terrain worker into `VoxelTerrain`. `AmbientLife` renders only the nearby chunk-provided motes via a lightweight registry (`src/features/environment/fireflyRegistry.ts`) and animates blink/drift in a tiny shader to avoid per-frame CPU instance updates.
   - **Verification**: Ran `npm run build` (success) and `npm run dev -- --host 127.0.0.1 --port 3000` (server ready, stopped by CLI timeout). Visual inspection required in-game: wait 10 seconds, then take 4 screenshots while (1) standing still in a grove pocket (motes stay stable), (2) walking across a chunk boundary (no “regenerate” pop), (3) approaching a tree cluster (swarm bias reads clearly), (4) moving through a shallow dip/valley (low-point swarms appear).
+
+- 2025-12-14: LumaSwarm polished — reduced jitter, smoother fluid motion, faster convergence.
+  - **Issue**: Particles had high-frequency "white noise" jitter and erratic individual motion during spread, and took too long (10s) to fully form the silhouette, making the effect feel low-quality.
+  - **Fix**: 
+    - Replaced `hash3` white noise in the vertex shader with `smoothNoise` (layered low-frequency sine waves) for a "Triple-A" fluid look.
+    - Implemented a coherent "flow field" spread using spiral rotation and fluid turbulence offsets rather than random vector normalization.
+    - Reduced `FORMATION_DURATION` from 10s to 7s so the swarm converges 3 seconds earlier (while the 10s timer still holds the state), creating a solid "lock-in" moment before tree growth.
+    - Tuned `EMIT_JITTER` (1.75 -> 1.2) and `FORM_JITTER` (0.8 -> 0.25) to be subtle and etheric.
+  - **Verification**: Ran `npm run build` (success). Visual inspection required: place flora in RootHollow and confirm particles move in smooth curves/spirals (no buzzing) and lock into the shape at 7s, hovering stably for the final 3s.
