@@ -167,7 +167,8 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
             console.log('[LumaSwarm] Animation start time set on first frame:', startTimeRef.current);
         }
 
-        const elapsed = currentTime - startTimeRef.current;
+        const validStart = startTimeRef.current + 1.0; // 1s delay
+        const elapsed = Math.max(0, currentTime - validStart);
 
         // Update Uniforms
         // Pass 'real' absolute time for noise
@@ -369,10 +370,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             // Y Motion: Rise with fluid vertical drift
                             spreadPos.y = mix(startY, targetY, spreadEase) + (fluidOffset.z * spreadEase * 0.5);
 
-                            // Cache end position for blending
-                            vec3 spreadEndPos = vec3(0.0);
-                            spreadEndPos.xz = spiralDir * radial * cone + fluidOffset.xy;
-                            spreadEndPos.y = targetY + fluidOffset.z * 0.5;
+                            spreadPos.y = mix(startY, targetY, spreadEase) + (fluidOffset.z * spreadEase * 0.5);
 
                             // 2) Formation phase: converge
                             float formT = (uProgress - EMIT_PHASE) / (1.0 - EMIT_PHASE);
