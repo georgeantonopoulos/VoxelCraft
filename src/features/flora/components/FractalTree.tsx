@@ -282,11 +282,6 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                             float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
                             pos.x += wobble;
                             pos.z += wobble;
-                            
-                            // Original wobble
-                            float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
-                            pos.x += wobble;
-                            pos.z += wobble;
 
                             csm_Position = pos * scale;
                         }

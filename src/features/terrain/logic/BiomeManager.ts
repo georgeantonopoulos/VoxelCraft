@@ -346,9 +346,11 @@ export class BiomeManager {
       // Boost amplitude significantly
       // e goes 0.7 -> 1.0
       const mountainFactor = (e - 0.7) / 0.3; // 0..1
-      params.amp *= (1.0 + mountainFactor * 2.0); // Up to 3x amp
-      params.baseHeight += mountainFactor * 20; // Push peaks up
-      params.warp *= 1.5;
+      // Keep peaks within the single-vertical-chunk world budget; extreme values can
+      // push the surface above `CHUNK_SIZE_Y` and cause entire columns to be solid.
+      params.amp *= (1.0 + mountainFactor * 0.6); // Up to 1.6x amp
+      params.baseHeight += mountainFactor * 6; // Gentle lift
+      params.warp *= 1.2;
     }
 
     return params;

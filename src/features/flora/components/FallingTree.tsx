@@ -57,11 +57,17 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                     <CustomShaderMaterial
                         baseMaterial={THREE.MeshStandardMaterial}
                         vertexShader={`
+                            attribute vec3 aBranchAxis;
+                            attribute vec3 aBranchOrigin;
                             varying vec3 vPos;
                             varying vec3 vWorldNormal;
+                            varying vec3 vBranchAxis;
+                            varying vec3 vBranchOrigin;
                             void main() {
                                 vPos = position;
-                                vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                                vWorldNormal = normalize(normalMatrix * normal);
+                                vBranchAxis = aBranchAxis;
+                                vBranchOrigin = aBranchOrigin;
                                 csm_Position = position;
                             }
                         `}
@@ -69,28 +75,40 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                             precision highp sampler3D;
                             varying vec3 vPos;
                             varying vec3 vWorldNormal;
+                            varying vec3 vBranchAxis;
+                            varying vec3 vBranchOrigin;
                             uniform vec3 uColorBase;
                             uniform vec3 uColorTip;
                             uniform sampler3D uNoiseTexture;
 
                             void main() {
-                                // UV Mapping for Cylindrical Bark
-                                float angle = atan(vPos.x, vPos.z);
-                                vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0);
+                                // Cylindrical bark mapping around the true branch axis (per-segment).
+                                vec3 axis = normalize(vBranchAxis);
+                                vec3 ref = (abs(axis.y) < 0.99) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                                vec3 tangent = normalize(cross(ref, axis));
+                                vec3 bitangent = cross(axis, tangent);
+
+                                vec3 rel = vPos - vBranchOrigin;
+                                float along = dot(rel, axis);
+                                vec3 radial = rel - axis * along;
+                                float x = dot(radial, tangent);
+                                float z = dot(radial, bitangent);
+                                float angle = atan(x, z);
                                 
-                                float nBase = texture(uNoiseTexture, vPos * 2.5).r; 
-                                float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r;
+                                float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r; 
+                                vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);
+                                float nBark = texture(uNoiseTexture, barkP * 0.8).r;
                                 
                                 float ridges = smoothstep(0.3, 0.7, nBark);
                                 float crevices = 1.0 - ridges;
 
-                                // Approximate depth using Y height for color gradient
-                                float gradient = smoothstep(0.0, 5.0, vPos.y);
-                                vec3 col = mix(uColorBase, uColorTip, gradient);
+                                // Keep branches/trunk brown (no tip tinting on wood).
+                                vec3 col = uColorBase;
+                                col *= mix(0.92, 1.05, nBase * 0.6);
                                 col *= mix(1.0, 0.5, crevices * 0.8);
 
                                 // Moss
-                                float mossNoise = texture(uNoiseTexture, vPos * 4.0 + vec3(5.0)).g;
+                                float mossNoise = texture(uNoiseTexture, vPos * 0.55 + vec3(5.0)).g;
                                 float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
                                 if (upFactor > 0.2 && mossNoise > 0.5) {
                                     col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
@@ -98,11 +116,6 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
 
                                 csm_DiffuseColor = vec4(col, 1.0);
                                 csm_Roughness = 0.8 + crevices * 0.2;
-                                
-                                // Emissive tips
-                                if (gradient > 0.8) {
-                                    csm_Emissive = uColorTip * 0.5 * ridges;
-                                }
                             }
                         `}
                         uniforms={uniforms}
@@ -115,29 +128,37 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                         baseMaterial={THREE.MeshStandardMaterial}
                         vertexShader={`
                             varying vec3 vPos;
+                            varying vec3 vNoisePos;
                             void main() {
                                 vPos = position;
+                                vNoisePos = (modelMatrix * vec4(position, 1.0)).xyz;
                                 csm_Position = position;
                             }
                         `}
                         fragmentShader={`
                             precision highp sampler3D;
                             varying vec3 vPos;
+                            varying vec3 vNoisePos;
                             uniform vec3 uColorTip;
                             uniform sampler3D uNoiseTexture;
 
                             void main() {
                                 // Static Color Variation
-                                float variation = texture(uNoiseTexture, vPos * 0.5).r;
+                                float variation = texture(uNoiseTexture, vNoisePos * 0.08).r;
+                                float micro = texture(uNoiseTexture, vNoisePos * 0.35 + vPos * 0.5 + vec3(11.0)).r;
 
                                 // Simple Gradient
                                 float gradient = smoothstep(0.0, 1.0, vPos.y * 0.2); 
-                                
-                                vec3 col = mix(uColorTip * 0.8, uColorTip * 1.2, gradient);
-                                col = mix(col, col * 1.1, variation);
+
+                                vec3 baseLeaf = uColorTip * 0.80;
+                                vec3 tintA = baseLeaf * vec3(0.82, 0.95, 0.82);
+                                vec3 tintB = baseLeaf * vec3(0.95, 1.05, 0.95);
+                                vec3 col = mix(tintA, tintB, variation);
+                                col *= mix(0.92, 1.08, micro);
+                                col *= mix(0.95, 1.05, gradient);
 
                                 csm_DiffuseColor = vec4(col, 1.0);
-                                csm_Emissive = uColorTip * 0.2;
+                                csm_Emissive = uColorTip * 0.10;
                                 csm_Roughness = 0.6;
                             }
                         `}

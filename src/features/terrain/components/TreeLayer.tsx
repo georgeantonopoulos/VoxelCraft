@@ -193,15 +193,22 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={`
                         attribute float aBranchDepth;
+                        attribute vec3 aBranchAxis;
+                        attribute vec3 aBranchOrigin;
                         uniform float uTime;
                         varying float vDepth;
                         varying vec3 vPos;
                         varying vec3 vWorldNormal;
+                        varying vec3 vBranchAxis;
+                        varying vec3 vBranchOrigin;
 
                         void main() {
                             vDepth = aBranchDepth;
                             vPos = position;
-                            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                            // Include instance transform so moss/lighting doesn't "ignore" per-tree rotation.
+                            vWorldNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
+                            vBranchAxis = aBranchAxis;
+                            vBranchOrigin = aBranchOrigin;
                             
                             // Wind Sway
                             float windStrength = 0.05 * pow(1.0 - aBranchDepth, 2.0); // More sway at tips (lower depth logic might be inverted? No, depth 0 is root)
@@ -228,32 +235,46 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         varying float vDepth;
                         varying vec3 vPos;
                         varying vec3 vWorldNormal;
+                        varying vec3 vBranchAxis;
+                        varying vec3 vBranchOrigin;
                         
                         uniform vec3 uColorBase;
                         uniform vec3 uColorTip;
                         uniform sampler3D uNoiseTexture;
 
                         void main() {
-                            // UV Mapping for Cylindrical Bark
-                            float angle = atan(vPos.x, vPos.z);
-                            vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0); 
+                            // Cylindrical bark mapping around the true branch axis (per-segment),
+                            // so rotated end-branches don't get "wrong axis" artifacts.
+                            vec3 axis = normalize(vBranchAxis);
+                            vec3 ref = (abs(axis.y) < 0.99) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                            vec3 tangent = normalize(cross(ref, axis));
+                            vec3 bitangent = cross(axis, tangent);
+
+                            vec3 rel = vPos - vBranchOrigin;
+                            float along = dot(rel, axis);
+                            vec3 radial = rel - axis * along;
+                            float x = dot(radial, tangent);
+                            float z = dot(radial, bitangent);
+                            float angle = atan(x, z);
                             
                             // Sample noise
-                            float nBase = texture(uNoiseTexture, vPos * 2.5).r; 
-                            float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r; 
+                            float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
+                            vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);
+                            float nBark = texture(uNoiseTexture, barkP * 0.8).r;
                             
                             // Create ridges
                             float ridges = smoothstep(0.3, 0.7, nBark);
                             float crevices = 1.0 - ridges;
 
-                            // Color mixing
-                            vec3 col = mix(uColorBase, uColorTip, pow(vDepth, 3.0)); // Bias towards base color for trunk
+                            // Keep branches brown (no "green tip" tinting on wood).
+                            vec3 col = uColorBase;
+                            col *= mix(0.92, 1.05, nBase * 0.6);
                             
                             // Darken crevices
                             col *= mix(1.0, 0.5, crevices * 0.8);
                             
                             // Add "Moss"
-                            float mossNoise = texture(uNoiseTexture, vPos * 4.0 + vec3(5.0)).g;
+                            float mossNoise = texture(uNoiseTexture, vPos * 0.55 + vec3(5.0)).g;
                             float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
                             if (upFactor > 0.2 && mossNoise > 0.5) {
                                 col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
@@ -263,11 +284,6 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                             
                             float rough = 0.8 + crevices * 0.2;
                             csm_Roughness = rough;
-
-                            // Emissive for tips
-                            if (vDepth > 0.8) {
-                                csm_Emissive = uColorTip * 0.5 * ridges;
-                            }
                         }
                     `}
                     uniforms={uniforms}
@@ -284,10 +300,13 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         uniform float uTime;
                         varying vec3 vPos;
                         varying vec3 vWorldNormal;
+                        varying vec3 vNoisePos;
 
                         void main() {
                             vPos = position;
                             vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                            // Add per-instance offset so noise variation doesn't repeat identically per tree.
+                            vNoisePos = instanceMatrix[3].xyz + position;
                             
                             // Global wind sway for leaves (match tree sway roughly)
                             // Leaves are generally at top, so assume high sway
@@ -309,26 +328,30 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         fragmentShader={`
                         precision highp sampler3D;
                         varying vec3 vPos;
+                        varying vec3 vNoisePos;
                         uniform vec3 uColorTip;
                         uniform sampler3D uNoiseTexture;
                         uniform float uTime;
 
                         void main() {
                             // Static Color Variation (using noise)
-                            float variation = texture(uNoiseTexture, vPos * 0.5).r;
+                            float variation = texture(uNoiseTexture, vNoisePos * 0.08).r;
+                            float micro = texture(uNoiseTexture, vNoisePos * 0.35 + vPos * 0.5 + vec3(11.0)).r;
                             
                             // Simple Gradient based on local Y
                             float tip = smoothstep(0.0, 1.0, vPos.y + 0.5); 
                             
-                            vec3 col = uColorTip;
-                            // Mix variation
-                            col = mix(col * 0.85, col * 1.15, variation);
-                            // Mix gradient
-                            col = mix(col, col * 1.2, tip); 
+                            // Darker green overall with stable per-tree variation.
+                            vec3 baseLeaf = uColorTip * 0.80;
+                            vec3 tintA = baseLeaf * vec3(0.82, 0.95, 0.82);
+                            vec3 tintB = baseLeaf * vec3(0.95, 1.05, 0.95);
+                            vec3 col = mix(tintA, tintB, variation);
+                            col *= mix(0.92, 1.08, micro);
+                            col *= mix(0.92, 1.06, tip);
 
                             csm_DiffuseColor = vec4(col, 1.0);
                             // Static Emissive (no pulse)
-                            csm_Emissive = uColorTip * 0.3; 
+                            csm_Emissive = uColorTip * 0.12; 
                             csm_Roughness = 0.6;
                         }
                     `}

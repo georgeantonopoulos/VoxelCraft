@@ -160,6 +160,24 @@ export class TreeGeometryFactory {
             const depthArray = new Float32Array(vertCount).fill(normalizedDepth);
             instanceGeo.setAttribute('aBranchDepth', new THREE.BufferAttribute(depthArray, 1));
 
+            // Bark mapping helpers (avoid "wrong axis" artifacts on rotated branches).
+            // We store per-segment axis + origin so shaders can do cylindrical mapping
+            // around the true branch direction instead of assuming world Y.
+            const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(seg.quaternion).normalize();
+            const axisArray = new Float32Array(vertCount * 3);
+            const originArray = new Float32Array(vertCount * 3);
+            for (let i = 0; i < vertCount; i++) {
+                const idx = i * 3;
+                axisArray[idx + 0] = axis.x;
+                axisArray[idx + 1] = axis.y;
+                axisArray[idx + 2] = axis.z;
+                originArray[idx + 0] = seg.position.x;
+                originArray[idx + 1] = seg.position.y;
+                originArray[idx + 2] = seg.position.z;
+            }
+            instanceGeo.setAttribute('aBranchAxis', new THREE.BufferAttribute(axisArray, 3));
+            instanceGeo.setAttribute('aBranchOrigin', new THREE.BufferAttribute(originArray, 3));
+
             woodGeometries.push(instanceGeo);
 
             // Collect Collision Data for thick branches

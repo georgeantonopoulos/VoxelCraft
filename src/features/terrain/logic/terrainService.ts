@@ -1,5 +1,5 @@
 
-import { CHUNK_SIZE_XZ, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
+import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
 import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
@@ -60,6 +60,14 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
     return (tunnelVal - settings.threshold) * 50.0;
 }
 
+// The world currently uses a single vertical chunk stack. If the computed surface height goes
+// above the top of the chunk volume, the column can become "all solid" and the surface won't
+// be extracted by the mesher. Keep a small margin for overhang noise near the surface.
+const MAX_SURFACE_Y = MESH_Y_OFFSET + (CHUNK_SIZE_Y - 1) - 7; // topVisible(=offset+127) minus ~max overhang
+function clampSurfaceHeight(h: number): number {
+    return Math.min(h, MAX_SURFACE_Y);
+}
+
 export class TerrainService {
 
     // Helper to find surface height at specific world coordinates
@@ -77,7 +85,7 @@ export class TerrainService {
         // Base 2D noise for the biome
         const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
 
-        return baseHeight + (baseNoise * amp);
+        return clampSurfaceHeight(baseHeight + (baseNoise * amp));
     }
 
     static generateChunk(cx: number, cz: number, modifications: ChunkModification[] = []): {
@@ -196,7 +204,7 @@ export class TerrainService {
                         const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
                         // Calculate Height
-                        surfaceHeight = baseHeight + (baseNoise * amp) + detail;
+                        surfaceHeight = clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
 
                         // Cliff/Overhang noise
                         const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
