@@ -166,7 +166,9 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
         uNoiseTexture: { value: noiseTexture },
         uTime: { value: 0 },
         // Distinguish main world trees from others if needed
-        uIsInstanced: { value: 1.0 }
+        uIsInstanced: { value: 1.0 },
+        // Per-tree hue shift for visible color variety (0.30 ≈ 17 degrees).
+        uLeafHueVariation: { value: 0.30 }
     }), [colors]);
 
     useFrame((state) => {
@@ -298,15 +300,40 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         baseMaterial={THREE.MeshStandardMaterial}
                         vertexShader={`
                         uniform float uTime;
+                        uniform float uLeafHueVariation;
+                        attribute float aLeafRand;
                         varying vec3 vPos;
                         varying vec3 vWorldNormal;
                         varying vec3 vNoisePos;
+                        varying float vLeafRand;
+                        varying float vTreeSeed;
+                        varying float vHueCos;
+                        varying float vHueSin;
+
+                        float hash11(float p) {
+                            return fract(sin(p) * 43758.5453123);
+                        }
 
                         void main() {
                             vPos = position;
                             vWorldNormal = normalize(mat3(modelMatrix) * normal);
-                            // Add per-instance offset so noise variation doesn't repeat identically per tree.
-                            vNoisePos = instanceMatrix[3].xyz + position;
+                            
+                            // Per-tree seed for color variation
+                            vTreeSeed = fract(sin(dot(instanceMatrix[3].xyz, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
+                            
+                            // IMPORTANT: Offset noise coords by tree seed so each tree samples from
+                            // a different part of the noise texture, not just based on world position.
+                            // This prevents nearby trees from having nearly identical colors.
+                            vec3 treeNoiseOffset = vec3(vTreeSeed * 50.0, vTreeSeed * 37.0, vTreeSeed * 23.0);
+                            vNoisePos = position + treeNoiseOffset;
+                            
+                            vLeafRand = aLeafRand;
+
+                            // Per-leaf hue jitter (computed per-vertex to keep fragment cost low).
+                            float hueN = hash11(aLeafRand * 113.1 + vTreeSeed * 19.7);
+                            float hueAngle = (hueN * 2.0 - 1.0) * uLeafHueVariation;
+                            vHueCos = cos(hueAngle);
+                            vHueSin = sin(hueAngle);
                             
                             // Global wind sway for leaves (match tree sway roughly)
                             // Leaves are generally at top, so assume high sway
@@ -329,25 +356,43 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         precision highp sampler3D;
                         varying vec3 vPos;
                         varying vec3 vNoisePos;
+                        varying float vTreeSeed;
+                        varying float vHueCos;
+                        varying float vHueSin;
                         uniform vec3 uColorTip;
                         uniform sampler3D uNoiseTexture;
                         uniform float uTime;
 
+                        vec3 hueRotateCS(vec3 color, float c, float s) {
+                            vec3 k = vec3(0.57735026919); // normalize(vec3(1.0))
+                            return color * c + cross(k, color) * s + k * dot(k, color) * (1.0 - c);
+                        }
+
                         void main() {
-                            // Static Color Variation (using noise)
-                            float variation = texture(uNoiseTexture, vNoisePos * 0.08).r;
-                            float micro = texture(uNoiseTexture, vNoisePos * 0.35 + vPos * 0.5 + vec3(11.0)).r;
+                            // Per-tree brightness/saturation variation (deterministic per tree)
+                            float treeBrightness = 0.85 + vTreeSeed * 0.30; // 0.85 to 1.15
+                            float treeSaturation = 0.90 + fract(vTreeSeed * 7.3) * 0.20; // 0.90 to 1.10
+                            
+                            // Static Color Variation (using noise offset by tree seed)
+                            float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
+                            float micro = texture(uNoiseTexture, vNoisePos * 0.4 + vPos * 0.5 + vec3(11.0)).r;
                             
                             // Simple Gradient based on local Y
                             float tip = smoothstep(0.0, 1.0, vPos.y + 0.5); 
                             
-                            // Darker green overall with stable per-tree variation.
-                            vec3 baseLeaf = uColorTip * 0.80;
-                            vec3 tintA = baseLeaf * vec3(0.82, 0.95, 0.82);
-                            vec3 tintB = baseLeaf * vec3(0.95, 1.05, 0.95);
+                            // Base leaf color with wider tint variation
+                            vec3 baseLeaf = uColorTip * 0.80 * treeBrightness;
+                            vec3 tintA = baseLeaf * vec3(0.70, 0.95, 0.75); // More red/blue reduction for variety
+                            vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);  // Brighter yellower green
                             vec3 col = mix(tintA, tintB, variation);
-                            col *= mix(0.92, 1.08, micro);
-                            col *= mix(0.92, 1.06, tip);
+                            col *= mix(0.88, 1.12, micro);
+                            col *= mix(0.90, 1.08, tip);
+                            
+                            // Apply saturation adjustment
+                            float lum = dot(col, vec3(0.299, 0.587, 0.114));
+                            col = mix(vec3(lum), col, treeSaturation);
+
+                            col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
                             csm_DiffuseColor = vec4(col, 1.0);
                             // Static Emissive (no pulse)

@@ -11,12 +11,31 @@ export class TreeGeometryFactory {
     static getTreeGeometry(type: TreeType, variant = 0): { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] } {
         if (!this.cache[type]) this.cache[type] = {};
         if (this.cache[type][variant]) {
+            // Defensive: during hot reloads / stale caches, ensure new shader attributes exist.
+            this.ensureLeafRandAttribute(this.cache[type][variant].leaves, type, variant);
             return this.cache[type][variant];
         }
 
         const { wood, leaves, collisionData } = this.generateTree(type, variant);
+        this.ensureLeafRandAttribute(leaves, type, variant);
         this.cache[type][variant] = { wood, leaves, collisionData };
         return { wood, leaves, collisionData };
+    }
+
+    private static ensureLeafRandAttribute(leaves: THREE.BufferGeometry, type: TreeType, variant: number) {
+        if (!leaves?.getAttribute('position')) return;
+        if (leaves.getAttribute('aLeafRand')) return;
+
+        const vertCount = leaves.getAttribute('position').count;
+        const arr = new Float32Array(vertCount);
+        const fract = (x: number) => x - Math.floor(x);
+
+        for (let i = 0; i < vertCount; i++) {
+            const p = (i + 1) * 12.9898 + type * 78.233 + variant * 37.719;
+            arr[i] = fract(Math.sin(p) * 43758.5453123);
+        }
+
+        leaves.setAttribute('aLeafRand', new THREE.BufferAttribute(arr, 1));
     }
 
     private static generateTree(type: TreeType, variant: number) {
@@ -135,6 +154,14 @@ export class TreeGeometryFactory {
         stack.push({ position: rootPos, quaternion: rootQuat, scale: rootScale, depth: 0 });
 
         const dummy = new THREE.Matrix4();
+        // Per-leaf (actually per clump/leaf-primitive) random attribute for subtle
+        // shader-side hue variation without adding per-tree CPU work.
+        const addLeafVariationAttribute = (geo: THREE.BufferGeometry, leafRand: number) => {
+            const vertCount = geo.attributes.position.count;
+            const leafRandArray = new Float32Array(vertCount).fill(leafRand);
+            geo.setAttribute('aLeafRand', new THREE.BufferAttribute(leafRandArray, 1));
+        };
+
         // Helper for placing a standard leaf clump at a position.
         const addLeafClump = (pos: THREE.Vector3, scaleMul: number) => {
             dummy.makeRotationFromEuler(new THREE.Euler(rand() * 3, rand() * 3, rand() * 3));
@@ -143,6 +170,7 @@ export class TreeGeometryFactory {
             dummy.scale(new THREE.Vector3(lScale, lScale, lScale));
             const instanceLeaf = leafGeo.clone();
             instanceLeaf.applyMatrix4(dummy);
+            addLeafVariationAttribute(instanceLeaf, rand());
             leafGeometries.push(instanceLeaf);
         };
 
@@ -313,6 +341,7 @@ export class TreeGeometryFactory {
 
                         const instanceLeaf = leafGeo.clone();
                         instanceLeaf.applyMatrix4(dummy);
+                        addLeafVariationAttribute(instanceLeaf, rand());
                         leafGeometries.push(instanceLeaf);
                     }
                 } else {

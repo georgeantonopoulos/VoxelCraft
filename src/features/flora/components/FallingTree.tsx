@@ -37,8 +37,12 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
     const uniforms = useMemo(() => ({
         uColorBase: { value: new THREE.Color(colors.base) },
         uColorTip: { value: new THREE.Color(colors.tip) },
-        uNoiseTexture: { value: noiseTexture }
-    }), [colors]);
+        uNoiseTexture: { value: noiseTexture },
+        // Stable per-tree seed so per-leaf variation doesn't repeat identically between trees.
+        uTreeSeed: { value: seed },
+        // Per-tree hue shift for visible color variety (0.30 ≈ 17 degrees).
+        uLeafHueVariation: { value: 0.30 }
+    }), [colors, seed]);
 
     return (
         <RigidBody
@@ -127,11 +131,31 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                     <CustomShaderMaterial
                         baseMaterial={THREE.MeshStandardMaterial}
                         vertexShader={`
+                            attribute float aLeafRand;
                             varying vec3 vPos;
                             varying vec3 vNoisePos;
+                            varying float vHueCos;
+                            varying float vHueSin;
+                            varying float vTreeSeedF;
+                            uniform float uTreeSeed;
+                            uniform float uLeafHueVariation;
+
+                            float hash11(float p) {
+                                return fract(sin(p) * 43758.5453123);
+                            }
                             void main() {
                                 vPos = position;
-                                vNoisePos = (modelMatrix * vec4(position, 1.0)).xyz;
+                                vTreeSeedF = uTreeSeed;
+                                
+                                // Offset noise coords by tree seed so each tree samples different noise
+                                vec3 treeNoiseOffset = vec3(uTreeSeed * 50.0, uTreeSeed * 37.0, uTreeSeed * 23.0);
+                                vNoisePos = position + treeNoiseOffset;
+
+                                // Per-leaf hue jitter (computed per-vertex to keep fragment cost low).
+                                float hueN = hash11(aLeafRand * 113.1 + uTreeSeed * 19.7);
+                                float hueAngle = (hueN * 2.0 - 1.0) * uLeafHueVariation;
+                                vHueCos = cos(hueAngle);
+                                vHueSin = sin(hueAngle);
                                 csm_Position = position;
                             }
                         `}
@@ -139,23 +163,42 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                             precision highp sampler3D;
                             varying vec3 vPos;
                             varying vec3 vNoisePos;
+                            varying float vHueCos;
+                            varying float vHueSin;
+                            varying float vTreeSeedF;
                             uniform vec3 uColorTip;
                             uniform sampler3D uNoiseTexture;
 
+                            vec3 hueRotateCS(vec3 color, float c, float s) {
+                                vec3 k = vec3(0.57735026919); // normalize(vec3(1.0))
+                                return color * c + cross(k, color) * s + k * dot(k, color) * (1.0 - c);
+                            }
+
                             void main() {
-                                // Static Color Variation
-                                float variation = texture(uNoiseTexture, vNoisePos * 0.08).r;
-                                float micro = texture(uNoiseTexture, vNoisePos * 0.35 + vPos * 0.5 + vec3(11.0)).r;
+                                // Per-tree brightness/saturation variation
+                                float treeBrightness = 0.85 + vTreeSeedF * 0.30;
+                                float treeSaturation = 0.90 + fract(vTreeSeedF * 7.3) * 0.20;
+                                
+                                // Static Color Variation (using noise offset by tree seed)
+                                float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
+                                float micro = texture(uNoiseTexture, vNoisePos * 0.4 + vPos * 0.5 + vec3(11.0)).r;
 
                                 // Simple Gradient
                                 float gradient = smoothstep(0.0, 1.0, vPos.y * 0.2); 
 
-                                vec3 baseLeaf = uColorTip * 0.80;
-                                vec3 tintA = baseLeaf * vec3(0.82, 0.95, 0.82);
-                                vec3 tintB = baseLeaf * vec3(0.95, 1.05, 0.95);
+                                // Base leaf color with wider tint variation
+                                vec3 baseLeaf = uColorTip * 0.80 * treeBrightness;
+                                vec3 tintA = baseLeaf * vec3(0.70, 0.95, 0.75);
+                                vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);
                                 vec3 col = mix(tintA, tintB, variation);
-                                col *= mix(0.92, 1.08, micro);
-                                col *= mix(0.95, 1.05, gradient);
+                                col *= mix(0.88, 1.12, micro);
+                                col *= mix(0.90, 1.08, gradient);
+                                
+                                // Apply saturation adjustment
+                                float lum = dot(col, vec3(0.299, 0.587, 0.114));
+                                col = mix(vec3(lum), col, treeSaturation);
+
+                                col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
                                 csm_DiffuseColor = vec4(col, 1.0);
                                 csm_Emissive = uColorTip * 0.10;

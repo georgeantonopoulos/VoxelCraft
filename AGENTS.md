@@ -99,10 +99,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
-- 2025-12-14: Refined Sun Shader heavily per user request: Rays are now 1/3rd the size, more transparent (1/2 opacity), and tightly masked to the sun disk. This creates a subtle "atmospheric halo" rather than dominant beams.
-- 2025-12-14: Created robust volumetric Sun Glare ("God Rays Lite") using a massive shader-animated billboard. This replaces the post-processing GodRays which failed depth occlusion.
-- 2025-12-14: Increased camera `far` plane to 600m and relaxed default fog (10-90 -> 20-160) to fix Sun/Moon clipping and improve visibility.
+- 2025-12-14: Fixed per-tree leaf color variation not being visible. Root causes: (1) hue variation was too subtle (0.10→0.30 radians), (2) noise was sampled at world position making nearby trees identical, (3) tint range was too narrow. Fix: offset noise coords by per-tree seed, add per-tree brightness/saturation, widen tint range.
+- 2025-12-14: Added volumetric God Rays (post-processing) linked to the sun mesh for dramatic atmospheric lighting.
 - 2025-12-14: Removed ALL animated/pulsing texture effects from tree leaves per user request. Replaced with static color variation (noise lookup) and static emissive glow. Wind sway is retained in vertex shaders.
 - 2025-12-14: Removed procedural noise texture from all tree leaves (FractalTree, FallingTree, TreeLayer) per user request to fix "moving/weird" look. Reverted to clean gradient and simple emissive pulse.
-- 2025-12-14: Removed procedural wind sway from `FractalTree.tsx` bark to fix disjointed segments. Stabilized leaf pulse animation in `TreeLayer.tsx`.
 - 2025-12-14: Updated `TreeLayer.tsx` and `TreeGeometryFactory.ts` to apply procedural bark/leaf shaders to massive terrain trees (previously only applied to hero instances).
