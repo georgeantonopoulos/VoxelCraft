@@ -228,6 +228,17 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Fix (Debug)**: `src/state/InventoryStore.ts` now starts with `10` flora when `?debug` is present for faster iteration.
   - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: wait 10 seconds then take 4 screenshots while charging in RootHollow to confirm the swarm fills the full height range and feels smooth/etheric.
 
+- 2025-12-14: LumaSwarm behavior tuning — staggered emission, true ease-in/out, and per-particle fade timing.
+  - **Issue 1**: Motion still read as a “point cloud” (too coherent), and particles didn’t clearly emit from the luma core.
+  - **Issue 2**: There was no clear ease-in/ease-out feel during spread/convergence, and dissipation began too early (at growth start instead of at growth end).
+  - **Fix (Swarm)**: `src/features/flora/components/LumaSwarm.tsx` now:
+    - Staggers emission per particle via a small per-instance delay so the swarm doesn’t move in lock-step.
+    - Uses explicit ease-in/ease-out polynomials for spread and convergence.
+    - Keeps turbulence smooth and lower-frequency, and ensures the very first frames are truly centered (no instantaneous offset).
+    - Adds per-particle randomized fade-out during dissipation (via a `vFadeSeed` varying).
+  - **Fix (Timing)**: `src/features/flora/components/RootHollow.tsx` now delays `dissipating` until near the end of `FractalTree` growth (based on the known ~2.5s growth time for type=0).
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: confirm particles emit from the core, rise with eased motion, converge smoothly, then fade out organically near the end of growth.
+
 - 2025-12-13: Fixed `refreshFogUniforms` crash from `FogDeer` shader material.
   - **Root Cause**: Three.js will call `refreshFogUniforms()` whenever `material.fog === true`; if a `ShaderMaterial` lacks `fogColor/fogNear/fogFar` uniforms, it can crash with `Cannot read properties of undefined (reading 'value')`.
   - **Fix**: `src/features/creatures/FogDeer.tsx` now clones `THREE.UniformsLib.fog` explicitly into the shader uniforms and defensively ensures `fogColor/fogNear/fogFar` exist before the first program compile.

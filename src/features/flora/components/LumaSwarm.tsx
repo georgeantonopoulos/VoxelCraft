@@ -26,7 +26,7 @@ const EST_FLORA_TREE_WIDTH = 6.0; // Typical canopy span (heuristic); adjust by 
 const EMIT_PHASE = 0.55; // Fraction of formation spent “spreading” before converging
 const EMIT_RADIUS = EST_FLORA_TREE_WIDTH * 0.8;
 const EMIT_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.2;
-const EMIT_JITTER = 4.0; // Random motion amplitude during spread
+const EMIT_JITTER = 1.75; // Random motion amplitude during spread (kept gentle/etheric)
 const FORM_JITTER = 0.8; // Residual randomness during convergence (fades out)
 
 // Final silhouette dimensions (big representation of the PNG).
@@ -289,6 +289,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         uniform float uDissipate;
 
                         varying float vAlpha;
+                        varying float vFadeSeed;
 
                         // Formation staging
                         // - First, particles "emit" from the core and spread upward into a tall volume (tree-sized).
@@ -314,30 +315,35 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         }
 
                         void main() {
+                            vFadeSeed = aRandom.x;
+
                             // 1) Emission / spread phase:
                             // Particles originate at the core, then expand upward into a tall volume roughly
                             // matching the space a fully-grown flora tree occupies.
                             float spreadT = clamp(uProgress / EMIT_PHASE, 0.0, 1.0);
-                            // Ease-in-out so we don't rocket to the top immediately; feels more "etheric".
-                            float spreadEase = smoothstep(0.0, 1.0, spreadT);
+                            // Stagger emission so particles feel independent (not a single rigid point cloud).
+                            float delay = aRandom.y * 0.18;
+                            float spreadLocalT = clamp((spreadT - delay) / max(0.0001, (1.0 - delay)), 0.0, 1.0);
+                            // True ease-in/ease-out (smoother than a single smoothstep call in practice).
+                            float spreadEase = spreadLocalT * spreadLocalT * (3.0 - 2.0 * spreadLocalT);
 
                             // Random radial direction (XZ), with an outward radius bias.
                             vec2 dir2 = normalize((aRandom.xy - 0.5) * 2.0 + vec2(0.0001, 0.0002));
                             float radial = pow(aRandom.z, 0.65) * EMIT_RADIUS;
 
                             // Spiraling motion: per-particle spin speed + phase.
-                            float spinSpeed = mix(0.8, 2.2, aRandom.y); // gentle swirl (butterfly-like)
+                            float spinSpeed = mix(0.5, 1.4, aRandom.y); // gentle swirl (butterfly-like)
                             float angle = uTime * spinSpeed + aRandom.x * 6.28318530718;
                             vec2 spiralDir = rot2(angle) * dir2;
 
                             // Add a subtle secondary wobble to avoid perfectly smooth rings.
-                            float wobble = sin(uTime * 1.1 + aRandom.z * 12.0) * 0.8;
+                            float wobble = sin(uTime * 0.55 + aRandom.z * 12.0) * 0.8;
                             vec2 wobbleDir = vec2(cos(wobble), sin(wobble));
 
                             // Smooth turbulence (avoid "fast jitter"): layered sin/cos with per-particle phases.
-                            float t0 = uTime * 0.35 + aRandom.x * 12.0;
-                            float t1 = uTime * 0.22 + aRandom.y * 17.0;
-                            float t2 = uTime * 0.28 + aRandom.z * 9.0;
+                            float t0 = uTime * 0.18 + aRandom.x * 12.0;
+                            float t1 = uTime * 0.12 + aRandom.y * 17.0;
+                            float t2 = uTime * 0.15 + aRandom.z * 9.0;
                             vec3 flutter = vec3(
                                 sin(t0) + 0.5 * cos(t1),
                                 sin(t1) + 0.5 * cos(t2),
@@ -346,22 +352,30 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             flutter = normalize(flutter) * EMIT_JITTER;
 
                             // Spread should occupy the full vertical range (not all particles stuck at the top).
-                            float height01 = pow(aRandom.z, 0.9);
+                            float height01 = pow(aRandom.z, 0.85);
                             float targetY = height01 * EMIT_HEIGHT;
-                            float startY = 0.25; // just above the luma core
+                            float startY = 0.05; // inside/near the luma core
 
                             vec3 spreadPos = vec3(0.0);
-                            // Expand fast and keep adding turbulence as we rise.
-                            float cone = mix(0.5, 1.0, height01); // slightly wider at the top
-                            spreadPos.xz = (spiralDir * radial * cone * spreadEase) + wobbleDir * (0.6 * spreadEase);
-                            spreadPos.xz += flutter.xz * (0.35 + 0.65 * spreadEase);
+                            // Expand outward more slowly than we rise, so the first moment reads as "emitting upward".
+                            float xzEase = smoothstep(0.10, 1.0, spreadLocalT);
+                            float cone = mix(0.55, 1.0, height01); // slightly wider at the top
+                            spreadPos.xz = (spiralDir * radial * cone * xzEase) + wobbleDir * (0.55 * xzEase);
 
-                            // Rise into a distributed target Y; keep a gentle vertical bob.
-                            float bob = sin(uTime * 0.9 + aRandom.x * 9.0) * 0.35;
-                            spreadPos.y = mix(startY, targetY, spreadEase) + bob * spreadEase;
+                            // "Initial velocity" kick: quick upward impulse that fades early.
+                            float kick = (1.0 - smoothstep(0.0, 0.28, spreadLocalT)) * (0.6 + 1.1 * aRandom.x);
 
+                            // Rise into a distributed target Y with ease-in/out, plus a gentle bob.
+                            float bob = sin(uTime * 0.38 + aRandom.x * 9.0) * 0.28;
+                            // Slightly bias upward early, but keep ease-in/out overall.
+                            float yEase = mix(spreadEase, (1.0 - pow(1.0 - spreadEase, 2.2)), 0.55);
+                            spreadPos.y = mix(startY, targetY, yEase) + (kick + bob) * spreadEase;
+
+                            // Turbulence should feel like drifting in a volume, not snapping.
+                            // Multiply by 'spreadEase' so particles genuinely emit from the core (no instant offset at t=0).
+                            spreadPos += flutter * spreadEase;
                             // Give some true 3D thickness during spread so it doesn't feel like a flat sheet.
-                            spreadPos.z += flutter.x * (0.18 + 0.82 * spreadEase);
+                            spreadPos.z += flutter.x * 0.35 * spreadEase;
 
                             // Cache the end-of-spread position so the formation phase transitions smoothly.
                             vec3 spreadEndPos = vec3(0.0);
@@ -378,8 +392,8 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             // 3) Formation phase: converge from the spread volume to the PNG silhouette.
                             float formT = (uProgress - EMIT_PHASE) / (1.0 - EMIT_PHASE);
                             formT = clamp(formT, 0.0, 1.0);
-                            // Cubic ease out
-                            float ease = 1.0 - pow(1.0 - formT, 3.0);
+                            // Ease-in/ease-out convergence for a smoother "gathering" feel.
+                            float ease = formT * formT * (3.0 - 2.0 * formT);
 
                             vec3 pos = (uProgress < EMIT_PHASE)
                                 ? spreadPos
@@ -410,12 +424,19 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                     fragmentShader={`
                         uniform vec3 uColor;
                         varying float vAlpha;
+                        varying float vFadeSeed;
 
                         void main() {
-                            csm_DiffuseColor = vec4(uColor, vAlpha);
+                            // Per-particle fade randomness during dissipation.
+                            // Some particles begin fading earlier, giving a more organic "embers" feel.
+                            float fadeStart = 0.15 + 0.70 * vFadeSeed;
+                            float fadeEnd = fadeStart + 0.22;
+                            float fade = 1.0 - smoothstep(fadeStart, fadeEnd, 1.0 - vAlpha);
+
+                            csm_DiffuseColor = vec4(uColor, vAlpha * fade);
                             csm_Emissive = uColor * 2.0; // Super bright
 
-                            if (vAlpha < 0.01) discard;
+                            if (csm_DiffuseColor.a < 0.01) discard;
                         }
                     `}
                 />
