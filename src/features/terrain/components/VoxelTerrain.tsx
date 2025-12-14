@@ -15,6 +15,7 @@ import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 
 
 // Sounds
@@ -598,7 +599,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const { type, payload } = e.data;
 
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, treePositions, rootHollowPositions } = payload;
+        const { key, metadata, material, floraPositions, treePositions, rootHollowPositions, fireflyPositions } = payload;
         pendingChunks.current.delete(key);
 
         // Log flora positions for debugging
@@ -625,11 +626,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           floraPositions, // Lumina flora (for hotspots)
           treePositions,  // Surface trees
           rootHollowPositions, // Persist root hollow positions
+          fireflyPositions, // Ambient fireflies (persisted per chunk)
           terrainVersion: 0,
           visualVersion: 0,
           // Used to time-fade chunks into view (hides render-distance pop-in).
           spawnedAt: performance.now() / 1000
         };
+
+        // Register ambient fireflies for renderers (AmbientLife) without tightly coupling
+        // that system to the terrain chunk state shape.
+        setChunkFireflies(key, fireflyPositions);
 
         // Register chunk arrays for runtime queries (water, interaction probes, etc).
         terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
@@ -753,6 +759,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       if (!neededKeys.has(key)) {
         simulationManager.removeChunk(key);
         useWorldStore.getState().clearFloraHotspots(key);
+        deleteChunkFireflies(key);
         terrainRuntime.unregisterChunk(key);
         delete newChunks[key];
         changed = true;

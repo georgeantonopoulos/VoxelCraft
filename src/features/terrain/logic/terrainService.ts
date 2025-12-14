@@ -86,7 +86,8 @@ export class TerrainService {
         metadata: ChunkMetadata,
         floraPositions: Float32Array, // Lumina flora (collectibles) in caverns
         treePositions: Float32Array,  // Surface trees
-        rootHollowPositions: Float32Array
+        rootHollowPositions: Float32Array,
+        fireflyPositions: Float32Array // Ambient fireflies (surface swarms)
     } {
         const sizeX = TOTAL_SIZE_XZ;
         const sizeY = TOTAL_SIZE_Y;
@@ -99,6 +100,7 @@ export class TerrainService {
         const floraCandidates: number[] = []; // Cavern lumina flora
         const treeCandidates: number[] = [];  // Surface trees
         const rootHollowCandidates: number[] = [];
+        const fireflyCandidates: number[] = []; // Surface firefly motes (clustered swarms)
 
         const worldOffsetX = cx * CHUNK_SIZE_XZ;
         const worldOffsetZ = cz * CHUNK_SIZE_XZ;
@@ -614,6 +616,116 @@ export class TerrainService {
             }
         }
 
+        // --- 3.7 Firefly Generation (Surface Pass) ---
+        // Fireflies are generated as small swarms and persisted per-chunk (so they don't "regenerate"
+        // or jump around as the player crosses streaming boundaries).
+        //
+        // Placement heuristics:
+        // - Bias swarms near trees (looks intentional and "alive").
+        // - Add a few "valley" swarms where local height is below nearby terrain.
+        //
+        // Data layout: stride 4 in WORLD SPACE: x, y, z, seed
+        // (seed drives blink/drift in the renderer so we don't need per-frame CPU updates).
+        const hash01 = (x: number, y: number, z: number, salt: number) => {
+            // `noise3D` is deterministic and already in this module; map [-1..1] -> [0..1].
+            const n = noise3D(x * 0.011 + salt * 0.17, y * 0.017 + salt * 0.31, z * 0.013 + salt * 0.23);
+            return (n + 1) * 0.5;
+        };
+
+        const spawnSwarm = (centerX: number, centerZ: number, baseHeightOffset: number, seedSalt: number) => {
+            const surfaceY = TerrainService.getHeightAt(centerX, centerZ);
+            // Don't spawn fireflies inside oceans/lakes.
+            if (surfaceY <= WATER_LEVEL + 0.25) return;
+
+            const swarmSeed = hash01(centerX, surfaceY, centerZ, seedSalt);
+            const moteCount = 10 + Math.floor(hash01(centerX, surfaceY, centerZ, seedSalt + 1) * 9); // 10..18
+            const radius = 2.25 + hash01(centerX, surfaceY, centerZ, seedSalt + 2) * 3.75; // 2.25..6.0
+
+            for (let i = 0; i < moteCount; i++) {
+                const u = hash01(centerX, surfaceY, centerZ, seedSalt + 10 + i * 3);
+                const v = hash01(centerX, surfaceY, centerZ, seedSalt + 11 + i * 3);
+                const w = hash01(centerX, surfaceY, centerZ, seedSalt + 12 + i * 3);
+
+                const angle = u * Math.PI * 2;
+                // `sqrt` makes the distribution denser toward the center (reads as a swarm).
+                const r = Math.sqrt(v) * radius;
+                const wx = centerX + Math.cos(angle) * r;
+                const wz = centerZ + Math.sin(angle) * r;
+
+                const ySurface = TerrainService.getHeightAt(wx, wz);
+                if (ySurface <= WATER_LEVEL + 0.25) continue;
+
+                // Keep them close to the ground; stable per mote.
+                const heightOffset = baseHeightOffset + w * 1.35; // ~0.6..2.0
+                const wy = ySurface + heightOffset;
+
+                // Per-mote seed used for blink/drift. Keep in [0..1] for convenience.
+                const seed = (swarmSeed * 0.7) + hash01(wx, wy, wz, seedSalt + 99) * 0.3;
+                fireflyCandidates.push(wx, wy, wz, seed);
+            }
+        };
+
+        // 1) Tree-biased swarms: sample a subset of the generated tree placements.
+        // Limit per-chunk to keep draw cost and worker time predictable.
+        let treeSwarms = 0;
+        const MAX_TREE_SWARMS = 4;
+        for (let i = 0; i < treeCandidates.length && treeSwarms < MAX_TREE_SWARMS; i += 4) {
+            const tx = treeCandidates[i + 0] + worldOffsetX;
+            const tz = treeCandidates[i + 2] + worldOffsetZ;
+            const biome = BiomeManager.getBiomeAt(tx, tz);
+
+            // Rough biome gate: only bother in biomes that actually want fireflies.
+            // (Keep this local; we intentionally don't import renderer helpers here.)
+            if (biome !== 'THE_GROVE' && biome !== 'JUNGLE' && biome !== 'PLAINS' && biome !== 'MOUNTAINS' && biome !== 'BEACH') {
+                continue;
+            }
+
+            const p = hash01(tx, 0, tz, 701);
+            // Not every tree gets a swarm; makes them feel like "pockets".
+            if (p < 0.75) continue;
+
+            spawnSwarm(tx, tz, 0.65, 800 + treeSwarms * 37);
+            treeSwarms++;
+        }
+
+        // 2) Valley swarms: a few tests per chunk, looking for spots below nearby terrain.
+        // This reads as "low points" like shallow dips and streambeds.
+        let valleySwarms = 0;
+        const MAX_VALLEY_SWARMS = 3;
+        const SAMPLE_STEP = 10;
+        for (let z = 0; z < CHUNK_SIZE_XZ && valleySwarms < MAX_VALLEY_SWARMS; z += SAMPLE_STEP) {
+            for (let x = 0; x < CHUNK_SIZE_XZ && valleySwarms < MAX_VALLEY_SWARMS; x += SAMPLE_STEP) {
+                const wx = worldOffsetX + x;
+                const wz = worldOffsetZ + z;
+
+                const biome = BiomeManager.getBiomeAt(wx, wz);
+                if (biome !== 'THE_GROVE' && biome !== 'JUNGLE' && biome !== 'PLAINS' && biome !== 'MOUNTAINS' && biome !== 'BEACH') {
+                    continue;
+                }
+
+                const centerH = TerrainService.getHeightAt(wx, wz);
+                if (centerH <= WATER_LEVEL + 0.25) continue;
+
+                const s = 6;
+                const hN = TerrainService.getHeightAt(wx, wz - s);
+                const hS = TerrainService.getHeightAt(wx, wz + s);
+                const hE = TerrainService.getHeightAt(wx + s, wz);
+                const hW = TerrainService.getHeightAt(wx - s, wz);
+                const avg = (hN + hS + hE + hW) * 0.25;
+
+                // Require a meaningful dip, but not a canyon.
+                const dip = avg - centerH;
+                if (dip < 1.4 || dip > 10.0) continue;
+
+                // Thin by noise so we don't overpopulate every valley candidate.
+                const p = hash01(wx, centerH, wz, 911);
+                if (p < 0.72) continue;
+
+                spawnSwarm(wx, wz, 0.55, 1200 + valleySwarms * 41);
+                valleySwarms++;
+            }
+        }
+
         // --- 4. Apply Persistence Modifications ---
         if (modifications && modifications.length > 0) {
             for (const mod of modifications) {
@@ -635,7 +747,8 @@ export class TerrainService {
             metadata,
             floraPositions: new Float32Array(floraCandidates),
             treePositions: new Float32Array(treeCandidates),
-            rootHollowPositions: new Float32Array(rootHollowCandidates)
+            rootHollowPositions: new Float32Array(rootHollowCandidates),
+            fireflyPositions: new Float32Array(fireflyCandidates)
         };
     }
 

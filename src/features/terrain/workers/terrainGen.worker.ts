@@ -48,7 +48,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       }
 
       // 2. Generate with mods
-      const { density, material, metadata, floraPositions, treePositions, rootHollowPositions } =
+      const { density, material, metadata, floraPositions, treePositions, rootHollowPositions, fireflyPositions } =
         TerrainService.generateChunk(cx, cz, modifications);
 
       // --- AMBIENT VEGETATION GENERATION ---
@@ -226,6 +226,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       const floraShared = toSharedFloat32Array(floraPositions);
       const treeShared = toSharedFloat32Array(treePositions);
       const rootHollowShared = toSharedFloat32Array(rootHollowPositions);
+      const fireflyShared = toSharedFloat32Array(fireflyPositions);
 
       const { vegetationData, vegetationBuffers } = toSharedVegetationBuckets(vegetationBuckets);
 
@@ -243,7 +244,8 @@ ctx.onmessage = async (e: MessageEvent) => {
         vegetationData,
         floraPositions: floraShared,
         treePositions: treeShared,
-        rootHollowPositions: rootHollowShared
+        rootHollowPositions: rootHollowShared,
+        fireflyPositions: fireflyShared
       };
 
       // Only transfer non-shared buffers; SharedArrayBuffer stays shared.
@@ -258,6 +260,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       maybePush(floraShared.buffer as any);
       maybePush(treeShared.buffer as any);
       maybePush(rootHollowShared.buffer as any);
+      maybePush(fireflyShared.buffer as any);
 
       ctx.postMessage({ type: 'GENERATED_BASE', payload: response }, transfer);
     }
