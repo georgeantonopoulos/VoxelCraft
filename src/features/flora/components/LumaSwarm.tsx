@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useLoader } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
@@ -10,10 +10,32 @@ interface LumaSwarmProps {
 
 // Tuning
 const SAMPLE_RESOLUTION = 64; // Scan 64x64 grid
-const PARTICLE_SIZE = 0.06;   // Tiny spheres
-const SWARM_RADIUS = 3.5;     // Size of the shape in world units
+const PARTICLE_SIZE = 0.015;  // 1/10th size: keeps the swarm feeling like particles, not blobs
 const FORMATION_DURATION = 10.0; // Seconds to fully form
 const DISSIPATION_SPEED = 1.0;
+
+// Approximate "fully grown" RootHollow flora-tree size.
+// Derived from `src/features/flora/workers/fractal.worker.ts` for type=0 (Oak-ish):
+// height ~= BASE_LENGTH * (1 - LENGTH_DECAY^(MAX_DEPTH+1)) / (1 - LENGTH_DECAY)
+//      ~= 2.0 * (1 - 0.85^7) / 0.15 ~= 9.06
+const EST_FLORA_TREE_HEIGHT = 9.1;
+const EST_FLORA_TREE_WIDTH = 6.0; // Typical canopy span (heuristic); adjust by eye if needed.
+
+// Staging: emit/spread first, then form into PNG silhouette (tree-sized).
+// These values are injected into the shader as literals.
+const EMIT_PHASE = 0.55; // Fraction of formation spent “spreading” before converging
+const EMIT_RADIUS = EST_FLORA_TREE_WIDTH * 0.8;
+const EMIT_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.2;
+const EMIT_JITTER = 4.0; // Random motion amplitude during spread
+const FORM_JITTER = 0.8; // Residual randomness during convergence (fades out)
+
+// Final silhouette dimensions (big representation of the PNG).
+const SHAPE_WIDTH = EST_FLORA_TREE_WIDTH;
+const SHAPE_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.15;
+
+// Debug controls (keep off by default to avoid console spam/perf hits in-game)
+const DEBUG_LUMA_SWARM = false;
+const DEBUG_LUMA_SIMPLE_MATERIAL = false; // Renders all instances at origin (no shader animation)
 
 export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
@@ -21,12 +43,26 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     const coreRef = useRef<THREE.Group>(null);
     const texture = useLoader(THREE.TextureLoader, lumaShapeUrl);
 
-    // State for shader uniforms
-    const [elapsed, setElapsed] = useState(0);
+    // Track start time - will be set on first useFrame call
+    const startTimeRef = useRef<number | null>(null);
+
+    // Debug logging
+    useEffect(() => {
+        if (!DEBUG_LUMA_SWARM) return;
+        console.log('[LumaSwarm] Component mounted, dissipating:', dissipating);
+        console.log('[LumaSwarm] Texture loaded:', !!texture);
+        return () => console.log('[LumaSwarm] Component unmounted');
+    }, []);
 
     // 1. Process Texture to get Target Positions
     const particleData = useMemo(() => {
-        if (!texture || !texture.image) return null;
+        if (!texture || !texture.image) {
+            if (DEBUG_LUMA_SWARM) console.warn('[LumaSwarm] No texture or image data available');
+            return null;
+        }
+        if (DEBUG_LUMA_SWARM) {
+            console.log('[LumaSwarm] Processing texture, size:', texture.image.width, 'x', texture.image.height);
+        }
 
         const canvas = document.createElement('canvas');
         canvas.width = SAMPLE_RESOLUTION;
@@ -54,18 +90,21 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                 if (a > 50) {
                     // Normalize -0.5 to 0.5
                     const nX = (x / SAMPLE_RESOLUTION) - 0.5;
-                    const nY = (1.0 - (y / SAMPLE_RESOLUTION)) - 0.5; // Flip Y
+                    const nY01 = 1.0 - (y / SAMPLE_RESOLUTION); // Flip Y to 0..1 (base at 0, top at 1)
 
-                    targets.push(nX * SWARM_RADIUS, nY * SWARM_RADIUS, 0); // Z=0 flat plane
+                    // Make the silhouette BIG and upright: X is centered, Y is anchored at base (0..height).
+                    targets.push(nX * SHAPE_WIDTH, nY01 * SHAPE_HEIGHT, 0); // Z=0 plane (faces camera during convergence)
                     randoms.push(Math.random(), Math.random(), Math.random());
                 }
             }
         }
 
+        const count = targets.length / 3;
+        if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Particle count:', count);
         return {
             targets: new Float32Array(targets),
             randoms: new Float32Array(randoms),
-            count: targets.length / 3
+            count
         };
     }, [texture]);
 
@@ -73,15 +112,21 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     useEffect(() => {
         if (meshRef.current && particleData) {
             meshRef.current.count = particleData.count;
+            if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Setting up', particleData.count, 'particle instances');
 
-            // Dummy matrix setup (identity), shader does the positioning
+            // Instance matrix is identity.
+            // IMPORTANT: particle offsets happen in the shader; if we scale the instance matrix,
+            // we also scale the offsets and the swarm "clamps" around the core.
             const dummy = new THREE.Object3D();
             for (let i = 0; i < particleData.count; i++) {
-                dummy.scale.setScalar(PARTICLE_SIZE);
+                dummy.position.set(0, 0, 0);
+                dummy.rotation.set(0, 0, 0);
+                dummy.scale.setScalar(1.0);
                 dummy.updateMatrix();
                 meshRef.current.setMatrixAt(i, dummy.matrix);
             }
             meshRef.current.instanceMatrix.needsUpdate = true;
+            if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Instance matrices set (identity)');
 
             // Custom Attributes
             meshRef.current.geometry.setAttribute(
@@ -92,39 +137,60 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                 'aRandom',
                 new THREE.InstancedBufferAttribute(particleData.randoms, 3)
             );
+            if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Instance attributes set (aTargetPos, aRandom)');
+            
+            // Debug: Log first few particle positions
+            if (DEBUG_LUMA_SWARM) {
+                console.log('[LumaSwarm] Sample target positions:', particleData.targets.slice(0, 15));
+                console.log('[LumaSwarm] Sample random values:', particleData.randoms.slice(0, 15));
+            }
         }
     }, [particleData]);
 
     // 3. Animation Loop
     useFrame(({ clock, camera }) => {
         if (!materialRef.current || !meshRef.current) return;
+        
+        const currentTime = clock.getElapsedTime();
+        
+        // Set start time on first frame (not on mount)
+        if (startTimeRef.current === null) {
+            startTimeRef.current = currentTime;
+            console.log('[LumaSwarm] Animation start time set on first frame:', startTimeRef.current);
+        }
+        
+        const elapsed = currentTime - startTimeRef.current;
 
-        const dt = clock.getDelta(); // Not used directly, using uTime
-        const time = clock.getElapsedTime();
+        // Update Uniforms
+        // Pass 'real' absolute time for noise
+        materialRef.current.uniforms.uTime.value = currentTime;
+        // Pass normalized progress (0 to 1)
+        const progress = Math.min(elapsed / FORMATION_DURATION, 1.0);
+        materialRef.current.uniforms.uProgress.value = progress;
 
-        // Face Camera (Billboard the whole group)
-        if (meshRef.current) {
+        // Face Camera only during/after convergence.
+        // During the initial spread phase we want true “upwards” motion (world-aligned), not a billboarded plane.
+        if (progress >= EMIT_PHASE) {
             meshRef.current.lookAt(camera.position);
         }
 
-        // Update Uniforms
-        // Ramp formation progress 0 -> 1 over 10s
-        let progress = Math.min(elapsed + dt, FORMATION_DURATION) / FORMATION_DURATION;
-        if (dissipating) {
-            // Keep progress at max or handle transition?
-            // Actually uDissipate handles the exit.
-        } else {
-             setElapsed(e => e + dt);
+        // Debug logging (throttled to every 60 frames)
+        if (DEBUG_LUMA_SWARM && Math.floor(currentTime * 60) % 60 === 0) {
+            console.log('[LumaSwarm] Frame update:', {
+                startTime: startTimeRef.current.toFixed(2),
+                currentTime: currentTime.toFixed(2),
+                elapsed: elapsed.toFixed(2),
+                progress: progress.toFixed(3),
+                uProgress: materialRef.current.uniforms.uProgress.value.toFixed(3),
+                particleCount: meshRef.current.count,
+                visible: meshRef.current.visible
+            });
         }
-
-        // Pass 'real' absolute time for noise
-        materialRef.current.uniforms.uTime.value = time;
-        // Pass normalized progress (0 to 1)
-        materialRef.current.uniforms.uProgress.value = Math.min(elapsed / FORMATION_DURATION, 1.0);
 
         // Dissipation
         const curDissipate = materialRef.current.uniforms.uDissipate.value;
         if (dissipating) {
+            const dt = clock.getDelta();
             materialRef.current.uniforms.uDissipate.value = Math.min(curDissipate + dt * DISSIPATION_SPEED, 1.0);
         }
 
@@ -133,11 +199,11 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
             const light = coreRef.current.children.find(c => (c as THREE.PointLight).isPointLight) as THREE.PointLight;
             if (light) {
                 // Ramp from 2 to 10 intensity
-                const targetIntensity = dissipating ? 0 : (2.0 + (elapsed / FORMATION_DURATION) * 20.0);
+                const targetIntensity = dissipating ? 0 : (2.0 + progress * 20.0);
                 light.intensity = THREE.MathUtils.lerp(light.intensity, targetIntensity, 0.05);
 
                 // Scale core up slightly then shrink on dissipate
-                const scale = dissipating ? Math.max(0, 1.0 - curDissipate) : (1.0 + (elapsed/FORMATION_DURATION) * 0.5);
+                const scale = dissipating ? Math.max(0, 1.0 - curDissipate) : (1.0 + progress * 0.5);
                 coreRef.current.scale.setScalar(scale);
             }
         }
@@ -150,10 +216,25 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         uColor: { value: new THREE.Color('#4deeea') } // Luma Cyan
     }), []);
 
-    if (!particleData) return null;
+    if (!particleData) {
+        if (DEBUG_LUMA_SWARM) console.warn('[LumaSwarm] No particle data, returning null');
+        return null;
+    }
+    
+    if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Rendering with', particleData.count, 'particles');
+
+    const debugSphere = DEBUG_LUMA_SWARM ? (
+        <mesh>
+            <sphereGeometry args={[0.1, 16, 16]} />
+            <meshStandardMaterial emissive="#ff0000" emissiveIntensity={5.0} toneMapped={false} color="#ff0000" />
+        </mesh>
+    ) : null;
 
     return (
         <group>
+            {/* DEBUG: Red sphere at swarm origin */}
+            {debugSphere}
+            
             {/* The Core Luma (Visual Clone) */}
             <group ref={coreRef}>
                 <pointLight color="#4deeea" distance={10} decay={2} intensity={2} />
@@ -173,14 +254,27 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                 ref={meshRef}
                 args={[undefined, undefined, particleData.count]}
                 frustumCulled={false} // Always visible
+                renderOrder={999} // Render on top
             >
-                <sphereGeometry args={[1, 8, 8]} /> {/* Scale controlled by matrix */}
+                <sphereGeometry args={[PARTICLE_SIZE, 8, 8]} /> {/* Particle size is geometry radius (instance matrix stays identity) */}
+                {/* Temporary debug switch: renders all instances at origin if enabled */}
+                {DEBUG_LUMA_SIMPLE_MATERIAL ? (
+                    <meshStandardMaterial
+                        color="#00ff00"
+                        emissive="#00ff00"
+                        emissiveIntensity={2.0}
+                        toneMapped={false}
+                    />
+                ) : (
                 <CustomShaderMaterial
                     ref={materialRef}
                     baseMaterial={THREE.MeshStandardMaterial}
                     transparent
+                    depthWrite={false} // Don't write to depth buffer for transparency
                     uniforms={uniforms}
                     toneMapped={false}
+                    emissive="#4deeea"
+                    emissiveIntensity={2.0}
                     vertexShader={`
                         attribute vec3 aTargetPos;
                         attribute vec3 aRandom;
@@ -191,6 +285,21 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
                         varying float vAlpha;
 
+                        // Formation staging
+                        // - First, particles "emit" from the core and spread upward into a tall volume (tree-sized).
+                        // - Then, they converge into the 2D PNG silhouette (existing behavior).
+                        const float EMIT_PHASE = ${EMIT_PHASE.toFixed(3)};   // 0..1 fraction of uProgress reserved for the spread phase
+                        const float EMIT_RADIUS = ${EMIT_RADIUS.toFixed(3)}; // Horizontal spread radius (world units)
+                        const float EMIT_HEIGHT = ${EMIT_HEIGHT.toFixed(3)}; // Upward spread height (world units)
+                        const float EMIT_JITTER = ${EMIT_JITTER.toFixed(3)}; // Random motion amplitude during spread
+                        const float FORM_JITTER = ${FORM_JITTER.toFixed(3)}; // Residual randomness during convergence
+
+                        mat2 rot2(float a) {
+                            float c = cos(a);
+                            float s = sin(a);
+                            return mat2(c, -s, s, c);
+                        }
+
                         // Simplex-ish noise
                         vec3 hash3(vec3 p) {
                             p = vec3(dot(p,vec3(127.1,311.7, 74.7)),
@@ -200,8 +309,45 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         }
 
                         void main() {
-                            // 1. Start Position (Random cloud near center)
-                            vec3 startPos = (aRandom - 0.5) * 2.0; // +/- 1.0 unit box
+                            // 1) Emission / spread phase:
+                            // Particles originate at the core, then expand upward into a tall volume roughly
+                            // matching the space a fully-grown flora tree occupies.
+                            float spreadT = clamp(uProgress / EMIT_PHASE, 0.0, 1.0);
+                            // Faster “initial velocity” via ease-out.
+                            float spreadEase = 1.0 - pow(1.0 - spreadT, 3.0);
+
+                            // Random radial direction (XZ), with an outward radius bias.
+                            vec2 dir2 = normalize((aRandom.xy - 0.5) * 2.0 + vec2(0.0001, 0.0002));
+                            float radial = pow(aRandom.z, 0.65) * EMIT_RADIUS;
+
+                            // Spiraling motion: per-particle spin speed + phase.
+                            float spinSpeed = mix(6.0, 14.0, aRandom.y); // faster + more variance
+                            float angle = uTime * spinSpeed + aRandom.x * 6.28318530718;
+                            vec2 spiralDir = rot2(angle) * dir2;
+
+                            // Add a subtle secondary wobble to avoid perfectly smooth rings.
+                            float wobble = sin(uTime * 4.0 + aRandom.z * 12.0) * 0.8;
+                            vec2 wobbleDir = vec2(cos(wobble), sin(wobble));
+
+                            // Random “flutter” so the spread feels alive/chaotic before convergence.
+                            // This is deterministic per-particle but time-varying.
+                            vec3 flutterA = (hash3(vec3(aRandom.xy * 37.0, uTime * 0.65)) - 0.5) * 2.0;
+                            vec3 flutterB = (hash3(vec3(aRandom.yz * 83.0, uTime * 1.25)) - 0.5) * 2.0;
+                            vec3 flutter = (flutterA * 0.65 + flutterB * 0.35) * EMIT_JITTER;
+
+                            vec3 spreadPos = vec3(0.0);
+                            // Expand fast and keep adding turbulence as we rise.
+                            spreadPos.xz = (spiralDir * radial * spreadEase) + wobbleDir * (0.5 * spreadEase);
+                            spreadPos.xz += flutter.xz * (0.25 + 0.75 * spreadEase);
+                            spreadPos.y = EMIT_HEIGHT * spreadEase + flutter.y * (0.2 + 0.8 * spreadEase);
+                            // Give some true 3D thickness during spread so it doesn't feel like a flat sheet.
+                            spreadPos.z += (flutter.x * 0.65 + flutterB.z * 0.35) * (0.15 + 0.85 * spreadEase);
+
+                            // Cache the end-of-spread position so the formation phase transitions smoothly.
+                            vec3 spreadEndPos = vec3(0.0);
+                            spreadEndPos.xz = spiralDir * radial + wobbleDir * 0.5 + flutter.xz;
+                            spreadEndPos.y = EMIT_HEIGHT + flutter.y * 0.35;
+                            spreadEndPos.z = (flutter.x * 0.65 + flutterB.z * 0.35);
 
                             // 2. Target Position (The Shape)
                             // Add some wobble to target
@@ -209,23 +355,36 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             targetPos.z += sin(uTime * 2.0 + aRandom.x * 10.0) * 0.1; // Breathing Z
                             targetPos.x += cos(uTime * 1.5 + aRandom.y * 10.0) * 0.05;
 
-                            // 3. Interpolate
+                            // 3) Formation phase: converge from the spread volume to the PNG silhouette.
+                            float formT = (uProgress - EMIT_PHASE) / (1.0 - EMIT_PHASE);
+                            formT = clamp(formT, 0.0, 1.0);
                             // Cubic ease out
-                            float t = uProgress;
-                            float ease = 1.0 - pow(1.0 - t, 3.0);
+                            float ease = 1.0 - pow(1.0 - formT, 3.0);
 
-                            vec3 pos = mix(startPos, targetPos, ease);
+                            vec3 pos = (uProgress < EMIT_PHASE)
+                                ? spreadPos
+                                : mix(spreadEndPos, targetPos, ease);
+
+                            // Keep some randomness as particles begin to converge, then let it “lock in”.
+                            // This avoids an immediate, perfectly smooth snap into the silhouette.
+                            float settle = 1.0 - ease;
+                            vec3 convergeJitter = (hash3(vec3(aRandom.xy * 91.0, uTime * 0.6)) - 0.5) * 2.0;
+                            pos += convergeJitter * FORM_JITTER * settle;
 
                             // 4. Dissipation (Explode/Scatter)
                             if (uDissipate > 0.0) {
-                                vec3 dir = normalize(pos) + (aRandom - 0.5); // Outward + Chaos
+                                float len = length(pos);
+                                vec3 outward = (len > 0.0001) ? (pos / len) : normalize(aRandom - 0.5);
+                                vec3 dir = outward + (aRandom - 0.5); // Outward + Chaos
                                 pos += dir * uDissipate * 5.0; // Fly away
                             }
 
                             // Calculate Alpha for fade
                             vAlpha = 1.0 - uDissipate;
 
-                            csm_Position = pos;
+                            // Keep the sphere geometry and offset per-instance by our swarm position.
+                            // (If we set the position to 'pos' directly, the sphere collapses into a single point.)
+                            csm_Position = position + pos;
                         }
                     `}
                     fragmentShader={`
@@ -240,7 +399,11 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         }
                     `}
                 />
+                )}
             </instancedMesh>
         </group>
     );
 };
+
+// Preload the texture to avoid suspension during gameplay
+useLoader.preload(THREE.TextureLoader, lumaShapeUrl);

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
@@ -34,9 +34,18 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const [status, setStatus] = useState<'IDLE' | 'CHARGING' | 'GROWING'>('IDLE');
     const [swarmVisible, setSwarmVisible] = useState(false);
 
+    // Debug logging
+    useEffect(() => {
+        console.log('[RootHollow] Status changed to:', status, 'swarmVisible:', swarmVisible);
+    }, [status, swarmVisible]);
+
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
+    
+    // Use ref to track timer so we can properly clean it up
+    const growTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const dissipateTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const { scene } = useGLTF(stumpUrl);
 
@@ -119,19 +128,43 @@ export const RootHollow: React.FC<RootHollowProps> = ({
 
     // Transition Logic
     useEffect(() => {
+        // Clear any existing timers when status changes
+        if (growTimerRef.current) {
+            clearTimeout(growTimerRef.current);
+            growTimerRef.current = null;
+        }
+        if (dissipateTimerRef.current) {
+            clearTimeout(dissipateTimerRef.current);
+            dissipateTimerRef.current = null;
+        }
+
         if (status === 'CHARGING') {
+            console.log('[RootHollow] Starting 10 second particle formation timer');
             // Wait 10 seconds for particle formation
-            const growTimer = setTimeout(() => {
+            growTimerRef.current = setTimeout(() => {
+                console.log('[RootHollow] Timer complete, transitioning to GROWING');
                 setStatus('GROWING');
 
                 // Keep particles for dissipation (e.g. 3s) then cleanup
-                setTimeout(() => {
+                dissipateTimerRef.current = setTimeout(() => {
+                    console.log('[RootHollow] Hiding swarm');
                     setSwarmVisible(false);
                 }, 3000);
             }, 10000);
-
-            return () => clearTimeout(growTimer);
         }
+
+        return () => {
+            if (growTimerRef.current) {
+                console.log('[RootHollow] Cleaning up grow timer');
+                clearTimeout(growTimerRef.current);
+                growTimerRef.current = null;
+            }
+            if (dissipateTimerRef.current) {
+                console.log('[RootHollow] Cleaning up dissipate timer');
+                clearTimeout(dissipateTimerRef.current);
+                dissipateTimerRef.current = null;
+            }
+        };
     }, [status]);
 
     useFrame(() => {
@@ -150,6 +183,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             if (distSq < 2.25) {
                 const vel = body.linvel();
                 if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
+                    console.log('[RootHollow] Flora detected and stationary, triggering CHARGING');
                     removeEntity(entity.id);
                     setStatus('CHARGING');
                     setSwarmVisible(true);
@@ -184,7 +218,22 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             {/* Luma Swarm Animation (Charging Phase) */}
             {swarmVisible && (
                 <group position={[0, 1.5, 0]}> {/* Lift slightly above stump */}
-                    <LumaSwarm dissipating={status === 'GROWING'} />
+                    <Suspense fallback={
+                        <>
+                            <pointLight color="#ff00ff" distance={10} decay={2} intensity={10} />
+                            <mesh>
+                                <sphereGeometry args={[0.5, 16, 16]} />
+                                <meshStandardMaterial 
+                                    emissive="#ff00ff" 
+                                    emissiveIntensity={5.0}
+                                    toneMapped={false}
+                                    color="#ff00ff"
+                                />
+                            </mesh>
+                        </>
+                    }>
+                        <LumaSwarm dissipating={status === 'GROWING'} />
+                    </Suspense>
                 </group>
             )}
 

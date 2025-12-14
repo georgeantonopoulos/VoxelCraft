@@ -155,6 +155,68 @@ The project follows a domain-driven architecture to improve scalability and main
 
 ### 7. Recent Findings
 
+- 2025-12-14: Fixed LumaSwarm particle animation not appearing when flora is placed in RootHollow.
+  - **Root Cause 1**: The `elapsed` time was stored in React state (`useState`) but updated inside `useFrame`. Because React state updates are asynchronous, the shader uniform `uProgress` was always reading the stale value (0), so particles never animated from their random start positions to form the shape.
+  - **Root Cause 2 (Critical)**: The setTimeout in `RootHollow` was being cleared prematurely due to React Strict Mode causing double-mounts in development. Each time the component re-rendered, the old timer was cleared and a new one started, but because of the nested setTimeout for dissipation, the status was changing from CHARGING → GROWING almost immediately instead of waiting the full 10 seconds.
+  - **Fix 1**: Changed `elapsed` from state to a ref (`elapsedRef`) for synchronous updates in `useFrame`.
+  - **Fix 2**: Moved timer cleanup logic into refs (`growTimerRef`, `dissipateTimerRef`) and added proper cleanup in the useEffect return. Now timers are explicitly cleared before creating new ones, preventing race conditions.
+  - **Additional Fixes**: 
+    - Added Suspense boundary around LumaSwarm in RootHollow with a bright magenta fallback sphere to debug texture loading issues
+    - Added texture preloading with `useLoader.preload(THREE.TextureLoader, lumaShapeUrl)` to avoid suspension during gameplay
+    - Added comprehensive debug console logging to track component mounting, texture loading, particle count, state transitions, and timer lifecycle
+  - **Debugging**: Console logs now show:
+    - `[RootHollow] Flora detected and stationary, triggering CHARGING`
+    - `[RootHollow] Starting 10 second particle formation timer`
+    - `[LumaSwarm] Component mounted, dissipating: false`
+    - `[LumaSwarm] Processing texture, size: 2656 x 1600` (confirms texture loaded)
+    - `[LumaSwarm] Particle count: 1868` (confirms particles generated)
+    - `[LumaSwarm] Rendering with 1868 particles` (confirms rendering)
+    - `[RootHollow] Timer complete, transitioning to GROWING` (after 10 seconds)
+  - **Verification**: Ran `npm run build` (success). Visual inspection required in-game: place flora in a RootHollow and confirm particles swirl from a random cloud into the cyan shape over 10 seconds, then dissipate when tree growth starts.
+
+- 2025-12-14: Follow-up — LumaSwarm not visible due to debug leftovers in `LumaSwarm.tsx`.
+  - **Root Cause 1**: The shader material was effectively disabled (the `CustomShaderMaterial` block was wrapped in a comment and the instanced mesh used a simple `meshStandardMaterial`), so no formation animation could run.
+  - **Root Cause 2 (Critical)**: `debugSphere` was referenced but not defined, which breaks compilation and prevents the effect from rendering at all.
+  - **Root Cause 3**: The vertex shader was setting `csm_Position = pos`, which collapses each particle sphere into a single point; it now offsets with `csm_Position = position + pos`.
+  - **Fix**: Restored `CustomShaderMaterial`, defined `debugSphere`, gated debug logs behind constants, and made dissipation direction safe when `pos` is near-zero.
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection still required: wait 10 seconds then take 4 screenshots while placing flora in a RootHollow and confirm the swirl/formation is clearly visible.
+
+- 2025-12-14: LumaSwarm spread phase now fills “tree space” before forming the PNG silhouette.
+  - **Issue**: The random start positions were confined near the core (small luma ball area), so the swarm never occupied the volume of a fully-grown flora tree during the initial “charging” phase.
+  - **Fix**: Added an explicit shader staging step in `LumaSwarm.tsx`:
+    - **Phase 1 (Emit/Spread)**: Particles originate at the core and expand upward into a tall volume (`EMIT_HEIGHT`) with wide horizontal spread (`EMIT_RADIUS`) and a subtle swirl.
+    - **Phase 2 (Form PNG)**: Particles converge from the spread volume into the existing PNG silhouette as `uProgress` approaches 1.
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: wait 10 seconds then take 4 screenshots during RootHollow charging to confirm the upward spread is visible before the silhouette forms.
+
+- 2025-12-14: Follow-up — fixed LumaSwarm shader compile error after adding spread phase.
+  - **Root Cause**: GLSL `vec3(...)` constructor was given a `vec2` plus two floats (too many args), which prevented the vertex shader from compiling and made the swarm invisible.
+  - **Fix**: Build `spreadPos`/`spreadEndPos` via `vec3(0.0)` then assign `.xz` and `.y` explicitly.
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: confirm no shader compile errors and particles render again.
+
+- 2025-12-14: LumaSwarm tuning — smaller particles, higher/longer spread, more chaos before converging.
+  - **Issue**: Particles were visually too large and converged too quickly/cleanly, with minimal upward travel.
+  - **Fix**: Tuned `LumaSwarm.tsx`:
+    - Reduced `PARTICLE_SIZE` to `0.015` (1/10th).
+    - Increased spread height to `EMIT_HEIGHT = 80.0` and extended the spread window (`EMIT_PHASE = 0.55`).
+    - Added time-varying per-particle flutter during spread and residual jitter during the convergence phase (fades out as the silhouette “locks in”).
+    - Only billboard the swarm to the camera once convergence begins (keeps the initial spread truly “upwards”).
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: wait 10 seconds then take 4 screenshots during RootHollow charging to confirm the spread fills the tree volume, looks chaotic, then converges to the PNG.
+
+- 2025-12-14: LumaSwarm tuning — faster initial velocity + stronger turbulence/spiral motion.
+  - **Issue**: The initial spread felt too slow and too “orderly” (not enough per-particle velocity variance, turbulence, or spiraling).
+  - **Fix**: Updated the spread-phase shader in `LumaSwarm.tsx`:
+    - Switched to a faster ease-out (`spreadEase`) so particles accelerate upward/outward sooner.
+    - Added per-particle spiral motion with randomized `spinSpeed` and time-based rotation (`rot2(angle) * dir2`).
+    - Increased turbulence by combining multiple hash-noise sources (`flutterA`/`flutterB`) and raising `EMIT_JITTER` to `4.0`.
+    - Added 3D thickness during spread (Z motion), while still converging to the PNG plane during formation.
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: place flora in RootHollow and confirm particles rocket upward with visible swirl/turbulence before converging.
+
+- 2025-12-14: LumaSwarm scale fix — prevent instance scaling from shrinking the whole swarm volume.
+  - **Issue**: Particles appeared “clamped” close to the core and the PNG silhouette collapsed back into the luma ball area. Root cause was that the instanced mesh `instanceMatrix` scaling (used to size each particle) was also scaling the shader-driven positional offsets, shrinking the entire swarm’s spread/target space.
+  - **Fix**: `LumaSwarm.tsx` now keeps instance matrices identity and sets particle size via the sphere geometry radius (`sphereGeometry args={[PARTICLE_SIZE, ...]}`), so shader offsets remain in true world units.
+  - **Additional**: Scaled the PNG target positions to an estimated full RootHollow flora-tree volume (`~9.1` units tall, `~6.0` wide, based on `fractal.worker.ts` type=0 parameters) and anchored the silhouette Y at the base (0..height).
+  - **Verification**: Ran `npm run build` (success) and started `npm run dev` (server ready on `http://127.0.0.1:3000/`, stopped by CLI timeout). Visual inspection required: confirm spread and silhouette occupy the full tree-sized space and do not collapse back into the core.
+
 - 2025-12-13: Fixed `refreshFogUniforms` crash from `FogDeer` shader material.
   - **Root Cause**: Three.js will call `refreshFogUniforms()` whenever `material.fog === true`; if a `ShaderMaterial` lacks `fogColor/fogNear/fogFar` uniforms, it can crash with `Cannot read properties of undefined (reading 'value')`.
   - **Fix**: `src/features/creatures/FogDeer.tsx` now clones `THREE.UniformsLib.fog` explicitly into the shader uniforms and defensively ensures `fogColor/fogNear/fogFar` exist before the first program compile.
