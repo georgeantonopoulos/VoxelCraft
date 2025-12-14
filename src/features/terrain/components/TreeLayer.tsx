@@ -314,34 +314,22 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         uniform float uTime;
 
                         void main() {
-                            float n = texture(uNoiseTexture, vPos * 1.5).r;
+                            // Static Color Variation (using noise)
+                            float variation = texture(uNoiseTexture, vPos * 0.5).r;
                             
-                            // Veins
-                            float veins = abs(n * 2.0 - 1.0);
-                            veins = pow(veins, 3.0); 
+                            // Simple Gradient based on local Y
+                            float tip = smoothstep(0.0, 1.0, vPos.y + 0.5); 
                             
-                            // Color variation
                             vec3 col = uColorTip;
-                            col = mix(col, col * 0.5, veins * 0.5); 
-                            
-                            // Tip gradient
-                            // Approximate leaf tip using local Y or distance from center?
-                            // Leaves are usually small clumps. vPos is local to CLUMP (if instantiated) or TREE?
-                            // In TreeGeometryFactory, leaves are merged into tree. vPos is relative to TREE origin.
-                            // So we can't easily detect "tip of leaf" without extra attributes.
-                            // But we can use noise for variety.
-                            
-                            // Magical pulse
-                            // Use noise for pulse phase to avoid "sliding" stripes across the tree
-                            float pulseNoise = texture(uNoiseTexture, vPos * 0.5).r;
-                            // Throb based on time + large noise structure
-                            float pulse = sin(uTime * 2.0 + pulseNoise * 6.28) * 0.5 + 0.5;
-                            
-                            vec3 emissive = uColorTip * (0.3 + 0.7 * pulse) * (1.0 - veins);
+                            // Mix variation
+                            col = mix(col * 0.85, col * 1.15, variation);
+                            // Mix gradient
+                            col = mix(col, col * 1.2, tip); 
 
                             csm_DiffuseColor = vec4(col, 1.0);
-                            csm_Emissive = emissive * 1.2; 
-                            csm_Roughness = 0.4 + veins * 0.6;
+                            // Static Emissive (no pulse)
+                            csm_Emissive = uColorTip * 0.3; 
+                            csm_Roughness = 0.6;
                         }
                     `}
                         uniforms={uniforms}

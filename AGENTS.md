@@ -99,7 +99,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
-- 2025-12-14: Removed procedural wind sway from `FractalTree.tsx` bark to fix disjointed segments. Stabilized leaf pulse animation in `TreeLayer.tsx` to prevent "moving texture" artifacts.
+- 2025-12-14: Removed ALL animated/pulsing texture effects from tree leaves per user request. Replaced with static color variation (noise lookup) and static emissive glow. Wind sway is retained in vertex shaders.
+- 2025-12-14: Removed procedural noise texture from all tree leaves (FractalTree, FallingTree, TreeLayer) per user request to fix "moving/weird" look. Reverted to clean gradient and simple emissive pulse.
+- 2025-12-14: Removed procedural wind sway from `FractalTree.tsx` bark to fix disjointed segments. Stabilized leaf pulse animation in `TreeLayer.tsx`.
 - 2025-12-14: Updated `TreeLayer.tsx` and `TreeGeometryFactory.ts` to apply procedural bark/leaf shaders to massive terrain trees (previously only applied to hero instances).
 - 2025-12-14: Massively improved tree bark and leaf texturing using procedural shaders (CustomShaderMaterial + shared 3D noise). Added wind sway and moss support.
 - 2025-12-14: Curated/trimmed AGENTS.md into a stable agent guide; removed the growing daily log from this file (available in `git` history).

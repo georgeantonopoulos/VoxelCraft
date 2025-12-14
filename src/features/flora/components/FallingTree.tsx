@@ -127,17 +127,18 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
                             uniform sampler3D uNoiseTexture;
 
                             void main() {
-                                float n = texture(uNoiseTexture, vPos * 1.5).r;
-                                float veins = abs(n * 2.0 - 1.0);
-                                veins = pow(veins, 3.0);
+                                // Static Color Variation
+                                float variation = texture(uNoiseTexture, vPos * 0.5).r;
+
+                                // Simple Gradient
+                                float gradient = smoothstep(0.0, 1.0, vPos.y * 0.2); 
                                 
-                                vec3 col = uColorTip;
-                                col = mix(col, col * 0.5, veins * 0.5);
-                                col = mix(col, col * 1.2, smoothstep(0.0, 1.0, vPos.y * 0.2)); // Light gradient
+                                vec3 col = mix(uColorTip * 0.8, uColorTip * 1.2, gradient);
+                                col = mix(col, col * 1.1, variation);
 
                                 csm_DiffuseColor = vec4(col, 1.0);
-                                csm_Emissive = uColorTip * 0.5 * (1.0 - veins);
-                                csm_Roughness = 0.4 + veins * 0.6;
+                                csm_Emissive = uColorTip * 0.2;
+                                csm_Roughness = 0.6;
                             }
                         `}
                         uniforms={uniforms}

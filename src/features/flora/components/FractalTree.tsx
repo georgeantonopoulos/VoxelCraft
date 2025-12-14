@@ -398,32 +398,20 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                         uniform float uTime;
 
                         void main() {
-                            // Organic pattern
-                            float n = texture(uNoiseTexture, vPos * 1.5).r;
-                            
-                            // Veins or cellular-ish structure
-                            float veins = abs(n * 2.0 - 1.0);
-                            veins = pow(veins, 3.0); // Sharpen
-                            
-                            // Color variation
-                            vec3 col = uColorTip;
-                            col = mix(col, col * 0.5, veins * 0.5); // Darken veins
-                            
-                            // Tip gradient
-                            float tip = smoothstep(0.0, 0.5, vPos.y); 
-                            col = mix(col, col * 1.4, tip); // Lighter tips
-                            
-                            // Magical pulse (using position dependent phase to avoid "sliding" look)
-                            // We use vPos (local) so it is anchored to the leaf.
-                            // If it looks like it's moving, it's just the time animation.
-                            // Slowing it down and making it more of a "throb" than a "wave".
-                            float pulse = sin(uTime * 2.0 + vPos.x * 2.0) * 0.5 + 0.5;
-                            vec3 emissive = uColorTip * (0.5 + 0.5 * pulse) * (1.0 - veins);
+                            // Static Color Variation (using noise)
+                            // We need to use uNoiseTexture here which is available in uniforms
+                            float variation = texture(uNoiseTexture, vPos * 0.5).r;
 
+                            // Simple Gradient
+                            float tip = smoothstep(0.0, 0.5, vPos.y); 
+                            
+                            vec3 col = uColorTip;
+                            col = mix(col * 0.85, col * 1.15, variation);
+                            col = mix(col, col * 1.4, tip); 
+                            
                             csm_DiffuseColor = vec4(col, 1.0);
-                            // Tone down original emissive which was * 2.0
-                            csm_Emissive = emissive * 1.5; 
-                            csm_Roughness = 0.4 + veins * 0.6;
+                            csm_Emissive = uColorTip * 0.4; // Static glow
+                            csm_Roughness = 0.6;
                         }
                     `}
                     uniforms={uniforms}
