@@ -3,7 +3,7 @@ import { MapDebug } from '@/ui/MapDebug';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
-import { EffectComposer, Bloom, ToneMapping, N8AO } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, ToneMapping, N8AO, ChromaticAberration, Vignette } from '@react-three/postprocessing';
 import { useControls, Leva, folder } from 'leva';
 import * as THREE from 'three';
 import { DynamicEnvironmentIBL } from '@core/graphics/DynamicEnvironmentIBL';
@@ -18,14 +18,14 @@ import { StartupScreen } from '@ui/StartupScreen';
 import { BedrockPlane } from '@features/terrain/components/BedrockPlane';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { AmbientLife } from '@features/environment/AmbientLife';
-	import { setSnapEpsilon } from '@/constants';
-	import { useWorldStore } from '@state/WorldStore';
-	import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
-	import { InventoryInput } from '@features/interaction/components/InventoryInput';
-	import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
-	import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
-	import { useEnvironmentStore } from '@state/EnvironmentStore';
-	import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { setSnapEpsilon } from '@/constants';
+import { useWorldStore } from '@state/WorldStore';
+import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
+import { InventoryInput } from '@features/interaction/components/InventoryInput';
+import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
+import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
+import { useEnvironmentStore } from '@state/EnvironmentStore';
+import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 
 // Keyboard Map
 const keyboardMap = [
@@ -104,6 +104,8 @@ const DebugControls: React.FC<{
   setTerrainChunkTintEnabled: (v: boolean) => void;
   setTerrainWireframeEnabled: (v: boolean) => void;
   setTerrainWeightsView: (v: string) => void;
+  setCaOffset: (v: number) => void;
+  setVignetteDarkness: (v: number) => void;
 }> = ({
   setDebugShadowsEnabled,
   setTriplanarDetail,
@@ -138,90 +140,94 @@ const DebugControls: React.FC<{
   setLevaWidth,
   setTerrainChunkTintEnabled,
   setTerrainWireframeEnabled,
-  setTerrainWeightsView
+  setTerrainWeightsView,
+  setCaOffset,
+  setVignetteDarkness
 }) => {
-  useControls(
-    () => ({
-    Lighting: folder(
-      {
-        // Defaults match the requested screenshot.
-        iblEnabled: { value: false, onChange: (v) => setIblEnabled(!!v), label: 'IBL Enabled' },
-        iblIntensity: { value: 0.4, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setIblIntensity(v), label: 'IBL Intensity' },
-        sunIntensity: { value: 0.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
-        ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setAmbientIntensityMul(v), label: 'Ambient Intensity' },
-        moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: (v) => setMoonIntensityMul(v), label: 'Moon Intensity' },
-        // Keep fog relatively close so chunk streaming happens "inside" fog.
-        fogNear: { value: 10, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
-        fogFar: { value: 90, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
-        exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: (v) => setExposureSurface(v), label: 'Exposure (Surface)' },
-        exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: (v) => setExposureCaveMax(v), label: 'Exposure (Cave Max)' },
-        exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: (v) => setExposureUnderwater(v), label: 'Exposure (Underwater)' },
-        bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setBloomIntensity(v), label: 'Bloom Intensity' },
-        bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: (v) => setBloomThreshold(v), label: 'Bloom Threshold' }
-      },
-      { collapsed: false }
-    ),
-    UI: folder(
-      {
-        levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: (v) => setLevaWidth(v), label: 'Leva Width' },
-        levaScale: { value: 1.15, min: 0.8, max: 1.8, step: 0.05, onChange: (v) => setLevaScale(v), label: 'Leva Scale' }
-      },
-      { collapsed: false }
-    ),
-    OLD: folder(
-      {
-        terrainChunkTint: {
-          value: false,
-          onChange: (v) => setTerrainChunkTintEnabled(!!v),
-          // If the line is overlap/Z-fighting, tinting makes it obvious (you'll see both colors).
-          label: 'Terrain Chunk Tint'
-        },
-        terrainWireframe: { value: false, onChange: (v) => setTerrainWireframeEnabled(!!v), label: 'Terrain Wireframe' },
-        terrainWeightsView: {
-          value: 'off',
-          options: { Off: 'off', Snow: 'snow', Grass: 'grass', 'Snow - Grass': 'snowMinusGrass', Dominant: 'dominant' },
-          onChange: (v) => setTerrainWeightsView(String(v)),
-          // Shows per-vertex material weights (helps detect discontinuities at chunk seams).
-          label: 'Terrain Weights View'
-        },
-        shadowsEnabled: { value: true, onChange: (v) => setDebugShadowsEnabled(!!v), label: 'Shadows Enabled' },
-        terrainFadeEnabled: {
-          value: true,
-          onChange: (v) => setTerrainFadeEnabled(!!v),
-          // Chunk fade uses transparency + depthWrite toggling and can create seam-like hard edges.
-          label: 'Terrain Fade (Chunk)'
-        },
-        terrainWetnessEnabled: { value: true, onChange: (v) => setTerrainWetnessEnabled(!!v), label: 'Terrain Wetness' },
-        terrainMossEnabled: { value: true, onChange: (v) => setTerrainMossEnabled(!!v), label: 'Terrain Moss' },
-        terrainRoughnessMin: {
-          value: 0.0,
-          min: 0.0,
-          max: 1.0,
-          step: 0.01,
-          // Raising this reduces specular aliasing/shimmer in low-light (e.g. caves).
-          label: 'Terrain Roughness Min',
-          onChange: (v) => setTerrainRoughnessMin(v)
-        },
-        bedrockPlaneEnabled: { value: true, onChange: (v) => setBedrockPlaneEnabled(!!v), label: 'Bedrock Plane' },
-        terrainPolygonOffsetEnabled: { value: false, onChange: (v) => setTerrainPolygonOffsetEnabled(!!v), label: 'Terrain Polygon Offset' },
-        terrainPolygonOffsetFactor: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetFactor(v), label: 'Poly Offset Factor' },
-        terrainPolygonOffsetUnits: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetUnits(v), label: 'Poly Offset Units' },
-        postProcessingEnabled: { value: true, onChange: (v) => setPostProcessingEnabled(!!v), label: 'Post Processing' },
-        aoEnabled: { value: true, onChange: (v) => setAoEnabled(!!v), label: 'N8AO Enabled' },
-        aoIntensity: { value: 2.0, min: 0.0, max: 6.0, step: 0.1, onChange: (v) => setAoIntensity(v), label: 'N8AO Intensity' },
-        triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: (v) => setTriplanarDetail(v), label: 'Triplanar Detail' },
-        terrainShaderFogEnabled: { value: true, onChange: (v) => setTerrainShaderFogEnabled(!!v), label: 'Terrain Shader Fog' },
-        terrainShaderFogStrength: { value: 0.9, min: 0.0, max: 1.5, step: 0.05, onChange: (v) => setTerrainShaderFogStrength(v), label: 'Terrain Fog Strength' },
-        terrainThreeFogEnabled: { value: true, onChange: (v) => setTerrainThreeFogEnabled(!!v), label: 'Terrain Three Fog' },
-        snapEpsilon: { value: 0.02, min: 0.01, max: 0.15, step: 0.01, onChange: (v) => setSnapEpsilon(v), label: 'Snap Epsilon (Hysteresis)' }
-      },
-      { collapsed: true }
-    )
-    }),
-    []
-  );
-  return null;
-};
+    useControls(
+      () => ({
+        Lighting: folder(
+          {
+            // Defaults match the requested screenshot.
+            iblEnabled: { value: false, onChange: (v) => setIblEnabled(!!v), label: 'IBL Enabled' },
+            iblIntensity: { value: 0.4, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setIblIntensity(v), label: 'IBL Intensity' },
+            sunIntensity: { value: 0.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
+            ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setAmbientIntensityMul(v), label: 'Ambient Intensity' },
+            moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: (v) => setMoonIntensityMul(v), label: 'Moon Intensity' },
+            // Keep fog relatively close so chunk streaming happens "inside" fog.
+            fogNear: { value: 10, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
+            fogFar: { value: 90, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
+            exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: (v) => setExposureSurface(v), label: 'Exposure (Surface)' },
+            exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: (v) => setExposureCaveMax(v), label: 'Exposure (Cave Max)' },
+            exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: (v) => setExposureUnderwater(v), label: 'Exposure (Underwater)' },
+            bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setBloomIntensity(v), label: 'Bloom Intensity' },
+            bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: (v) => setBloomThreshold(v), label: 'Bloom Threshold' },
+            caOffset: { value: 0.002, min: 0.0, max: 0.01, step: 0.0001, onChange: (v) => setCaOffset(v), label: 'Chromatic Abb.' },
+            vignetteDarkness: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: (v) => setVignetteDarkness(v), label: 'Vignette' }
+          },
+          { collapsed: false }
+        ),
+        UI: folder(
+          {
+            levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: (v) => setLevaWidth(v), label: 'Leva Width' },
+            levaScale: { value: 1.15, min: 0.8, max: 1.8, step: 0.05, onChange: (v) => setLevaScale(v), label: 'Leva Scale' }
+          },
+          { collapsed: false }
+        ),
+        OLD: folder(
+          {
+            terrainChunkTint: {
+              value: false,
+              onChange: (v) => setTerrainChunkTintEnabled(!!v),
+              // If the line is overlap/Z-fighting, tinting makes it obvious (you'll see both colors).
+              label: 'Terrain Chunk Tint'
+            },
+            terrainWireframe: { value: false, onChange: (v) => setTerrainWireframeEnabled(!!v), label: 'Terrain Wireframe' },
+            terrainWeightsView: {
+              value: 'off',
+              options: { Off: 'off', Snow: 'snow', Grass: 'grass', 'Snow - Grass': 'snowMinusGrass', Dominant: 'dominant' },
+              onChange: (v) => setTerrainWeightsView(String(v)),
+              // Shows per-vertex material weights (helps detect discontinuities at chunk seams).
+              label: 'Terrain Weights View'
+            },
+            shadowsEnabled: { value: true, onChange: (v) => setDebugShadowsEnabled(!!v), label: 'Shadows Enabled' },
+            terrainFadeEnabled: {
+              value: true,
+              onChange: (v) => setTerrainFadeEnabled(!!v),
+              // Chunk fade uses transparency + depthWrite toggling and can create seam-like hard edges.
+              label: 'Terrain Fade (Chunk)'
+            },
+            terrainWetnessEnabled: { value: true, onChange: (v) => setTerrainWetnessEnabled(!!v), label: 'Terrain Wetness' },
+            terrainMossEnabled: { value: true, onChange: (v) => setTerrainMossEnabled(!!v), label: 'Terrain Moss' },
+            terrainRoughnessMin: {
+              value: 0.0,
+              min: 0.0,
+              max: 1.0,
+              step: 0.01,
+              // Raising this reduces specular aliasing/shimmer in low-light (e.g. caves).
+              label: 'Terrain Roughness Min',
+              onChange: (v) => setTerrainRoughnessMin(v)
+            },
+            bedrockPlaneEnabled: { value: true, onChange: (v) => setBedrockPlaneEnabled(!!v), label: 'Bedrock Plane' },
+            terrainPolygonOffsetEnabled: { value: false, onChange: (v) => setTerrainPolygonOffsetEnabled(!!v), label: 'Terrain Polygon Offset' },
+            terrainPolygonOffsetFactor: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetFactor(v), label: 'Poly Offset Factor' },
+            terrainPolygonOffsetUnits: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetUnits(v), label: 'Poly Offset Units' },
+            postProcessingEnabled: { value: true, onChange: (v) => setPostProcessingEnabled(!!v), label: 'Post Processing' },
+            aoEnabled: { value: true, onChange: (v) => setAoEnabled(!!v), label: 'N8AO Enabled' },
+            aoIntensity: { value: 2.0, min: 0.0, max: 6.0, step: 0.1, onChange: (v) => setAoIntensity(v), label: 'N8AO Intensity' },
+            triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: (v) => setTriplanarDetail(v), label: 'Triplanar Detail' },
+            terrainShaderFogEnabled: { value: true, onChange: (v) => setTerrainShaderFogEnabled(!!v), label: 'Terrain Shader Fog' },
+            terrainShaderFogStrength: { value: 0.9, min: 0.0, max: 1.5, step: 0.05, onChange: (v) => setTerrainShaderFogStrength(v), label: 'Terrain Fog Strength' },
+            terrainThreeFogEnabled: { value: true, onChange: (v) => setTerrainThreeFogEnabled(!!v), label: 'Terrain Three Fog' },
+            snapEpsilon: { value: 0.02, min: 0.01, max: 0.15, step: 0.01, onChange: (v) => setSnapEpsilon(v), label: 'Snap Epsilon (Hysteresis)' }
+          },
+          { collapsed: true }
+        )
+      }),
+      []
+    );
+    return null;
+  };
 
 const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
   const { gl, camera } = useThree();
@@ -399,14 +405,14 @@ const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, botto
 
 
 const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: number }> = ({ sunDirection, intensityMul = 1.0 }) => {
-	  const { camera } = useThree();
-	  const lightRef = useRef<THREE.DirectionalLight>(null);
-	  const sunMeshRef = useRef<THREE.Mesh>(null);
-	  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
-	  const glowMeshRef = useRef<THREE.Mesh>(null);
-	  const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
-	  const target = useMemo(() => new THREE.Object3D(), []);
-	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+  const { camera } = useThree();
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const sunMeshRef = useRef<THREE.Mesh>(null);
+  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const glowMeshRef = useRef<THREE.Mesh>(null);
+  const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
+  const target = useMemo(() => new THREE.Object3D(), []);
+  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
   // Smooth position tracking to prevent choppy updates
   const smoothSunPos = useRef(new THREE.Vector3());
@@ -475,30 +481,30 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
       // Update light color
       lightRef.current.color.copy(sunColor);
 
-	      // Adjust intensity: fade out smoothly when below horizon
-	      const normalizedHeight = sy / radius;
-	      let baseIntensity = 1.0;
-	      if (normalizedHeight < -0.15) {
-	        // Deep night: darker
-	        baseIntensity = 0.1;
-	      } else if (normalizedHeight < 0.0) {
-	        // Transition from Night to Sunset
-	        const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
-	        baseIntensity = 0.1 + (0.4 - 0.1) * t;
-	      } else if (normalizedHeight < 0.3) {
-	        // Sunset to Day
-	        const t = normalizedHeight / 0.3; // 0 to 1
-	        baseIntensity = 0.4 + (1.0 - 0.4) * t;
-	      } else {
-	        // Day: full intensity
-	        baseIntensity = 1.0;
-	      }
-	
-	      // Underground: keep outside readable by not hard-killing the sun globally.
-	      // We only dim moderately at depth to reduce "sun in caves" artifacts.
-	      const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-	      const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
-	      lightRef.current.intensity = baseIntensity * sunDimming * intensityMul;
+      // Adjust intensity: fade out smoothly when below horizon
+      const normalizedHeight = sy / radius;
+      let baseIntensity = 1.0;
+      if (normalizedHeight < -0.15) {
+        // Deep night: darker
+        baseIntensity = 0.1;
+      } else if (normalizedHeight < 0.0) {
+        // Transition from Night to Sunset
+        const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
+        baseIntensity = 0.1 + (0.4 - 0.1) * t;
+      } else if (normalizedHeight < 0.3) {
+        // Sunset to Day
+        const t = normalizedHeight / 0.3; // 0 to 1
+        baseIntensity = 0.4 + (1.0 - 0.4) * t;
+      } else {
+        // Day: full intensity
+        baseIntensity = 1.0;
+      }
+
+      // Underground: keep outside readable by not hard-killing the sun globally.
+      // We only dim moderately at depth to reduce "sun in caves" artifacts.
+      const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+      const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
+      lightRef.current.intensity = baseIntensity * sunDimming * intensityMul;
 
       // Update Visual Sun color and glow
       if (sunMeshRef.current) {
@@ -508,25 +514,25 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
 
         // Update sun material color
         if (sunMaterialRef.current) {
-	          const sunMeshColor = sunColor.clone();
-	          if (normalizedHeight < -0.15) {
-	            // Deep night: make sun mesh dim
-	            sunMeshColor.multiplyScalar(0.4);
-	          } else if (normalizedHeight < 0.0) {
+          const sunMeshColor = sunColor.clone();
+          if (normalizedHeight < -0.15) {
+            // Deep night: make sun mesh dim
+            sunMeshColor.multiplyScalar(0.4);
+          } else if (normalizedHeight < 0.0) {
             // Transition from sunset to night - fade smoothly
             const t = (normalizedHeight + 0.15) / 0.15;
             sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
           } else {
             // Day/sunrise: bright sun core
             sunMeshColor.multiplyScalar(1.5);
-	          }
-	
-	          // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
-	          const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-	          sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
+          }
 
-	          sunMaterialRef.current.color.copy(sunMeshColor);
-	        }
+          // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
+          const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+          sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
+
+          sunMaterialRef.current.color.copy(sunMeshColor);
+        }
 
         // Update glow - make it more visible during sunset
         if (glowMeshRef.current && glowMaterialRef.current) {
@@ -538,12 +544,12 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
 
           // Calculate glow intensity and size based on sun position
           const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
-	          const glowScale = isSunset ? 5.0 : 3.5;
-	          const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
-	
-	          // Underground: reduce glow strength to keep caves moodier
-	          const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-	          const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
+          const glowScale = isSunset ? 5.0 : 3.5;
+          const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+
+          // Underground: reduce glow strength to keep caves moodier
+          const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+          const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
 
           glowMeshRef.current.scale.setScalar(glowScale);
 
@@ -624,11 +630,11 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
  * Moon is visible when above horizon and provides subtle night lighting.
  */
 const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
-	  const { camera } = useThree();
-	  const moonMeshRef = useRef<THREE.Mesh>(null);
-	  const lightRef = useRef<THREE.DirectionalLight>(null);
-	  const target = useMemo(() => new THREE.Object3D(), []);
-	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+  const { camera } = useThree();
+  const moonMeshRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const target = useMemo(() => new THREE.Object3D(), []);
+  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
   useFrame(({ clock }) => {
     if (!moonMeshRef.current || !lightRef.current) return;
@@ -658,16 +664,16 @@ const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 
     lightRef.current.target = target;
     lightRef.current.updateMatrixWorld();
 
-	    // VISIBILITY: Only visible when above the horizon
-	    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
-	    moonMeshRef.current.visible = isAboveHorizon;
-	
-	    // Underground: keep outside moon/sky readable but reduce cave bleed.
-	    const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-	    const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
-	    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming * intensityMul : 0; // Dim light
-	    if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
-	  });
+    // VISIBILITY: Only visible when above the horizon
+    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
+    moonMeshRef.current.visible = isAboveHorizon;
+
+    // Underground: keep outside moon/sky readable but reduce cave bleed.
+    const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+    const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
+    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming * intensityMul : 0; // Dim light
+    if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
+  });
 
   return (
     <>
@@ -693,37 +699,37 @@ const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 
  * Renders the SkyDome with dynamic gradients and updates fog to match horizon color.
  */
 const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }> = ({ baseFogNear, baseFogFar }) => {
-	  const { scene, camera } = useThree();
-	  const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
-	  const gradientRef = useRef<{ top: THREE.Color, bottom: THREE.Color }>({
-	    top: new THREE.Color('#87CEEB'),
-	    bottom: new THREE.Color('#87CEEB')
-	  });
-	
-	  // Smooth underground detection to avoid flicker near cave mouths
-	  const isUndergroundRef = useRef(false);
-	  const undergroundBlendRef = useRef(0);
-	  const lastSentBlendRef = useRef(0);
-	  const setUndergroundBlend = useEnvironmentStore((s) => s.setUndergroundBlend);
-	  const setUndergroundState = useEnvironmentStore((s) => s.setUndergroundState);
+  const { scene, camera } = useThree();
+  const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
+  const gradientRef = useRef<{ top: THREE.Color, bottom: THREE.Color }>({
+    top: new THREE.Color('#87CEEB'),
+    bottom: new THREE.Color('#87CEEB')
+  });
 
-	  // Smooth underwater detection to avoid flicker at the waterline.
-	  // Uses runtime voxel water queries at the camera position.
-	  const isUnderwaterRef = useRef(false);
-	  const underwaterBlendRef = useRef(0);
-	  const lastSentUnderwaterBlendRef = useRef(0);
-	  const setUnderwaterBlend = useEnvironmentStore((s) => s.setUnderwaterBlend);
-	  const setUnderwaterState = useEnvironmentStore((s) => s.setUnderwaterState);
-	
-	  // Cave palette is used only for ground bounce/ambient cues.
-	  const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
-	
-	  // Underwater palette: cooler and denser (applied after sky/cave palette).
-	  const waterTop = useMemo(() => new THREE.Color('#061526'), []);
-	  const waterBottom = useMemo(() => new THREE.Color('#063047'), []);
+  // Smooth underground detection to avoid flicker near cave mouths
+  const isUndergroundRef = useRef(false);
+  const undergroundBlendRef = useRef(0);
+  const lastSentBlendRef = useRef(0);
+  const setUndergroundBlend = useEnvironmentStore((s) => s.setUndergroundBlend);
+  const setUndergroundState = useEnvironmentStore((s) => s.setUndergroundState);
 
-	  useFrame((state, delta) => {
-	    const t = state.clock.getElapsedTime();
+  // Smooth underwater detection to avoid flicker at the waterline.
+  // Uses runtime voxel water queries at the camera position.
+  const isUnderwaterRef = useRef(false);
+  const underwaterBlendRef = useRef(0);
+  const lastSentUnderwaterBlendRef = useRef(0);
+  const setUnderwaterBlend = useEnvironmentStore((s) => s.setUnderwaterBlend);
+  const setUnderwaterState = useEnvironmentStore((s) => s.setUnderwaterState);
+
+  // Cave palette is used only for ground bounce/ambient cues.
+  const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
+
+  // Underwater palette: cooler and denser (applied after sky/cave palette).
+  const waterTop = useMemo(() => new THREE.Color('#061526'), []);
+  const waterBottom = useMemo(() => new THREE.Color('#063047'), []);
+
+  useFrame((state, delta) => {
+    const t = state.clock.getElapsedTime();
 
     // Use the same non-linear orbit calculation as SunFollower
     const speed = 0.025;
@@ -731,181 +737,181 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
     const radius = 300;
     const sy = Math.cos(angle) * radius;
 
-	    // Calculate sky gradient colors based on sun position
-	    const { top, bottom } = getSkyGradient(sy, radius);
-	
-	    // --- Underground detection ---
-	    // Use TerrainService height approximation as a proxy for "surface above".
-	    const surfaceY = TerrainService.getHeightAt(camera.position.x, camera.position.z);
-	    const depthFromSurface = surfaceY - camera.position.y;
-	
-	    // Hysteresis band: used for discrete "entered cave" events (torch, SFX).
-	    const nextIsUnderground = isUndergroundRef.current
-	      ? depthFromSurface > 3.0
-	      : depthFromSurface > 6.0;
-	    if (nextIsUnderground !== isUndergroundRef.current) {
-	      isUndergroundRef.current = nextIsUnderground;
-	      // Record the toggle time so other systems can delay effects (e.g., torch slide-in).
-	      setUndergroundState(nextIsUnderground, t);
-	    }
+    // Calculate sky gradient colors based on sun position
+    const { top, bottom } = getSkyGradient(sy, radius);
 
-	    // Continuous underground blend: 0 near surface -> 1 deep underground.
-	    // This makes lighting transition gradual as you move deeper into enclosed space.
-	    const targetBlend = THREE.MathUtils.clamp(
-	      THREE.MathUtils.smoothstep(depthFromSurface, 2.0, 18.0),
-	      0,
-	      1
-	    );
-	    undergroundBlendRef.current = THREE.MathUtils.damp(
-	      undergroundBlendRef.current,
-	      targetBlend,
-	      6.0,
-	      delta
-	    );
-	
-	    // Push blend into store only when meaningfully changed.
-	    const blend = undergroundBlendRef.current;
-	    if (Math.abs(blend - lastSentBlendRef.current) > 0.01) {
-	      lastSentBlendRef.current = blend;
-	      setUndergroundBlend(blend);
-	    }
+    // --- Underground detection ---
+    // Use TerrainService height approximation as a proxy for "surface above".
+    const surfaceY = TerrainService.getHeightAt(camera.position.x, camera.position.z);
+    const depthFromSurface = surfaceY - camera.position.y;
 
-	    // --- Underwater detection ---
-	    const nextIsUnderwater = terrainRuntime.isLiquidAtWorld(
-	      camera.position.x,
-	      camera.position.y,
-	      camera.position.z
-	    );
-	    if (nextIsUnderwater !== isUnderwaterRef.current) {
-	      isUnderwaterRef.current = nextIsUnderwater;
-	      setUnderwaterState(nextIsUnderwater, t);
-	    }
+    // Hysteresis band: used for discrete "entered cave" events (torch, SFX).
+    const nextIsUnderground = isUndergroundRef.current
+      ? depthFromSurface > 3.0
+      : depthFromSurface > 6.0;
+    if (nextIsUnderground !== isUndergroundRef.current) {
+      isUndergroundRef.current = nextIsUnderground;
+      // Record the toggle time so other systems can delay effects (e.g., torch slide-in).
+      setUndergroundState(nextIsUnderground, t);
+    }
 
-	    const targetUnderwaterBlend = nextIsUnderwater ? 1.0 : 0.0;
-	    underwaterBlendRef.current = THREE.MathUtils.lerp(
-	      underwaterBlendRef.current,
-	      targetUnderwaterBlend,
-	      0.08
-	    );
+    // Continuous underground blend: 0 near surface -> 1 deep underground.
+    // This makes lighting transition gradual as you move deeper into enclosed space.
+    const targetBlend = THREE.MathUtils.clamp(
+      THREE.MathUtils.smoothstep(depthFromSurface, 2.0, 18.0),
+      0,
+      1
+    );
+    undergroundBlendRef.current = THREE.MathUtils.damp(
+      undergroundBlendRef.current,
+      targetBlend,
+      6.0,
+      delta
+    );
 
-	    const uwBlend = underwaterBlendRef.current;
-	    if (Math.abs(uwBlend - lastSentUnderwaterBlendRef.current) > 0.01) {
-	      lastSentUnderwaterBlendRef.current = uwBlend;
-	      setUnderwaterBlend(uwBlend);
-	    }
-	
-	    // Keep sky/fog driven by the sun even when underground so looking out remains bright.
-	    // Underwater is the only state that should override the whole palette.
-	    const finalTop = top.clone().lerp(waterTop, uwBlend);
-	    const finalBottom = bottom.clone().lerp(waterBottom, uwBlend);
+    // Push blend into store only when meaningfully changed.
+    const blend = undergroundBlendRef.current;
+    if (Math.abs(blend - lastSentBlendRef.current) > 0.01) {
+      lastSentBlendRef.current = blend;
+      setUndergroundBlend(blend);
+    }
 
-	    // Update gradient ref for SkyDome
-	    gradientRef.current.top.copy(finalTop);
-	    gradientRef.current.bottom.copy(finalBottom);
+    // --- Underwater detection ---
+    const nextIsUnderwater = terrainRuntime.isLiquidAtWorld(
+      camera.position.x,
+      camera.position.y,
+      camera.position.z
+    );
+    if (nextIsUnderwater !== isUnderwaterRef.current) {
+      isUnderwaterRef.current = nextIsUnderwater;
+      setUnderwaterState(nextIsUnderwater, t);
+    }
 
-	    // Update fog color to match horizon (bottom) color for seamless blending
-	    const fog = scene.fog as THREE.Fog | undefined;
-	    if (fog) {
-	      fog.color.copy(finalBottom);
-		
-	      // Underground: adjust fog distances gradually with depth (but keep outdoor color).
-	      const caveNear = THREE.MathUtils.lerp(baseFogNear, Math.max(2.0, baseFogNear * 0.66), blend);
-	      const caveFar = THREE.MathUtils.lerp(baseFogFar, baseFogFar * 1.2, blend);
-		
-	      // Underwater: much denser fog to sell immersion.
-	      fog.near = THREE.MathUtils.lerp(caveNear, 2.0, uwBlend);
-	      fog.far = THREE.MathUtils.lerp(caveFar, 60.0, uwBlend);
-	    }
-	
-	    // Background color follows the same mix (still acts as fallback)
-	    if (scene.background && scene.background instanceof THREE.Color) {
-	      scene.background.copy(finalBottom);
-	    }
+    const targetUnderwaterBlend = nextIsUnderwater ? 1.0 : 0.0;
+    underwaterBlendRef.current = THREE.MathUtils.lerp(
+      underwaterBlendRef.current,
+      targetUnderwaterBlend,
+      0.08
+    );
 
-	    // Update hemisphere light colors to match atmosphere
-	    if (hemisphereLightRef.current) {
-	      const normalizedHeight = sy / radius;
-	      hemisphereLightRef.current.color.copy(finalTop);
+    const uwBlend = underwaterBlendRef.current;
+    if (Math.abs(uwBlend - lastSentUnderwaterBlendRef.current) > 0.01) {
+      lastSentUnderwaterBlendRef.current = uwBlend;
+      setUnderwaterBlend(uwBlend);
+    }
 
-	      if (normalizedHeight < -0.1) {
-	        // Night: darker ground
-	        hemisphereLightRef.current.groundColor
-	          .set(0x1a1a2a)
-	          .lerp(caveGround, blend)
-	          .lerp(waterBottom, uwBlend);
-	      } else if (normalizedHeight < 0.2) {
-	        // Sunrise/sunset: warmer ground
-	        hemisphereLightRef.current.groundColor
-	          .set(0x3a2a2a)
-	          .lerp(caveGround, blend)
-	          .lerp(waterBottom, uwBlend);
-	      } else {
-	        // Day: darker ground for contrast
-	        hemisphereLightRef.current.groundColor
-	          .set(0x2a2a4a)
-	          .lerp(caveGround, blend)
-	          .lerp(waterBottom, uwBlend);
-	      }
-	    }
-	  });
+    // Keep sky/fog driven by the sun even when underground so looking out remains bright.
+    // Underwater is the only state that should override the whole palette.
+    const finalTop = top.clone().lerp(waterTop, uwBlend);
+    const finalBottom = bottom.clone().lerp(waterBottom, uwBlend);
 
-	  return (
-	    <>
-	      {/* Ambient is controlled separately (see AmbientController) */}
-	      <hemisphereLight
-	        ref={hemisphereLightRef}
-	        args={['#87CEEB', '#2a2a4a', 0.5]}
-	      />
-	      <SkyDomeRefLink gradientRef={gradientRef} />
-	    </>
-	  );
-	};
-	
-	/**
-	 * AmbientController
-	 * Keeps surface ambient as-is, but smoothly darkens and cools it underground.
-	 * This helps caves feel less flat while preserving overground readability.
-	 */
-	const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
-	  const ambientRef = useRef<THREE.AmbientLight>(null);
-	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
-	  const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
-	  const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
-	
-	  useFrame(() => {
-	    if (!ambientRef.current) return;
-	
-	    // Underground: reduce ambient so emissives and local lights carry caves.
-	    // Slightly higher cave floor to avoid pitch-black walls.
-	    ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend) * intensityMul;
-	    ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
-	  });
-	
-	  return (
-	    <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />
-	  );
-	};
+    // Update gradient ref for SkyDome
+    gradientRef.current.top.copy(finalTop);
+    gradientRef.current.bottom.copy(finalBottom);
 
-	/**
-	 * ExposureToneMapping
-	 * Simple exposure shift so when you're in a dark cavern, looking outside remains bright/over-exposed.
-	 * We raise exposure with underground depth; underwater keeps a lower exposure for readability.
-	 */
-	const ExposureToneMapping: React.FC<{
-	  surfaceExposure: number;
-	  caveExposureMax: number;
-	  underwaterExposure: number;
-	}> = ({ surfaceExposure, caveExposureMax, underwaterExposure }) => {
-	  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
-	  const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
-	
-	  // Cave: higher exposure to adapt to darkness (outside sky clips brighter).
-	  const caveExposure = THREE.MathUtils.lerp(surfaceExposure, caveExposureMax, undergroundBlend);
-	  // Underwater: reduce exposure slightly to avoid blowing out fog.
-	  const exposure = THREE.MathUtils.lerp(caveExposure, underwaterExposure, underwaterBlend);
-	
-	  return <ToneMapping exposure={exposure} />;
-	};
+    // Update fog color to match horizon (bottom) color for seamless blending
+    const fog = scene.fog as THREE.Fog | undefined;
+    if (fog) {
+      fog.color.copy(finalBottom);
+
+      // Underground: adjust fog distances gradually with depth (but keep outdoor color).
+      const caveNear = THREE.MathUtils.lerp(baseFogNear, Math.max(2.0, baseFogNear * 0.66), blend);
+      const caveFar = THREE.MathUtils.lerp(baseFogFar, baseFogFar * 1.2, blend);
+
+      // Underwater: much denser fog to sell immersion.
+      fog.near = THREE.MathUtils.lerp(caveNear, 2.0, uwBlend);
+      fog.far = THREE.MathUtils.lerp(caveFar, 60.0, uwBlend);
+    }
+
+    // Background color follows the same mix (still acts as fallback)
+    if (scene.background && scene.background instanceof THREE.Color) {
+      scene.background.copy(finalBottom);
+    }
+
+    // Update hemisphere light colors to match atmosphere
+    if (hemisphereLightRef.current) {
+      const normalizedHeight = sy / radius;
+      hemisphereLightRef.current.color.copy(finalTop);
+
+      if (normalizedHeight < -0.1) {
+        // Night: darker ground
+        hemisphereLightRef.current.groundColor
+          .set(0x1a1a2a)
+          .lerp(caveGround, blend)
+          .lerp(waterBottom, uwBlend);
+      } else if (normalizedHeight < 0.2) {
+        // Sunrise/sunset: warmer ground
+        hemisphereLightRef.current.groundColor
+          .set(0x3a2a2a)
+          .lerp(caveGround, blend)
+          .lerp(waterBottom, uwBlend);
+      } else {
+        // Day: darker ground for contrast
+        hemisphereLightRef.current.groundColor
+          .set(0x2a2a4a)
+          .lerp(caveGround, blend)
+          .lerp(waterBottom, uwBlend);
+      }
+    }
+  });
+
+  return (
+    <>
+      {/* Ambient is controlled separately (see AmbientController) */}
+      <hemisphereLight
+        ref={hemisphereLightRef}
+        args={['#87CEEB', '#2a2a4a', 0.5]}
+      />
+      <SkyDomeRefLink gradientRef={gradientRef} />
+    </>
+  );
+};
+
+/**
+ * AmbientController
+ * Keeps surface ambient as-is, but smoothly darkens and cools it underground.
+ * This helps caves feel less flat while preserving overground readability.
+ */
+const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
+  const ambientRef = useRef<THREE.AmbientLight>(null);
+  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+  const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
+  const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
+
+  useFrame(() => {
+    if (!ambientRef.current) return;
+
+    // Underground: reduce ambient so emissives and local lights carry caves.
+    // Slightly higher cave floor to avoid pitch-black walls.
+    ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend) * intensityMul;
+    ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
+  });
+
+  return (
+    <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />
+  );
+};
+
+/**
+ * ExposureToneMapping
+ * Simple exposure shift so when you're in a dark cavern, looking outside remains bright/over-exposed.
+ * We raise exposure with underground depth; underwater keeps a lower exposure for readability.
+ */
+const ExposureToneMapping: React.FC<{
+  surfaceExposure: number;
+  caveExposureMax: number;
+  underwaterExposure: number;
+}> = ({ surfaceExposure, caveExposureMax, underwaterExposure }) => {
+  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+  const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+
+  // Cave: higher exposure to adapt to darkness (outside sky clips brighter).
+  const caveExposure = THREE.MathUtils.lerp(surfaceExposure, caveExposureMax, undergroundBlend);
+  // Underwater: reduce exposure slightly to avoid blowing out fog.
+  const exposure = THREE.MathUtils.lerp(caveExposure, underwaterExposure, underwaterBlend);
+
+  return <ToneMapping exposure={exposure} />;
+};
 
 /**
  * Helper component to bridge the gradient ref to SkyDome.
@@ -1042,6 +1048,8 @@ const App: React.FC = () => {
   const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
+  const [caOffset, setCaOffset] = useState(0.0003); // Subtle default (Simulates slight lens/motion imperfection)
+  const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -1202,6 +1210,8 @@ const App: React.FC = () => {
           setTerrainChunkTintEnabled={setTerrainChunkTintEnabled}
           setTerrainWireframeEnabled={setTerrainWireframeEnabled}
           setTerrainWeightsView={setTerrainWeightsView}
+          setCaOffset={setCaOffset}
+          setVignetteDarkness={setVignetteDarkness}
         />
       )}
 
@@ -1239,8 +1249,8 @@ const App: React.FC = () => {
           {/* Fog: Strong fog starting close to camera to hide terrain generation - color updated by AtmosphereController */}
           <fog attach="fog" args={['#87CEEB', fogNear, fogFar]} />
 
-	          {/* Ambient: Softer base to let point lights shine */}
-	          <AmbientController intensityMul={ambientIntensityMul} />
+          {/* Ambient: Softer base to let point lights shine */}
+          <AmbientController intensityMul={ambientIntensityMul} />
 
           {/* Atmosphere Controller: Renders gradient SkyDome and updates fog/hemisphere light colors */}
           <AtmosphereController baseFogNear={fogNear} baseFogFar={fogFar} />
@@ -1317,12 +1327,22 @@ const App: React.FC = () => {
               {/* Bloom: Gentle glow for sky and water highlights */}
               <Bloom luminanceThreshold={bloomThreshold} mipmapBlur intensity={bloomIntensity} />
 
-	              {/* ToneMapping: Exposure shifts in caves for natural "looking out" brightness */}
-	              <ExposureToneMapping
-	                surfaceExposure={exposureSurface}
-	                caveExposureMax={exposureCaveMax}
-	                underwaterExposure={exposureUnderwater}
-	              />
+              {/* ToneMapping: Exposure shifts in caves for natural "looking out" brightness */}
+              <ExposureToneMapping
+                surfaceExposure={exposureSurface}
+                caveExposureMax={exposureCaveMax}
+                underwaterExposure={exposureUnderwater}
+              />
+
+              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
+              <ChromaticAberration
+                offset={[caOffset, caOffset]}
+                radialModulation={false}
+                modulationOffset={0}
+              />
+
+              {/* Vignette: Focuses eyes on center, premium feel */}
+              <Vignette eskil={false} offset={0.1} darkness={vignetteDarkness} />
             </EffectComposer>
           ) : null}
 

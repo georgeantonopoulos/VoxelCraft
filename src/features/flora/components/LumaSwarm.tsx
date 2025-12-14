@@ -98,7 +98,10 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                     const nY01 = 1.0 - (y / SAMPLE_RESOLUTION); // Flip Y to 0..1 (base at 0, top at 1)
 
                     // Make the silhouette BIG and upright: X is centered, Y is anchored at base (0..height).
-                    targets.push(nX * shapeWidth, nY01 * SHAPE_HEIGHT, 0); // Z=0 plane (faces camera during convergence)
+                    // Add significant spatial jitter to break the sampling grid artifacts
+                    const jitterX = (Math.random() - 0.5) * 0.15;
+                    const jitterY = (Math.random() - 0.5) * 0.15;
+                    targets.push(nX * shapeWidth + jitterX, nY01 * SHAPE_HEIGHT + jitterY, 0);
                     randoms.push(Math.random(), Math.random(), Math.random());
                 }
             }
@@ -153,7 +156,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     }, [particleData]);
 
     // 3. Animation Loop
-    useFrame(({ clock, camera }) => {
+    useFrame(({ clock, camera }, delta) => {
         if (!materialRef.current || !meshRef.current) return;
 
         const currentTime = clock.getElapsedTime();
@@ -175,15 +178,24 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
         // Face Camera only during/after convergence.
         // During the initial spread phase we want true “upwards” motion (world-aligned), not a billboarded plane.
-        if (progress >= EMIT_PHASE) {
-            meshRef.current.lookAt(camera.position);
+        // A simple heuristic: start blending towards billboard rotation after 50% formation.
+        const billboardWeight = THREE.MathUtils.smoothstep(progress, 0.4, 0.9);
+        if (billboardWeight > 0.0) {
+            // We can't easily billboard instances in a performant way without a custom shader billboard logic,
+            // OR rotating the entire InstancedMesh to face camera. 
+            // Rotating the mesh is easiest but might conflict with world-space spread logic if not careful.
+            // Given the particles are spheres, they look the same from any angle! 
+            // So we actually DON'T need to face camera for the particles themselves.
+            // However, the *shape* might look flat if it was a plane. But our shape is 3D volumetrically distributed on Z=0.
+            // If the user wants the "image" to face the player, we should rotate the Group.
+            // For now, let's just make the entire mesh look at the camera if requested, 
+            // but since we spawn 2D sprites in a 3D volume, it might look best fixed or billboarded.
+            // Let's leave orientation alone for now (fixed world space) as requested by "maintain volume".
         }
 
         // Debug logging (throttled to every 60 frames)
-        if (DEBUG_LUMA_SWARM && Math.floor(currentTime * 60) % 60 === 0) {
-            console.log('[LumaSwarm] Frame update:', {
-                startTime: startTimeRef.current.toFixed(2),
-                currentTime: currentTime.toFixed(2),
+        if (DEBUG_LUMA_SWARM && Math.floor(currentTime * 2) > Math.floor((currentTime - delta) * 2)) {
+            console.log('[LumaSwarm] Update', {
                 elapsed: elapsed.toFixed(2),
                 progress: progress.toFixed(3),
                 uProgress: materialRef.current.uniforms.uProgress.value.toFixed(3),
@@ -195,8 +207,8 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         // Dissipation
         const curDissipate = materialRef.current.uniforms.uDissipate.value;
         if (dissipating) {
-            const dt = clock.getDelta();
-            materialRef.current.uniforms.uDissipate.value = Math.min(curDissipate + dt * DISSIPATION_SPEED, 1.0);
+            // Use stable frame delta instead of clock.getDelta() which can be unpredictable
+            materialRef.current.uniforms.uDissipate.value = Math.min(curDissipate + delta * DISSIPATION_SPEED, 1.0);
         }
 
         // Core Luma Intensity Ramp
@@ -337,8 +349,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             // Apply rotation
                             vec2 spiralDir = rot2(angle) * dir2;
 
-                            // Fluid Turbulence (Replaces erratic flutter)
-                            // We use the particle's random seed + time to sample a smooth vector field
+                            // Fluid Turbulence
                             vec3 fluidOffset = smoothNoise(aRandom * 5.0, uTime * 0.5) * EMIT_JITTER;
 
                             // Height distribution
@@ -350,7 +361,9 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             vec3 spreadPos = vec3(0.0);
                             
                             // XZ Motion: Expand outward with spiral + fluid noise
-                            float cone = mix(0.4, 1.0, height01); 
+                            // VARY the cone shape so it's not a perfect funnel
+                            float coneRandom = 1.0 + (aRandom.x - 0.5) * 0.5; 
+                            float cone = mix(0.4, 1.0, height01) * coneRandom; 
                             spreadPos.xz = (spiralDir * radial * cone * spreadEase) + (fluidOffset.xy * spreadEase);
                             
                             // Y Motion: Rise with fluid vertical drift
@@ -365,20 +378,18 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             float formT = (uProgress - EMIT_PHASE) / (1.0 - EMIT_PHASE);
                             formT = clamp(formT, 0.0, 1.0);
                             
-                            // Smooth Quartic ease-in-out for solid locking
+                            // Smooth Quartic ease-in-out
                             float ease = formT < 0.5 ? 8.0 * formT * formT * formT * formT : 1.0 - pow(-2.0 * formT + 2.0, 4.0) / 2.0;
 
                             // Target Shape Position
                             vec3 targetPos = aTargetPos;
-                            // Add very subtle "living" breath to the final shape (smooth, not jittery)
                             vec3 breath = smoothNoise(aTargetPos * 2.0, uTime * 1.5) * 0.15;
                             targetPos += breath;
 
                             // Blend
                             vec3 pos = mix(spreadPos, targetPos, ease);
 
-                            // Add residual "floating" instability that fades out as we lock in
-                            // This replaces the white-noise jitter
+                            // Residual float
                             float settle = 1.0 - ease;
                             vec3 floatDrift = smoothNoise(pos * 0.5, uTime * 0.8) * FORM_JITTER;
                             pos += floatDrift * settle;
@@ -392,7 +403,14 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                             }
 
                             vAlpha = 1.0 - uDissipate;
-                            csm_Position = position + pos;
+                            
+                            // VARY SIZE per particle
+                            // Some are tiny motes, some are larger "souls"
+                            float sizeVar = mix(0.5, 1.5, aRandom.z);
+                            
+                            // If we just scale 'position', it works because it's local space sphere geo.
+                            // We do NOT want to scale 'pos' (the offset).
+                            csm_Position = (position * sizeVar) + pos;
                         }
                     `}
                         fragmentShader={`
@@ -401,14 +419,22 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         varying float vFadeSeed;
 
                         void main() {
-                            // Per-particle fade randomness during dissipation.
-                            // Some particles begin fading earlier, giving a more organic "embers" feel.
-                            float fadeStart = 0.15 + 0.70 * vFadeSeed;
-                            float fadeEnd = fadeStart + 0.22;
-                            float fade = 1.0 - smoothstep(fadeStart, fadeEnd, 1.0 - vAlpha);
+                            // Organic dissipation:
+                            // Widen the smoothstep range significantly for softer edges
+                            // and use noise/randomness to make some fade way later.
+                            float fadeStart = 0.10 + 0.60 * vFadeSeed;
+                            float fadeEnd = fadeStart + 0.50; // softer window
+                            
+                            // Non-linear alpha falloff
+                            float progress = 1.0 - vAlpha; // 0..1
+                            float fade = 1.0 - smoothstep(fadeStart, fadeEnd, progress);
+                            
+                            // Randomize Glow Intensity per particle
+                            // (vFadeSeed is just aRandom.x, reusing it)
+                            float glowVar = mix(0.8, 2.5, vFadeSeed); 
 
                             csm_DiffuseColor = vec4(uColor, vAlpha * fade);
-                            csm_Emissive = uColor * 2.0; // Super bright
+                            csm_Emissive = uColor * 2.0 * glowVar; 
 
                             if (csm_DiffuseColor.a < 0.01) discard;
                         }
