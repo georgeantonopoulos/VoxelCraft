@@ -153,6 +153,13 @@ export class TreeGeometryFactory {
             dummy.compose(seg.position, seg.quaternion, seg.scale);
             const instanceGeo = branchGeo.clone();
             instanceGeo.applyMatrix4(dummy);
+
+            // Add branch depth attribute for shaders
+            const vertCount = instanceGeo.attributes.position.count;
+            const normalizedDepth = seg.depth / (MAX_DEPTH || 1); // Avoid div/0
+            const depthArray = new Float32Array(vertCount).fill(normalizedDepth);
+            instanceGeo.setAttribute('aBranchDepth', new THREE.BufferAttribute(depthArray, 1));
+
             woodGeometries.push(instanceGeo);
 
             // Collect Collision Data for thick branches

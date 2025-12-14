@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
+import { noiseTexture } from '@core/memory/sharedResources';
 
 interface FractalTreeProps {
     seed: number;
@@ -196,9 +197,15 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         return {
             uGrowthProgress: { value: 0 },
             uColorBase: { value: new THREE.Color(base) },
-            uColorTip: { value: new THREE.Color(tip) }
+            uColorTip: { value: new THREE.Color(tip) },
+            uNoiseTexture: { value: noiseTexture },
+            uTime: { value: 0 }
         };
     }, [type]);
+
+    useFrame((state) => {
+        if (uniforms.uTime) uniforms.uTime.value = state.clock.elapsedTime;
+    });
 
     const topCenter = useMemo(() => {
         if (!data || !data.boundingBox) return new THREE.Vector3(0, 1.5, 0);
@@ -240,7 +247,10 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                     vertexShader={`
                         attribute float aBranchDepth;
                         uniform float uGrowthProgress;
+                        uniform float uTime;
                         varying float vDepth;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
 
                         // Elastic out easing
                         float easeOutElastic(float x) {
@@ -250,6 +260,8 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
 
                         void main() {
                             vDepth = aBranchDepth;
+                            vPos = position;
+                            vWorldNormal = normalize(mat3(modelMatrix) * normal);
 
                             // Growth Logic
                             float start = aBranchDepth * 0.6;
@@ -262,9 +274,16 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                                 scale = scale + sin(progress * 3.14) * 0.1; 
                             }
 
-                            // Small wobble for organic feel
-                            float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
+                            // Wind Sway (stronger at top/ends)
+                            float windStrength = 0.05 * pow(1.0 - aBranchDepth, 2.0);
+                            float time = uTime * 1.5;
+                            float sway = sin(time + position.x + position.y) * windStrength;
+                            
                             vec3 pos = position;
+                            pos.x += sway;
+                            
+                            // Original wobble
+                            float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
                             pos.x += wobble;
                             pos.z += wobble;
 
@@ -272,22 +291,65 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                         }
                     `}
                     fragmentShader={`
+                        precision highp sampler3D;
                         varying float vDepth;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
+                        
                         uniform vec3 uColorBase;
                         uniform vec3 uColorTip;
+                        uniform sampler3D uNoiseTexture;
+
+                        // Triplanar-ish sampling for bark
+                        float getNoise(vec3 p, float scale) {
+                            return texture(uNoiseTexture, p * scale).r;
+                        }
 
                         void main() {
+                            // UV Mapping for Cylindrical Bark
+                            // We use local cylindrical coordinates for consistency on branches
+                            float angle = atan(vPos.x, vPos.z);
+                            vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0); // Stretch Y for fibers
+                            
+                            // Sample noise
+                            float nBase = texture(uNoiseTexture, vPos * 2.5).r; // 3D lookup
+                            float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r; // Cylindrical lookup approximation
+                            
+                            // Create ridges
+                            float ridges = smoothstep(0.3, 0.7, nBark);
+                            float crevices = 1.0 - ridges;
+
+                            // Color mixing
                             vec3 col = mix(uColorBase, uColorTip, pow(vDepth, 3.0));
+                            
+                            // Darken crevices
+                            col *= mix(1.0, 0.5, crevices * 0.8);
+                            
+                            // Add "Moss" (noise on top surfaces)
+                            float mossNoise = texture(uNoiseTexture, vPos * 4.0 + vec3(5.0)).g;
+                            float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
+                            if (upFactor > 0.2 && mossNoise > 0.5) {
+                                col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
+                            }
+
                             csm_DiffuseColor = vec4(col, 1.0);
 
-                            // Emissive for tips
+                            // Normals: Perturb based on ridges
+                            // (Simplified: we use NormalMap logic in StandardMaterial if we had one, 
+                            // here we can adjust roughness)
+                            
+                            // Roughness: Crevices are rougher, ridges smoother or vice versa
+                            float rough = 0.8 + crevices * 0.2;
+                            csm_Roughness = rough;
+
+                            // Emissive for tips (Magical)
                             if (vDepth > 0.8) {
-                                csm_Emissive = uColorTip * 0.8;
+                                csm_Emissive = uColorTip * 0.5 * ridges;
                             }
                         }
                     `}
                     uniforms={uniforms}
-                    roughness={0.8}
+                    roughness={0.9} // Base roughness
                     toneMapped={false}
                 />
             </instancedMesh>
@@ -300,10 +362,14 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={`
                         uniform float uGrowthProgress;
+                        uniform float uTime;
                         varying vec3 vPos;
+                        varying vec3 vWorldNormal;
 
                         void main() {
                             vPos = position;
+                            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+
                             // Leaves appear at the end
                             float start = 0.8;
                             float end = 1.0;
@@ -313,14 +379,47 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                             float pop = sin(scale * 3.14 * 2.0) * 0.2;
                             scale += pop;
 
-                            csm_Position = position * scale;
+                            // Gentle Sway
+                            float sway = sin(uTime * 2.0 + position.x * 5.0 + position.z * 5.0) * 0.1;
+                            vec3 pos = position;
+                            pos.x += sway * scale;
+                            pos.y += sway * 0.5 * scale;
+
+                            csm_Position = pos * scale;
                         }
                     `}
                     fragmentShader={`
+                        precision highp sampler3D;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
                         uniform vec3 uColorTip;
+                        uniform sampler3D uNoiseTexture;
+                        uniform float uTime;
+
                         void main() {
-                            csm_DiffuseColor = vec4(uColorTip, 1.0);
-                            csm_Emissive = uColorTip * 2.0;
+                            // Organic pattern
+                            float n = texture(uNoiseTexture, vPos * 1.5).r;
+                            
+                            // Veins or cellular-ish structure
+                            float veins = abs(n * 2.0 - 1.0);
+                            veins = pow(veins, 3.0); // Sharpen
+                            
+                            // Color variation
+                            vec3 col = uColorTip;
+                            col = mix(col, col * 0.5, veins * 0.5); // Darken veins
+                            
+                            // Tip gradient
+                            float tip = smoothstep(0.0, 0.5, vPos.y); 
+                            col = mix(col, col * 1.4, tip); // Lighter tips
+                            
+                            // Magical pulse
+                            float pulse = sin(uTime * 3.0 + vPos.x * 10.0) * 0.5 + 0.5;
+                            vec3 emissive = uColorTip * (0.5 + 0.5 * pulse) * (1.0 - veins);
+
+                            csm_DiffuseColor = vec4(col, 1.0);
+                            // Tone down original emissive which was * 2.0
+                            csm_Emissive = emissive * 1.5; 
+                            csm_Roughness = 0.4 + veins * 0.6;
                         }
                     `}
                     uniforms={uniforms}

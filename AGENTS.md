@@ -17,6 +17,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
    - Use the in-game controls to capture **4 screenshots** from different angles/states.
    - Add a **1–3 line** summary under “Worklog (short)” (include what changed and what you verified).
 5. Back-check any new “facts” against the codebase before writing them here.
+6. If something here is important and missing, add it.
+7. If something here is wrong, fix it.
+8. If something here is outdated, update it.
+9. If something here is unclear, clarify it.
 
 ### Non-negotiables
 
@@ -95,4 +99,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
-- 2025-12-14: Curated/trimmed `AGENTS.md` into a stable agent guide; removed the growing daily log from this file (available in `git` history).
+- 2025-12-14: Updated `TreeLayer.tsx` and `TreeGeometryFactory.ts` to apply procedural bark/leaf shaders to massive terrain trees (previously only applied to hero instances).
+- 2025-12-14: Massively improved tree bark and leaf texturing using procedural shaders (CustomShaderMaterial + shared 3D noise). Added wind sway and moss support.
+- 2025-12-14: Curated/trimmed AGENTS.md into a stable agent guide; removed the growing daily log from this file (available in `git` history).

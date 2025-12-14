@@ -1,6 +1,9 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
+import CustomShaderMaterial from 'three-custom-shader-material';
+import { noiseTexture } from '@core/memory/sharedResources';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 
@@ -58,8 +61,8 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
 const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number }> = ({ type, variant, positions, count }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
-    const woodMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
-    const leafMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
+    const woodMaterialRef = useRef<any>(null);
+    const leafMaterialRef = useRef<any>(null);
 
     const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
@@ -152,10 +155,24 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
         else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
         else if (type === TreeType.ACACIA) { base = '#6D4C41'; tip = '#CDDC39'; }
         else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
-        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; } // Dark wood, deep green leaves
+        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; }
 
         return { base, tip };
     }, [type]);
+
+    const uniforms = useMemo(() => ({
+        uColorBase: { value: new THREE.Color(colors.base) },
+        uColorTip: { value: new THREE.Color(colors.tip) },
+        uNoiseTexture: { value: noiseTexture },
+        uTime: { value: 0 },
+        // Distinguish main world trees from others if needed
+        uIsInstanced: { value: 1.0 }
+    }), [colors]);
+
+    useFrame((state) => {
+        if (woodMaterialRef.current) woodMaterialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+        if (leafMaterialRef.current) leafMaterialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    });
 
     // Collider Geometries
     const colliderGeometries = useMemo(() => {
@@ -171,22 +188,160 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
     return (
         <group>
             <instancedMesh ref={woodMesh} args={[wood, undefined, count]} castShadow receiveShadow>
-                <meshStandardMaterial
+                <CustomShaderMaterial
                     ref={woodMaterialRef}
-                    color={colors.base}
+                    baseMaterial={THREE.MeshStandardMaterial}
+                    vertexShader={`
+                        attribute float aBranchDepth;
+                        uniform float uTime;
+                        varying float vDepth;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
+
+                        void main() {
+                            vDepth = aBranchDepth;
+                            vPos = position;
+                            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                            
+                            // Wind Sway
+                            float windStrength = 0.05 * pow(1.0 - aBranchDepth, 2.0); // More sway at tips (lower depth logic might be inverted? No, depth 0 is root)
+                            // Wait, depth 0 is root, depth MAX is tips. 
+                            // In Factory: normalizedDepth = seg.depth / MAX_DEPTH. So 0=Root, 1=Tip.
+                            // So sway should be proportional to aBranchDepth.
+                            
+                            windStrength = 0.08 * pow(aBranchDepth, 2.0);
+
+                            float time = uTime * 1.5;
+                            // Add some position variation to phase
+                            float phase = position.x + position.z; 
+                            float sway = sin(time + phase) * windStrength + sin(time * 0.5 + phase * 0.5) * windStrength * 0.5;
+                            
+                            vec3 pos = position;
+                            pos.x += sway;
+                            pos.z += sway * 0.5;
+
+                            csm_Position = pos;
+                        }
+                    `}
+                    fragmentShader={`
+                        precision highp sampler3D;
+                        varying float vDepth;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
+                        
+                        uniform vec3 uColorBase;
+                        uniform vec3 uColorTip;
+                        uniform sampler3D uNoiseTexture;
+
+                        void main() {
+                            // UV Mapping for Cylindrical Bark
+                            float angle = atan(vPos.x, vPos.z);
+                            vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0); 
+                            
+                            // Sample noise
+                            float nBase = texture(uNoiseTexture, vPos * 2.5).r; 
+                            float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r; 
+                            
+                            // Create ridges
+                            float ridges = smoothstep(0.3, 0.7, nBark);
+                            float crevices = 1.0 - ridges;
+
+                            // Color mixing
+                            vec3 col = mix(uColorBase, uColorTip, pow(vDepth, 3.0)); // Bias towards base color for trunk
+                            
+                            // Darken crevices
+                            col *= mix(1.0, 0.5, crevices * 0.8);
+                            
+                            // Add "Moss"
+                            float mossNoise = texture(uNoiseTexture, vPos * 4.0 + vec3(5.0)).g;
+                            float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
+                            if (upFactor > 0.2 && mossNoise > 0.5) {
+                                col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
+                            }
+
+                            csm_DiffuseColor = vec4(col, 1.0);
+                            
+                            float rough = 0.8 + crevices * 0.2;
+                            csm_Roughness = rough;
+
+                            // Emissive for tips
+                            if (vDepth > 0.8) {
+                                csm_Emissive = uColorTip * 0.5 * ridges;
+                            }
+                        }
+                    `}
+                    uniforms={uniforms}
                     roughness={0.9}
-                    transparent={false}
-                    depthWrite
+                    toneMapped={false}
                 />
             </instancedMesh>
             {leaves.getAttribute('position') && (
                 <instancedMesh ref={leafMesh} args={[leaves, undefined, count]} castShadow receiveShadow>
-                    <meshStandardMaterial
+                    <CustomShaderMaterial
                         ref={leafMaterialRef}
-                        color={colors.tip}
-                        roughness={0.8}
-                        transparent={false}
-                        depthWrite
+                        baseMaterial={THREE.MeshStandardMaterial}
+                        vertexShader={`
+                        uniform float uTime;
+                        varying vec3 vPos;
+                        varying vec3 vWorldNormal;
+
+                        void main() {
+                            vPos = position;
+                            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                            
+                            // Global wind sway for leaves (match tree sway roughly)
+                            // Leaves are generally at top, so assume high sway
+                            float swayStrength = 0.1;
+                            float time = uTime * 1.5;
+                            float phase = position.x + position.z + instanceMatrix[3][0]; // Add instance pos for phase variation
+
+                            float sway = sin(time + phase) * swayStrength;
+                            vec3 pos = position;
+                            pos.x += sway; 
+                            
+                            // Leaf wobble
+                            float wobble = sin(time * 3.0 + phase * 2.0) * 0.05;
+                            pos.y += wobble;
+
+                            csm_Position = pos;
+                        }
+                    `}
+                        fragmentShader={`
+                        precision highp sampler3D;
+                        varying vec3 vPos;
+                        uniform vec3 uColorTip;
+                        uniform sampler3D uNoiseTexture;
+                        uniform float uTime;
+
+                        void main() {
+                            float n = texture(uNoiseTexture, vPos * 1.5).r;
+                            
+                            // Veins
+                            float veins = abs(n * 2.0 - 1.0);
+                            veins = pow(veins, 3.0); 
+                            
+                            // Color variation
+                            vec3 col = uColorTip;
+                            col = mix(col, col * 0.5, veins * 0.5); 
+                            
+                            // Tip gradient
+                            // Approximate leaf tip using local Y or distance from center?
+                            // Leaves are usually small clumps. vPos is local to CLUMP (if instantiated) or TREE?
+                            // In TreeGeometryFactory, leaves are merged into tree. vPos is relative to TREE origin.
+                            // So we can't easily detect "tip of leaf" without extra attributes.
+                            // But we can use noise for variety.
+                            
+                            // Magical pulse
+                            float pulse = sin(uTime * 3.0 + vPos.x * 10.0) * 0.5 + 0.5;
+                            vec3 emissive = uColorTip * (0.5 + 0.5 * pulse) * (1.0 - veins);
+
+                            csm_DiffuseColor = vec4(col, 1.0);
+                            csm_Emissive = emissive * 1.2; 
+                            csm_Roughness = 0.4 + veins * 0.6;
+                        }
+                    `}
+                        uniforms={uniforms}
+                        toneMapped={false}
                     />
                 </instancedMesh>
             )}
