@@ -274,13 +274,14 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                                 scale = scale + sin(progress * 3.14) * 0.1; 
                             }
 
-                            // Wind Sway (stronger at top/ends)
-                            float windStrength = 0.05 * pow(1.0 - aBranchDepth, 2.0);
-                            float time = uTime * 1.5;
-                            float sway = sin(time + position.x + position.y) * windStrength;
-                            
+                            // Wind Sway REMOVED per user request (caused disjointed segments)
                             vec3 pos = position;
-                            pos.x += sway;
+                            
+                            // Original wobble (kept only for growth animation, or remove if causing lag)
+                            // Keeping it separate from wind.
+                            float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
+                            pos.x += wobble;
+                            pos.z += wobble;
                             
                             // Original wobble
                             float wobble = sin(uGrowthProgress * 10.0 + position.y * 2.0) * 0.03 * (1.0 - scale);
@@ -412,8 +413,11 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                             float tip = smoothstep(0.0, 0.5, vPos.y); 
                             col = mix(col, col * 1.4, tip); // Lighter tips
                             
-                            // Magical pulse
-                            float pulse = sin(uTime * 3.0 + vPos.x * 10.0) * 0.5 + 0.5;
+                            // Magical pulse (using position dependent phase to avoid "sliding" look)
+                            // We use vPos (local) so it is anchored to the leaf.
+                            // If it looks like it's moving, it's just the time animation.
+                            // Slowing it down and making it more of a "throb" than a "wave".
+                            float pulse = sin(uTime * 2.0 + vPos.x * 2.0) * 0.5 + 0.5;
                             vec3 emissive = uColorTip * (0.5 + 0.5 * pulse) * (1.0 - veins);
 
                             csm_DiffuseColor = vec4(col, 1.0);

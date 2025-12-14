@@ -332,8 +332,12 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                             // But we can use noise for variety.
                             
                             // Magical pulse
-                            float pulse = sin(uTime * 3.0 + vPos.x * 10.0) * 0.5 + 0.5;
-                            vec3 emissive = uColorTip * (0.5 + 0.5 * pulse) * (1.0 - veins);
+                            // Use noise for pulse phase to avoid "sliding" stripes across the tree
+                            float pulseNoise = texture(uNoiseTexture, vPos * 0.5).r;
+                            // Throb based on time + large noise structure
+                            float pulse = sin(uTime * 2.0 + pulseNoise * 6.28) * 0.5 + 0.5;
+                            
+                            vec3 emissive = uColorTip * (0.3 + 0.7 * pulse) * (1.0 - veins);
 
                             csm_DiffuseColor = vec4(col, 1.0);
                             csm_Emissive = emissive * 1.2; 
