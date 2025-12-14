@@ -556,6 +556,8 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
           const glowColor = getSunGlowColor(normalizedHeight, sunColor);
           glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
           glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
+          // Animate rays
+          glowMaterialRef.current.uniforms.uTime.value = t;
         }
       }
     }
@@ -588,17 +590,19 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
         />
       </mesh>
 
-      {/* Sun Glow Billboard - Always faces camera, more visible during sunset */}
+      {/* Sun Glow Billboard - High-quality atmospheric scattering simulation */}
       <mesh ref={glowMeshRef}>
-        <planeGeometry args={[40, 40]} />
+        <planeGeometry args={[250, 250]} />
         <shaderMaterial
           ref={glowMaterialRef}
           transparent
           depthWrite={false}
           fog={false}
+          blending={THREE.AdditiveBlending}
           uniforms={{
             uColor: { value: new THREE.Color() },
-            uOpacity: { value: 0.5 }
+            uOpacity: { value: 0.25 },
+            uTime: { value: 0 }
           }}
           vertexShader={`
             varying vec2 vUv;
@@ -610,12 +614,61 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
           fragmentShader={`
             uniform vec3 uColor;
             uniform float uOpacity;
+            uniform float uTime;
             varying vec2 vUv;
+
+            // Pseudo-random
+            float hash(float n) { return fract(sin(n) * 43758.5453123); }
+
+            // Value noise for softer, cloud-like rays
+            float noise(float p) {
+                float fl = floor(p);
+                float fc = fract(p);
+                return mix(hash(fl), hash(fl + 1.0), fc);
+            }
+
             void main() {
-              float d = distance(vUv, vec2(0.5));
-              float glow = 1.0 - smoothstep(0.0, 0.5, d);
-              glow = pow(glow, 2.5);
-              gl_FragColor = vec4(uColor, glow * uOpacity);
+              vec2 centered = vUv - 0.5;
+              float dist = length(centered);
+              
+              // 0. Hard circular clip to standard plane (safety)
+              if (dist > 0.5) discard;
+
+              // 1. Core Glow (Tiighter to match smaller rays)
+              float core = 1.0 / (dist * 25.0 + 0.8);
+              core = pow(core, 2.8);
+
+              // 2. Volumetric Ray Simulation
+              float angle = atan(centered.y, centered.x);
+              float t = uTime * 0.05;
+              
+              // Layered noise for variation
+              float raysA = noise(angle * 8.0 + t) * 0.5 + 0.5;
+              float raysB = noise(angle * 16.0 - t * 1.5); // Range -0.5 to 1.5
+              
+              // Combine layers (straighter, sharper rays)
+              float rays = raysA * 0.6 + raysB * 0.4;
+              
+              // **Ray Variation & Tip Fade**:
+              // Mask rays to be VERY short (1/3rd size: fade start 0.03, fade end 0.09)
+              float rayMask = smoothstep(0.02, 0.05, dist) * (1.0 - smoothstep(0.05, 0.09, dist));
+              
+              // Per-ray length variation
+              float lengthVar = noise(angle * 3.0 + 52.0); 
+              rayMask *= smoothstep(0.09, 0.05 + 0.03 * lengthVar, dist);
+
+              // Anisotropy: Sharpen the beams
+              rays = pow(max(0.0, rays), 4.0); 
+
+              float totalLight = core * 0.75 + rays * rayMask * 0.65;
+              
+              // Clamp opacity
+              float alpha = smoothstep(0.0, 1.0, totalLight) * uOpacity;
+
+              // Color: Core is white-hot, rays are atmospheric
+              vec3 finalColor = mix(uColor, vec3(1.0, 1.0, 0.95), core * 0.9);
+
+              gl_FragColor = vec4(finalColor, alpha);
             }
           `}
         />
@@ -1028,14 +1081,14 @@ const App: React.FC = () => {
   const [fogNear, setFogNear] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get('vcFogNear');
-    const n = v != null ? Number(v) : 10;
-    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 0, 200) : 10;
+    const n = v != null ? Number(v) : 20;
+    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 0, 200) : 20;
   });
   const [fogFar, setFogFar] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get('vcFogFar');
-    const n = v != null ? Number(v) : 90;
-    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 90;
+    const n = v != null ? Number(v) : 160;
+    return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 160;
   });
   const [sunIntensityMul, setSunIntensityMul] = useState(0.0);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
@@ -1236,8 +1289,8 @@ const App: React.FC = () => {
             // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
-          // Keep far plane modest; fog should hide distant chunk generation.
-          camera={{ fov: 75, near: 0.1, far: 220 }}
+          // Keep far plane large enough to include the Sun/Moon (r=300) + buffer
+          camera={{ fov: 75, near: 0.1, far: 600 }}
         >
           <DebugGL skipPost={skipPost} />
 
@@ -1334,12 +1387,12 @@ const App: React.FC = () => {
                 underwaterExposure={exposureUnderwater}
               />
 
-	              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
-	              <ChromaticAberration
-	                offset={[caOffset * 0.1, caOffset * 0.1]}
-	                radialModulation={true}
-	                modulationOffset={0}
-	              />
+              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
+              <ChromaticAberration
+                offset={[caOffset * 0.1, caOffset * 0.1]}
+                radialModulation={true}
+                modulationOffset={0}
+              />
 
               {/* Vignette: Focuses eyes on center, premium feel */}
               <Vignette eskil={false} offset={0.1} darkness={vignetteDarkness} />
