@@ -108,6 +108,7 @@ export interface ChunkState {
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
   rootHollowPositions?: Float32Array;
+  fireflyPositions?: Float32Array; // stride 4: x, y, z, seed (WORLD SPACE)
   vegetationData?: Record<number, Float32Array>;
 
   meshWaterPositions: Float32Array;

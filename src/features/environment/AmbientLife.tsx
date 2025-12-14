@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
-import { TerrainService } from '@features/terrain/logic/terrainService';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { FogDeer } from '@features/creatures/FogDeer';
+import { forEachChunkFireflies, getFireflyRegistryVersion } from '@features/environment/fireflyRegistry';
 
 export type PlayerMovedDetail = {
   x: number;
@@ -53,8 +53,10 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
  * FirefliesField
  * Lightweight instanced "motes" that feel like ambient life.
  *
- * - Uses stable anchor wrapping so the field feels infinite without spawning globally.
- * - Avoids React state churn: all per-instance simulation is kept in refs/typed arrays.
+ * - Firefly positions are chosen during terrain generation and persist per chunk.
+ * - This renderer queries the set of currently loaded chunks and renders nearby motes.
+ * - Avoids React state churn: instance data is rebuilt only when the player crosses a small cell
+ *   boundary or when new chunk firefly data arrives.
  */
 const FirefliesField: React.FC<{
   enabled: boolean;
@@ -66,165 +68,158 @@ const FirefliesField: React.FC<{
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
-  // Tunables: keep count modest to avoid CPU churn.
-  const COUNT = 200;
-  const CELL_SIZE = 18; // Snapped anchor size to keep wrapping stable.
-  const RANGE = 64; // XZ range covered around the anchor.
-  const BASE_RADIUS = 0.07;
+  // Tunables: cap the visible motes to keep CPU and draw cost predictable.
+  const MAX_VISIBLE = 700;
+  const REFRESH_CELL_SIZE = 10; // Rebuild instance list after moving ~10m in world space.
+  const QUERY_RADIUS = 58; // Only render motes near the player for a tighter "swarm pocket" feel.
+  const BASE_RADIUS_MIN = 0.012;
+  const BASE_RADIUS_MAX = 0.026;
 
-  // Per-instance: offset in the local window, cached base Y, and a stable phase/seed.
-  const offsets = useRef<Float32Array>(new Float32Array(COUNT * 2)); // x,z only
-  const baseY = useRef<Float32Array>(new Float32Array(COUNT));
-  const phases = useRef<Float32Array>(new Float32Array(COUNT));
-  const factors = useRef<Float32Array>(new Float32Array(COUNT)); // biome gating per instance
-  const drift = useRef<Float32Array>(new Float32Array(COUNT * 2)); // drift direction x,z
+  const seedsRef = useRef<Float32Array>(new Float32Array(MAX_VISIBLE));
+  const lastRefreshRef = useRef<{ ax: number; az: number; version: number } | null>(null);
 
-  const anchorRef = useRef<{ ax: number; az: number } | null>(null);
-  const lastEnvRef = useRef<{ undergroundBlend: number; underwaterBlend: number } | null>(null);
+  const material = useMemo(() => {
+    // NOTE: Keep this shader tiny and stable. No GLSL version forcing.
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+      uniforms: {
+        uTime: { value: 0 },
+        uIntensity: { value: 1 },
+        uColor: { value: new THREE.Color('#d9ff7a') },
+        uDriftAmp: { value: 0.35 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uIntensity;
+        uniform float uDriftAmp;
+        attribute float aSeed;
+        varying float vBlink;
 
-  useEffect(() => {
-    // Deterministic-ish seed without importing new RNG deps.
-    const rand = (() => {
-      let s = 1337;
-      return () => {
-        s = (s * 1664525 + 1013904223) >>> 0;
-        return (s & 0xfffffff) / 0xfffffff;
-      };
-    })();
+        float hash01(float x) {
+          return fract(sin(x) * 43758.5453);
+        }
 
-    for (let i = 0; i < COUNT; i++) {
-      const ox = (rand() - 0.5) * RANGE;
-      const oz = (rand() - 0.5) * RANGE;
-      offsets.current[i * 2 + 0] = ox;
-      offsets.current[i * 2 + 1] = oz;
-      phases.current[i] = rand() * Math.PI * 2;
-      // Drift direction (unit-ish).
-      const dx = rand() * 2 - 1;
-      const dz = rand() * 2 - 1;
-      const invLen = 1.0 / Math.max(0.001, Math.sqrt(dx * dx + dz * dz));
-      drift.current[i * 2 + 0] = dx * invLen;
-      drift.current[i * 2 + 1] = dz * invLen;
-      baseY.current[i] = 0;
-      factors.current[i] = 0;
-    }
+        void main() {
+          // Blink: smooth pulse with stable per-instance seed.
+          float phase = aSeed * 6.28318530718;
+          float speed = mix(1.2, 2.1, hash01(aSeed * 13.7));
+          float blink = 0.45 + 0.55 * sin(uTime * speed + phase);
+          vBlink = blink * uIntensity;
+
+          // Drift: tiny local wobble to keep them alive without per-frame CPU updates.
+          vec3 drift = vec3(
+            sin(uTime * 0.7 + aSeed * 12.3),
+            sin(uTime * 0.9 + aSeed * 5.1),
+            cos(uTime * 0.6 + aSeed * 9.7)
+          ) * uDriftAmp;
+
+          // Scale geometry by blink, but keep a minimum to avoid degenerate transforms.
+          float s = max(0.08, 0.45 + 0.75 * blink);
+          vec3 pos = position * s;
+
+          mat4 im = instanceMatrix;
+          im[3].xyz += drift;
+          gl_Position = projectionMatrix * modelViewMatrix * im * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        varying float vBlink;
+
+        void main() {
+          // Soft alpha falloff; additive blending makes this read as a glow mote.
+          float a = clamp(vBlink, 0.0, 1.0) * 0.95;
+          gl_FragColor = vec4(uColor, a);
+        }
+      `,
+    });
   }, []);
 
-  /**
-   * Recomputes per-instance biome gating + baseline height when the anchor changes.
-   * This keeps expensive queries (biome + surface height) out of the frame loop.
-   */
-  const refreshForAnchor = (ax: number, az: number) => {
-    const px = playerRef.current.x;
-    const py = playerRef.current.y;
-    const pz = playerRef.current.z;
-    const caveLerp = smoothstep(0.15, 0.65, undergroundBlend);
+  useLayoutEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
 
-    for (let i = 0; i < COUNT; i++) {
-      const wx = ax + offsets.current[i * 2 + 0];
-      const wz = az + offsets.current[i * 2 + 1];
-
-      const biome = BiomeManager.getBiomeAt(wx, wz);
-      const biomeFactor = biomeFireflyFactor(biome);
-
-      // Underground: allow subtle motes anywhere (cave entrances included),
-      // but keep them very subdued in deserts/snow to avoid "magical glitter" everywhere.
-      const caveFactor = caveLerp * (biomeFactor > 0 ? 1.0 : 0.35);
-      factors.current[i] = Math.max(biomeFactor, caveFactor);
-
-      const surfaceY = TerrainService.getHeightAt(wx, wz);
-      // Blend: near surface use surfaceY; underground use player Y so motes appear "in the cave".
-      const targetY = THREE.MathUtils.lerp(surfaceY + 2.0, py + 0.5, caveLerp);
-
-      // Keep fireflies local so they don't end up above the player in deep caves.
-      // This is purely a visual cheat; they are not physics objects.
-      const dy = (phases.current[i] % 1.0) * 3.0 - 1.25;
-      baseY.current[i] = THREE.MathUtils.lerp(targetY, py + dy, caveLerp);
-
-      // Mild bias toward player so the field doesn't feel "pinned" to the surface when
-      // walking along steep terrain.
-      if (caveLerp < 0.15) {
-        const distToPlayer = Math.hypot(wx - px, wz - pz);
-        if (distToPlayer < 14) baseY.current[i] = THREE.MathUtils.lerp(baseY.current[i], py + 1.0, 0.2);
-      }
-    }
-  };
+    // Per-instance seed attribute (used by the shader for blink/drift).
+    const attr = new THREE.InstancedBufferAttribute(seedsRef.current, 1);
+    mesh.geometry.setAttribute('aSeed', attr);
+    // Default to rendering 0 instances until we get a player signal + chunk data.
+    mesh.count = 0;
+  }, []);
 
   useFrame((state) => {
     const mesh = meshRef.current;
     if (!enabled || !mesh) return;
     if (!playerRef.current.hasSignal) return;
 
-    // Global intensity gates (cheap, avoids doing extra work underwater).
+    // Global intensity gates (cheap, avoids doing extra work underwater/underground).
     const biomeAtPlayer = BiomeManager.getBiomeAt(playerRef.current.x, playerRef.current.z);
     const biomeFactor = biomeFireflyFactor(biomeAtPlayer);
-    const caveBoost = smoothstep(0.25, 0.85, undergroundBlend);
     const underwaterSuppression = 1.0 - smoothstep(0.05, 0.45, underwaterBlend);
-    const globalIntensity = Math.max(biomeFactor, caveBoost * 0.9) * underwaterSuppression;
-    if (globalIntensity < 0.01) return;
+    const undergroundSuppression = 1.0 - smoothstep(0.25, 0.85, undergroundBlend);
+    const globalIntensity = biomeFactor * underwaterSuppression * undergroundSuppression;
 
     const px = playerRef.current.x;
     const pz = playerRef.current.z;
-    const ax = Math.floor(px / CELL_SIZE) * CELL_SIZE;
-    const az = Math.floor(pz / CELL_SIZE) * CELL_SIZE;
+    // Rebuild the visible instance list only when needed:
+    // - Player moved far enough (cell boundary)
+    // - Chunk fireflies changed (new chunk loaded/unloaded)
+    const ax = Math.floor(px / REFRESH_CELL_SIZE) * REFRESH_CELL_SIZE;
+    const az = Math.floor(pz / REFRESH_CELL_SIZE) * REFRESH_CELL_SIZE;
+    const version = getFireflyRegistryVersion();
 
-    const env = lastEnvRef.current;
-    const envChanged =
-      !env ||
-      Math.abs(env.undergroundBlend - undergroundBlend) > 0.08 ||
-      Math.abs(env.underwaterBlend - underwaterBlend) > 0.08;
+    if (!lastRefreshRef.current || lastRefreshRef.current.ax !== ax || lastRefreshRef.current.az !== az || lastRefreshRef.current.version !== version) {
+      lastRefreshRef.current = { ax, az, version };
 
-    if (
-      !anchorRef.current ||
-      anchorRef.current.ax !== ax ||
-      anchorRef.current.az !== az ||
-      envChanged
-    ) {
-      anchorRef.current = { ax, az };
-      lastEnvRef.current = { undergroundBlend, underwaterBlend };
-      refreshForAnchor(ax, az);
+      const r2 = QUERY_RADIUS * QUERY_RADIUS;
+      let write = 0;
+
+      forEachChunkFireflies((_key, data) => {
+        void _key;
+        for (let i = 0; i < data.length && write < MAX_VISIBLE; i += 4) {
+          const x = data[i + 0];
+          const y = data[i + 1];
+          const z = data[i + 2];
+          const seed = data[i + 3];
+
+          const dx = x - px;
+          const dz = z - pz;
+          if (dx * dx + dz * dz > r2) continue;
+
+          // Smaller motes; scale is stored in the instance matrix and animated in shader.
+          const h = Math.abs(Math.sin(seed * 437.58)) % 1;
+          const baseScale = THREE.MathUtils.lerp(BASE_RADIUS_MIN, BASE_RADIUS_MAX, h);
+
+          dummy.position.set(x, y, z);
+          dummy.scale.setScalar(baseScale);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          mesh.setMatrixAt(write, dummy.matrix);
+          seedsRef.current[write] = seed;
+          write++;
+        }
+      });
+
+      // Render only the visible instances.
+      mesh.count = write;
+      mesh.instanceMatrix.needsUpdate = true;
+      const seedAttr = mesh.geometry.getAttribute('aSeed') as THREE.InstancedBufferAttribute | undefined;
+      if (seedAttr) seedAttr.needsUpdate = true;
     }
 
+    // Keep shader uniforms up to date (cheap).
     const t = state.clock.elapsedTime;
-    const driftSpeed = THREE.MathUtils.lerp(0.25, 0.6, smoothstep(0.0, 1.0, undergroundBlend));
-
-    for (let i = 0; i < COUNT; i++) {
-      const instanceFactor = factors.current[i] * globalIntensity;
-      const phase = phases.current[i];
-
-      // Blink: smooth pulse with per-instance phase.
-      const blink = 0.45 + 0.55 * Math.sin(t * 1.6 + phase);
-      const scale = BASE_RADIUS * instanceFactor * (0.35 + 0.75 * blink);
-
-      // If suppressed, keep the matrix valid but tiny to avoid NaN issues.
-      const safeScale = scale > 0.0005 ? scale : 0.0001;
-
-      const ox = offsets.current[i * 2 + 0];
-      const oz = offsets.current[i * 2 + 1];
-      const dx = drift.current[i * 2 + 0];
-      const dz = drift.current[i * 2 + 1];
-      const driftX = dx * Math.sin(t * 0.7 + phase) * driftSpeed;
-      const driftZ = dz * Math.cos(t * 0.6 + phase) * driftSpeed;
-      const driftY = Math.sin(t * 0.9 + phase) * 0.35;
-
-      dummy.position.set(ax + ox + driftX, baseY.current[i] + driftY, az + oz + driftZ);
-      dummy.scale.setScalar(safeScale);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
+    material.uniforms.uTime.value = t;
+    material.uniforms.uIntensity.value = THREE.MathUtils.clamp(globalIntensity, 0, 1);
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, COUNT]} frustumCulled={false}>
+    <instancedMesh ref={meshRef} args={[undefined as any, undefined as any, MAX_VISIBLE]} frustumCulled={false}>
       {/* Small icosahedrons read as "motes" and avoid looking like UI points. */}
       <icosahedronGeometry args={[1, 0]} />
-      <meshBasicMaterial
-        color="#d9ff7a"
-        transparent
-        opacity={0.95}
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-      />
+      <primitive object={material} attach="material" />
     </instancedMesh>
   );
 };
