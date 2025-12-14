@@ -70,7 +70,7 @@ const FirefliesField: React.FC<{
   const COUNT = 200;
   const CELL_SIZE = 18; // Snapped anchor size to keep wrapping stable.
   const RANGE = 64; // XZ range covered around the anchor.
-  const BASE_RADIUS = 0.07;
+  const BASE_RADIUS = 0.035; // Reduced for smaller, subtler fireflies
 
   // Per-instance: offset in the local window, cached base Y, and a stable phase/seed.
   const offsets = useRef<Float32Array>(new Float32Array(COUNT * 2)); // x,z only
@@ -113,12 +113,12 @@ const FirefliesField: React.FC<{
    * Recomputes per-instance biome gating + baseline height when the anchor changes.
    * This keeps expensive queries (biome + surface height) out of the frame loop.
    */
+  /**
+   * Recomputes per-instance biome gating + baseline height when the anchor changes.
+   * FIXED: No longer uses player Y to prevent vertical jumping when player moves.
+   * Fireflies are now strictly terrain-relative.
+   */
   const refreshForAnchor = (ax: number, az: number) => {
-    const px = playerRef.current.x;
-    const py = playerRef.current.y;
-    const pz = playerRef.current.z;
-    const caveLerp = smoothstep(0.15, 0.65, undergroundBlend);
-
     for (let i = 0; i < COUNT; i++) {
       const wx = ax + offsets.current[i * 2 + 0];
       const wz = az + offsets.current[i * 2 + 1];
@@ -126,26 +126,14 @@ const FirefliesField: React.FC<{
       const biome = BiomeManager.getBiomeAt(wx, wz);
       const biomeFactor = biomeFireflyFactor(biome);
 
-      // Underground: allow subtle motes anywhere (cave entrances included),
-      // but keep them very subdued in deserts/snow to avoid "magical glitter" everywhere.
-      const caveFactor = caveLerp * (biomeFactor > 0 ? 1.0 : 0.35);
-      factors.current[i] = Math.max(biomeFactor, caveFactor);
+      // Only spawn in biomes that support fireflies (no cave boost to avoid "everywhere" feel)
+      factors.current[i] = biomeFactor;
 
+      // Strictly terrain-relative height: surface + stable offset based on phase
       const surfaceY = TerrainService.getHeightAt(wx, wz);
-      // Blend: near surface use surfaceY; underground use player Y so motes appear "in the cave".
-      const targetY = THREE.MathUtils.lerp(surfaceY + 2.0, py + 0.5, caveLerp);
-
-      // Keep fireflies local so they don't end up above the player in deep caves.
-      // This is purely a visual cheat; they are not physics objects.
-      const dy = (phases.current[i] % 1.0) * 3.0 - 1.25;
-      baseY.current[i] = THREE.MathUtils.lerp(targetY, py + dy, caveLerp);
-
-      // Mild bias toward player so the field doesn't feel "pinned" to the surface when
-      // walking along steep terrain.
-      if (caveLerp < 0.15) {
-        const distToPlayer = Math.hypot(wx - px, wz - pz);
-        if (distToPlayer < 14) baseY.current[i] = THREE.MathUtils.lerp(baseY.current[i], py + 1.0, 0.2);
-      }
+      // Height variation: 1.0 to 4.0 units above ground, stable per instance
+      const heightOffset = 1.0 + (phases.current[i] % 1.0) * 3.0;
+      baseY.current[i] = surfaceY + heightOffset;
     }
   };
 

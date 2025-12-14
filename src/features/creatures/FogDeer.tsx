@@ -57,21 +57,31 @@ export const FogDeer: React.FC<{
     return {
       // Useful for headless verification: keep at least one deer in front of the camera so it shows in screenshots.
       spawnFront: params.has('vcDeerFront'),
+      // Debug: spawn deer much closer to the player so you can verify the silhouette quickly.
+      // Normal gameplay should keep deer as distant fog-band glimpses.
+      // Alias `vcDeerNeer` exists because it's easy to typo and we still want a useful debug toggle.
+      spawnNear: params.has('vcDeerNear') || params.has('vcDeerNeer'),
+      // Debug: force a single, always-visible "inspection" deer near the camera.
+      // This makes it obvious what the silhouette looks like without relying on biome gates/spawn chance.
+      staticInspect: params.has('vcDeerStatic'),
       // Useful for headless verification: force a flee cycle without player movement.
       autoScare: params.has('vcDeerAutoScare'),
     };
   }, []);
 
   // Keep count low: the goal is glimpses, not herds.
-  const COUNT = 3;
+  // Increased from 3 to 5 for better visibility.
+  const COUNT = 5;
 
   // Simulation params.
   const SCARE_RADIUS = 32;
   const RUN_SPEED = 12.0;
   const IDLE_SPEED = 0.45;
   const TICK_HZ = 20;
-  const DEER_HEIGHT = 2.2;
-  const DEER_WIDTH = 3.0;
+  // Increased size for better visibility in fog
+  const DEER_HEIGHT = 3.0;
+  const DEER_WIDTH = 4.0;
+  const DEER_HALF_HEIGHT = DEER_HEIGHT * 0.5;
 
   // Deer state is stored in typed arrays to avoid GC churn.
   const px = useRef<Float32Array>(new Float32Array(COUNT));
@@ -90,6 +100,8 @@ export const FogDeer: React.FC<{
   // Rendering.
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const tmpDir = useMemo(() => new THREE.Vector3(), []);
+  const tmpPos = useMemo(() => new THREE.Vector3(), []);
 
   // Attribute refs (so we can flag needsUpdate without poking into mesh internals).
   const aOpacityRef = useRef<THREE.InstancedBufferAttribute | null>(null);
@@ -106,7 +118,7 @@ export const FogDeer: React.FC<{
     const uniforms = {
       ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       uTime: { value: 0 },
-      uColor: { value: new THREE.Color('#0a0b0c') },
+      uColor: { value: new THREE.Color('#1a1b1c') }, // Slightly brighter for visibility
     } satisfies Record<string, THREE.IUniform>;
 
     // NOTE: No GLSL version pragma here; the repo mixes shader versions and we must not force it.
@@ -280,7 +292,9 @@ export const FogDeer: React.FC<{
       opacity.current[i] = 0;
       targetOpacity.current[i] = 0;
       mode.current[i] = 2; // cooldown until we have a player signal
-      cooldown.current[i] = 0.5 + rand() * 1.0;
+      // Default: stagger initial spawns slightly.
+      // Debug (`?vcDeerNear`): spawn immediately after the first player signal.
+      cooldown.current[i] = debugConfig.spawnNear ? 0.0 : 0.5 + rand() * 1.0;
       aliveFor.current[i] = 0;
       px.current[i] = 0;
       py.current[i] = 0;
@@ -315,8 +329,10 @@ export const FogDeer: React.FC<{
     if (!playerRef.current.hasSignal) return false;
 
     const fogFar = Math.max(30, getFogFar());
-    const innerR = fogFar * 0.65;
-    const outerR = fogFar * 0.92;
+    // Normal: keep deer in a far fog annulus.
+    // Debug (`?vcDeerNear`): pull them close so they’re easy to spot immediately.
+    const innerR = debugConfig.spawnNear ? 7.0 : fogFar * 0.40;
+    const outerR = debugConfig.spawnNear ? 14.0 : fogFar * 0.70;
 
     const baseBiome = BiomeManager.getBiomeAt(playerRef.current.x, playerRef.current.z);
     // If the player's biome doesn't support deer, keep the whole system quiet.
@@ -344,7 +360,8 @@ export const FogDeer: React.FC<{
 
       px.current[i] = wx;
       pz.current[i] = wz;
-      py.current[i] = surfaceY + 0.35;
+      // Store "feet Y" so render can place the plane with its bottom at the surface.
+      py.current[i] = surfaceY;
 
       // Idle tangential drift around the player.
       const tangentX = -Math.sin(a);
@@ -380,8 +397,9 @@ export const FogDeer: React.FC<{
     }
 
     const fogFar = Math.max(30, getFogFar());
-    const innerR = fogFar * 0.65;
-    const outerR = fogFar * 0.92;
+    // Match the closer spawn range
+    const innerR = fogFar * 0.40;
+    const outerR = fogFar * 0.70;
 
     const playerX = playerRef.current.x;
     const playerZ = playerRef.current.z;
@@ -466,7 +484,7 @@ export const FogDeer: React.FC<{
 
       // Height: update occasionally (cheap enough at low tick rate).
       const surfaceY = TerrainService.getHeightAt(px.current[i], pz.current[i]);
-      py.current[i] = surfaceY + 0.35;
+      py.current[i] = surfaceY;
 
       // Biome gating: if it wanders into a "no deer" biome, fade and respawn.
       const biome = BiomeManager.getBiomeAt(px.current[i], pz.current[i]);
@@ -510,6 +528,49 @@ export const FogDeer: React.FC<{
     // Keep uniforms in sync.
     (material.uniforms as any).uTime.value = state.clock.elapsedTime;
 
+    // Debug: render a single deer near the camera for easy inspection.
+    // This bypasses biome gating/spawn logic entirely and keeps the deer "always on".
+    if (debugConfig.staticInspect) {
+      camera.getWorldDirection(tmpDir);
+      tmpPos.copy(camera.position).addScaledVector(tmpDir, 6.0);
+      // Keep the inspection deer planted on the terrain (not "sinking" through it).
+      tmpPos.y = TerrainService.getHeightAt(tmpPos.x, tmpPos.z);
+
+      px.current[0] = tmpPos.x;
+      py.current[0] = tmpPos.y;
+      pz.current[0] = tmpPos.z;
+      opacity.current[0] = 1.0;
+      targetOpacity.current[0] = 1.0;
+
+      // Hide all other instances so only one deer is visible.
+      for (let i = 1; i < COUNT; i++) {
+        opacity.current[i] = 0.0;
+        targetOpacity.current[i] = 0.0;
+      }
+      const opacityAttr = aOpacityRef.current;
+      if (opacityAttr) opacityAttr.needsUpdate = true;
+
+      // Place instance 0 facing the camera.
+      const yawToCamera = Math.atan2(camera.position.x - px.current[0], camera.position.z - pz.current[0]);
+      dummy.position.set(px.current[0], py.current[0] + DEER_HALF_HEIGHT, pz.current[0]);
+      dummy.rotation.set(0, yawToCamera, 0);
+      dummy.scale.setScalar(2.0);
+      dummy.updateMatrix();
+      meshRef.current.setMatrixAt(0, dummy.matrix);
+
+      // Force-hide the remaining instance transforms (so we don't depend on prior frame state).
+      for (let i = 1; i < COUNT; i++) {
+        dummy.position.set(0, -9999, 0);
+        dummy.scale.setScalar(0.0001);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        meshRef.current.setMatrixAt(i, dummy.matrix);
+      }
+
+      meshRef.current.instanceMatrix.needsUpdate = true;
+      return;
+    }
+
     // Fixed-step sim (keeps behavior stable across frame rate).
     accumulator.current += dt;
     const step = 1 / TICK_HZ;
@@ -541,7 +602,8 @@ export const FogDeer: React.FC<{
       }
 
       const yawToCamera = Math.atan2(camera.position.x - px.current[i], camera.position.z - pz.current[i]);
-      dummy.position.set(px.current[i], py.current[i] + 0.9, pz.current[i]);
+      // Position the instanced plane so its bottom edge sits on the sampled terrain height.
+      dummy.position.set(px.current[i], py.current[i] + DEER_HALF_HEIGHT, pz.current[i]);
       dummy.rotation.set(0, yawToCamera, 0);
 
       // Slight scale variance per deer to avoid clones.

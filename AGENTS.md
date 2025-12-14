@@ -160,6 +160,19 @@ The project follows a domain-driven architecture to improve scalability and main
   - **Fix**: `src/features/creatures/FogDeer.tsx` now clones `THREE.UniformsLib.fog` explicitly into the shader uniforms and defensively ensures `fogColor/fogNear/fogFar` exist before the first program compile.
   - **Verification**: Ran `npm run build` (success) and `npm run dev -- --host 127.0.0.1 --port 3000` (server ready on `http://127.0.0.1:3000/`, stopped after ~20s by CLI timeout). Visual inspection required: confirm the console error is gone and fog deer silhouettes still render in the distance.
 
+- 2025-12-13: Added `?vcDeerNear` debug mode to spawn FogDeer close to the player at game start for easy visual verification.
+  - **Debug**: `http://127.0.0.1:3000/?vcDeerNear` spawns deer in a close annulus (~7–14 units) immediately after the first `player-moved` signal, instead of in the mid/far fog band. (Typo alias supported: `?vcDeerNeer`.)
+  - **Debug**: `http://127.0.0.1:3000/?vcDeerStatic` forces a single "inspection" deer ~6 units in front of the camera so you can see the silhouette immediately.
+  - **Fix**: Deer were visually “sinking” into the terrain because the instanced plane was positioned by its center. `FogDeer` now stores `py` as the sampled surface height (“feet Y”) and renders at `feetY + DEER_HEIGHT/2` so the bottom edge sits on the terrain.
+  - **Verification**: Ran `npm run build` (success) and `npm run dev -- --host 127.0.0.1 --port 3000` (server ready on `http://127.0.0.1:3000/`, stopped after ~20s by CLI timeout). Visual inspection required: confirm the deer silhouettes are visible near spawn and the fog-uniform console error remains gone.
+
+- 2025-12-13: Fixed firefly Y-axis instability and deer visibility issues.
+  - **Firefly Y-Jumping**: `AmbientLife.tsx` `refreshForAnchor` was using `playerRef.current.y` to compute `baseY`, causing fireflies to rapidly move vertically when the player moved. Fixed by making fireflies strictly terrain-relative with a stable height offset based on their phase seed.
+  - **Firefly Scale**: Reduced `BASE_RADIUS` from 0.07 to 0.035 for smaller, subtler appearance.
+  - **Firefly Distribution**: Removed cave boost logic that was spawning them "everywhere". Now only spawn in biomes with positive `biomeFireflyFactor` (GROVE, JUNGLE, BEACH, PLAINS, MOUNTAINS).
+  - **Deer Visibility**: Deer were spawning too far (65-92% of fog distance) and were too small. Fixed by bringing spawn range closer (40-70%), increasing count from 3 to 5, increasing size from 2.2x3.0 to 3.0x4.0 units, and slightly brightening the silhouette color.
+  - **Verification**: Ran `npm run build` (success). Visual inspection required: walk around THE_GROVE biome, confirm fireflies hover stably above terrain without jumping, and deer silhouettes are visible in the mid-distance fog band.
+
 - 2025-12-13: Changed flora pickup + placement hotkeys, and added world torch placement.
   - **Pickup**: Flora is no longer harvested via DIG (which could grab multiple nearby). New `Q` hotkey performs a single-target ray pickup (placed `FLORA` entities + generated lumina flora), increments flora count, and plays a fly-to-player pickup effect. Generated lumina removal now “hides” a single instance (keeps array length stable) and `LuminaLayer` uses deterministic per-instance transforms so other bulbs don’t reshuffle on pickup.
   - **Placement**: `E` now places the currently selected inventory item. If the torch slot is selected, a world-placed torch is spawned and oriented to face away from the hit surface normal; if the flora slot is selected, one flora is consumed and placed as before.
