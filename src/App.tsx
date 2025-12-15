@@ -174,18 +174,18 @@ const DebugControls: React.FC<{
             // Defaults match the requested screenshot.
             iblEnabled: { value: false, onChange: (v) => setIblEnabled(!!v), label: 'IBL Enabled' },
             iblIntensity: { value: 0.4, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setIblIntensity(v), label: 'IBL Intensity' },
-            sunIntensity: { value: 0.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
+            sunIntensity: { value: 1.5, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
             ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setAmbientIntensityMul(v), label: 'Ambient Intensity' },
             moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: (v) => setMoonIntensityMul(v), label: 'Moon Intensity' },
             // Keep fog relatively close so chunk streaming happens "inside" fog.
-            fogNear: { value: 10, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
-            fogFar: { value: 90, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
+            fogNear: { value: 20, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
+            fogFar: { value: 160, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
             exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: (v) => setExposureSurface(v), label: 'Exposure (Surface)' },
             exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: (v) => setExposureCaveMax(v), label: 'Exposure (Cave Max)' },
             exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: (v) => setExposureUnderwater(v), label: 'Exposure (Underwater)' },
             bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setBloomIntensity(v), label: 'Bloom Intensity' },
             bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: (v) => setBloomThreshold(v), label: 'Bloom Threshold' },
-            caOffset: { value: 0.002, min: 0.0, max: 0.01, step: 0.0001, onChange: (v) => setCaOffset(v), label: 'Chromatic Abb.' },
+            caOffset: { value: 0.00001, min: 0.0, max: 0.01, step: 0.0001, onChange: (v) => setCaOffset(v), label: 'Chromatic Abb.' },
             vignetteDarkness: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: (v) => setVignetteDarkness(v), label: 'Vignette' }
           },
           { collapsed: false }
@@ -716,38 +716,53 @@ const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 
     if (!moonMeshRef.current || !lightRef.current) return;
 
     const t = clock.getElapsedTime();
-    const radius = 300; // Distance from player
-    const speed = 0.025; // MUST match Sun speed to stay opposite
+    const speed = 0.025;
+    const radius = 300;
 
     // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
     const angle = calculateOrbitAngle(t, speed, Math.PI);
 
-    // Calculate position
-    const x = Math.sin(angle) * radius;
-    const y = Math.cos(angle) * radius;
+    // --- VISUAL MOON (Mesh) ---
+    // Push the moon mesh far away (1200 units) so it doesn't clip through 
+    // terrain/mountains, but keep it properly scaled so it looks realistic.
+    // Real moon is ~0.5 degrees. Radius 12 @ Dist 1200 ~= 0.57 degrees.
+    const visualDistance = 1200;
 
-    // Position the moon relative to the camera (so you can't walk past it)
-    const px = camera.position.x + x;
-    const py = y; // Keep height absolute relative to horizon
-    const pz = camera.position.z + 30; // Slight Z offset
+    const vx = Math.sin(angle) * visualDistance;
+    const vy = Math.cos(angle) * visualDistance;
 
-    // Apply positions
-    moonMeshRef.current.position.set(px, py, pz);
+    // Position relative to camera so it's always "at infinity"
+    const mPx = camera.position.x + vx;
+    const mPy = vy;
+    const mPz = camera.position.z + 30; // Keep same Z plane offset
 
-    // Move the directional light with the mesh
-    lightRef.current.position.set(px, py, pz);
+    moonMeshRef.current.position.set(mPx, mPy, mPz);
+
+    // --- LIGHTING (Physics) ---
+    // Keep light at the configured orbital radius for consistent shadow map behavior
+    const lx = Math.sin(angle) * radius;
+    const ly = Math.cos(angle) * radius;
+
+    const lPx = camera.position.x + lx;
+    const lPy = ly;
+    const lPz = camera.position.z + 30;
+
+    lightRef.current.position.set(lPx, lPy, lPz);
     target.position.set(camera.position.x, 0, camera.position.z);
     lightRef.current.target = target;
     lightRef.current.updateMatrixWorld();
 
     // VISIBILITY: Only visible when above the horizon
-    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
+    const isAboveHorizon = mPy > -150;
     moonMeshRef.current.visible = isAboveHorizon;
 
     // Underground: keep outside moon/sky readable but reduce cave bleed.
     const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
     const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
-    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming * intensityMul : 0; // Dim light
+
+    // Light intensity check - use the mathematical height (ly) not visual height
+    lightRef.current.intensity = (ly > -50) ? 0.2 * moonDimming * intensityMul : 0;
+
     if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
   });
 
@@ -761,9 +776,9 @@ const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 
       />
       <primitive object={target} />
 
-      {/* Simple White Sphere - fog={false} so scene fog doesn't hide the moon */}
+      {/* Small White Sphere - fog={false} so scene fog doesn't hide the moon */}
       <mesh ref={moonMeshRef}>
-        <sphereGeometry args={[20, 32, 32]} />
+        <sphereGeometry args={[12, 32, 32]} />
         <meshBasicMaterial color="#ffffff" fog={false} />
       </mesh>
     </>
@@ -1122,7 +1137,7 @@ const App: React.FC = () => {
     const n = v != null ? Number(v) : 160;
     return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 160;
   });
-  const [sunIntensityMul, setSunIntensityMul] = useState(0.0);
+  const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
   // IBL: disabled by default (can be re-enabled later via debug if desired).
