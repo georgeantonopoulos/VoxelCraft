@@ -5,6 +5,9 @@ import torchImg from '@/assets/images/torch_gemini.png';
 import floraImg from '@/assets/images/flower_blue.png';
 import stickImg from '@/assets/images/stick.svg';
 import stoneImg from '@/assets/images/stone.svg';
+// Reuse stone image for shard for now, or just use a generic shape if we had one.
+// Using stoneImg but maybe tinted or just same for now as placeholder is acceptable per requirements.
+// Requirement said: "reusing Stone or a simple SVG is fine"
 
 export const InventoryBar: React.FC = () => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -13,12 +16,13 @@ export const InventoryBar: React.FC = () => {
     const torchCount = useInventoryStore(state => state.torchCount);
     const stickCount = useInventoryStore(state => state.stickCount);
     const stoneCount = useInventoryStore(state => state.stoneCount);
+    const shardCount = useInventoryStore(state => state.shardCount);
 
     return (
         <div className="absolute bottom-6 left-6 z-50 flex gap-2 p-2 bg-slate-900/80 backdrop-blur-md rounded-xl border border-white/10 shadow-xl pointer-events-auto">
             {inventorySlots.map((item, index) => {
                 const isSelected = index === selectedSlotIndex;
-                const showCount = item === 'flora' || item === 'torch' || item === 'stick' || item === 'stone';
+                const showCount = item === 'flora' || item === 'torch' || item === 'stick' || item === 'stone' || item === 'shard';
                 const count = item === 'flora'
                   ? floraCount
                   : (item === 'torch'
@@ -27,7 +31,9 @@ export const InventoryBar: React.FC = () => {
                       ? stickCount
                       : (item === 'stone'
                         ? stoneCount
-                        : 0)));
+                        : (item === 'shard'
+                            ? shardCount
+                            : 0))));
                 return (
                     <div
                         key={index}
@@ -69,6 +75,12 @@ export const InventoryBar: React.FC = () => {
                                 alt="Stone"
                                 className={`w-8 h-8 object-contain drop-shadow-md ${count > 0 ? '' : 'opacity-30'}`}
                             />
+                        )}
+                        {item === 'shard' && (
+                             <div className={`relative w-8 h-8 flex items-center justify-center ${count > 0 ? '' : 'opacity-30'}`}>
+                                 {/* Simple CSS shape for shard if no image */}
+                                 <div className="w-0 h-0 border-l-[6px] border-l-transparent border-b-[16px] border-b-slate-300 border-r-[6px] border-r-transparent transform rotate-45 drop-shadow-md"></div>
+                             </div>
                         )}
 
                         {/* Stack Count */}

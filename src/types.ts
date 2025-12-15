@@ -127,3 +127,18 @@ export interface ChunkState {
 
   lightPositions?: Float32Array;
 }
+
+export enum ItemType {
+  STONE = 'stone',
+  STICK = 'stick',
+  SHARD = 'shard',
+  PICKAXE = 'pickaxe'
+}
+
+export interface ActivePhysicsItem {
+  id: string;
+  type: ItemType;
+  position: [number, number, number];
+  velocity: [number, number, number];
+  isPlanted?: boolean; // For sticks
+}

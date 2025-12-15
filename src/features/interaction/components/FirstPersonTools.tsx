@@ -9,6 +9,7 @@ import { TorchTool } from './TorchTool';
 import { FloraTool } from './FloraTool';
 import { StickTool } from './StickTool';
 import { StoneTool } from './StoneTool';
+import { ShardTool } from './ShardTool';
 import { RIGHT_HAND_HELD_ITEM_POSES } from '@features/interaction/logic/HeldItemPoses';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
@@ -197,7 +198,7 @@ export const FirstPersonTools: React.FC = () => {
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
             // Stick/stone are held as right-hand items (not tools), so don't animate pickaxe swings.
-            if (selectedItem === 'stick' || selectedItem === 'stone') return;
+            if (selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard') return;
             if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -219,7 +220,7 @@ export const FirstPersonTools: React.FC = () => {
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            if (selectedItem === 'stick' || selectedItem === 'stone') return;
+            if (selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard') return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
             if (detail.action === 'DIG' && currentTool === 'pickaxe') {
                 isDigging.current = true;
@@ -311,7 +312,7 @@ export const FirstPersonTools: React.FC = () => {
         rotationX += kick * 0.10;  // Tiny upward recoil
 
         const selectedItem = inventorySlots[selectedSlotIndex];
-        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone';
+        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
         const leftHandShown = selectedItem === 'torch' || selectedItem === 'flora';
 
         // Apply transforms to the inner Axe group (local offsets)
@@ -362,7 +363,7 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        // Right-hand item logic: stick/stone replaces pickaxe.
+        // Right-hand item logic: stick/stone/shard replaces pickaxe.
         const rightShown = rightHandOverride;
         const rTargetProg = rightShown ? 1 : 0;
         rightItemProgress.current = THREE.MathUtils.lerp(
@@ -375,8 +376,9 @@ export const FirstPersonTools: React.FC = () => {
 
         if (rightItemRef.current) {
             const now = state.clock.getElapsedTime();
-            const pose = selectedItem === 'stick' || selectedItem === 'stone'
-                ? (debugMode
+            const isRightHandItem = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
+            const pose = isRightHandItem
+                ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
                     ? (selectedItem === 'stick'
                         ? {
                             xOffset: rightHandStickPoseDebug.xOffset,
@@ -485,6 +487,9 @@ export const FirstPersonTools: React.FC = () => {
                 </group>
                 <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
                     <StoneTool />
+                </group>
+                <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
+                    <ShardTool />
                 </group>
             </group>
 

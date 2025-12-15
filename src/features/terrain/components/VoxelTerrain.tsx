@@ -8,8 +8,9 @@ import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore, FloraHotspot } from '@state/WorldStore';
+import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
-import { MaterialType, ChunkState } from '@/types';
+import { MaterialType, ChunkState, ItemType } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
@@ -72,6 +73,13 @@ const isTerrainCollider = (collider: Collider): boolean => {
   const parent = collider.parent();
   const userData = parent?.userData as { type?: string } | undefined;
   return userData?.type === 'terrain';
+};
+
+const isPhysicsItemCollider = (collider: Collider): boolean => {
+  const parent = collider.parent();
+  const userData = parent?.userData as { type?: string } | undefined;
+  // PhysicsItems have ItemType enum values in userData.type
+  return Object.values(ItemType).includes(userData?.type as ItemType);
 };
 
 // Small helper to test ray vs placed flora without relying on physics colliders
@@ -1099,6 +1107,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const luminaHit = rayHitsGeneratedLuminaFlora(chunksRef.current, origin, dir, maxDist, 0.55);
       const groundHit = rayHitsGeneratedGroundPickup(chunksRef.current, origin, dir, maxDist, 0.55);
 
+      // Physics Item Hit (Pickaxe, Shard, Stick, Stone)
+      const physicsHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined, isPhysicsItemCollider);
+      let physicsItemHit: { id: string, type: ItemType, position: THREE.Vector3, t: number } | null = null;
+
+      if (physicsHit && physicsHit.collider) {
+          const parent = physicsHit.collider.parent();
+          const userData = parent?.userData as { type?: ItemType, id?: string };
+          if (userData && userData.id && userData.type) {
+              const t = physicsHit.timeOfImpact;
+              const point = new rapier.Ray(origin, dir).pointAt(t);
+              physicsItemHit = { id: userData.id, type: userData.type, position: new THREE.Vector3(point.x, point.y, point.z), t };
+          }
+      }
+
       const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
         const key = hit.key;
         const chunk = chunksRef.current[key];
@@ -1139,6 +1161,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
       // Determine closest along ray (torch vs flora vs lumina).
       const tTorch = torchHit?.t ?? Infinity;
+      const tPhysics = physicsItemHit?.t ?? Infinity;
 
       const entPlaced = placedId ? useWorldStore.getState().entities.get(placedId) : null;
       const pPlaced = entPlaced?.bodyRef?.current ? entPlaced.bodyRef.current.translation() : entPlaced?.position;
@@ -1147,7 +1170,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const tLumina = luminaHit?.t ?? Infinity;
       const tGround = groundHit?.t ?? Infinity;
 
-      if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
+      if (tPhysics <= tTorch && tPhysics <= tPlaced && tPhysics <= tLumina && tPhysics <= tGround && physicsItemHit) {
+          // Physics Item Pickup
+          pickedStart = physicsItemHit.position;
+          usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
+
+          if (physicsItemHit.type === ItemType.PICKAXE) {
+              useGameStore.getState().setHasAxe(true);
+              // Pickaxe doesn't go into inventory count, it just unlocks the tool
+              // But we can show a pickup effect
+              const effectId = `${Date.now()}-${Math.random()}`;
+              setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
+              return; // Special case, return early or handle below?
+              // Logic below expects 'pickedItem' to add to inventory count.
+              // Let's just handle it here and return or set null.
+          } else {
+              pickedItem = physicsItemHit.type === ItemType.STICK ? 'stick'
+                         : physicsItemHit.type === ItemType.STONE ? 'stone'
+                         : physicsItemHit.type === ItemType.SHARD ? 'shard'
+                         : null;
+          }
+      } else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
         pickedItem = 'torch';
         pickedStart = torchHit.position;
         useWorldStore.getState().removeEntity(torchHit.id);
@@ -1194,6 +1237,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           pickedItem === 'torch' ? '#ffdbb1' :
             pickedItem === 'stick' ? '#c99a63' :
               pickedItem === 'stone' ? '#cfcfd6' :
+                pickedItem === 'shard' ? '#aaaaaa' :
                 '#00FFFF';
         setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color }]);
       }

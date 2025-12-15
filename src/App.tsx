@@ -21,6 +21,8 @@ import { AmbientLife } from '@features/environment/AmbientLife';
 import { setSnapEpsilon } from '@/constants';
 import { useWorldStore } from '@state/WorldStore';
 import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
+import { PhysicsItemRenderer } from '@features/interaction/components/PhysicsItemRenderer';
+import { InteractionHandler } from '@features/interaction/logic/InteractionHandler';
 import { InventoryInput } from '@features/interaction/components/InventoryInput';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
@@ -42,56 +44,7 @@ const keyboardMap = [
   { name: 'shift', keys: ['Shift'] },
 ];
 
-const InteractionLayer: React.FC<{
-  setInteracting: (v: boolean) => void,
-  setAction: (a: 'DIG' | 'BUILD' | null) => void
-}> = ({ setInteracting, setAction }) => {
-  const inputMode = useSettingsStore(s => s.inputMode);
-  const isDigging = useInputStore(s => s.isDigging);
-  const isBuilding = useInputStore(s => s.isBuilding);
-
-  useEffect(() => {
-    if (inputMode !== 'touch') return;
-    if (isDigging) {
-      setAction('DIG');
-      setInteracting(true);
-    } else if (isBuilding) {
-      setAction('BUILD');
-      setInteracting(true);
-    } else {
-      setAction(null);
-      setInteracting(false);
-    }
-  }, [isDigging, isBuilding, inputMode, setAction, setInteracting]);
-
-  useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
-      // Only allow interaction if we are locked (gameplay) OR if we are clicking canvas (handled by pointer lock check)
-      // But typically we want to interact when locked.
-      if (!document.pointerLockElement) return;
-      if (e.button === 0) setAction('DIG');
-      if (e.button === 2) setAction('BUILD');
-      setInteracting(true);
-    };
-
-    const handleMouseUp = () => {
-      setInteracting(false);
-      setAction(null);
-    };
-
-    window.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('contextmenu', (e) => e.preventDefault());
-
-    return () => {
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('contextmenu', (e) => e.preventDefault());
-    };
-  }, [setInteracting, setAction]);
-
-  return null;
-};
+// Removed InteractionLayer (Logic moved to InteractionHandler.tsx)
 
 const DebugControls: React.FC<{
   setDebugShadowsEnabled: (v: boolean) => void;
@@ -1501,6 +1454,7 @@ const App: React.FC = () => {
               )}
               <FloraPlacer />
               {bedrockPlaneEnabled && <BedrockPlane />}
+              <PhysicsItemRenderer />
             </Physics>
             {/* Add FirstPersonTools here, outside Physics but inside Canvas/Suspense if needed, or just inside Canvas */}
             <FirstPersonTools />
@@ -1554,7 +1508,7 @@ const App: React.FC = () => {
 
         {gameStarted && (
           <>
-            <InteractionLayer setInteracting={setIsInteracting} setAction={setAction} />
+            <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
             <InventoryInput enabled={gameStarted} />
             <UI />
           </>
