@@ -41,26 +41,29 @@ const vcPoseWriterPlugin = (): Plugin => ({
           return `{ xOffset: ${xOffset}, y: ${y}, z: ${z}, scale: ${scale}, rotOffset: { x: ${rx}, y: ${ry}, z: ${rz} } }`;
         };
 
-        const replaceLine = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
-          const lineRe = new RegExp(`^\\s*${key}\\s*:\\s*\\{.*\\}\\s*,?\\s*$`, 'm');
-          const replacement = `  ${key}: ${formatPose(pose)}${key === 'stick' ? ',' : ''}`;
-          if (!lineRe.test(content)) {
-            throw new Error(`Could not find ${key} pose line in HeldItemPoses.ts`);
+        const replacePose = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
+          const entry = `${key}: ${formatPose(pose)}`;
+          if (key === 'stick') {
+            const re = /(\bstick\s*:\s*)\{[\s\S]*?\}\s*,/m;
+            if (!re.test(content)) throw new Error('Could not find stick pose entry in HeldItemPoses.ts');
+            content = content.replace(re, `${entry},`);
+          } else {
+            const re = /(\bstone\s*:\s*)\{[\s\S]*?\}\s*(,?)/m;
+            if (!re.test(content)) throw new Error('Could not find stone pose entry in HeldItemPoses.ts');
+            content = content.replace(re, `${entry}$2`);
           }
-          content = content.replace(lineRe, replacement);
         };
 
         if (body.kind === 'stick' || body.kind === 'both') {
           if (!body.stick) throw new Error('Missing stick payload');
-          replaceLine('stick', body.stick);
+          replacePose('stick', body.stick);
         }
         if (body.kind === 'stone' || body.kind === 'both') {
           if (!body.stone) throw new Error('Missing stone payload');
-          replaceLine('stone', body.stone);
+          replacePose('stone', body.stone);
         }
 
         await fs.writeFile(filePath, content, 'utf8');
-        server.ws.send({ type: 'full-reload' });
 
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');

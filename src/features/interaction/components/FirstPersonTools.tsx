@@ -62,33 +62,44 @@ export const FirstPersonTools: React.FC = () => {
             rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
             rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
-            'Save To Code': button(async () => {
+            'Save To Code': button((get) => (async () => {
                 try {
+                    const folder = (typeof get === 'function' ? get('Right Hand / Stick') : null) as any;
+                    const xOffset = folder?.xOffset ?? rightHandStickPoseDebug.xOffset;
+                    const y = folder?.y ?? rightHandStickPoseDebug.y;
+                    const z = folder?.z ?? rightHandStickPoseDebug.z;
+                    const scale = folder?.scale ?? rightHandStickPoseDebug.scale;
+                    const rotXDeg = folder?.rotXDeg ?? rightHandStickPoseDebug.rotXDeg;
+                    const rotYDeg = folder?.rotYDeg ?? rightHandStickPoseDebug.rotYDeg;
+                    const rotZDeg = folder?.rotZDeg ?? rightHandStickPoseDebug.rotZDeg;
+
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             kind: 'stick',
                             stick: {
-                                xOffset: rightHandStickPoseDebug.xOffset,
-                                y: rightHandStickPoseDebug.y,
-                                z: rightHandStickPoseDebug.z,
-                                scale: rightHandStickPoseDebug.scale,
+                                xOffset,
+                                y,
+                                z,
+                                scale,
                                 rotOffset: {
-                                    x: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotXDeg),
-                                    y: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotYDeg),
-                                    z: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotZDeg),
+                                    x: THREE.MathUtils.degToRad(rotXDeg),
+                                    y: THREE.MathUtils.degToRad(rotYDeg),
+                                    z: THREE.MathUtils.degToRad(rotZDeg),
                                 }
                             }
                         })
                     });
                     const json = await res.json().catch(() => ({}));
                     if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                    // Let HMR pick up the updated file; keep this explicit for clarity during tuning.
+                    console.log('[Right Hand / Stick] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stick] Save failed:', err);
                     alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
-            }),
+            })()),
         },
         { hidden: !debugMode }
     );
@@ -103,33 +114,43 @@ export const FirstPersonTools: React.FC = () => {
             rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
             rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
-            'Save To Code': button(async () => {
+            'Save To Code': button((get) => (async () => {
                 try {
+                    const folder = (typeof get === 'function' ? get('Right Hand / Stone') : null) as any;
+                    const xOffset = folder?.xOffset ?? rightHandStonePoseDebug.xOffset;
+                    const y = folder?.y ?? rightHandStonePoseDebug.y;
+                    const z = folder?.z ?? rightHandStonePoseDebug.z;
+                    const scale = folder?.scale ?? rightHandStonePoseDebug.scale;
+                    const rotXDeg = folder?.rotXDeg ?? rightHandStonePoseDebug.rotXDeg;
+                    const rotYDeg = folder?.rotYDeg ?? rightHandStonePoseDebug.rotYDeg;
+                    const rotZDeg = folder?.rotZDeg ?? rightHandStonePoseDebug.rotZDeg;
+
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             kind: 'stone',
                             stone: {
-                                xOffset: rightHandStonePoseDebug.xOffset,
-                                y: rightHandStonePoseDebug.y,
-                                z: rightHandStonePoseDebug.z,
-                                scale: rightHandStonePoseDebug.scale,
+                                xOffset,
+                                y,
+                                z,
+                                scale,
                                 rotOffset: {
-                                    x: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotXDeg),
-                                    y: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotYDeg),
-                                    z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg),
+                                    x: THREE.MathUtils.degToRad(rotXDeg),
+                                    y: THREE.MathUtils.degToRad(rotYDeg),
+                                    z: THREE.MathUtils.degToRad(rotZDeg),
                                 }
                             }
                         })
                     });
                     const json = await res.json().catch(() => ({}));
                     if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                    console.log('[Right Hand / Stone] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stone] Save failed:', err);
                     alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
-            }),
+            })()),
         },
         { hidden: !debugMode }
     );
