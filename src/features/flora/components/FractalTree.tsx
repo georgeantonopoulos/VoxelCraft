@@ -405,7 +405,8 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                             col = mix(col, col * 1.4, tip); 
                             
                             csm_DiffuseColor = vec4(col, 1.0);
-                            csm_Emissive = uColorTip * 0.4; // Static glow
+                            // Restore original leaf self-illumination (see history: csm_Emissive = uColorTip * 2.0)
+                            csm_Emissive = uColorTip * 2.0;
                             csm_Roughness = 0.6;
                         }
                     `}
