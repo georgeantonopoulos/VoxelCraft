@@ -1157,7 +1157,6 @@ const App: React.FC = () => {
     return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 160;
   });
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
-  const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
   // IBL: disabled by default (can be re-enabled later via debug if desired).
