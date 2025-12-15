@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { RigidBody } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
-import { VOXEL_SCALE, CHUNK_SIZE_XZ } from '@/constants';
+import { VOXEL_SCALE, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, MESH_Y_OFFSET } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
@@ -83,8 +83,16 @@ export const ChunkMesh: React.FC<{
     if (chunk.meshNormals?.length > 0) geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
     else geom.computeVertexNormals();
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
-    geom.computeBoundingBox();
-    geom.computeBoundingSphere();
+    // Avoid per-chunk bounding volume scans on the main thread when streaming.
+    // Use a conservative, constant local-space bound that covers chunk extents.
+    const r = Math.sqrt(
+      (CHUNK_SIZE_XZ + PAD * 2) ** 2 * 2 +
+      (CHUNK_SIZE_Y + PAD * 2) ** 2
+    ) * 0.5;
+    geom.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(CHUNK_SIZE_XZ * 0.5 - PAD, MESH_Y_OFFSET + CHUNK_SIZE_Y * 0.5, CHUNK_SIZE_XZ * 0.5 - PAD),
+      r
+    );
     return geom;
   }, [chunk.meshPositions, chunk.visualVersion]);
 
@@ -126,10 +134,11 @@ export const ChunkMesh: React.FC<{
 
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
+  const colliderEnabled = chunk.colliderEnabled ?? true;
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
-      {terrainGeometry && (
+      {terrainGeometry && (colliderEnabled ? (
         <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
           <mesh
             ref={meshRef}
@@ -145,14 +154,14 @@ export const ChunkMesh: React.FC<{
               <meshNormalMaterial />
             ) : terrainChunkTintEnabled ? (
               <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
-              ) : (
-                <TriplanarMaterial
-                  sunDirection={sunDirection}
-                  triplanarDetail={triplanarDetail}
-                  shaderFogEnabled={terrainShaderFogEnabled}
-                  shaderFogStrength={terrainShaderFogStrength}
-                  threeFogEnabled={terrainThreeFogEnabled}
-                  wetnessEnabled={terrainWetnessEnabled}
+            ) : (
+              <TriplanarMaterial
+                sunDirection={sunDirection}
+                triplanarDetail={triplanarDetail}
+                shaderFogEnabled={terrainShaderFogEnabled}
+                shaderFogStrength={terrainShaderFogStrength}
+                threeFogEnabled={terrainThreeFogEnabled}
+                wetnessEnabled={terrainWetnessEnabled}
                 mossEnabled={terrainMossEnabled}
                 roughnessMin={terrainRoughnessMin}
                 polygonOffsetEnabled={terrainPolygonOffsetEnabled}
@@ -164,7 +173,40 @@ export const ChunkMesh: React.FC<{
             )}
           </mesh>
         </RigidBody>
-      )}
+      ) : (
+        <mesh
+          ref={meshRef}
+          // Tag the actual render mesh so non-physics raycasters (e.g. placement tools) can reliably detect terrain hits.
+          userData={{ type: 'terrain', key: chunk.key }}
+          scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
+          castShadow
+          receiveShadow
+          frustumCulled
+          geometry={terrainGeometry}
+        >
+          {normalsMode ? (
+            <meshNormalMaterial />
+          ) : terrainChunkTintEnabled ? (
+            <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
+          ) : (
+            <TriplanarMaterial
+              sunDirection={sunDirection}
+              triplanarDetail={triplanarDetail}
+              shaderFogEnabled={terrainShaderFogEnabled}
+              shaderFogStrength={terrainShaderFogStrength}
+              threeFogEnabled={terrainThreeFogEnabled}
+              wetnessEnabled={terrainWetnessEnabled}
+              mossEnabled={terrainMossEnabled}
+              roughnessMin={terrainRoughnessMin}
+              polygonOffsetEnabled={terrainPolygonOffsetEnabled}
+              polygonOffsetFactor={terrainPolygonOffsetFactor}
+              polygonOffsetUnits={terrainPolygonOffsetUnits}
+              weightsView={terrainWeightsView}
+              wireframe={terrainWireframeEnabled}
+            />
+          )}
+        </mesh>
+      ))}
       {waterGeometry && (
         <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
           <WaterMaterial

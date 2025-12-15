@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, startTransition } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
@@ -532,6 +532,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const initialLoadTriggered = useRef(false);
   const treeDamageRef = useRef<Map<string, number>>(new Map());
 
+  const streamDebug = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const params = new URLSearchParams(window.location.search);
+    // Keep streaming logs opt-in even in debug sessions.
+    return params.has('debug') && params.has('vcStreamDebug');
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Manual material selection (hotkeys). This temporarily disables smart auto-selection.
@@ -551,6 +558,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   // Queue chunk generation requests so we can throttle how many we send per frame.
   // This spreads out the worker responses and main-thread geometry/collider work.
   const generateQueue = useRef<Array<{ cx: number; cz: number; key: string }>>([]);
+  // Buffer worker messages so we can apply them at a controlled cadence (reduces hitching).
+  const workerMessageQueue = useRef<Array<{ type: string; payload: any }>>([]);
+  const workerMessageHead = useRef(0);
+
+  const neededKeysRef = useRef<Set<string>>(new Set());
+
+  // Streaming window: shift the active chunk window slightly in the movement direction so we
+  // generate more ahead of the player without increasing total chunk count.
+  const hasPrevCamPos = useRef(false);
+  const prevCamPos = useRef(new THREE.Vector3());
+  const tmpMoveDir = useRef(new THREE.Vector3());
+  const streamForward = useRef(new THREE.Vector3(0, 0, 1));
+  const streamCenter = useRef<{ cx: number; cz: number }>({ cx: 0, cz: 0 });
+  const playerChunk = useRef<{ px: number; pz: number }>({ px: 0, pz: 0 });
+
+  // Physics collider enabling is intentionally more conservative than rendering to reduce spikes.
+  const COLLIDER_RADIUS = 1; // Chebyshev distance (0 => current chunk only; 1 => 3x3)
+  const colliderEnableQueue = useRef<string[]>([]);
+  const colliderEnablePending = useRef<Set<string>>(new Set());
+  const lastColliderCenterKey = useRef<string>('');
 
   // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
   const [particleState, setParticleState] = useState<{
@@ -596,51 +623,197 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     worker.postMessage({ type: 'CONFIGURE', payload: { worldType } });
 
     worker.onmessage = (e) => {
-      const { type, payload } = e.data;
+      // Buffer all messages; we apply them in `useFrame` to control cadence and reduce hitches.
+      workerMessageQueue.current.push(e.data);
+    };
 
+    return () => worker.terminate();
+  }, []);
+
+  useEffect(() => {
+    if (initialLoadTriggered.current || !onInitialLoad) return;
+
+    // Check if central chunks are ready (3x3 grid around 0,0)
+    // 3x3 is enough to cover the immediate view so player doesn't see void
+    const essentialKeys = [
+      '0,0', '0,1', '0,-1', '1,0', '-1,0',
+      '1,1', '1,-1', '-1,1', '-1,-1'
+    ];
+
+    const allLoaded = essentialKeys.every(key => chunks[key]);
+
+    if (allLoaded) {
+      initialLoadTriggered.current = true;
+      onInitialLoad();
+    }
+  }, [chunks, onInitialLoad]);
+
+  useFrame(() => {
+    if (!camera || !workerRef.current) return;
+
+    const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
+    const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
+    playerChunk.current.px = px;
+    playerChunk.current.pz = pz;
+
+    // Drive initial load from the authoritative ref, not React state: during streaming we may
+    // intentionally deprioritize state updates to reduce hitches.
+    if (!initialLoadTriggered.current && onInitialLoad) {
+      const essentialKeys = [
+        `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
+        `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
+      ];
+      const allLoaded = essentialKeys.every(key => chunksRef.current[key]);
+      if (allLoaded) {
+        initialLoadTriggered.current = true;
+        onInitialLoad();
+      }
+    }
+
+    // Update movement direction estimate (world-space) for forward-shifted streaming window.
+    if (!hasPrevCamPos.current) {
+      prevCamPos.current.copy(camera.position);
+      hasPrevCamPos.current = true;
+    } else {
+      const dx = camera.position.x - prevCamPos.current.x;
+      const dz = camera.position.z - prevCamPos.current.z;
+      const speedSq = dx * dx + dz * dz;
+      // Only update direction when we are actually moving (prevents churn when rotating in place).
+      if (speedSq > 0.0004) {
+        tmpMoveDir.current.set(dx, 0, dz).normalize();
+        // Smooth direction so tiny jitter doesn't thrash the streaming center.
+        streamForward.current.lerp(tmpMoveDir.current, 0.25).normalize();
+      }
+      prevCamPos.current.copy(camera.position);
+    }
+
+    // Update simulation player position
+    simulationManager.updatePlayerPosition(px, pz);
+
+    const neededKeys = new Set<string>();
+    let changed = false;
+
+    const shift = 1;
+    const axisThreshold = 0.35;
+    const offsetCx = Math.abs(streamForward.current.x) > axisThreshold ? Math.sign(streamForward.current.x) * shift : 0;
+    const offsetCz = Math.abs(streamForward.current.z) > axisThreshold ? Math.sign(streamForward.current.z) * shift : 0;
+    const centerCx = px + offsetCx;
+    const centerCz = pz + offsetCz;
+    streamCenter.current.cx = centerCx;
+    streamCenter.current.cz = centerCz;
+
+    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
+      for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
+        const cx = centerCx + x;
+        const cz = centerCz + z;
+        const key = `${cx},${cz}`;
+        neededKeys.add(key);
+
+        if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
+          pendingChunks.current.add(key);
+          generateQueue.current.push({ cx, cz, key });
+        }
+      }
+    }
+    neededKeysRef.current = neededKeys;
+
+    // Throttle chunk generation: only send 1 request per frame to spread out
+    // worker responses and main-thread geometry/collider build work.
+    // Prefer nearest-to-player chunks first.
+    if (generateQueue.current.length > 0) {
+      let bestIndex = 0;
+      let bestDist2 = Infinity;
+      for (let i = 0; i < generateQueue.current.length; i++) {
+        const job = generateQueue.current[i];
+        const dx = job.cx - centerCx;
+        const dz = job.cz - centerCz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          bestIndex = i;
+        }
+      }
+      const job = generateQueue.current.splice(bestIndex, 1)[0];
+      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
+    }
+
+    // Apply at most 1 worker message per frame (chunk mount / remesh is the main-thread hitch source).
+    // Messages are FIFO, but we can safely drop generated chunks that are no longer needed.
+    const msg = workerMessageHead.current < workerMessageQueue.current.length
+      ? workerMessageQueue.current[workerMessageHead.current++]
+      : null;
+    let appliedWorkerMessageThisFrame = false;
+    if (msg) {
+      appliedWorkerMessageThisFrame = true;
+      // Compact queue periodically to avoid unbounded growth when head advances.
+      if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
+        workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
+        workerMessageHead.current = 0;
+      }
+
+      const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
         const { key, metadata, material, floraPositions, treePositions, rootHollowPositions, fireflyPositions } = payload;
         pendingChunks.current.delete(key);
 
-        // Log flora positions for debugging
-        if (floraPositions && floraPositions.length > 0) {
-          console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 4, 'lumina flora positions');
-        }
-
-        // Check if metadata exists before initializing
-        if (metadata) {
-          metadataDB.initChunk(key, metadata);
-          simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
+        // If the chunk is already out of the active window, drop it instead of mounting it.
+        if (!neededKeysRef.current.has(key)) {
+          if (streamDebug) console.log('[VoxelTerrain] Drop generated chunk (not needed):', key);
         } else {
-          // Fallback if worker didn't send metadata structure
-          console.warn('[VoxelTerrain] Received chunk without metadata', key);
+          // Log flora positions for debugging
+          if (streamDebug && floraPositions && floraPositions.length > 0) {
+            console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 4, 'lumina flora positions');
+          }
+
+          // Check if metadata exists before initializing
+          if (metadata) {
+            metadataDB.initChunk(key, metadata);
+            simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
+          } else {
+            // Fallback if worker didn't send metadata structure
+            console.warn('[VoxelTerrain] Received chunk without metadata', key);
+          }
+
+          useWorldStore.getState().setFloraHotspots(
+            key,
+            buildFloraHotspots(floraPositions)
+          );
+
+          // Defer collider creation to a later frame (reduces "chunk arrived" hitches).
+          // Exception: during initial boot, keep physics in a 3x3 so the player can immediately move.
+          const dCheby = Math.max(Math.abs(payload.cx - px), Math.abs(payload.cz - pz));
+          const colliderEnabled = !initialLoadTriggered.current
+            ? dCheby <= COLLIDER_RADIUS
+            : (payload.cx === px && payload.cz === pz);
+
+          const newChunk: ChunkState = {
+            ...payload,
+            colliderEnabled,
+            floraPositions, // Lumina flora (for hotspots)
+            treePositions,  // Surface trees
+            rootHollowPositions, // Persist root hollow positions
+            fireflyPositions, // Ambient fireflies (persisted per chunk)
+            terrainVersion: 0,
+            visualVersion: 0,
+            // Used to time-fade chunks into view (hides render-distance pop-in).
+            spawnedAt: performance.now() / 1000
+          };
+
+          // Register ambient fireflies for renderers (AmbientLife) without tightly coupling
+          // that system to the terrain chunk state shape.
+          setChunkFireflies(key, fireflyPositions);
+
+          // Register chunk arrays for runtime queries (water, interaction probes, etc).
+          terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
+          chunksRef.current[key] = newChunk;
+          if (initialLoadTriggered.current) {
+            startTransition(() => {
+              setChunks(prev => ({ ...prev, [key]: newChunk }));
+            });
+          } else {
+            setChunks(prev => ({ ...prev, [key]: newChunk }));
+          }
         }
-
-        useWorldStore.getState().setFloraHotspots(
-          key,
-          buildFloraHotspots(floraPositions)
-        );
-
-        const newChunk: ChunkState = {
-          ...payload,
-          floraPositions, // Lumina flora (for hotspots)
-          treePositions,  // Surface trees
-          rootHollowPositions, // Persist root hollow positions
-          fireflyPositions, // Ambient fireflies (persisted per chunk)
-          terrainVersion: 0,
-          visualVersion: 0,
-          // Used to time-fade chunks into view (hides render-distance pop-in).
-          spawnedAt: performance.now() / 1000
-        };
-
-        // Register ambient fireflies for renderers (AmbientLife) without tightly coupling
-        // that system to the terrain chunk state shape.
-        setChunkFireflies(key, fireflyPositions);
-
-        // Register chunk arrays for runtime queries (water, interaction probes, etc).
-        terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
-        chunksRef.current[key] = newChunk;
-        setChunks(prev => ({ ...prev, [key]: newChunk }));
       } else if (type === 'REMESHED') {
         const {
           key,
@@ -682,76 +855,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             meshWaterShoreMask: meshWaterShoreMask || current.meshWaterShoreMask
           };
           chunksRef.current[key] = updatedChunk;
-          setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+          if (initialLoadTriggered.current) {
+            startTransition(() => {
+              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+            });
+          } else {
+            setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+          }
         }
       }
-    };
-
-    return () => worker.terminate();
-  }, []);
-
-  useEffect(() => {
-    if (initialLoadTriggered.current || !onInitialLoad) return;
-
-    // Check if central chunks are ready (3x3 grid around 0,0)
-    // 3x3 is enough to cover the immediate view so player doesn't see void
-    const essentialKeys = [
-      '0,0', '0,1', '0,-1', '1,0', '-1,0',
-      '1,1', '1,-1', '-1,1', '-1,-1'
-    ];
-
-    const allLoaded = essentialKeys.every(key => chunks[key]);
-
-    if (allLoaded) {
-      initialLoadTriggered.current = true;
-      onInitialLoad();
-    }
-  }, [chunks, onInitialLoad]);
-
-  useFrame(() => {
-    if (!camera || !workerRef.current) return;
-
-    const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
-    const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
-
-    // Update simulation player position
-    simulationManager.updatePlayerPosition(px, pz);
-
-    const neededKeys = new Set<string>();
-    let changed = false;
-
-    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-      for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-        const cx = px + x;
-        const cz = pz + z;
-        const key = `${cx},${cz}`;
-        neededKeys.add(key);
-
-        if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
-          pendingChunks.current.add(key);
-          generateQueue.current.push({ cx, cz, key });
-        }
-      }
-    }
-
-    // Throttle chunk generation: only send 1 request per frame to spread out
-    // worker responses and main-thread geometry/collider build work.
-    // Prefer nearest-to-player chunks first.
-    if (generateQueue.current.length > 0) {
-      let bestIndex = 0;
-      let bestDist2 = Infinity;
-      for (let i = 0; i < generateQueue.current.length; i++) {
-        const job = generateQueue.current[i];
-        const dx = job.cx - px;
-        const dz = job.cz - pz;
-        const d2 = dx * dx + dz * dz;
-        if (d2 < bestDist2) {
-          bestDist2 = d2;
-          bestIndex = i;
-        }
-      }
-      const job = generateQueue.current.splice(bestIndex, 1)[0];
-      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
     const newChunks = { ...chunksRef.current };
@@ -768,7 +880,65 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
     if (changed) {
       chunksRef.current = newChunks;
-      setChunks(newChunks);
+      if (initialLoadTriggered.current) {
+        startTransition(() => {
+          setChunks(newChunks);
+        });
+      } else {
+        setChunks(newChunks);
+      }
+    }
+
+    // Queue collider enables for nearby chunks, then enable at most 1 per frame.
+    // This reduces the chance of a single frame doing both "new chunk mount" AND "collider build".
+    const colliderCenterKey = `${px},${pz}`;
+    if (colliderCenterKey !== lastColliderCenterKey.current) {
+      lastColliderCenterKey.current = colliderCenterKey;
+      colliderEnableQueue.current.length = 0;
+      colliderEnablePending.current.clear();
+    }
+    {
+      const candidates = new Set<string>();
+      const addRadius = (cx: number, cz: number, r: number) => {
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dz = -r; dz <= r; dz++) {
+            candidates.add(`${cx + dx},${cz + dz}`);
+          }
+        }
+      };
+      // Always keep physics around the player.
+      addRadius(px, pz, COLLIDER_RADIUS);
+      // Pre-build colliders slightly ahead in the movement direction.
+      addRadius(px + offsetCx, pz + offsetCz, COLLIDER_RADIUS);
+
+      for (const key of candidates) {
+        const c = chunksRef.current[key];
+        if (!c) continue;
+        if (c.colliderEnabled) continue;
+        if (colliderEnablePending.current.has(key)) continue;
+        colliderEnablePending.current.add(key);
+        colliderEnableQueue.current.push(key);
+      }
+    }
+
+    // Only enable a collider on frames where we didn't also apply a worker chunk/remesh.
+    if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
+      const key = colliderEnableQueue.current.shift();
+      if (key) {
+        colliderEnablePending.current.delete(key);
+        const current = chunksRef.current[key];
+        if (current && !current.colliderEnabled) {
+          const updated = { ...current, colliderEnabled: true };
+          chunksRef.current[key] = updated;
+          if (initialLoadTriggered.current) {
+            startTransition(() => {
+              setChunks(prev => ({ ...prev, [key]: updated }));
+            });
+          } else {
+            setChunks(prev => ({ ...prev, [key]: updated }));
+          }
+        }
+      }
     }
 
     if (remeshQueue.current.size > 0) {

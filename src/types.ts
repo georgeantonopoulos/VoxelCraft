@@ -86,6 +86,9 @@ export interface ChunkState {
   key: ChunkKey;
   cx: number;
   cz: number;
+  // Optional: if false, the chunk renders without a physics collider to reduce streaming hitches.
+  // Collision can be enabled later when the chunk is near the player.
+  colliderEnabled?: boolean;
   // Timestamp (seconds) when the chunk first became renderable.
   // Used for time-based fade-in to hide pop-in at render distance.
   spawnedAt?: number;
