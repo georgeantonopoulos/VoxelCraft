@@ -26,6 +26,11 @@ import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { useSettingsStore } from '@state/SettingsStore';
+import { useInputStore } from '@/state/InputStore';
+import { SettingsMenu } from '@/ui/SettingsMenu';
+import { TouchControls } from '@/ui/TouchControls';
+import { TouchCameraControls } from '@features/player/TouchCameraControls';
 
 // Keyboard Map
 const keyboardMap = [
@@ -41,6 +46,24 @@ const InteractionLayer: React.FC<{
   setInteracting: (v: boolean) => void,
   setAction: (a: 'DIG' | 'BUILD' | null) => void
 }> = ({ setInteracting, setAction }) => {
+  const inputMode = useSettingsStore(s => s.inputMode);
+  const isDigging = useInputStore(s => s.isDigging);
+  const isBuilding = useInputStore(s => s.isBuilding);
+
+  useEffect(() => {
+    if (inputMode !== 'touch') return;
+    if (isDigging) {
+      setAction('DIG');
+      setInteracting(true);
+    } else if (isBuilding) {
+      setAction('BUILD');
+      setInteracting(true);
+    } else {
+      setAction(null);
+      setInteracting(false);
+    }
+  }, [isDigging, isBuilding, inputMode, setAction, setInteracting]);
+
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
       // Only allow interaction if we are locked (gameplay) OR if we are clicking canvas (handled by pointer lock check)
@@ -1089,10 +1112,19 @@ const App: React.FC = () => {
   const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
-  const [debugShadowsEnabled, setDebugShadowsEnabled] = useState(true);
+
+  // Graphics & Input Settings
+  const resolutionScale = useSettingsStore(s => s.resolutionScale);
+  const inputMode = useSettingsStore(s => s.inputMode);
+  const debugShadowsEnabled = useSettingsStore(s => s.shadows);
+  const setDebugShadowsEnabled = useSettingsStore(s => s.setShadows);
+  const aoEnabled = useSettingsStore(s => s.ao);
+  const setAoEnabled = useSettingsStore(s => s.setAo);
+  const bloomEnabled = useSettingsStore(s => s.bloom);
+  const viewDistance = useSettingsStore(s => s.viewDistance);
+
   const [triplanarDetail, setTriplanarDetail] = useState(1.0);
   const [postProcessingEnabled, setPostProcessingEnabled] = useState(true);
-  const [aoEnabled, setAoEnabled] = useState(true);
   const [aoIntensity, setAoIntensity] = useState(2.0);
   const [terrainShaderFogEnabled, setTerrainShaderFogEnabled] = useState(true);
   const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.9);
@@ -1124,6 +1156,7 @@ const App: React.FC = () => {
     const n = v != null ? Number(v) : 160;
     return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 160;
   });
+  const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
@@ -1378,7 +1411,7 @@ const App: React.FC = () => {
         <Canvas
           // Debug: allow toggling shadows to isolate shadow-map shimmer vs shader noise.
           shadows={debugShadowsEnabled}
-          dpr={[1, 2]}
+          dpr={resolutionScale * (typeof window !== 'undefined' ? window.devicePixelRatio : 1)}
           gl={{
             antialias: false, // Post-processing handles AA usually, keeps edges crisp
             outputColorSpace: THREE.SRGBColorSpace,
@@ -1396,13 +1429,13 @@ const App: React.FC = () => {
           <color attach="background" args={['#87CEEB']} />
 
           {/* Fog: Strong fog starting close to camera to hide terrain generation - color updated by AtmosphereController */}
-          <fog attach="fog" args={['#87CEEB', fogNear, fogFar]} />
+          <fog attach="fog" args={['#87CEEB', fogNear, fogFar * viewDistance]} />
 
           {/* Ambient: Softer base to let point lights shine */}
           <AmbientController intensityMul={ambientIntensityMul} />
 
           {/* Atmosphere Controller: Renders gradient SkyDome and updates fog/hemisphere light colors */}
-          <AtmosphereController baseFogNear={fogNear} baseFogFar={fogFar} />
+          <AtmosphereController baseFogNear={fogNear} baseFogFar={fogFar * viewDistance} />
 
           {/* Sun: Strong directional light */}
           <SunFollower
@@ -1495,7 +1528,7 @@ const App: React.FC = () => {
               )}
 
               {/* Bloom: Gentle glow for sky and water highlights */}
-              <Bloom luminanceThreshold={bloomThreshold} mipmapBlur intensity={bloomIntensity} />
+              {bloomEnabled && <Bloom luminanceThreshold={bloomThreshold} mipmapBlur intensity={bloomIntensity} />}
 
               {/* ToneMapping: Exposure shifts in caves for natural "looking out" brightness */}
               <ExposureToneMapping
@@ -1516,7 +1549,8 @@ const App: React.FC = () => {
             </EffectComposer>
           ) : null}
 
-          {gameStarted && <PointerLockControls onUnlock={handleUnlock} />}
+          {gameStarted && inputMode === 'mouse' && <PointerLockControls onUnlock={handleUnlock} />}
+          {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
         </Canvas>
 
         {gameStarted && (
@@ -1527,6 +1561,8 @@ const App: React.FC = () => {
           </>
         )}
       </KeyboardControls>
+      <TouchControls />
+      <SettingsMenu />
     </div>
   );
 };
