@@ -4,7 +4,7 @@ import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { EffectComposer, Bloom, ToneMapping, N8AO, ChromaticAberration, Vignette } from '@react-three/postprocessing';
-import { useControls, Leva, folder } from 'leva';
+import { useControls, Leva, folder, button } from 'leva';
 import * as THREE from 'three';
 import { DynamicEnvironmentIBL } from '@core/graphics/DynamicEnvironmentIBL';
 
@@ -106,128 +106,114 @@ const DebugControls: React.FC<{
   setTerrainWeightsView: (v: string) => void;
   setCaOffset: (v: number) => void;
   setVignetteDarkness: (v: number) => void;
-}> = ({
-  setDebugShadowsEnabled,
-  setTriplanarDetail,
-  setPostProcessingEnabled,
-  setAoEnabled,
-  setAoIntensity,
-  setBloomIntensity,
-  setBloomThreshold,
-  setExposureSurface,
-  setExposureCaveMax,
-  setExposureUnderwater,
-  setFogNear,
-  setFogFar,
-  setSunIntensityMul,
-  setAmbientIntensityMul,
-  setMoonIntensityMul,
-  setIblEnabled,
-  setIblIntensity,
-  setTerrainShaderFogEnabled,
-  setTerrainShaderFogStrength,
-  setTerrainThreeFogEnabled,
-  setTerrainFadeEnabled
-  ,
-  setTerrainWetnessEnabled,
-  setTerrainMossEnabled,
-  setTerrainRoughnessMin,
-  setBedrockPlaneEnabled,
-  setTerrainPolygonOffsetEnabled,
-  setTerrainPolygonOffsetFactor,
-  setTerrainPolygonOffsetUnits,
-  setLevaScale,
-  setLevaWidth,
-  setTerrainChunkTintEnabled,
-  setTerrainWireframeEnabled,
-  setTerrainWeightsView,
-  setCaOffset,
-  setVignetteDarkness
-}) => {
-    useControls(
-      () => ({
-        Lighting: folder(
-          {
-            // Defaults match the requested screenshot.
-            iblEnabled: { value: false, onChange: (v) => setIblEnabled(!!v), label: 'IBL Enabled' },
-            iblIntensity: { value: 0.4, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setIblIntensity(v), label: 'IBL Intensity' },
-            sunIntensity: { value: 0.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setSunIntensityMul(v), label: 'Sun Intensity' },
-            ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: (v) => setAmbientIntensityMul(v), label: 'Ambient Intensity' },
-            moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: (v) => setMoonIntensityMul(v), label: 'Moon Intensity' },
-            // Keep fog relatively close so chunk streaming happens "inside" fog.
-            fogNear: { value: 10, min: 0, max: 120, step: 1, onChange: (v) => setFogNear(v), label: 'Fog Near' },
-            fogFar: { value: 90, min: 20, max: 600, step: 5, onChange: (v) => setFogFar(v), label: 'Fog Far' },
-            exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: (v) => setExposureSurface(v), label: 'Exposure (Surface)' },
-            exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: (v) => setExposureCaveMax(v), label: 'Exposure (Cave Max)' },
-            exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: (v) => setExposureUnderwater(v), label: 'Exposure (Underwater)' },
-            bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: (v) => setBloomIntensity(v), label: 'Bloom Intensity' },
-            bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: (v) => setBloomThreshold(v), label: 'Bloom Threshold' },
-            caOffset: { value: 0.002, min: 0.0, max: 0.01, step: 0.0001, onChange: (v) => setCaOffset(v), label: 'Chromatic Abb.' },
-            vignetteDarkness: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: (v) => setVignetteDarkness(v), label: 'Vignette' }
-          },
-          { collapsed: false }
-        ),
-        UI: folder(
-          {
-            levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: (v) => setLevaWidth(v), label: 'Leva Width' },
-            levaScale: { value: 1.15, min: 0.8, max: 1.8, step: 0.05, onChange: (v) => setLevaScale(v), label: 'Leva Scale' }
-          },
-          { collapsed: false }
-        ),
-        OLD: folder(
-          {
-            terrainChunkTint: {
-              value: false,
-              onChange: (v) => setTerrainChunkTintEnabled(!!v),
-              // If the line is overlap/Z-fighting, tinting makes it obvious (you'll see both colors).
-              label: 'Terrain Chunk Tint'
+  // Sun Shadow Params
+  setSunShadowBias: (v: number) => void;
+  setSunShadowNormalBias: (v: number) => void;
+  setSunShadowMapSize: (v: number) => void;
+  setSunShadowCamSize: (v: number) => void;
+  // Sun Orbit Params
+  setSunOrbitRadius: (v: number) => void;
+  setSunOrbitSpeed: (v: number) => void;
+  setSunTimeOffset: (v: number) => void;
+  // STATE VALUES PROPS (needed for export)
+  values: any;
+}> = (props) => {
+  useControls(
+    {
+      'Scene Lighting': folder({
+        Sun: folder({
+          'Properties': folder({
+            sunIntensity: { value: 1.5, min: 0.0, max: 2.5, step: 0.01, onChange: props.setSunIntensityMul, label: 'Intensity' },
+            radius: { value: 300, min: 50, max: 1000, step: 10, onChange: props.setSunOrbitRadius, label: 'Orbit Radius' },
+            speed: { value: 0.025, min: 0.0, max: 0.5, step: 0.001, onChange: props.setSunOrbitSpeed, label: 'Orbit Speed' },
+            timeOffset: { value: 0.0, min: 0.0, max: Math.PI * 2, step: 0.05, onChange: props.setSunTimeOffset, label: 'Time Offset' }
+          }),
+          'Shadows': folder({
+            shadowsEnabled: { value: true, onChange: (v) => props.setDebugShadowsEnabled(!!v), label: 'Enabled' },
+            sunBias: { value: -0.0005, min: -0.01, max: 0.01, step: 0.0001, onChange: props.setSunShadowBias, label: 'Bias' },
+            sunNormalBias: { value: 0.02, min: 0.0, max: 0.2, step: 0.001, onChange: props.setSunShadowNormalBias, label: 'Normal Bias' },
+            sunMapSize: {
+              value: 2048,
+              options: { '1024': 1024, '2048': 2048, '4096': 4096 },
+              onChange: (v) => props.setSunShadowMapSize(Number(v)),
+              label: 'Map Size'
             },
-            terrainWireframe: { value: false, onChange: (v) => setTerrainWireframeEnabled(!!v), label: 'Terrain Wireframe' },
-            terrainWeightsView: {
-              value: 'off',
-              options: { Off: 'off', Snow: 'snow', Grass: 'grass', 'Snow - Grass': 'snowMinusGrass', Dominant: 'dominant' },
-              onChange: (v) => setTerrainWeightsView(String(v)),
-              // Shows per-vertex material weights (helps detect discontinuities at chunk seams).
-              label: 'Terrain Weights View'
-            },
-            shadowsEnabled: { value: true, onChange: (v) => setDebugShadowsEnabled(!!v), label: 'Shadows Enabled' },
-            terrainFadeEnabled: {
-              value: true,
-              onChange: (v) => setTerrainFadeEnabled(!!v),
-              // Chunk fade uses transparency + depthWrite toggling and can create seam-like hard edges.
-              label: 'Terrain Fade (Chunk)'
-            },
-            terrainWetnessEnabled: { value: true, onChange: (v) => setTerrainWetnessEnabled(!!v), label: 'Terrain Wetness' },
-            terrainMossEnabled: { value: true, onChange: (v) => setTerrainMossEnabled(!!v), label: 'Terrain Moss' },
-            terrainRoughnessMin: {
-              value: 0.0,
-              min: 0.0,
-              max: 1.0,
-              step: 0.01,
-              // Raising this reduces specular aliasing/shimmer in low-light (e.g. caves).
-              label: 'Terrain Roughness Min',
-              onChange: (v) => setTerrainRoughnessMin(v)
-            },
-            bedrockPlaneEnabled: { value: true, onChange: (v) => setBedrockPlaneEnabled(!!v), label: 'Bedrock Plane' },
-            terrainPolygonOffsetEnabled: { value: false, onChange: (v) => setTerrainPolygonOffsetEnabled(!!v), label: 'Terrain Polygon Offset' },
-            terrainPolygonOffsetFactor: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetFactor(v), label: 'Poly Offset Factor' },
-            terrainPolygonOffsetUnits: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: (v) => setTerrainPolygonOffsetUnits(v), label: 'Poly Offset Units' },
-            postProcessingEnabled: { value: true, onChange: (v) => setPostProcessingEnabled(!!v), label: 'Post Processing' },
-            aoEnabled: { value: true, onChange: (v) => setAoEnabled(!!v), label: 'N8AO Enabled' },
-            aoIntensity: { value: 2.0, min: 0.0, max: 6.0, step: 0.1, onChange: (v) => setAoIntensity(v), label: 'N8AO Intensity' },
-            triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: (v) => setTriplanarDetail(v), label: 'Triplanar Detail' },
-            terrainShaderFogEnabled: { value: true, onChange: (v) => setTerrainShaderFogEnabled(!!v), label: 'Terrain Shader Fog' },
-            terrainShaderFogStrength: { value: 0.9, min: 0.0, max: 1.5, step: 0.05, onChange: (v) => setTerrainShaderFogStrength(v), label: 'Terrain Fog Strength' },
-            terrainThreeFogEnabled: { value: true, onChange: (v) => setTerrainThreeFogEnabled(!!v), label: 'Terrain Three Fog' },
-            snapEpsilon: { value: 0.02, min: 0.01, max: 0.15, step: 0.01, onChange: (v) => setSnapEpsilon(v), label: 'Snap Epsilon (Hysteresis)' }
-          },
-          { collapsed: true }
-        )
-      }),
-      []
-    );
-    return null;
-  };
+            sunCamSize: { value: 200, min: 50, max: 500, step: 10, onChange: props.setSunShadowCamSize, label: 'Cam Size' },
+          })
+        }),
+        Moon: folder({
+          moonIntensity: { value: 1.7, min: 0.0, max: 3.0, step: 0.01, onChange: props.setMoonIntensityMul, label: 'Intensity' },
+        }),
+        Ambient: folder({
+          ambientIntensity: { value: 1.0, min: 0.0, max: 2.5, step: 0.01, onChange: props.setAmbientIntensityMul, label: 'Intensity' },
+        }),
+        IBL: folder({
+          iblEnabled: { value: false, onChange: (v) => props.setIblEnabled(!!v), label: 'Enabled' },
+          iblIntensity: { value: 0.4, min: 0.0, max: 2.0, step: 0.01, onChange: props.setIblIntensity, label: 'Intensity' },
+        }),
+        Fog: folder({
+          fogNear: { value: 20, min: 0, max: 120, step: 1, onChange: props.setFogNear, label: 'Near' },
+          fogFar: { value: 160, min: 20, max: 600, step: 5, onChange: props.setFogFar, label: 'Far' },
+        })
+      }, { collapsed: false }),
+
+      'Post Processing': folder({
+        ppEnabled: { value: true, onChange: (v) => props.setPostProcessingEnabled(!!v), label: 'Master Switch' },
+        bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: props.setBloomIntensity, label: 'Bloom Int' },
+        bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: props.setBloomThreshold, label: 'Bloom Thresh' },
+        exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: props.setExposureSurface, label: 'Exp Surface' },
+        exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: props.setExposureCaveMax, label: 'Exp Cave' },
+        exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: props.setExposureUnderwater, label: 'Exp Underwater' },
+        aoEnabled: { value: true, onChange: (v) => props.setAoEnabled(!!v), label: 'AO Enabled' },
+        aoIntensity: { value: 2.0, min: 0.0, max: 6.0, step: 0.1, onChange: props.setAoIntensity, label: 'AO Intensity' },
+        caOffset: { value: 0.002, min: 0.0, max: 0.01, step: 0.0001, onChange: props.setCaOffset, label: 'Chrom. Abb.' },
+        vignetteDarkness: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: props.setVignetteDarkness, label: 'Vignette' },
+      }, { collapsed: true }),
+
+      'Terrain': folder({
+        Material: folder({
+          triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTriplanarDetail, label: 'Detail Mix' },
+          terrainWetness: { value: true, onChange: (v) => props.setTerrainWetnessEnabled(!!v), label: 'Wetness' },
+          terrainMoss: { value: true, onChange: (v) => props.setTerrainMossEnabled(!!v), label: 'Moss' },
+          terrainRoughnessMin: { value: 0.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTerrainRoughnessMin, label: 'Roughness Min' },
+        }),
+        Rendering: folder({
+          chunkTint: { value: false, onChange: (v) => props.setTerrainChunkTintEnabled(!!v), label: 'Chunk Tint' },
+          wireframe: { value: false, onChange: (v) => props.setTerrainWireframeEnabled(!!v), label: 'Wireframe' },
+          weightsView: { value: 'off', options: { Off: 'off', Snow: 'snow', Grass: 'grass', 'Snow - Grass': 'snowMinusGrass', Dominant: 'dominant' }, onChange: (v) => props.setTerrainWeightsView(String(v)), label: 'Weights View' },
+          terrainFade: { value: true, onChange: (v) => props.setTerrainFadeEnabled(!!v), label: 'Chunk Fade' },
+          shaderFog: { value: true, onChange: (v) => props.setTerrainShaderFogEnabled(!!v), label: 'Shader Fog' },
+          shaderFogStr: { value: 0.9, min: 0.0, max: 1.5, step: 0.05, onChange: props.setTerrainShaderFogStrength, label: 'Fog Strength' },
+          threeFog: { value: true, onChange: (v) => props.setTerrainThreeFogEnabled(!!v), label: 'Three Fog' },
+        }),
+        Debug: folder({
+          bedrock: { value: true, onChange: (v) => props.setBedrockPlaneEnabled(!!v), label: 'Bedrock Plane' },
+          polyOffset: { value: false, onChange: (v) => props.setTerrainPolygonOffsetEnabled(!!v), label: 'Poly Offset' },
+          poFactor: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: props.setTerrainPolygonOffsetFactor, label: 'PO Factor' },
+          poUnits: { value: -1.0, min: -10.0, max: 10.0, step: 0.1, onChange: props.setTerrainPolygonOffsetUnits, label: 'PO Units' },
+          snapEpsilon: { value: 0.02, min: 0.01, max: 0.15, step: 0.01, onChange: setSnapEpsilon, label: 'Snap Epsilon' }
+        })
+      }, { collapsed: true }),
+
+      'Tools': folder({
+        'Copy Config': button((get) => {
+          const config = { ...props.values };
+          console.log('[DebugConfig] JSON:', JSON.stringify(config, null, 2));
+          navigator.clipboard.writeText(JSON.stringify(config, null, 2))
+            .then(() => alert('Configuration copied to clipboard!'))
+            .catch((err) => console.error('Failed to copy config:', err));
+        })
+      }, { collapsed: false }),
+
+      'UI': folder({
+        levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: props.setLevaWidth, label: 'Width' },
+        levaScale: { value: 1.15, min: 0.8, max: 1.8, step: 0.05, onChange: props.setLevaScale, label: 'Scale' },
+      }, { collapsed: true })
+    },
+    []
+  );
+  return null;
+};
 
 const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
   const { gl, camera } = useThree();
@@ -404,214 +390,237 @@ const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, botto
  */
 
 
-const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: number }> = ({ sunDirection, intensityMul = 1.0 }) => {
-  const { camera } = useThree();
-  const lightRef = useRef<THREE.DirectionalLight>(null);
-  const sunMeshRef = useRef<THREE.Mesh>(null);
-  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
-  const glowMeshRef = useRef<THREE.Mesh>(null);
-  const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
-  const target = useMemo(() => new THREE.Object3D(), []);
-  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+const SunFollower: React.FC<{
+  sunDirection?: THREE.Vector3;
+  intensityMul?: number;
+  shadowConfig?: {
+    bias: number;
+    normalBias: number;
+    mapSize: number;
+    camSize: number;
+  };
+  orbitConfig?: {
+    radius: number;
+    speed: number;
+    offset: number;
+  };
+}> = ({
+  sunDirection,
+  intensityMul = 1.0,
+  shadowConfig = {
+    bias: -0.0005,
+    normalBias: 0.02,
+    mapSize: 2048,
+    camSize: 200
+  },
+  orbitConfig = { radius: 300, speed: 0.025, offset: 0 }
+}) => {
+    const { camera } = useThree();
+    const lightRef = useRef<THREE.DirectionalLight>(null);
+    const sunMeshRef = useRef<THREE.Mesh>(null);
+    const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+    const glowMeshRef = useRef<THREE.Mesh>(null);
+    const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
+    const target = useMemo(() => new THREE.Object3D(), []);
+    const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
-  // Smooth position tracking to prevent choppy updates
-  const smoothSunPos = useRef(new THREE.Vector3());
-  const lastCameraPos = useRef(new THREE.Vector3());
+    // Smooth position tracking to prevent choppy updates
+    const smoothSunPos = useRef(new THREE.Vector3());
+    const lastCameraPos = useRef(new THREE.Vector3());
 
-  // Initialize smooth position tracking
-  useEffect(() => {
-    lastCameraPos.current.copy(camera.position);
-    smoothSunPos.current.set(0, 0, 0);
-  }, [camera]);
-
-  useFrame(({ clock }) => {
-    if (lightRef.current) {
-      const t = clock.getElapsedTime();
-
-      // Slow orbit (Cycle every ~8-10 minutes)
-      const speed = 0.025; // 1/4th of previous 0.1
-
-      // Non-linear angle mapping to make day longer and night shorter
-      const angle = calculateOrbitAngle(t, speed);
-
-      // Radius of orbit relative to player
-      const radius = 300;
-      const sx = Math.sin(angle) * radius;
-      const sy = Math.cos(angle) * radius;
-      const sz = 30;
-
-      // Smooth sun position relative to camera to prevent choppy updates
-      const cameraDelta = camera.position.clone().sub(lastCameraPos.current);
-      smoothSunPos.current.add(cameraDelta);
+    // Initialize smooth position tracking
+    useEffect(() => {
       lastCameraPos.current.copy(camera.position);
+      smoothSunPos.current.set(0, 0, 0);
+    }, [camera]);
 
-      // Calculate smooth sun position (only for visual sun, light stays snapped for performance)
-      const sunDist = 350;
-      const targetSunPos = new THREE.Vector3(
-        smoothSunPos.current.x + Math.sin(angle) * sunDist,
-        Math.cos(angle) * sunDist,
-        smoothSunPos.current.z + sz
-      );
+    useFrame(({ clock }) => {
+      if (lightRef.current) {
+        const t = clock.getElapsedTime() + orbitConfig.offset;
+        const { radius, speed } = orbitConfig;
 
-      // Light position: snap to grid for performance (shadows don't need smooth movement)
-      const q = 4;
-      const lx = Math.round(camera.position.x / q) * q;
-      const lz = Math.round(camera.position.z / q) * q;
+        // Non-linear angle mapping to make day longer and night shorter
+        const angle = calculateOrbitAngle(t, speed);
 
-      lightRef.current.position.set(lx + sx, sy, lz + sz);
-      target.position.set(lx, 0, lz);
+        // Radius of orbit relative to player
+        const sx = Math.sin(angle) * radius;
+        const sy = Math.cos(angle) * radius;
+        const sz = 30;
 
-      lightRef.current.target = target;
-      lightRef.current.updateMatrixWorld();
-      target.updateMatrixWorld();
+        // Smooth sun position relative to camera to prevent choppy updates
+        const cameraDelta = camera.position.clone().sub(lastCameraPos.current);
+        smoothSunPos.current.add(cameraDelta);
+        lastCameraPos.current.copy(camera.position);
 
-      // Expose the live sun direction for water/terrain shading and dynamic IBL.
-      // We update a mutable Vector3 to avoid React state churn.
-      if (sunDirection) {
-        sunDirection.set(
-          lightRef.current.position.x - target.position.x,
-          lightRef.current.position.y - target.position.y,
-          lightRef.current.position.z - target.position.z
-        ).normalize();
-      }
+        // Calculate smooth sun position (only for visual sun, light stays snapped for performance)
+        const sunDist = 350;
+        const targetSunPos = new THREE.Vector3(
+          smoothSunPos.current.x + Math.sin(angle) * sunDist,
+          Math.cos(angle) * sunDist,
+          smoothSunPos.current.z + sz
+        );
 
-      // Calculate sun color based on height
-      const sunColor = getSunColor(sy, radius);
+        // Light position: snap to grid for performance (shadows don't need smooth movement)
+        const q = 4;
+        const lx = Math.round(camera.position.x / q) * q;
+        const lz = Math.round(camera.position.z / q) * q;
 
-      // Update light color
-      lightRef.current.color.copy(sunColor);
+        lightRef.current.position.set(lx + sx, sy, lz + sz);
+        target.position.set(lx, 0, lz);
 
-      // Adjust intensity: fade out smoothly when below horizon
-      const normalizedHeight = sy / radius;
-      let baseIntensity = 1.0;
-      if (normalizedHeight < -0.15) {
-        // Deep night: darker
-        baseIntensity = 0.1;
-      } else if (normalizedHeight < 0.0) {
-        // Transition from Night to Sunset
-        const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
-        baseIntensity = 0.1 + (0.4 - 0.1) * t;
-      } else if (normalizedHeight < 0.3) {
-        // Sunset to Day
-        const t = normalizedHeight / 0.3; // 0 to 1
-        baseIntensity = 0.4 + (1.0 - 0.4) * t;
-      } else {
-        // Day: full intensity
-        baseIntensity = 1.0;
-      }
+        lightRef.current.target = target;
+        lightRef.current.updateMatrixWorld();
+        target.updateMatrixWorld();
 
-      // Underground: keep outside readable by not hard-killing the sun globally.
-      // We only dim moderately at depth to reduce "sun in caves" artifacts.
-      const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-      const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
-      lightRef.current.intensity = baseIntensity * sunDimming * intensityMul;
+        // Expose the live sun direction for water/terrain shading and dynamic IBL.
+        // We update a mutable Vector3 to avoid React state churn.
+        if (sunDirection) {
+          sunDirection.set(
+            lightRef.current.position.x - target.position.x,
+            lightRef.current.position.y - target.position.y,
+            lightRef.current.position.z - target.position.z
+          ).normalize();
+        }
 
-      // Update Visual Sun color and glow
-      if (sunMeshRef.current) {
-        // Use smooth position for visual sun to prevent choppy updates
-        sunMeshRef.current.position.copy(targetSunPos);
-        sunMeshRef.current.lookAt(camera.position);
+        // Calculate sun color based on height
+        const sunColor = getSunColor(sy, radius);
 
-        // Update sun material color
-        if (sunMaterialRef.current) {
-          const sunMeshColor = sunColor.clone();
-          if (normalizedHeight < -0.15) {
-            // Deep night: make sun mesh dim
-            sunMeshColor.multiplyScalar(0.4);
-          } else if (normalizedHeight < 0.0) {
-            // Transition from sunset to night - fade smoothly
-            const t = (normalizedHeight + 0.15) / 0.15;
-            sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
-          } else {
-            // Day/sunrise: bright sun core
-            sunMeshColor.multiplyScalar(1.5);
+        // Update light color
+        lightRef.current.color.copy(sunColor);
+
+        // Adjust intensity: fade out smoothly when below horizon
+        const normalizedHeight = sy / radius;
+        let baseIntensity = 1.0;
+        if (normalizedHeight < -0.15) {
+          // Deep night: darker
+          baseIntensity = 0.1;
+        } else if (normalizedHeight < 0.0) {
+          // Transition from Night to Sunset
+          const t = (normalizedHeight + 0.15) / 0.15; // 0 to 1
+          baseIntensity = 0.1 + (0.4 - 0.1) * t;
+        } else if (normalizedHeight < 0.3) {
+          // Sunset to Day
+          const t = normalizedHeight / 0.3; // 0 to 1
+          baseIntensity = 0.4 + (1.0 - 0.4) * t;
+        } else {
+          // Day: full intensity
+          baseIntensity = 1.0;
+        }
+
+        // Underground: keep outside readable by not hard-killing the sun globally.
+        // We only dim moderately at depth to reduce "sun in caves" artifacts.
+        const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+        const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
+        lightRef.current.intensity = baseIntensity * sunDimming * intensityMul;
+
+        // Update Visual Sun color and glow
+        if (sunMeshRef.current) {
+          // Use smooth position for visual sun to prevent choppy updates
+          sunMeshRef.current.position.copy(targetSunPos);
+          sunMeshRef.current.lookAt(camera.position);
+
+          // Update sun material color
+          if (sunMaterialRef.current) {
+            const sunMeshColor = sunColor.clone();
+            if (normalizedHeight < -0.15) {
+              // Deep night: make sun mesh dim
+              sunMeshColor.multiplyScalar(0.4);
+            } else if (normalizedHeight < 0.0) {
+              // Transition from sunset to night - fade smoothly
+              const t = (normalizedHeight + 0.15) / 0.15;
+              sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
+            } else {
+              // Day/sunrise: bright sun core
+              sunMeshColor.multiplyScalar(1.5);
+            }
+
+            // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
+            const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+            sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
+
+            sunMaterialRef.current.color.copy(sunMeshColor);
           }
 
-          // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
-          const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-          sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
+          // Update glow - make it more visible during sunset
+          if (glowMeshRef.current && glowMaterialRef.current) {
+            // Position glow at sun location (using smooth position)
+            glowMeshRef.current.position.copy(targetSunPos);
 
-          sunMaterialRef.current.color.copy(sunMeshColor);
-        }
+            // Make glow always face camera
+            glowMeshRef.current.lookAt(camera.position);
 
-        // Update glow - make it more visible during sunset
-        if (glowMeshRef.current && glowMaterialRef.current) {
-          // Position glow at sun location (using smooth position)
-          glowMeshRef.current.position.copy(targetSunPos);
+            // Calculate glow intensity and size based on sun position
+            const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
+            const glowScale = isSunset ? 5.0 : 3.5;
+            const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
 
-          // Make glow always face camera
-          glowMeshRef.current.lookAt(camera.position);
+            // Underground: reduce glow strength to keep caves moodier
+            const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+            const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
 
-          // Calculate glow intensity and size based on sun position
-          const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
-          const glowScale = isSunset ? 5.0 : 3.5;
-          const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+            glowMeshRef.current.scale.setScalar(glowScale);
 
-          // Underground: reduce glow strength to keep caves moodier
-          const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-          const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
-
-          glowMeshRef.current.scale.setScalar(glowScale);
-
-          const glowColor = getSunGlowColor(normalizedHeight, sunColor);
-          glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
-          glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
-          // Animate rays
-          glowMaterialRef.current.uniforms.uTime.value = t;
+            const glowColor = getSunGlowColor(normalizedHeight, sunColor);
+            glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
+            glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
+            // Animate rays
+            glowMaterialRef.current.uniforms.uTime.value = t;
+          }
         }
       }
-    }
-  });
+    });
 
-  return (
-    <>
-      <directionalLight
-        ref={lightRef}
-        color="#fffcf0"
-        castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-near={10}
-        shadow-camera-far={500}
-        shadow-camera-left={-200}
-        shadow-camera-right={200}
-        shadow-camera-top={200}
-        shadow-camera-bottom={-200}
-      />
-      <primitive object={target} />
-
-      {/* Physical Sun Mesh - Bright solid core */}
-      <mesh ref={sunMeshRef}>
-        <sphereGeometry args={[15, 32, 32]} />
-        <meshBasicMaterial
-          ref={sunMaterialRef}
-          color="#fffee0"
-          toneMapped={false}
-          fog={false}
+    return (
+      <>
+        <directionalLight
+          ref={lightRef}
+          color="#fffcf0"
+          castShadow
+          shadow-bias={shadowConfig.bias}
+          shadow-normalBias={shadowConfig.normalBias}
+          shadow-mapSize={[shadowConfig.mapSize, shadowConfig.mapSize]}
+          shadow-camera-near={10}
+          shadow-camera-far={500}
+          shadow-camera-left={-shadowConfig.camSize}
+          shadow-camera-right={shadowConfig.camSize}
+          shadow-camera-top={shadowConfig.camSize}
+          shadow-camera-bottom={-shadowConfig.camSize}
         />
-      </mesh>
+        <primitive object={target} />
 
-      {/* Sun Glow Billboard - High-quality atmospheric scattering simulation */}
-      <mesh ref={glowMeshRef}>
-        <planeGeometry args={[250, 250]} />
-        <shaderMaterial
-          ref={glowMaterialRef}
-          transparent
-          depthWrite={false}
-          fog={false}
-          blending={THREE.AdditiveBlending}
-          uniforms={{
-            uColor: { value: new THREE.Color() },
-            uOpacity: { value: 0.25 },
-            uTime: { value: 0 }
-          }}
-          vertexShader={`
+        {/* Physical Sun Mesh - Bright solid core */}
+        <mesh ref={sunMeshRef}>
+          <sphereGeometry args={[15, 32, 32]} />
+          <meshBasicMaterial
+            ref={sunMaterialRef}
+            color="#fffee0"
+            toneMapped={false}
+            fog={false}
+          />
+        </mesh>
+
+        {/* Sun Glow Billboard - High-quality atmospheric scattering simulation */}
+        <mesh ref={glowMeshRef}>
+          <planeGeometry args={[250, 250]} />
+          <shaderMaterial
+            ref={glowMaterialRef}
+            transparent
+            depthWrite={false}
+            fog={false}
+            blending={THREE.AdditiveBlending}
+            uniforms={{
+              uColor: { value: new THREE.Color() },
+              uOpacity: { value: 0.25 },
+              uTime: { value: 0 }
+            }}
+            vertexShader={`
             varying vec2 vUv;
             void main() {
               vUv = uv;
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
           `}
-          fragmentShader={`
+            fragmentShader={`
             uniform vec3 uColor;
             uniform float uOpacity;
             uniform float uTime;
@@ -671,81 +680,106 @@ const SunFollower: React.FC<{ sunDirection?: THREE.Vector3; intensityMul?: numbe
               gl_FragColor = vec4(finalColor, alpha);
             }
           `}
-        />
-      </mesh>
-    </>
-  );
-};
+          />
+        </mesh>
+      </>
+    );
+  };
 
 /**
  * Simple moon component that orbits exactly opposite to the sun.
  * Uses "game physics" - moon and sun are counter-weights on a rotating stick.
  * Moon is visible when above horizon and provides subtle night lighting.
  */
-const MoonFollower: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
-  const { camera } = useThree();
-  const moonMeshRef = useRef<THREE.Mesh>(null);
-  const lightRef = useRef<THREE.DirectionalLight>(null);
-  const target = useMemo(() => new THREE.Object3D(), []);
-  const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+const MoonFollower: React.FC<{
+  intensityMul?: number;
+  orbitConfig?: {
+    radius: number;
+    speed: number;
+    offset: number;
+  };
+}> = ({
+  intensityMul = 1.0,
+  orbitConfig = { radius: 300, speed: 0.025, offset: 0 }
+}) => {
+    const { camera } = useThree();
+    const moonMeshRef = useRef<THREE.Mesh>(null);
+    const lightRef = useRef<THREE.DirectionalLight>(null);
+    const target = useMemo(() => new THREE.Object3D(), []);
+    const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
 
-  useFrame(({ clock }) => {
-    if (!moonMeshRef.current || !lightRef.current) return;
+    useFrame(({ clock }) => {
+      if (!moonMeshRef.current || !lightRef.current) return;
 
-    const t = clock.getElapsedTime();
-    const radius = 300; // Distance from player
-    const speed = 0.025; // MUST match Sun speed to stay opposite
+      const t = clock.getElapsedTime() + orbitConfig.offset;
+      const { radius, speed } = orbitConfig;
 
-    // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
-    const angle = calculateOrbitAngle(t, speed, Math.PI);
+      // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
+      const angle = calculateOrbitAngle(t, speed, Math.PI);
 
-    // Calculate position
-    const x = Math.sin(angle) * radius;
-    const y = Math.cos(angle) * radius;
+      // --- VISUAL MOON (Mesh) ---
+      // Push the moon mesh far away (1200 units) so it doesn't clip through 
+      // terrain/mountains, but keep it properly scaled so it looks realistic.
+      // Real moon is ~0.5 degrees. Radius 12 @ Dist 1200 ~= 0.57 degrees.
+      const visualDistance = 1200;
 
-    // Position the moon relative to the camera (so you can't walk past it)
-    const px = camera.position.x + x;
-    const py = y; // Keep height absolute relative to horizon
-    const pz = camera.position.z + 30; // Slight Z offset
+      const vx = Math.sin(angle) * visualDistance;
+      const vy = Math.cos(angle) * visualDistance;
 
-    // Apply positions
-    moonMeshRef.current.position.set(px, py, pz);
+      // Position relative to camera so it's always "at infinity"
+      const mPx = camera.position.x + vx;
+      const mPy = vy;
+      const mPz = camera.position.z + 30; // Keep same Z plane offset
 
-    // Move the directional light with the mesh
-    lightRef.current.position.set(px, py, pz);
-    target.position.set(camera.position.x, 0, camera.position.z);
-    lightRef.current.target = target;
-    lightRef.current.updateMatrixWorld();
+      moonMeshRef.current.position.set(mPx, mPy, mPz);
+      // Ensure specific render order if needed, but distance usually sorts it.
 
-    // VISIBILITY: Only visible when above the horizon
-    const isAboveHorizon = py > -50; // Buffer of -50 allows it to set smoothly
-    moonMeshRef.current.visible = isAboveHorizon;
+      // --- LIGHTING (Physics) ---
+      // Keep light at the configured orbital radius for consistent shadow map behavior
+      const lx = Math.sin(angle) * radius;
+      const ly = Math.cos(angle) * radius;
 
-    // Underground: keep outside moon/sky readable but reduce cave bleed.
-    const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-    const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
-    lightRef.current.intensity = isAboveHorizon ? 0.2 * moonDimming * intensityMul : 0; // Dim light
-    if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
-  });
+      const lPx = camera.position.x + lx;
+      const lPy = ly;
+      const lPz = camera.position.z + 30;
 
-  return (
-    <>
-      <directionalLight
-        ref={lightRef}
-        color="#b8d4f0"
-        intensity={0.2}
-        castShadow={false}
-      />
-      <primitive object={target} />
+      lightRef.current.position.set(lPx, lPy, lPz);
+      target.position.set(camera.position.x, 0, camera.position.z);
+      lightRef.current.target = target;
+      lightRef.current.updateMatrixWorld();
 
-      {/* Simple White Sphere - fog={false} so scene fog doesn't hide the moon */}
-      <mesh ref={moonMeshRef}>
-        <sphereGeometry args={[20, 32, 32]} />
-        <meshBasicMaterial color="#ffffff" fog={false} />
-      </mesh>
-    </>
-  );
-};
+      // VISIBILITY: Only visible when above the horizon
+      const isAboveHorizon = mPy > -150; // Buffer allows it to "set" below visual horizon
+      moonMeshRef.current.visible = isAboveHorizon;
+
+      // Underground: keep outside moon/sky readable but reduce cave bleed.
+      const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
+      const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
+
+      // Light intensity check - use the mathematical height (ly) not visual height
+      lightRef.current.intensity = (ly > -50) ? 0.2 * moonDimming * intensityMul : 0;
+
+      if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
+    });
+
+    return (
+      <>
+        <directionalLight
+          ref={lightRef}
+          color="#b8d4f0"
+          intensity={0.2}
+          castShadow={false}
+        />
+        <primitive object={target} />
+
+        {/* Small White Sphere - fog={false} so scene fog doesn't hide the moon */}
+        <mesh ref={moonMeshRef}>
+          <sphereGeometry args={[12, 32, 32]} />
+          <meshBasicMaterial color="#ffffff" fog={false} />
+        </mesh>
+      </>
+    );
+  };
 
 /**
  * Controls fog, background, hemisphere light colors, and sky gradient based on sun position.
@@ -1090,7 +1124,7 @@ const App: React.FC = () => {
     const n = v != null ? Number(v) : 160;
     return Number.isFinite(n) ? THREE.MathUtils.clamp(n, 20, 800) : 160;
   });
-  const [sunIntensityMul, setSunIntensityMul] = useState(0.0);
+  const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
   // IBL: disabled by default (can be re-enabled later via debug if desired).
@@ -1103,6 +1137,17 @@ const App: React.FC = () => {
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
   const [caOffset, setCaOffset] = useState(0.00001); // Subtle default (Simulates slight lens/motion imperfection)
   const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
+
+  // Sun Shadow Params
+  const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
+  const [sunShadowNormalBias, setSunShadowNormalBias] = useState(0.02);
+  const [sunShadowMapSize, setSunShadowMapSize] = useState(2048);
+  const [sunShadowCamSize, setSunShadowCamSize] = useState(200);
+
+  // Sun Orbit Params
+  const [sunOrbitRadius, setSunOrbitRadius] = useState(300);
+  const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.025);
+  const [sunTimeOffset, setSunTimeOffset] = useState(0.0);
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -1265,6 +1310,57 @@ const App: React.FC = () => {
           setTerrainWeightsView={setTerrainWeightsView}
           setCaOffset={setCaOffset}
           setVignetteDarkness={setVignetteDarkness}
+          setSunShadowBias={setSunShadowBias}
+          setSunShadowNormalBias={setSunShadowNormalBias}
+          setSunShadowMapSize={setSunShadowMapSize}
+          setSunShadowCamSize={setSunShadowCamSize}
+          setSunOrbitRadius={setSunOrbitRadius}
+          setSunOrbitSpeed={setSunOrbitSpeed}
+          setSunTimeOffset={setSunTimeOffset}
+          values={{
+            debugShadowsEnabled,
+            triplanarDetail,
+            postProcessingEnabled,
+            aoEnabled,
+            aoIntensity,
+            bloomIntensity,
+            bloomThreshold,
+            exposureSurface,
+            exposureCaveMax,
+            exposureUnderwater,
+            fogNear,
+            fogFar,
+            sunIntensityMul,
+            ambientIntensityMul,
+            moonIntensityMul,
+            iblEnabled,
+            iblIntensity,
+            terrainShaderFogEnabled,
+            terrainShaderFogStrength,
+            terrainThreeFogEnabled,
+            terrainFadeEnabled,
+            terrainWetnessEnabled,
+            terrainMossEnabled,
+            terrainRoughnessMin,
+            bedrockPlaneEnabled,
+            terrainPolygonOffsetEnabled,
+            terrainPolygonOffsetFactor,
+            terrainPolygonOffsetUnits,
+            levaScale,
+            levaWidth,
+            terrainChunkTintEnabled,
+            terrainWireframeEnabled,
+            terrainWeightsView,
+            caOffset,
+            vignetteDarkness,
+            sunShadowBias,
+            sunShadowNormalBias,
+            sunShadowMapSize,
+            sunShadowCamSize,
+            sunOrbitRadius,
+            sunOrbitSpeed,
+            sunTimeOffset
+          }}
         />
       )}
 
@@ -1309,10 +1405,31 @@ const App: React.FC = () => {
           <AtmosphereController baseFogNear={fogNear} baseFogFar={fogFar} />
 
           {/* Sun: Strong directional light */}
-          <SunFollower sunDirection={sunDirection} intensityMul={sunIntensityMul} />
+          <SunFollower
+            sunDirection={sunDirection}
+            intensityMul={sunIntensityMul}
+            shadowConfig={{
+              bias: sunShadowBias,
+              normalBias: sunShadowNormalBias,
+              mapSize: sunShadowMapSize,
+              camSize: sunShadowCamSize
+            }}
+            orbitConfig={{
+              radius: sunOrbitRadius,
+              speed: sunOrbitSpeed,
+              offset: sunTimeOffset
+            }}
+          />
 
           {/* Moon: Subtle night lighting */}
-          <MoonFollower intensityMul={moonIntensityMul} />
+          <MoonFollower
+            intensityMul={moonIntensityMul}
+            orbitConfig={{
+              radius: sunOrbitRadius,
+              speed: sunOrbitSpeed,
+              offset: sunTimeOffset
+            }}
+          />
 
           {/* Dynamic IBL: time-of-day aware environment reflections for PBR materials. */}
           <DynamicEnvironmentIBL sunDirection={sunDirection} enabled={iblEnabled} intensity={iblIntensity} />

@@ -84,7 +84,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Debug Switches (verified)
 
-- `?debug`: enables debug UI paths (Leva/HUD/placement debug) (`src/App.tsx`, `src/ui/HUD.tsx`, `src/state/InventoryStore.ts`).
+- `?debug`: enables debug UI paths (Leva/HUD/placement debug) (`src/App.tsx`, `src/ui/HUD.tsx`, `src/state/InventoryStore.ts`). Now includes- **Granular Sun Controls**:
+  - **Properties**: `sunIntensity`, `radius` (orbit size), `speed` (day/night duration), `timeOffset` (manual time scrubbing).
+  - **Shadows**: `shadowsEnabled`, `bias`, `normalBias`, `mapSize`, `camSize` (frustum).
+- **Export Config**: Use the **"Copy Config"** button in `Tools` folder to export all current settings to JSON (clipboard).
 - `?mode=map`: shows the biome/map debug view (`src/App.tsx` -> `src/ui/MapDebug.tsx`).
 - `?normals`: swaps terrain material to normal material for geometry inspection (`src/features/terrain/components/ChunkMesh.tsx`).
 - `?vcDeerNear`, `?vcDeerStatic`: FogDeer spawn helpers (`src/features/creatures/FogDeer.tsx`).
@@ -104,3 +107,4 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 2025-12-14: Removed ALL animated/pulsing texture effects from tree leaves per user request. Replaced with static color variation (noise lookup) and static emissive glow. Wind sway is retained in vertex shaders.
 - 2025-12-14: Removed procedural noise texture from all tree leaves (FractalTree, FallingTree, TreeLayer) per user request to fix "moving/weird" look. Reverted to clean gradient and simple emissive pulse.
 - 2025-12-14: Updated `TreeLayer.tsx` and `TreeGeometryFactory.ts` to apply procedural bark/leaf shaders to massive terrain trees (previously only applied to hero instances).
+- 2025-12-15: Fixed "enormous/clipping" Moon by decoupling visual distance (1200) from orbit physics (300) and reducing mesh radius (20->12). Moon now renders behind terrain and at correct angular size (~0.5 deg).
