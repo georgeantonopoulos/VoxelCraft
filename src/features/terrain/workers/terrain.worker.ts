@@ -39,7 +39,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             }
 
             // 2. Generate with mods
-            const { density, material, metadata, floraPositions, treePositions, rootHollowPositions, fireflyPositions } = TerrainService.generateChunk(cx, cz, modifications);
+            const { density, material, metadata, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
             // 3. Compute Light Clusters (Async in Worker)
             // const lightPositions = TerrainService.computeLightClusters(floraPositions);
@@ -242,6 +242,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                 vegetationData,
                 floraPositions,
                 treePositions,
+                stickPositions,
+                rockPositions,
+                largeRockPositions,
                 rootHollowPositions,
                 fireflyPositions,
                 meshPositions: mesh.positions,
@@ -271,6 +274,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                 metadata.mossiness.buffer,
                 floraPositions.buffer,
                 treePositions.buffer,
+                stickPositions.buffer,
+                rockPositions.buffer,
+                largeRockPositions.buffer,
                 rootHollowPositions.buffer,
                 fireflyPositions.buffer,
                 mesh.positions.buffer,

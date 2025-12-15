@@ -198,6 +198,71 @@ const rayHitsGeneratedLuminaFlora = (
   return best;
 };
 
+type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
+
+/**
+ * Ray-hit test against generated ground pickups (sticks + stones).
+ * Data is chunk-local in XZ (chunk group space) but world-space in Y.
+ */
+const rayHitsGeneratedGroundPickup = (
+  chunks: Record<string, ChunkState>,
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxDist: number,
+  radius = 0.55
+): { key: string; array: GroundPickupArrayKey; index: number; t: number; position: THREE.Vector3 } | null => {
+  const tmp = new THREE.Vector3();
+  const proj = new THREE.Vector3();
+  const hitPos = new THREE.Vector3();
+
+  const minCx = Math.floor((origin.x - maxDist) / CHUNK_SIZE_XZ);
+  const maxCx = Math.floor((origin.x + maxDist) / CHUNK_SIZE_XZ);
+  const minCz = Math.floor((origin.z - maxDist) / CHUNK_SIZE_XZ);
+  const maxCz = Math.floor((origin.z + maxDist) / CHUNK_SIZE_XZ);
+
+  let best: { key: string; array: GroundPickupArrayKey; index: number; t: number; position: THREE.Vector3 } | null = null;
+  let bestT = maxDist + 1;
+
+  const consider = (key: string, array: GroundPickupArrayKey, data: Float32Array) => {
+    const chunk = chunks[key];
+    if (!chunk) return;
+    const originX = chunk.cx * CHUNK_SIZE_XZ;
+    const originZ = chunk.cz * CHUNK_SIZE_XZ;
+
+    // stride 8: x, y, z, nx, ny, nz, variant, seed
+    for (let i = 0; i < data.length; i += 8) {
+      const wy = data[i + 1];
+      if (wy < -9999) continue;
+      const wx = originX + data[i + 0];
+      const wz = originZ + data[i + 2];
+      hitPos.set(wx, wy, wz);
+      tmp.copy(hitPos).sub(origin);
+      const t = tmp.dot(dir);
+      if (t < 0 || t > maxDist) continue;
+      if (t >= bestT) continue;
+      proj.copy(dir).multiplyScalar(t);
+      tmp.sub(proj);
+      const distSq = tmp.lengthSq();
+      if (distSq <= radius * radius) {
+        bestT = t;
+        best = { key, array, index: i, t, position: hitPos.clone() };
+      }
+    }
+  };
+
+  for (let cx = minCx; cx <= maxCx; cx++) {
+    for (let cz = minCz; cz <= maxCz; cz++) {
+      const key = `${cx},${cz}`;
+      const chunk = chunks[key];
+      if (!chunk) continue;
+      if (chunk.stickPositions && chunk.stickPositions.length > 0) consider(key, 'stickPositions', chunk.stickPositions);
+      if (chunk.rockPositions && chunk.rockPositions.length > 0) consider(key, 'rockPositions', chunk.rockPositions);
+    }
+  }
+
+  return best;
+};
+
 /**
  * Convert chunk-local flora positions into world-space hotspots for UI overlays.
  */
@@ -215,6 +280,29 @@ const buildFloraHotspots = (
     hotspots.push({
       x: positions[i],
       z: positions[i + 2]
+    });
+  }
+
+  return hotspots;
+};
+
+const buildChunkLocalHotspots = (
+  cx: number,
+  cz: number,
+  positions: Float32Array | undefined
+): FloraHotspot[] => {
+  if (!positions || positions.length === 0) return [];
+
+  const originX = cx * CHUNK_SIZE_XZ;
+  const originZ = cz * CHUNK_SIZE_XZ;
+  const hotspots: FloraHotspot[] = [];
+
+  // stride 8: x, y, z, nx, ny, nz, variant, seed
+  for (let i = 0; i < positions.length; i += 8) {
+    if (positions[i + 1] < -9999) continue;
+    hotspots.push({
+      x: originX + positions[i + 0],
+      z: originZ + positions[i + 2]
     });
   }
 
@@ -753,7 +841,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, treePositions, rootHollowPositions, fireflyPositions } = payload;
+        const { key, metadata, material, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = payload;
         pendingChunks.current.delete(key);
 
         // If the chunk is already out of the active window, drop it instead of mounting it.
@@ -778,6 +866,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             key,
             buildFloraHotspots(floraPositions)
           );
+          useWorldStore.getState().setStickHotspots(
+            key,
+            buildChunkLocalHotspots(payload.cx, payload.cz, stickPositions)
+          );
+          useWorldStore.getState().setRockHotspots(
+            key,
+            buildChunkLocalHotspots(payload.cx, payload.cz, rockPositions)
+          );
 
           // Defer collider creation to a later frame (reduces "chunk arrived" hitches).
           // Exception: during initial boot, keep physics in a 3x3 so the player can immediately move.
@@ -791,6 +887,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             colliderEnabled,
             floraPositions, // Lumina flora (for hotspots)
             treePositions,  // Surface trees
+            stickPositions, // Surface sticks (forage)
+            rockPositions, // Stones (forage)
+            largeRockPositions, // Large rocks (obstacles)
             rootHollowPositions, // Persist root hollow positions
             fireflyPositions, // Ambient fireflies (persisted per chunk)
             terrainVersion: 0,
@@ -871,6 +970,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       if (!neededKeys.has(key)) {
         simulationManager.removeChunk(key);
         useWorldStore.getState().clearFloraHotspots(key);
+        useWorldStore.getState().clearStickHotspots(key);
+        useWorldStore.getState().clearRockHotspots(key);
         deleteChunkFireflies(key);
         terrainRuntime.unregisterChunk(key);
         delete newChunks[key];
@@ -991,10 +1092,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       // Pick a single closest target along the ray:
       // 1) placed flora entities (WorldStore)
       // 2) placed torches (WorldStore)
-      // 2) generated lumina flora (chunk floraPositions)
+      // 3) generated lumina flora (chunk floraPositions)
+      // 4) generated ground pickups (sticks + stones)
       const placedId = rayHitsFlora(origin, dir, maxDist, 0.55);
       const torchHit = rayHitsTorch(origin, dir, maxDist, 0.55);
       const luminaHit = rayHitsGeneratedLuminaFlora(chunksRef.current, origin, dir, maxDist, 0.55);
+      const groundHit = rayHitsGeneratedGroundPickup(chunksRef.current, origin, dir, maxDist, 0.55);
 
       const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
         const key = hit.key;
@@ -1015,8 +1118,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
       };
 
+      const removeGround = (hit: NonNullable<typeof groundHit>) => {
+        const chunk = chunksRef.current[hit.key];
+        const positions = chunk?.[hit.array];
+        if (!chunk || !positions || positions.length < 8) return;
+        const next = new Float32Array(positions);
+        next[hit.index + 1] = -10000;
+        const updatedChunk = { ...chunk, [hit.array]: next };
+        chunksRef.current[hit.key] = updatedChunk;
+        setChunks((prev) => ({ ...prev, [hit.key]: updatedChunk }));
+        if (hit.array === 'stickPositions') {
+          useWorldStore.getState().setStickHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
+        } else {
+          useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
+        }
+      };
+
       let pickedStart: THREE.Vector3 | null = null;
-      let pickedTorch = false;
+      let pickedItem: 'torch' | 'flora' | 'stick' | 'stone' | null = null;
 
       // Determine closest along ray (torch vs flora vs lumina).
       const tTorch = torchHit?.t ?? Infinity;
@@ -1026,23 +1145,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const placedPos = pPlaced ? new THREE.Vector3(pPlaced.x, pPlaced.y, pPlaced.z) : null;
       const tPlaced = placedPos ? placedPos.clone().sub(origin).dot(dir) : Infinity;
       const tLumina = luminaHit?.t ?? Infinity;
+      const tGround = groundHit?.t ?? Infinity;
 
-      if (tTorch <= tPlaced && tTorch <= tLumina && torchHit) {
-        pickedTorch = true;
+      if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
+        pickedItem = 'torch';
         pickedStart = torchHit.position;
         useWorldStore.getState().removeEntity(torchHit.id);
+      } else if (tGround <= tPlaced && tGround <= tLumina && groundHit) {
+        pickedStart = groundHit.position;
+        pickedItem = groundHit.array === 'stickPositions' ? 'stick' : 'stone';
+        removeGround(groundHit);
       } else if (placedId && luminaHit) {
         if (placedPos) {
           if (tPlaced <= luminaHit.t) {
             pickedStart = placedPos;
+            pickedItem = 'flora';
             useWorldStore.getState().removeEntity(placedId);
           } else {
             pickedStart = luminaHit.position;
+            pickedItem = 'flora';
             removeLumina(luminaHit);
           }
         } else {
           // Fallback: treat as lumina if we can't read the placed entity position.
           pickedStart = luminaHit.position;
+          pickedItem = 'flora';
           removeLumina(luminaHit);
         }
       } else if (placedId) {
@@ -1051,21 +1178,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         if (p) {
           pickedStart = new THREE.Vector3(p.x, p.y, p.z);
         }
+        pickedItem = 'flora';
         useWorldStore.getState().removeEntity(placedId);
       } else if (luminaHit) {
         pickedStart = luminaHit.position;
+        pickedItem = 'flora';
         removeLumina(luminaHit);
       }
 
-      if (pickedStart) {
+      if (pickedStart && pickedItem) {
         // Add item to inventory and play a fly-to-player pickup effect.
-        if (pickedTorch) {
-          useGameStore.getState().addItem('torch', 1);
-        } else {
-          useGameStore.getState().addItem('flora', 1);
-        }
+        useGameStore.getState().addItem(pickedItem, 1);
         const effectId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color: pickedTorch ? '#ffdbb1' : '#00FFFF' }]);
+        const color =
+          pickedItem === 'torch' ? '#ffdbb1' :
+            pickedItem === 'stick' ? '#c99a63' :
+              pickedItem === 'stone' ? '#cfcfd6' :
+                '#00FFFF';
+        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color }]);
       }
     };
 

@@ -35,11 +35,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const [swarmVisible, setSwarmVisible] = useState(false);
     const [swarmDissipating, setSwarmDissipating] = useState(false);
 
-    // Debug logging
-    useEffect(() => {
-        console.log('[RootHollow] Status changed to:', status, 'swarmVisible:', swarmVisible, 'swarmDissipating:', swarmDissipating);
-    }, [status, swarmVisible, swarmDissipating]);
-
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);

@@ -2,11 +2,14 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
-import { useControls } from 'leva';
+import { useControls, button } from 'leva';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
 import { TorchTool } from './TorchTool';
 import { FloraTool } from './FloraTool';
+import { StickTool } from './StickTool';
+import { StoneTool } from './StoneTool';
+import { RIGHT_HAND_HELD_ITEM_POSES } from '@features/interaction/logic/HeldItemPoses';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 
@@ -17,7 +20,8 @@ export const FirstPersonTools: React.FC = () => {
     const { camera, scene } = useThree(); // Needed for parenting
     const groupRef = useRef<THREE.Group>(null);
     const axeRef = useRef<THREE.Group>(null);
-    const torchRef = useRef<THREE.Group>(null);
+    const torchRef = useRef<THREE.Group>(null); // left hand (torch/flora)
+    const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
     const hasAxe = useInventoryStore(state => state.hasAxe);
     const currentTool = useInventoryStore(state => state.currentTool);
 
@@ -48,6 +52,88 @@ export const FirstPersonTools: React.FC = () => {
         { hidden: !debugMode }
     );
 
+    const rightHandStickPoseDebug = useControls(
+        'Right Hand / Stick',
+        {
+            xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
+            y: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.y, min: -1.2, max: 0.6, step: 0.01 },
+            z: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.z, min: -2.0, max: -0.1, step: 0.01 },
+            scale: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.scale, min: 0.1, max: 2.0, step: 0.01 },
+            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
+            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
+            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
+            'Save To Code': button(async () => {
+                try {
+                    const res = await fetch('/__vc/held-item-poses', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            kind: 'stick',
+                            stick: {
+                                xOffset: rightHandStickPoseDebug.xOffset,
+                                y: rightHandStickPoseDebug.y,
+                                z: rightHandStickPoseDebug.z,
+                                scale: rightHandStickPoseDebug.scale,
+                                rotOffset: {
+                                    x: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotXDeg),
+                                    y: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotYDeg),
+                                    z: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotZDeg),
+                                }
+                            }
+                        })
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                } catch (err) {
+                    console.error('[Right Hand / Stick] Save failed:', err);
+                    alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }),
+        },
+        { hidden: !debugMode }
+    );
+
+    const rightHandStonePoseDebug = useControls(
+        'Right Hand / Stone',
+        {
+            xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
+            y: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.y, min: -1.2, max: 0.6, step: 0.01 },
+            z: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.z, min: -2.0, max: -0.1, step: 0.01 },
+            scale: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.scale, min: 0.1, max: 2.0, step: 0.01 },
+            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
+            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
+            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
+            'Save To Code': button(async () => {
+                try {
+                    const res = await fetch('/__vc/held-item-poses', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            kind: 'stone',
+                            stone: {
+                                xOffset: rightHandStonePoseDebug.xOffset,
+                                y: rightHandStonePoseDebug.y,
+                                z: rightHandStonePoseDebug.z,
+                                scale: rightHandStonePoseDebug.scale,
+                                rotOffset: {
+                                    x: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotXDeg),
+                                    y: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotYDeg),
+                                    z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg),
+                                }
+                            }
+                        })
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                } catch (err) {
+                    console.error('[Right Hand / Stone] Save failed:', err);
+                    alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)}`);
+                }
+            }),
+        },
+        { hidden: !debugMode }
+    );
+
     // Load the GLB model using the imported URL
     const { scene: modelScene } = useGLTF(pickaxeUrl);
 
@@ -74,6 +160,12 @@ export const FirstPersonTools: React.FC = () => {
     );
     const torchScaleDefault = useRef(0.41);
 
+    // Right-hand item slide animation state (0 hidden -> 1 fully shown)
+    const rightItemProgress = useRef(0);
+    const rightItemTargetPos = useRef(new THREE.Vector3(0.715, -0.30, -0.40));
+    const rightItemHiddenPos = useRef(new THREE.Vector3(0.715, -1.10, -0.40));
+    const rightItemPosTemp = useRef(new THREE.Vector3());
+
     // Debug controls ENABLED
     const { debugPos, debugRot } = usePickaxeDebug();
 
@@ -81,6 +173,10 @@ export const FirstPersonTools: React.FC = () => {
         const handleMouseDown = (e: MouseEvent) => {
             // Only swing when pointer is locked (gameplay) and when using the pickaxe tool.
             if (!document.pointerLockElement) return;
+            const state = useInventoryStore.getState();
+            const selectedItem = state.inventorySlots[state.selectedSlotIndex];
+            // Stick/stone are held as right-hand items (not tools), so don't animate pickaxe swings.
+            if (selectedItem === 'stick' || selectedItem === 'stone') return;
             if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -100,6 +196,9 @@ export const FirstPersonTools: React.FC = () => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
+            const state = useInventoryStore.getState();
+            const selectedItem = state.inventorySlots[state.selectedSlotIndex];
+            if (selectedItem === 'stick' || selectedItem === 'stone') return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
             if (detail.action === 'DIG' && currentTool === 'pickaxe') {
                 isDigging.current = true;
@@ -136,7 +235,7 @@ export const FirstPersonTools: React.FC = () => {
     // Priority 1 ensures this runs AFTER the camera controller updates
     // This eliminates the jitter/lag between camera and tool
     useFrame((state, delta) => {
-        if (!axeRef.current) return;
+        if (!axeRef.current && !torchRef.current && !rightItemRef.current) return;
 
         // Calculate sway/animations relative to the camera-locked group
 
@@ -190,19 +289,20 @@ export const FirstPersonTools: React.FC = () => {
         positionZ += kick * 0.06;  // Tiny pull-back
         rotationX += kick * 0.10;  // Tiny upward recoil
 
+        const selectedItem = inventorySlots[selectedSlotIndex];
+        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone';
+        const leftHandShown = selectedItem === 'torch' || selectedItem === 'flora';
+
         // Apply transforms to the inner Axe group (local offsets)
-        axeRef.current.position.set(positionX, positionY, positionZ);
-        axeRef.current.rotation.set(
-            rotationX,
-            rotationY,
-            rotationZ
-        );
+        // Pickaxe stays visible unless a right-hand override item is selected.
+        if (axeRef.current) {
+            axeRef.current.visible = !rightHandOverride;
+            axeRef.current.position.set(positionX, positionY, positionZ);
+            axeRef.current.rotation.set(rotationX, rotationY, rotationZ);
+        }
 
-        // Left-hand item logic: driven by Inventory Selection
-        const selectedLeftItem = inventorySlots[selectedSlotIndex];
-        const isLeftItemSelected = selectedLeftItem === 'torch' || selectedLeftItem === 'flora';
-
-        const targetShown = isLeftItemSelected;
+        // Left-hand held item logic: torch/flora.
+        const targetShown = leftHandShown;
         const speedIn = 2.2;  // ~0.45s in
         const speedOut = 2.8; // slightly faster out
         const targetProg = targetShown ? 1 : 0;
@@ -214,7 +314,7 @@ export const FirstPersonTools: React.FC = () => {
         const p = torchProgress.current;
         const ease = p * p * (3 - 2 * p); // smoothstep
 
-        // Keep torch on left, match pickaxe height/angle, and slide from below camera.
+        // Keep torch/flora on left and slide from below camera.
         if (torchRef.current) {
             // Re-declare ‘now’ for animation usage using state.clock
             const now = state.clock.getElapsedTime();
@@ -225,7 +325,7 @@ export const FirstPersonTools: React.FC = () => {
                 torchHiddenPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
             }
 
-            // Target pose (mirrors pickaxe feel but left side).
+            // Target pose (left-hand comfort pose).
             torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
             torchRef.current.position.copy(torchPosTemp.current);
             torchRef.current.rotation.set(
@@ -239,6 +339,66 @@ export const FirstPersonTools: React.FC = () => {
             }
             torchRef.current.scale.setScalar(debugMode ? torchPoseDebug.scale : torchScaleDefault.current);
             torchRef.current.visible = ease > 0.01;
+        }
+
+        // Right-hand item logic: stick/stone replaces pickaxe.
+        const rightShown = rightHandOverride;
+        const rTargetProg = rightShown ? 1 : 0;
+        rightItemProgress.current = THREE.MathUtils.lerp(
+            rightItemProgress.current,
+            rTargetProg,
+            (rightShown ? 2.4 : 3.0) * delta
+        );
+        const rp = rightItemProgress.current;
+        const rease = rp * rp * (3 - 2 * rp);
+
+        if (rightItemRef.current) {
+            const now = state.clock.getElapsedTime();
+            const pose = selectedItem === 'stick' || selectedItem === 'stone'
+                ? (debugMode
+                    ? (selectedItem === 'stick'
+                        ? {
+                            xOffset: rightHandStickPoseDebug.xOffset,
+                            y: rightHandStickPoseDebug.y,
+                            z: rightHandStickPoseDebug.z,
+                            scale: rightHandStickPoseDebug.scale,
+                            rotOffset: {
+                                x: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotXDeg),
+                                y: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotYDeg),
+                                z: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotZDeg)
+                            }
+                        }
+                        : {
+                            xOffset: rightHandStonePoseDebug.xOffset,
+                            y: rightHandStonePoseDebug.y,
+                            z: rightHandStonePoseDebug.z,
+                            scale: rightHandStonePoseDebug.scale,
+                            rotOffset: {
+                                x: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotXDeg),
+                                y: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotYDeg),
+                                z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
+                            }
+                        })
+                    : RIGHT_HAND_HELD_ITEM_POSES[selectedItem])
+                : null;
+            if (pose) {
+                const x = positionX + (pose.xOffset ?? 0);
+                rightItemTargetPos.current.set(x, pose.y, pose.z);
+                rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
+                rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
+                rightItemRef.current.position.copy(rightItemPosTemp.current);
+
+                const rot = pose.rotOffset;
+                rightItemRef.current.rotation.set(
+                    rotationX + (rot?.x ?? 0) + Math.sin(now * 1.4) * 0.012,
+                    rotationY + (rot?.y ?? 0) + Math.cos(now * 1.1) * 0.012,
+                    rotationZ + (rot?.z ?? 0)
+                );
+                rightItemRef.current.scale.setScalar(pose.scale);
+                rightItemRef.current.visible = rease > 0.01;
+            } else {
+                rightItemRef.current.visible = false;
+            }
         }
     });
 
@@ -286,7 +446,7 @@ export const FirstPersonTools: React.FC = () => {
             {/* Ambient light for the tool itself to ensure it's never pitch black */}
             <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
 
-            {/* Left-hand torch for caves. Positioned/rotated in useFrame above. */}
+            {/* Left-hand torch/flora. Positioned/rotated in useFrame above. */}
             <group ref={torchRef}>
                 {/* Swap held left-hand item based on inventory selection (same pose/animation). */}
                 <group visible={inventorySlots[selectedSlotIndex] === 'torch'}>
@@ -294,6 +454,16 @@ export const FirstPersonTools: React.FC = () => {
                 </group>
                 <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
                     <FloraTool />
+                </group>
+            </group>
+
+            {/* Right-hand stick/stone (replaces pickaxe). Positioned/rotated in useFrame above. */}
+            <group ref={rightItemRef}>
+                <group visible={inventorySlots[selectedSlotIndex] === 'stick'}>
+                    <StickTool />
+                </group>
+                <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
+                    <StoneTool />
                 </group>
             </group>
 

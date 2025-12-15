@@ -48,7 +48,7 @@ ctx.onmessage = async (e: MessageEvent) => {
       }
 
       // 2. Generate with mods
-      const { density, material, metadata, floraPositions, treePositions, rootHollowPositions, fireflyPositions } =
+      const { density, material, metadata, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } =
         TerrainService.generateChunk(cx, cz, modifications);
 
       // --- AMBIENT VEGETATION GENERATION ---
@@ -225,6 +225,9 @@ ctx.onmessage = async (e: MessageEvent) => {
       const mossinessShared = toSharedUint8Array(metadata.mossiness);
       const floraShared = toSharedFloat32Array(floraPositions);
       const treeShared = toSharedFloat32Array(treePositions);
+      const stickShared = toSharedFloat32Array(stickPositions);
+      const rockShared = toSharedFloat32Array(rockPositions);
+      const largeRockShared = toSharedFloat32Array(largeRockPositions);
       const rootHollowShared = toSharedFloat32Array(rootHollowPositions);
       const fireflyShared = toSharedFloat32Array(fireflyPositions);
 
@@ -244,6 +247,9 @@ ctx.onmessage = async (e: MessageEvent) => {
         vegetationData,
         floraPositions: floraShared,
         treePositions: treeShared,
+        stickPositions: stickShared,
+        rockPositions: rockShared,
+        largeRockPositions: largeRockShared,
         rootHollowPositions: rootHollowShared,
         fireflyPositions: fireflyShared
       };
@@ -259,6 +265,9 @@ ctx.onmessage = async (e: MessageEvent) => {
       maybePush(mossinessShared.buffer as any);
       maybePush(floraShared.buffer as any);
       maybePush(treeShared.buffer as any);
+      maybePush(stickShared.buffer as any);
+      maybePush(rockShared.buffer as any);
+      maybePush(largeRockShared.buffer as any);
       maybePush(rootHollowShared.buffer as any);
       maybePush(fireflyShared.buffer as any);
 

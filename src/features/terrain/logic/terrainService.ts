@@ -3,6 +3,7 @@ import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LE
 import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
+import { RockVariant } from './GroundItemKinds';
 
 export const MATERIAL_HARDNESS: Record<number, number> = {
     [MaterialType.DIRT]: 1.0,
@@ -94,6 +95,9 @@ export class TerrainService {
         metadata: ChunkMetadata,
         floraPositions: Float32Array, // Lumina flora (collectibles) in caverns
         treePositions: Float32Array,  // Surface trees
+        stickPositions: Float32Array, // Surface sticks (collectibles) near trees
+        rockPositions: Float32Array,  // Stones (collectibles) on ground (surface/caves)
+        largeRockPositions: Float32Array, // Large rocks (non-pickup) with collision
         rootHollowPositions: Float32Array,
         fireflyPositions: Float32Array // Ambient fireflies (surface swarms)
     } {
@@ -107,6 +111,9 @@ export class TerrainService {
         const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
         const floraCandidates: number[] = []; // Cavern lumina flora
         const treeCandidates: number[] = [];  // Surface trees
+        const stickCandidates: number[] = []; // Surface sticks (collectible)
+        const rockCandidates: number[] = []; // Stones (collectible)
+        const largeRockCandidates: number[] = []; // Large rocks (non-pickup)
         const rootHollowCandidates: number[] = [];
         const fireflyCandidates: number[] = []; // Surface firefly motes (clustered swarms)
 
@@ -744,6 +751,292 @@ export class TerrainService {
             }
         }
 
+        // --- 5. Ground Item Generation (Sticks + Stones/Rocks) ---
+        // These are lightweight, deterministic, per-chunk ground pickups meant to add "foraging" loops.
+        // - Sticks: biased toward tree-dense biomes and placed near tree bases.
+        // - Stones: placed on rocky surfaces (mountains), on beaches, and on cave floors.
+        // - Large rocks: rare, non-pickup obstacles with collision (mountains + caves).
+        //
+        // Data layout (chunk-local XZ, world-space Y):
+        // - stickPositions: stride 8: x, y, z, nx, ny, nz, variant, seed
+        // - rockPositions:  stride 8: x, y, z, nx, ny, nz, variant, seed
+        // - largeRockPositions: stride 6: x, y, z, radius, variant, seed
+        const clampi = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+        const idx3 = (ix: number, iy: number, iz: number) => ix + iy * sizeX + iz * sizeX * sizeY;
+        const hash01p = (x: number, y: number, z: number, salt: number) => {
+            const n = noise3D(x * 0.011 + salt * 0.17, y * 0.017 + salt * 0.31, z * 0.013 + salt * 0.23);
+            return (n + 1) * 0.5;
+        };
+
+        const normalAt = (ix: number, iy: number, iz: number): [number, number, number] => {
+            const x0 = clampi(ix - 1, 0, sizeX - 1);
+            const x1 = clampi(ix + 1, 0, sizeX - 1);
+            const y0 = clampi(iy - 1, 0, sizeY - 1);
+            const y1 = clampi(iy + 1, 0, sizeY - 1);
+            const z0 = clampi(iz - 1, 0, sizeZ - 1);
+            const z1 = clampi(iz + 1, 0, sizeZ - 1);
+
+            const dx = density[idx3(x1, iy, iz)] - density[idx3(x0, iy, iz)];
+            const dy = density[idx3(ix, y1, iz)] - density[idx3(ix, y0, iz)];
+            const dz = density[idx3(ix, iy, z1)] - density[idx3(ix, iy, z0)];
+
+            let nx = dx;
+            let ny = dy;
+            let nz = dz;
+            const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+            if (len < 1e-6) return [0, 1, 0];
+            nx /= len; ny /= len; nz /= len;
+            // Prefer "upward" normals for ground alignment.
+            if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+            return [nx, ny, nz];
+        };
+
+        const findTopSurfaceAtLocalXZ = (localX: number, localZ: number): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
+            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
+            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
+            for (let y = sizeY - 2; y >= 1; y--) {
+                const idx = idx3(ix, y, iz);
+                if (density[idx] > ISO_LEVEL) {
+                    const idxAbove = idx3(ix, y + 1, iz);
+                    // Ensure we are at a solid->air boundary (actual exposed surface),
+                    // otherwise we can "hit" interior solids under overhangs and place items inside rock.
+                    if (density[idxAbove] > ISO_LEVEL) continue;
+                    const dSolid = density[idx];
+                    const dAir = density[idxAbove];
+                    const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                    const worldY = (y - PAD + t) + MESH_Y_OFFSET;
+                    const n = normalAt(ix, y, iz);
+                    const matBelow = material[idx] ?? MaterialType.DIRT;
+                    return { worldY, normal: n, matBelow };
+                }
+            }
+            return null;
+        };
+
+        const findGroundNear = (
+            localX: number,
+            localZ: number,
+            centerYIndex: number,
+            searchRange: number,
+            requireHeadroomCells: number
+        ): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
+            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
+            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
+            const startY = clampi(centerYIndex + searchRange, 2, sizeY - 3);
+            const endY = clampi(centerYIndex - searchRange, 1, sizeY - 4);
+
+            for (let fy = startY; fy >= endY; fy--) {
+                const idxAir = idx3(ix, fy, iz);
+                const idxBelow = idx3(ix, fy - 1, iz);
+                if (density[idxAir] > ISO_LEVEL) continue;
+                if (density[idxBelow] <= ISO_LEVEL) continue;
+
+                let headroomOk = true;
+                for (let k = 0; k < requireHeadroomCells; k++) {
+                    const iy = fy + k;
+                    if (iy >= sizeY) { headroomOk = false; break; }
+                    const idxHr = idx3(ix, iy, iz);
+                    if (density[idxHr] > ISO_LEVEL) { headroomOk = false; break; }
+                }
+                if (!headroomOk) continue;
+
+                const dAir = density[idxAir];
+                const dSolid = density[idxBelow];
+                const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                const worldY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
+                const n = normalAt(ix, fy - 1, iz);
+                const matBelow = material[idxBelow] ?? MaterialType.DIRT;
+                return { worldY, normal: n, matBelow };
+            }
+
+            return null;
+        };
+
+        const isRockyMaterial = (m: number): boolean => (
+            m === MaterialType.STONE ||
+            m === MaterialType.MOSSY_STONE ||
+            m === MaterialType.TERRACOTTA ||
+            m === MaterialType.OBSIDIAN ||
+            m === MaterialType.GLOW_STONE
+        );
+
+        const MAX_STICKS = 40;
+        const MAX_PICKUP_ROCKS = 18;
+        const MAX_LARGE_ROCKS = 3;
+
+        // 5.1 Sticks (near trees, biased to high-tree biomes)
+        // NOTE: treeCandidates are chunk-local (XZ) and world-space Y.
+        for (let i = 0; i < treeCandidates.length && stickCandidates.length / 8 < MAX_STICKS; i += 4) {
+            const txLocal = treeCandidates[i + 0];
+            const tyWorld = treeCandidates[i + 1];
+            const tzLocal = treeCandidates[i + 2];
+
+            const txWorld = txLocal + worldOffsetX;
+            const tzWorld = tzLocal + worldOffsetZ;
+            const biome = BiomeManager.getBiomeAt(txWorld, tzWorld);
+
+            let biomeFactor = 0.0;
+            if (biome === 'JUNGLE') biomeFactor = 1.0;
+            else if (biome === 'THE_GROVE') biomeFactor = 0.45;
+            else if (biome === 'PLAINS') biomeFactor = 0.25;
+            else biomeFactor = 0.0;
+            if (biomeFactor <= 0) continue;
+
+            const spawnP = hash01p(txWorld, tyWorld, tzWorld, 3101);
+            if (spawnP > biomeFactor * 0.65) continue;
+
+            const attempts = biome === 'JUNGLE' ? 3 : 2;
+            const centerYIdx = clampi(Math.floor((tyWorld + 0.2 - MESH_Y_OFFSET) + PAD), 2, sizeY - 3);
+
+            for (let a = 0; a < attempts && stickCandidates.length / 8 < MAX_STICKS; a++) {
+                const u = hash01p(txWorld, tyWorld, tzWorld, 3120 + a * 7);
+                const v = hash01p(txWorld, tyWorld, tzWorld, 3121 + a * 7);
+                const w = hash01p(txWorld, tyWorld, tzWorld, 3122 + a * 7);
+
+                const angle = u * Math.PI * 2;
+                const r = 0.25 + v * 1.15;
+                const lx = txLocal + Math.cos(angle) * r;
+                const lz = tzLocal + Math.sin(angle) * r;
+
+                const hit = findGroundNear(lx, lz, centerYIdx, 6, 1);
+                if (!hit) continue;
+                if (hit.worldY <= WATER_LEVEL + 0.15) continue;
+
+                const variant = biome === 'JUNGLE' ? 1 : 0;
+                stickCandidates.push(
+                    lx,
+                    hit.worldY + 0.05,
+                    lz,
+                    hit.normal[0], hit.normal[1], hit.normal[2],
+                    variant,
+                    w
+                );
+            }
+        }
+
+        // 5.2 Surface rocks (mountains + beaches; keep scarce)
+        for (let i = 0; i < 22 && rockCandidates.length / 8 < MAX_PICKUP_ROCKS; i++) {
+            const u = hash01p(worldOffsetX, 0, worldOffsetZ, 4200 + i * 3);
+            const v = hash01p(worldOffsetX, 0, worldOffsetZ, 4201 + i * 3);
+            const lx = u * CHUNK_SIZE_XZ;
+            const lz = v * CHUNK_SIZE_XZ;
+            const wx = worldOffsetX + lx;
+            const wz = worldOffsetZ + lz;
+
+            const biome = BiomeManager.getBiomeAt(wx, wz);
+            const top = findTopSurfaceAtLocalXZ(lx, lz);
+            if (!top) continue;
+            if (top.worldY <= WATER_LEVEL + 0.15) continue;
+
+            const matBelow = top.matBelow;
+
+            let want = false;
+            let threshold = 0.0;
+            let variant: RockVariant = RockVariant.MOUNTAIN;
+
+            if (biome === 'BEACH') {
+                want = true;
+                threshold = 0.35;
+                variant = RockVariant.BEACH;
+            } else if (biome === 'MOUNTAINS' || biome === 'ICE_SPIKES') {
+                want = isRockyMaterial(matBelow);
+                threshold = 0.35;
+                variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            } else {
+                // Outside obvious rocky biomes, only sprinkle on exposed stone at higher altitudes.
+                want = isRockyMaterial(matBelow) && top.worldY > 24;
+                threshold = 0.16;
+                variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            }
+
+            if (!want) continue;
+            const p = hash01p(wx, top.worldY, wz, 4220);
+            if (p > threshold) continue;
+
+            // Small local jitter keeps them from reading as grid-snapped.
+            const jx = (hash01p(wx, top.worldY, wz, 4221) - 0.5) * 0.9;
+            const jz = (hash01p(wx, top.worldY, wz, 4222) - 0.5) * 0.9;
+            rockCandidates.push(
+                lx + jx,
+                top.worldY + 0.05,
+                lz + jz,
+                top.normal[0], top.normal[1], top.normal[2],
+                variant,
+                p
+            );
+
+            // Rare large surface rock in mountainous / rocky areas.
+            if (largeRockCandidates.length / 6 < MAX_LARGE_ROCKS) {
+                const bigP = hash01p(wx, top.worldY, wz, 4250);
+                const bigOk = (biome === 'MOUNTAINS' || biome === 'ICE_SPIKES') && isRockyMaterial(matBelow);
+                if (bigOk && bigP < 0.06) {
+                    const radius = 1.1 + hash01p(wx, top.worldY, wz, 4251) * 1.8; // ~1.1..2.9
+                    largeRockCandidates.push(
+                        lx + (hash01p(wx, top.worldY, wz, 4252) - 0.5) * 1.2,
+                        top.worldY + 0.05,
+                        lz + (hash01p(wx, top.worldY, wz, 4253) - 0.5) * 1.2,
+                        radius,
+                        variant,
+                        bigP
+                    );
+                }
+            }
+        }
+
+        // 5.3 Cave rocks (on cave floors, near rock material)
+        for (let i = 0; i < 26 && rockCandidates.length / 8 < MAX_PICKUP_ROCKS; i++) {
+            const u = hash01p(worldOffsetX, -101, worldOffsetZ, 5200 + i * 3);
+            const v = hash01p(worldOffsetX, -101, worldOffsetZ, 5201 + i * 3);
+            const lx = u * CHUNK_SIZE_XZ;
+            const lz = v * CHUNK_SIZE_XZ;
+            const wx = worldOffsetX + lx;
+            const wz = worldOffsetZ + lz;
+
+            // Find the top surface so we can look for a floor below it (skip shallow overhangs).
+            const top = findTopSurfaceAtLocalXZ(lx, lz);
+            if (!top) continue;
+            const surfaceYIdx = clampi(Math.floor((top.worldY - MESH_Y_OFFSET) + PAD), 2, sizeY - 3);
+
+            // Search for a deeper floor (air cell with solid below) well below the surface.
+            const minDepthCells = 12;
+            const center = surfaceYIdx - minDepthCells;
+            const floor = findGroundNear(lx, lz, center, 36, 2);
+            if (!floor) continue;
+
+            // Must be meaningfully underground and on/near rock.
+            if (floor.worldY > top.worldY - 8) continue;
+            if (!isRockyMaterial(floor.matBelow)) continue;
+
+            const p = hash01p(wx, floor.worldY, wz, 5230);
+            if (p > 0.35) continue;
+
+            const variant = floor.matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.CAVE;
+            rockCandidates.push(
+                lx + (hash01p(wx, floor.worldY, wz, 5231) - 0.5) * 0.85,
+                floor.worldY + 0.05,
+                lz + (hash01p(wx, floor.worldY, wz, 5232) - 0.5) * 0.85,
+                floor.normal[0], floor.normal[1], floor.normal[2],
+                variant,
+                p
+            );
+
+            // Very rare large cave boulder (ensure headroom).
+            if (largeRockCandidates.length / 6 < MAX_LARGE_ROCKS) {
+                const bigP = hash01p(wx, floor.worldY, wz, 5260);
+                if (bigP < 0.045) {
+                    const radius = 1.0 + hash01p(wx, floor.worldY, wz, 5261) * 1.6; // ~1.0..2.6
+                    largeRockCandidates.push(
+                        lx + (hash01p(wx, floor.worldY, wz, 5262) - 0.5) * 1.0,
+                        floor.worldY + 0.05,
+                        lz + (hash01p(wx, floor.worldY, wz, 5263) - 0.5) * 1.0,
+                        radius,
+                        variant,
+                        bigP
+                    );
+                }
+            }
+        }
+
         const metadata: ChunkMetadata = {
             wetness,
             mossiness
@@ -755,6 +1048,9 @@ export class TerrainService {
             metadata,
             floraPositions: new Float32Array(floraCandidates),
             treePositions: new Float32Array(treeCandidates),
+            stickPositions: new Float32Array(stickCandidates),
+            rockPositions: new Float32Array(rockCandidates),
+            largeRockPositions: new Float32Array(largeRockCandidates),
             rootHollowPositions: new Float32Array(rootHollowCandidates),
             fireflyPositions: new Float32Array(fireflyCandidates)
         };

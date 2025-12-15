@@ -371,7 +371,7 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                         void main() {
                             // Per-tree brightness/saturation variation (deterministic per tree)
                             float treeBrightness = 0.85 + vTreeSeed * 0.30; // 0.85 to 1.15
-                            float treeSaturation = 0.90 + fract(vTreeSeed * 7.3) * 0.20; // 0.90 to 1.10
+                            float treeSaturation = 0.70 + fract(vTreeSeed * 7.3) * 0.20; // 0.70 to 0.90 (reduced saturation)
                             
                             // Static Color Variation (using noise offset by tree seed)
                             float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
@@ -395,8 +395,8 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
                             col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
                             csm_DiffuseColor = vec4(col, 1.0);
-                            // Static Emissive (no pulse)
-                            csm_Emissive = uColorTip * 0.12; 
+                            // Static Emissive (no pulse) - reduced glow
+                            csm_Emissive = uColorTip * 0.05; 
                             csm_Roughness = 0.6;
                         }
                     `}

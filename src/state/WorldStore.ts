@@ -8,6 +8,11 @@ export interface FloraHotspot {
   z: number;
 }
 
+export interface GroundHotspot {
+  x: number;
+  z: number;
+}
+
 export type EntityType = 'FLORA' | 'TORCH' | 'TREE_STUMP' | 'BEE';
 
 export interface EntityData {
@@ -33,6 +38,10 @@ interface WorldState {
   // Hotspots for naturally generated flora (per chunk key)
   floraHotspots: Map<string, FloraHotspot[]>;
 
+  // Hotspots for naturally generated ground pickups (per chunk key)
+  stickHotspots: Map<string, GroundHotspot[]>;
+  rockHotspots: Map<string, GroundHotspot[]>;
+
   addEntity: (data: EntityData) => void;
   addEntities: (data: EntityData[]) => void;
   removeEntity: (id: string) => void;
@@ -55,12 +64,22 @@ interface WorldState {
    * Retrieve flora hotspots within a radius (for UI overlays).
    */
   getFloraHotspotsNearby: (pos: Vector3, searchRadius?: number) => FloraHotspot[];
+
+  setStickHotspots: (chunkKey: string, hotspots: GroundHotspot[]) => void;
+  clearStickHotspots: (chunkKey: string) => void;
+  getStickHotspotsNearby: (pos: Vector3, searchRadius?: number) => GroundHotspot[];
+
+  setRockHotspots: (chunkKey: string, hotspots: GroundHotspot[]) => void;
+  clearRockHotspots: (chunkKey: string) => void;
+  getRockHotspotsNearby: (pos: Vector3, searchRadius?: number) => GroundHotspot[];
 }
 
 export const useWorldStore = create<WorldState>((set, get) => ({
   entities: new Map(),
   spatialMap: new Map(),
   floraHotspots: new Map(),
+  stickHotspots: new Map(),
+  rockHotspots: new Map(),
 
   addEntity: (data) => set((state) => {
     // 1. Add to main database
@@ -182,6 +201,68 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     const radiusSq = searchRadius * searchRadius;
 
     floraHotspots.forEach((spots) => {
+      for (const spot of spots) {
+        const dx = spot.x - pos.x;
+        const dz = spot.z - pos.z;
+        if (dx * dx + dz * dz <= radiusSq) {
+          results.push(spot);
+        }
+      }
+    });
+
+    return results;
+  },
+
+  setStickHotspots: (chunkKey, hotspots) => set((state) => {
+    const next = new Map(state.stickHotspots);
+    next.set(chunkKey, hotspots);
+    return { stickHotspots: next };
+  }),
+
+  clearStickHotspots: (chunkKey) => set((state) => {
+    if (!state.stickHotspots.has(chunkKey)) return state;
+    const next = new Map(state.stickHotspots);
+    next.delete(chunkKey);
+    return { stickHotspots: next };
+  }),
+
+  getStickHotspotsNearby: (pos, searchRadius = 160) => {
+    const { stickHotspots } = get();
+    const results: GroundHotspot[] = [];
+    const radiusSq = searchRadius * searchRadius;
+
+    stickHotspots.forEach((spots) => {
+      for (const spot of spots) {
+        const dx = spot.x - pos.x;
+        const dz = spot.z - pos.z;
+        if (dx * dx + dz * dz <= radiusSq) {
+          results.push(spot);
+        }
+      }
+    });
+
+    return results;
+  },
+
+  setRockHotspots: (chunkKey, hotspots) => set((state) => {
+    const next = new Map(state.rockHotspots);
+    next.set(chunkKey, hotspots);
+    return { rockHotspots: next };
+  }),
+
+  clearRockHotspots: (chunkKey) => set((state) => {
+    if (!state.rockHotspots.has(chunkKey)) return state;
+    const next = new Map(state.rockHotspots);
+    next.delete(chunkKey);
+    return { rockHotspots: next };
+  }),
+
+  getRockHotspotsNearby: (pos, searchRadius = 160) => {
+    const { rockHotspots } = get();
+    const results: GroundHotspot[] = [];
+    const radiusSq = searchRadius * searchRadius;
+
+    rockHotspots.forEach((spots) => {
       for (const spot of spots) {
         const dx = spot.x - pos.x;
         const dz = spot.z - pos.z;

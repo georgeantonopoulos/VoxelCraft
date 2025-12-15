@@ -29,29 +29,19 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameCount = useRef(0);
 
-  // Get flora entities to display
-  const floraEntities = useWorldStore(s => s.entities);
-  const getFloraHotspotsNearby = useWorldStore(s => s.getFloraHotspotsNearby);
-  // We need a ref to access the latest entities inside the effect without re-triggering it constantly
-  // However, since we redraw every few frames, we can just read from the store or use a ref.
-  // Using the hook directly causes re-renders when entities change, which is fine.
+  // Ground pickup signatures (sticks/rocks). Flora signatures are intentionally disabled.
+  const getStickHotspotsNearby = useWorldStore(s => s.getStickHotspotsNearby);
+  const getRockHotspotsNearby = useWorldStore(s => s.getRockHotspotsNearby);
 
-  // Filter flora for performance (only those likely to be on map)
-  // Map radius in world units = (MAP_SIZE / 2) * MAP_SCALE = 64 * 2 = 128
-  const visibleFlora = useMemo(() => {
-    const range = (MAP_SIZE / 2) * MAP_SCALE + 20; // +buffer
-    return Array.from(floraEntities.values()).filter(e => {
-      if (e.type !== 'FLORA') return false;
-      const dx = e.position.x - px;
-      const dz = e.position.z - pz;
-      return Math.abs(dx) < range && Math.abs(dz) < range;
-    });
-  }, [floraEntities, px, pz]);
+  const visibleStickHotspots = useMemo(() => {
+    const range = (MAP_SIZE / 2) * MAP_SCALE + 20;
+    return getStickHotspotsNearby(new Vector3(px, 0, pz), range);
+  }, [getStickHotspotsNearby, px, pz]);
 
-  const visibleHotspots = useMemo(() => {
-    const range = (MAP_SIZE / 2) * MAP_SCALE + 20; // Keep buffer consistent with entities
-    return getFloraHotspotsNearby(new Vector3(px, 0, pz), range);
-  }, [getFloraHotspotsNearby, px, pz]);
+  const visibleRockHotspots = useMemo(() => {
+    const range = (MAP_SIZE / 2) * MAP_SCALE + 20;
+    return getRockHotspotsNearby(new Vector3(px, 0, pz), range);
+  }, [getRockHotspotsNearby, px, pz]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -98,42 +88,37 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
     ctx.putImageData(imgData, 0, 0);
 
-    // Draw Flora Hotspots (pre-pickup spawn points from terrain generation)
+    // Draw Ground Pickup Hotspots (sticks + stones)
     const time = Date.now() / 1000;
     const pulse = (Math.sin(time * 5) * 0.5 + 0.5); // 0 to 1
-    const hotspotRadius = 3 + pulse * 3; // Larger to signal area of interest
+    const rSmall = 1.8 + pulse * 0.9;
+    const rLarge = 2.3 + pulse * 1.1;
 
-    ctx.fillStyle = '#38bdf8'; // Bright blue
-    ctx.globalAlpha = 0.45 + pulse * 0.35; // Pulse opacity
-
-    visibleHotspots.forEach((spot) => {
-      // Convert world pos to map pos
+    // Sticks: brown dots
+    ctx.fillStyle = '#b45309';
+    ctx.globalAlpha = 0.65 + pulse * 0.25;
+    visibleStickHotspots.forEach((spot) => {
       const mapX = cx + (spot.x - px) / MAP_SCALE;
       const mapY = cy + (spot.z - pz) / MAP_SCALE;
-
       ctx.beginPath();
-      ctx.arc(mapX, mapY, hotspotRadius, 0, Math.PI * 2);
+      ctx.arc(mapX, mapY, rSmall, 0, Math.PI * 2);
       ctx.fill();
     });
 
-    // Draw placed/active flora entities (player-facing objects)
-    const entityRadius = 2 + pulse * 2; // 2 to 4 pixels
-
-    ctx.fillStyle = '#67e8f9'; // Cyan
-    ctx.globalAlpha = 0.6 + pulse * 0.4; // Pulse opacity
-
-    visibleFlora.forEach(flora => {
-      const mapX = cx + (flora.position.x - px) / MAP_SCALE;
-      const mapY = cy + (flora.position.z - pz) / MAP_SCALE;
-
+    // Stones: grey dots
+    ctx.fillStyle = '#9ca3af';
+    ctx.globalAlpha = 0.70 + pulse * 0.25;
+    visibleRockHotspots.forEach((spot) => {
+      const mapX = cx + (spot.x - px) / MAP_SCALE;
+      const mapY = cy + (spot.z - pz) / MAP_SCALE;
       ctx.beginPath();
-      ctx.arc(mapX, mapY, entityRadius, 0, Math.PI * 2);
+      ctx.arc(mapX, mapY, rLarge, 0, Math.PI * 2);
       ctx.fill();
     });
 
     ctx.globalAlpha = 1.0;
 
-  }, [px, pz, visibleFlora, visibleHotspots]); // Re-run when player moves or flora changes
+  }, [px, pz, visibleStickHotspots, visibleRockHotspots]); // Re-run when player moves or pickup hotspots change
 
   return (
     <div className="relative rounded-full border-4 border-slate-800/50 shadow-2xl overflow-hidden bg-slate-900 w-32 h-32 flex items-center justify-center">
@@ -168,6 +153,8 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
 export const HUD: React.FC = () => {
   const inventoryCount = useGameStore((state) => state.inventoryCount);
+  const stickCount = useGameStore((state) => state.stickCount);
+  const stoneCount = useGameStore((state) => state.stoneCount);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
   const [crosshairHit, setCrosshairHit] = useState(false);
@@ -253,7 +240,9 @@ export const HUD: React.FC = () => {
           <p>Left Click: <span className="text-red-500 font-semibold">DIG</span></p>
           <p>Right Click: <span className="text-emerald-600 font-semibold">BUILD</span></p>
           <p>E: <span className="text-cyan-600 font-semibold">Place Selected</span></p>
-          <p>Q: <span className="text-cyan-600 font-semibold">Pick Up Flora</span> (Inv: {inventoryCount})</p>
+          <p>
+            Q: <span className="text-cyan-600 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})
+          </p>
           <p>Scroll: <span className="text-amber-500 font-semibold">Inventory</span></p>
         </div>
         {debugMode && placementDebug && (

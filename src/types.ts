@@ -112,6 +112,11 @@ export interface ChunkState {
   treePositions?: Float32Array;
   rootHollowPositions?: Float32Array;
   fireflyPositions?: Float32Array; // stride 4: x, y, z, seed (WORLD SPACE)
+  // Small ground pickups (chunk-local XZ, world-space Y). Stride is documented in `GroundItemsLayer.tsx`.
+  stickPositions?: Float32Array;
+  rockPositions?: Float32Array;
+  // Non-pickup large rocks with collision. Stride is documented in `GroundItemsLayer.tsx`.
+  largeRockPositions?: Float32Array;
   vegetationData?: Record<number, Float32Array>;
 
   meshWaterPositions: Float32Array;

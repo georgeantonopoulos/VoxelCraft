@@ -1,6 +1,78 @@
 import path from 'path';
+import fs from 'node:fs/promises';
+import type { Plugin } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+
+type RightHandPosePayload = {
+  kind: 'stick' | 'stone' | 'both';
+  stick?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
+  stone?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
+};
+
+const vcPoseWriterPlugin = (): Plugin => ({
+  name: 'vc-pose-writer',
+  configureServer(server) {
+    server.middlewares.use('/__vc/held-item-poses', async (req, res, next) => {
+      if (req.method !== 'POST') return next();
+
+      try {
+        const chunks: Buffer[] = [];
+        for await (const c of req) chunks.push(c as Buffer);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        const body = JSON.parse(raw || '{}') as RightHandPosePayload;
+
+        const filePath = path.resolve(process.cwd(), 'src/features/interaction/logic/HeldItemPoses.ts');
+        let content = await fs.readFile(filePath, 'utf8');
+
+        const fmt = (n: number, digits = 3): string => {
+          const v = Number.isFinite(n) ? Number(n.toFixed(digits)) : 0;
+          return String(v);
+        };
+
+        const formatPose = (pose: NonNullable<RightHandPosePayload['stick']>): string => {
+          const xOffset = fmt(pose.xOffset ?? 0, 3);
+          const y = fmt(pose.y, 3);
+          const z = fmt(pose.z, 3);
+          const scale = fmt(pose.scale, 3);
+          const rx = fmt(pose.rotOffset?.x ?? 0, 4);
+          const ry = fmt(pose.rotOffset?.y ?? 0, 4);
+          const rz = fmt(pose.rotOffset?.z ?? 0, 4);
+          return `{ xOffset: ${xOffset}, y: ${y}, z: ${z}, scale: ${scale}, rotOffset: { x: ${rx}, y: ${ry}, z: ${rz} } }`;
+        };
+
+        const replaceLine = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
+          const lineRe = new RegExp(`^\\s*${key}\\s*:\\s*\\{.*\\}\\s*,?\\s*$`, 'm');
+          const replacement = `  ${key}: ${formatPose(pose)}${key === 'stick' ? ',' : ''}`;
+          if (!lineRe.test(content)) {
+            throw new Error(`Could not find ${key} pose line in HeldItemPoses.ts`);
+          }
+          content = content.replace(lineRe, replacement);
+        };
+
+        if (body.kind === 'stick' || body.kind === 'both') {
+          if (!body.stick) throw new Error('Missing stick payload');
+          replaceLine('stick', body.stick);
+        }
+        if (body.kind === 'stone' || body.kind === 'both') {
+          if (!body.stone) throw new Error('Missing stone payload');
+          replaceLine('stone', body.stone);
+        }
+
+        await fs.writeFile(filePath, content, 'utf8');
+        server.ws.send({ type: 'full-reload' });
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      }
+    });
+  }
+});
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
@@ -22,7 +94,7 @@ export default defineConfig(({ mode }) => {
         'Cross-Origin-Embedder-Policy': 'require-corp',
       },
     },
-    plugins: [react()],
+    plugins: [react(), vcPoseWriterPlugin()],
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)

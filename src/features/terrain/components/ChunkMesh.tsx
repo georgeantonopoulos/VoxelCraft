@@ -8,6 +8,7 @@ import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
+import { GroundItemsLayer } from './GroundItemsLayer';
 
 
 
@@ -227,6 +228,14 @@ export const ChunkMesh: React.FC<{
       {chunk.treePositions && chunk.treePositions.length > 0 && (
         <TreeLayer data={chunk.treePositions} />
       )}
+
+      {(chunk.stickPositions?.length || chunk.rockPositions?.length || chunk.largeRockPositions?.length) ? (
+        <GroundItemsLayer
+          stickData={chunk.stickPositions}
+          rockData={chunk.rockPositions}
+          largeRockData={chunk.largeRockPositions}
+        />
+      ) : null}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
         <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} />

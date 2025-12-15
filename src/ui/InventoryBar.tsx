@@ -3,19 +3,31 @@ import React from 'react';
 import { useInventoryStore } from '@/state/InventoryStore';
 import torchImg from '@/assets/images/torch_gemini.png';
 import floraImg from '@/assets/images/flower_blue.png';
+import stickImg from '@/assets/images/stick.svg';
+import stoneImg from '@/assets/images/stone.svg';
 
 export const InventoryBar: React.FC = () => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
     const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
     const floraCount = useInventoryStore(state => state.inventoryCount);
     const torchCount = useInventoryStore(state => state.torchCount);
+    const stickCount = useInventoryStore(state => state.stickCount);
+    const stoneCount = useInventoryStore(state => state.stoneCount);
 
     return (
         <div className="absolute bottom-6 left-6 z-50 flex gap-2 p-2 bg-slate-900/80 backdrop-blur-md rounded-xl border border-white/10 shadow-xl pointer-events-auto">
             {inventorySlots.map((item, index) => {
                 const isSelected = index === selectedSlotIndex;
-                const showCount = item === 'flora' || item === 'torch';
-                const count = item === 'flora' ? floraCount : (item === 'torch' ? torchCount : 0);
+                const showCount = item === 'flora' || item === 'torch' || item === 'stick' || item === 'stone';
+                const count = item === 'flora'
+                  ? floraCount
+                  : (item === 'torch'
+                    ? torchCount
+                    : (item === 'stick'
+                      ? stickCount
+                      : (item === 'stone'
+                        ? stoneCount
+                        : 0)));
                 return (
                     <div
                         key={index}
@@ -41,6 +53,20 @@ export const InventoryBar: React.FC = () => {
                             <img
                                 src={floraImg}
                                 alt="Flora"
+                                className={`w-8 h-8 object-contain drop-shadow-md ${count > 0 ? '' : 'opacity-30'}`}
+                            />
+                        )}
+                        {item === 'stick' && (
+                            <img
+                                src={stickImg}
+                                alt="Stick"
+                                className={`w-8 h-8 object-contain drop-shadow-md ${count > 0 ? '' : 'opacity-30'}`}
+                            />
+                        )}
+                        {item === 'stone' && (
+                            <img
+                                src={stoneImg}
+                                alt="Stone"
                                 className={`w-8 h-8 object-contain drop-shadow-md ${count > 0 ? '' : 'opacity-30'}`}
                             />
                         )}
