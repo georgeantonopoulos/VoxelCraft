@@ -63,13 +63,12 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - Worker message convention is `{ type, payload }` (see `terrain.worker.ts`, `simulation.worker.ts`).
 - Simulation runs via `src/features/flora/workers/simulation.worker.ts` managed by `src/features/flora/logic/SimulationManager.ts` and posts `type: 'CHUNKS_UPDATED'`.
 
-## Interaction: Hard Invariants (verified)
+## Interaction & State (verified)
 
-- Terrain targeting relies on `userData.type === 'terrain'`:
-  - `src/features/terrain/components/ChunkMesh.tsx` tags both the physics `RigidBody` and the render mesh.
-  - Consumers include `src/features/terrain/components/VoxelTerrain.tsx` and `src/features/flora/components/FloraPlacer.tsx`.
-
----
+- Terrain targeting relies on `userData.type === 'terrain'` (`ChunkMesh.tsx`).
+- **Global Settings**: `src/state/SettingsStore.ts` is the source of truth for graphics (resolution, shadows) and input mode (mouse vs touch). `App.tsx` subscribes to this.
+- **Input Logic**: `src/features/player/usePlayerInput.ts` abstracts input sources (`useKeyboardControls` vs `InputStore`).
+- **Touch Camera**: `src/features/player/TouchCameraControls.tsx` handles look rotation for touch mode, bypassing `PointerLockControls`.
 
 ## Known Pitfalls (keep this list small)
 
@@ -99,8 +98,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-14: Implemented persistent Graphics Settings (Resolution, Quality) and Touchscreen Support (Virtual Joystick). Added `SettingsStore.ts` and `SettingsMenu.tsx`. Refactored `Player` input.
 - 2025-12-14: Fixed per-tree leaf color variation not being visible. Root causes: (1) hue variation was too subtle (0.10→0.30 radians), (2) noise was sampled at world position making nearby trees identical, (3) tint range was too narrow. Fix: offset noise coords by per-tree seed, add per-tree brightness/saturation, widen tint range.
 - 2025-12-14: Added volumetric God Rays (post-processing) linked to the sun mesh for dramatic atmospheric lighting.
 - 2025-12-14: Removed ALL animated/pulsing texture effects from tree leaves per user request. Replaced with static color variation (noise lookup) and static emissive glow. Wind sway is retained in vertex shaders.
 - 2025-12-14: Removed procedural noise texture from all tree leaves (FractalTree, FallingTree, TreeLayer) per user request to fix "moving/weird" look. Reverted to clean gradient and simple emissive pulse.
-- 2025-12-14: Updated `TreeLayer.tsx` and `TreeGeometryFactory.ts` to apply procedural bark/leaf shaders to massive terrain trees (previously only applied to hero instances).

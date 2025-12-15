@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { useRef, useState, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useKeyboardControls } from '@react-three/drei';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { usePlayerInput } from './usePlayerInput';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
@@ -13,7 +13,7 @@ const SWIM_VERTICAL_SPEED = 4.5;
 
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
-  const [, getKeys] = useKeyboardControls();
+  const getInput = usePlayerInput();
   const { rapier, world } = useRapier();
   const [isFlying, setIsFlying] = useState(false);
   const lastSpacePress = useRef<number>(0);
@@ -64,20 +64,22 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       }
     }));
 
-    const { forward, backward, left, right, jump, shift } = getKeys();
+    const { move, jump, shift } = getInput();
     // REMOVED: The Flora Placement logic that was conflicting
 
     const velocity = body.current.linvel();
     const camera = state.camera;
 
-    const frontVector = new THREE.Vector3(0, 0, (backward ? 1 : 0) - (forward ? 1 : 0));
-    const sideVector = new THREE.Vector3((left ? 1 : 0) - (right ? 1 : 0), 0, 0);
-    const direction = new THREE.Vector3();
+    const direction = new THREE.Vector3(move.x, 0, move.z);
 
     // Underwater movement: slower horizontal speed with drag based on submersion.
     const baseSpeed = (inWater && !isFlying) ? SWIM_SPEED : PLAYER_SPEED;
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
-    direction.subVectors(frontVector, sideVector).normalize().multiplyScalar(baseSpeed * drag);
+
+    // Normalize only if length > 1 (to allow slow analog movement)
+    if (direction.lengthSq() > 1.0) direction.normalize();
+
+    direction.multiplyScalar(baseSpeed * drag);
     direction.applyEuler(camera.rotation);
 
     let yVelocity = velocity.y;
