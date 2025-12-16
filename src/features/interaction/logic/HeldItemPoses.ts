@@ -13,7 +13,7 @@ export type HeldItemPose = {
 
 export const RIGHT_HAND_HELD_ITEM_POSES: Record<RightHandHeldItemId, HeldItemPose> = {
   // Reference: torch's comfortable Y/Z (but on the right hand).
-  stick: { xOffset: 0, y: -0.3, z: -0.4, scale: 0.65, rotOffset: { x: 0.25, y: 0, z: 0.4 } },
-  stone: { xOffset: 0, y: -0.3, z: -0.4, scale: 0.78, rotOffset: { x: 0.15, y: 0, z: 0 } },
-  shard: { xOffset: 0, y: -0.3, z: -0.4, scale: 0.60, rotOffset: { x: 0.15, y: 0, z: 0.8 } }
+  stick: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
+  stone: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } } ,
+  shard: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } }
 };
