@@ -313,15 +313,17 @@ const LeafPickupEffect = ({
   start,
   color = '#00FFFF',
   geometry = 'octahedron',
+  item,
   onDone
 }: {
   start: THREE.Vector3;
   color?: string;
   geometry?: 'octahedron' | 'sphere';
+  item?: 'torch' | 'flora' | 'stick' | 'stone';
   onDone: () => void;
 }) => {
   const { camera } = useThree();
-  const meshRef = useRef<THREE.Mesh>(null);
+  const meshRef = useRef<THREE.Object3D>(null);
   const velocity = useRef(new THREE.Vector3(0, 1.5, 0));
   const phase = useRef<'fall' | 'fly'>('fall');
   const elapsed = useRef(0);
@@ -367,21 +369,35 @@ const LeafPickupEffect = ({
   });
 
   return (
-    <mesh ref={meshRef} castShadow receiveShadow>
-      {geometry === 'sphere' ? (
-        <sphereGeometry args={[0.13, 12, 10]} />
+    <group ref={meshRef}>
+      {item === 'stick' ? (
+        <mesh rotation={[Math.PI * 0.5, 0, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[0.05, 0.045, 0.75, 10]} />
+          <meshStandardMaterial color="#8b5a2b" roughness={0.92} metalness={0.0} toneMapped={false} />
+        </mesh>
+      ) : item === 'stone' ? (
+        <mesh castShadow receiveShadow>
+          <dodecahedronGeometry args={[0.18, 0]} />
+          <meshStandardMaterial color="#8e8e9a" roughness={0.92} metalness={0.0} toneMapped={false} />
+        </mesh>
       ) : (
-        <octahedronGeometry args={[0.15, 0]} />
+        <mesh castShadow receiveShadow>
+          {geometry === 'sphere' ? (
+            <sphereGeometry args={[0.13, 12, 10]} />
+          ) : (
+            <octahedronGeometry args={[0.15, 0]} />
+          )}
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={1.2}
+            roughness={0.3}
+            metalness={0.0}
+            toneMapped={false}
+          />
+        </mesh>
       )}
-      <meshStandardMaterial
-        color={color}
-        emissive={color}
-        emissiveIntensity={1.2}
-        roughness={0.3}
-        metalness={0.0}
-        toneMapped={false}
-      />
-    </mesh>
+    </group>
   );
 };
 
@@ -684,7 +700,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     active: false
   });
   const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
-  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string }>>([]);
+  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: 'torch' | 'flora' | 'stick' | 'stone' }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
 
@@ -1195,7 +1211,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             pickedItem === 'stick' ? '#c99a63' :
               pickedItem === 'stone' ? '#cfcfd6' :
                 '#00FFFF';
-        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color }]);
+        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color, item: pickedItem }]);
       }
     };
 
@@ -1695,6 +1711,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           key={fx.id}
           start={fx.start}
           color={fx.color}
+          item={fx.item}
           geometry="sphere"
           onDone={() => {
             setFloraPickups((prev) => prev.filter((p) => p.id !== fx.id));

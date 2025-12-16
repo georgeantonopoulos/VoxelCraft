@@ -42,16 +42,11 @@ const vcPoseWriterPlugin = (): Plugin => ({
         };
 
         const replacePose = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
-          const entry = `${key}: ${formatPose(pose)}`;
-          if (key === 'stick') {
-            const re = /(\bstick\s*:\s*)\{[\s\S]*?\}\s*,/m;
-            if (!re.test(content)) throw new Error('Could not find stick pose entry in HeldItemPoses.ts');
-            content = content.replace(re, `${entry},`);
-          } else {
-            const re = /(\bstone\s*:\s*)\{[\s\S]*?\}\s*(,?)/m;
-            if (!re.test(content)) throw new Error('Could not find stone pose entry in HeldItemPoses.ts');
-            content = content.replace(re, `${entry}$2`);
-          }
+          // Keep the file format stable: one entry per line.
+          const re = new RegExp(`^\\s*${key}\\s*:\\s*\\{[^\\n]*\\}\\s*,?\\s*$`, 'm');
+          if (!re.test(content)) throw new Error(`Could not find ${key} pose line in HeldItemPoses.ts`);
+          const replacement = `  ${key}: ${formatPose(pose)}${key === 'stick' ? ',' : ''}`;
+          content = content.replace(re, replacement);
         };
 
         if (body.kind === 'stick' || body.kind === 'both') {
@@ -61,6 +56,13 @@ const vcPoseWriterPlugin = (): Plugin => ({
         if (body.kind === 'stone' || body.kind === 'both') {
           if (!body.stone) throw new Error('Missing stone payload');
           replacePose('stone', body.stone);
+        }
+
+        // Safety net: keep the previous file contents so tuning mistakes are reversible.
+        try {
+          await fs.writeFile(`${filePath}.bak`, await fs.readFile(filePath, 'utf8'), 'utf8');
+        } catch {
+          // Best-effort backup; continue even if it fails.
         }
 
         await fs.writeFile(filePath, content, 'utf8');
