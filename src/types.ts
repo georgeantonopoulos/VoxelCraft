@@ -132,7 +132,8 @@ export enum ItemType {
   STONE = 'stone',
   STICK = 'stick',
   SHARD = 'shard',
-  PICKAXE = 'pickaxe'
+  PICKAXE = 'pickaxe',
+  FIRE = 'fire'
 }
 
 export interface ActivePhysicsItem {
@@ -141,4 +142,5 @@ export interface ActivePhysicsItem {
   position: [number, number, number];
   velocity: [number, number, number];
   isPlanted?: boolean; // For sticks
+  heat?: number; // 0-10, for fire creation progress
 }

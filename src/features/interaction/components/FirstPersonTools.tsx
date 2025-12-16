@@ -23,9 +23,7 @@ export const FirstPersonTools: React.FC = () => {
     const axeRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch/flora)
     const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
-    const hasAxe = useInventoryStore(state => state.hasAxe);
     const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
-    const currentTool = useInventoryStore(state => state.currentTool);
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -193,16 +191,14 @@ export const FirstPersonTools: React.FC = () => {
     const { debugPos, debugRot } = usePickaxeDebug();
 
     useEffect(() => {
-        if (!hasPickaxe) return;
-
         const handleMouseDown = (e: MouseEvent) => {
             // Only swing when pointer is locked (gameplay) and when using the pickaxe tool.
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
             // Only animate when pickaxe is explicitly selected.
-            if (selectedItem !== 'pickaxe') return;
-            if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
+            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
+            if (e.button === 0 && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
             }
@@ -212,33 +208,32 @@ export const FirstPersonTools: React.FC = () => {
         return () => {
             window.removeEventListener('mousedown', handleMouseDown);
         };
-    }, [currentTool, hasAxe, hasPickaxe]);
+    }, []);
 
     // Sync tool motion to actual terrain impacts (hit/clunk/build).
     // This makes the pickaxe feel connected to the world, even if interaction rate changes.
     useEffect(() => {
-        if (!hasPickaxe) return;
-
         const handleImpact = (e: Event) => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            if (selectedItem !== 'pickaxe') return;
+            // Allow animation for pickaxe, stone, and stick
+            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
-            if (detail.action === 'DIG' && currentTool === 'pickaxe') {
+            if (detail.action === 'DIG') {
                 isDigging.current = true;
                 digProgress.current = 0;
                 // Kick stronger on failures (e.g. bedrock/clunk) to make it readable.
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
-            } else if (detail.action === 'BUILD' && currentTool === 'pickaxe') {
+            } else if (detail.action === 'BUILD') {
                 impactKickTarget.current = 0.25;
             }
         };
         window.addEventListener('tool-impact', handleImpact as EventListener);
         return () => window.removeEventListener('tool-impact', handleImpact as EventListener);
-    }, [currentTool]);
+    }, []);
 
     // Hard Camera Attachment - The only way to get ZERO jitter
     // We attach the group to the camera object so it moves 1:1 with the camera matrix.
@@ -410,8 +405,13 @@ export const FirstPersonTools: React.FC = () => {
                     : RIGHT_HAND_HELD_ITEM_POSES[selectedItem])
                 : null;
             if (pose) {
+                // Apply animation offsets (delta from base/debug pos)
+                const animOffsetY = positionY - (debugPos.current.y + swayY);
+                const animOffsetZ = positionZ - debugPos.current.z;
+
                 const x = positionX + (pose.xOffset ?? 0);
-                rightItemTargetPos.current.set(x, pose.y, pose.z);
+                // Combine pose position with animation offset
+                rightItemTargetPos.current.set(x, pose.y + animOffsetY, pose.z + animOffsetZ);
                 rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
                 rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
                 rightItemRef.current.position.copy(rightItemPosTemp.current);
@@ -465,7 +465,7 @@ export const FirstPersonTools: React.FC = () => {
         }
     }, [modelScene]);
 
-    // if (!hasAxe) return null; // DEBUG: Force visible
+    // if (!hasPickaxe) return null; // DEBUG: Force visible
 
     // Compute offset to center the model if needed (based on logs, but we'll try a visual offset adjustment wrapper)
 

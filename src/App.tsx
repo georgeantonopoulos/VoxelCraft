@@ -33,6 +33,7 @@ import { useInputStore } from '@/state/InputStore';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 import { TouchCameraControls } from '@features/player/TouchCameraControls';
+import { SparkSystem } from '@features/interaction/components/SparkSystem';
 
 // Keyboard Map
 const keyboardMap = [
@@ -1505,7 +1506,8 @@ const App: React.FC = () => {
           {gameStarted && inputMode === 'mouse' && <PointerLockControls onUnlock={handleUnlock} />}
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
-          {gameStarted && <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />}
+          <SparkSystem />
+          <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
         </Canvas>
 
         {gameStarted && (

@@ -96,7 +96,7 @@ interface GameState {
 export const useInventoryStore = create<GameState>((set) => ({
   // "Flora" starts empty in normal play. In `?debug` mode, start with some for fast iteration.
   inventoryCount: INITIAL_FLORA_COUNT,
-  torchCount: 1, // Start with one torch.
+  torchCount: 0, // Start with zero torches.
   stickCount: 0,
   stoneCount: 0,
   shardCount: 0,
@@ -106,7 +106,7 @@ export const useInventoryStore = create<GameState>((set) => ({
   currentTool: 'pickaxe',
   // New Inventory System
   // Slots are stable; unlocks (like `hasAxe`) control whether some items are usable.
-  inventorySlots: computeSlots({ inventoryCount: INITIAL_FLORA_COUNT, torchCount: 1, stickCount: 0, stoneCount: 0, shardCount: 0, hasPickaxe: false, hasAxe: false }),
+  inventorySlots: computeSlots({ inventoryCount: INITIAL_FLORA_COUNT, torchCount: 0, stickCount: 0, stoneCount: 0, shardCount: 0, hasPickaxe: false, hasAxe: false }),
   // Start on slot 1 (index 0): hands/none.
   selectedSlotIndex: 0,
 
