@@ -1176,7 +1176,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
 
           if (physicsItemHit.type === ItemType.PICKAXE) {
-              useGameStore.getState().setHasAxe(true);
+              useGameStore.getState().setHasPickaxe(true);
               // Pickaxe doesn't go into inventory count, it just unlocks the tool
               // But we can show a pickup effect
               const effectId = `${Date.now()}-${Math.random()}`;

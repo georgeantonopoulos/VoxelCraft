@@ -56,16 +56,15 @@ export const FloraPlacer: React.FC = () => {
             console.log('[FloraPlacer]', message);
         };
 
-        const handleDown = (e: KeyboardEvent) => {
-            if (e.code !== 'KeyE') return;
-            if (debugMode) {
-                // Breadcrumb so it's obvious the listener is mounted.
-                console.log('[FloraPlacer] KeyE received');
-            }
+        const handleDown = (e: MouseEvent) => {
+            // Right mouse button = "use/build" for the currently selected item.
+            if (e.button !== 2) return;
+            // Only place items when in gameplay (pointer lock).
+            if (!document.pointerLockElement) return;
             // Avoid stealing focus from UI inputs/debug panels.
             if (isTextInputTarget(e.target)) return;
             e.preventDefault();
-            emitDebug('KeyE received');
+            emitDebug('RMB received');
 
             const state = useGameStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
@@ -149,16 +148,16 @@ export const FloraPlacer: React.FC = () => {
                 }
             }
         };
-        // Capture phase ensures we still receive the key even if another handler stops propagation.
+        // Capture phase ensures we still receive the event even if another handler stops propagation.
         // We attach to both `window` and `document` because some pointer-lock/controls setups
         // can behave differently across browsers.
         const opts: AddEventListenerOptions = { capture: true };
-        window.addEventListener('keydown', handleDown, opts);
-        document.addEventListener('keydown', handleDown, opts);
-        emitDebug('mounted (keydown listener active on window+document, capture=true)');
+        window.addEventListener('mousedown', handleDown, opts);
+        document.addEventListener('mousedown', handleDown, opts);
+        emitDebug('mounted (mousedown listener active on window+document, capture=true)');
         return () => {
-            window.removeEventListener('keydown', handleDown, opts);
-            document.removeEventListener('keydown', handleDown, opts);
+            window.removeEventListener('mousedown', handleDown, opts);
+            document.removeEventListener('mousedown', handleDown, opts);
         };
     }, [camera, scene, raycaster, addEntity, debugMode]);
 

@@ -15,8 +15,8 @@ interface InteractionHandlerProps {
 export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInteracting, setAction }) => {
   const { camera } = useThree();
   const inputMode = useSettingsStore(s => s.inputMode);
+  const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
   const isDigging = useInputStore(s => s.isDigging);
-  const isBuilding = useInputStore(s => s.isBuilding);
 
   // Stores
   const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -27,20 +27,50 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
   // Touch Input Logic (Restored from InteractionLayer)
   useEffect(() => {
     if (inputMode !== 'touch') return;
-    if (isDigging) {
+    const selectedItem = inventorySlots[selectedSlotIndex];
+    const pickaxeSelected = hasPickaxe && selectedItem === 'pickaxe';
+
+    // Only DIG when the crafted pickaxe is unlocked + explicitly selected.
+    // BUILD is intentionally disabled for now.
+    if (isDigging && pickaxeSelected) {
       setAction('DIG');
-      setInteracting(true);
-    } else if (isBuilding) {
-      setAction('BUILD');
       setInteracting(true);
     } else {
       setAction(null);
       setInteracting(false);
     }
-  }, [isDigging, isBuilding, inputMode, setAction, setInteracting]);
+  }, [hasPickaxe, inventorySlots, selectedSlotIndex, isDigging, inputMode, setAction, setInteracting]);
 
   // Mouse Input Logic
   useEffect(() => {
+    const tryThrowSelected = (): boolean => {
+      const selectedItem = inventorySlots[selectedSlotIndex];
+      if (selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return false;
+
+      // Calculate Throw Vector
+      const origin = camera.position.clone();
+      const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+
+      // Spawn Position: Slightly in front of camera
+      const spawnPos = origin.add(direction.clone().multiplyScalar(0.5));
+
+      // Velocity: Direction * Force + Upward Arc
+      // Stone needs > 12 rel velocity to shatter.
+      // Stick needs > 8 to plant.
+      const force = 24.0;
+      const velocity = direction.multiplyScalar(force);
+      velocity.y += 2.0; // slight arc up
+
+      // Spawn Item
+      const type = selectedItem === 'stick' ? ItemType.STICK : selectedItem === 'stone' ? ItemType.STONE : ItemType.SHARD;
+      spawnPhysicsItem(type, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
+
+      // Remove from Inventory
+      removeItem(selectedItem, 1);
+
+      return true;
+    };
+
     const handleMouseDown = (e: MouseEvent) => {
       // Only allow interaction if we are locked (gameplay)
       // Note: Touch users won't be pointer locked usually, but they use the effect above.
@@ -48,51 +78,20 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       if (!document.pointerLockElement) return;
 
       const selectedItem = inventorySlots[selectedSlotIndex];
+      const pickaxeSelected = hasPickaxe && selectedItem === 'pickaxe';
 
-      // Left Click: Always DIG/Interact
+      // Left Click: DIG only when pickaxe is crafted + selected.
       if (e.button === 0) {
+        if (!pickaxeSelected) return;
         setAction('DIG');
         setInteracting(true);
         return;
       }
 
-      // Right Click: Action depends on held item
+      // Right Click: allow throwing held physics items; BUILD is intentionally disabled for now.
       if (e.button === 2) {
         // Throw Logic for Physics Items
-        if (selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard') {
-            // Calculate Throw Vector
-            const origin = camera.position.clone();
-            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-
-            // Spawn Position: Slightly in front of camera
-            const spawnPos = origin.add(direction.clone().multiplyScalar(0.5));
-
-            // Velocity: Direction * Force + Upward Arc
-            // Force depends on item? Stick=20, Stone=25?
-            // Stone needs > 12 rel velocity to shatter.
-            // Stick needs > 8 to plant.
-            // Let's give them a good hard throw.
-            const force = 24.0;
-            const velocity = direction.multiplyScalar(force);
-            velocity.y += 2.0; // slight arc up
-
-            // Spawn Item
-            const type = selectedItem === 'stick' ? ItemType.STICK
-                       : selectedItem === 'stone' ? ItemType.STONE
-                       : ItemType.SHARD;
-
-            spawnPhysicsItem(type, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
-
-            // Remove from Inventory
-            removeItem(selectedItem, 1);
-
-            // Do NOT trigger VoxelTerrain BUILD action
-            return;
-        }
-
-        // Default Build Logic (Blocks/Torches/Flora)
-        setAction('BUILD');
-        setInteracting(true);
+        if (tryThrowSelected()) return;
       }
     };
 
@@ -101,16 +100,18 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       setAction(null);
     };
 
+    const handleContextMenu = (e: MouseEvent) => e.preventDefault();
+
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('contextmenu', (e) => e.preventDefault());
+      window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [setInteracting, setAction, camera, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem]);
+  }, [setInteracting, setAction, camera, hasPickaxe, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem]);
 
   return null;
 };

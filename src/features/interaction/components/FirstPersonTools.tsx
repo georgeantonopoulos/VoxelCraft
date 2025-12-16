@@ -24,6 +24,7 @@ export const FirstPersonTools: React.FC = () => {
     const torchRef = useRef<THREE.Group>(null); // left hand (torch/flora)
     const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
     const hasAxe = useInventoryStore(state => state.hasAxe);
+    const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
     const currentTool = useInventoryStore(state => state.currentTool);
 
     // Inventory State
@@ -192,13 +193,15 @@ export const FirstPersonTools: React.FC = () => {
     const { debugPos, debugRot } = usePickaxeDebug();
 
     useEffect(() => {
+        if (!hasPickaxe) return;
+
         const handleMouseDown = (e: MouseEvent) => {
             // Only swing when pointer is locked (gameplay) and when using the pickaxe tool.
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            // Stick/stone are held as right-hand items (not tools), so don't animate pickaxe swings.
-            if (selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard') return;
+            // Only animate when pickaxe is explicitly selected.
+            if (selectedItem !== 'pickaxe') return;
             if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -209,18 +212,20 @@ export const FirstPersonTools: React.FC = () => {
         return () => {
             window.removeEventListener('mousedown', handleMouseDown);
         };
-    }, [currentTool, hasAxe]);
+    }, [currentTool, hasAxe, hasPickaxe]);
 
     // Sync tool motion to actual terrain impacts (hit/clunk/build).
     // This makes the pickaxe feel connected to the world, even if interaction rate changes.
     useEffect(() => {
+        if (!hasPickaxe) return;
+
         const handleImpact = (e: Event) => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            if (selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard') return;
+            if (selectedItem !== 'pickaxe') return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
             if (detail.action === 'DIG' && currentTool === 'pickaxe') {
                 isDigging.current = true;
@@ -316,9 +321,9 @@ export const FirstPersonTools: React.FC = () => {
         const leftHandShown = selectedItem === 'torch' || selectedItem === 'flora';
 
         // Apply transforms to the inner Axe group (local offsets)
-        // Pickaxe stays visible unless a right-hand override item is selected.
+        // Pickaxe only shows when explicitly selected.
         if (axeRef.current) {
-            axeRef.current.visible = !rightHandOverride;
+            axeRef.current.visible = !rightHandOverride && selectedItem === 'pickaxe';
             axeRef.current.position.set(positionX, positionY, positionZ);
             axeRef.current.rotation.set(rotationX, rotationY, rotationZ);
         }
@@ -493,21 +498,23 @@ export const FirstPersonTools: React.FC = () => {
                 </group>
             </group>
 
-            <group ref={axeRef}>
-                <group>
-                    {/* Move model down/center if it was high up? We will check logs. 
-	                         For now, just render it as is, we have the Red Box as reference. */}
-                    <primitive
-                        object={modelScene}
-                        scale={0.5}
-                    // Removed HUD hacks to ensure proper lighting integration
-                    // If clipping occurs, we can tune the Z-position or near plane, 
-                    // but keeping it in the scene graph is best for lighting.
-                    // renderOrder={999} 
-                    // material-depthTest={false} 
-                    />
+            {hasPickaxe && (
+                <group ref={axeRef}>
+                    <group>
+                        {/* Move model down/center if it was high up? We will check logs. 
+	                             For now, just render it as is, we have the Red Box as reference. */}
+                        <primitive
+                            object={modelScene}
+                            scale={0.5}
+                        // Removed HUD hacks to ensure proper lighting integration
+                        // If clipping occurs, we can tune the Z-position or near plane, 
+                        // but keeping it in the scene graph is best for lighting.
+                        // renderOrder={999} 
+                        // material-depthTest={false} 
+                        />
+                    </group>
                 </group>
-            </group>
+            )}
         </group>
     );
 };

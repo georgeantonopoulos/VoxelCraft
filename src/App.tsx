@@ -1504,11 +1504,12 @@ const App: React.FC = () => {
 
           {gameStarted && inputMode === 'mouse' && <PointerLockControls onUnlock={handleUnlock} />}
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
+
+          {gameStarted && <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />}
         </Canvas>
 
         {gameStarted && (
           <>
-            <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
             <InventoryInput enabled={gameStarted} />
             <UI />
           </>

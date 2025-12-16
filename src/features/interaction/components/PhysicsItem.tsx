@@ -3,8 +3,9 @@ import { useFrame } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider } from '@react-three/rapier';
 import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
-import { ItemType, ActivePhysicsItem } from '@/types';
+import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { useInventoryStore } from '@state/InventoryStore';
+import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 
 // Sounds
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
@@ -16,6 +17,11 @@ interface PhysicsItemProps {
 
 const IMPACT_THRESHOLD_STONE = 12.0;
 const IMPACT_THRESHOLD_STICK = 8.0;
+
+const isHardImpactSurface = (mat: MaterialType | null): boolean => {
+  // Only shatter stones when hitting hard/cavern-like materials.
+  return mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE;
+};
 
 export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   const rigidBody = useRef<RapierRigidBody>(null);
@@ -98,6 +104,17 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
     if (item.type === ItemType.STONE) {
       if (isTerrain && impactSpeed > IMPACT_THRESHOLD_STONE) {
+        // Only shatter on hard terrain materials (avoid sand/soil shatter).
+        const tSelf = rigidBody.current?.translation();
+        if (!tSelf) return;
+        const sample = new THREE.Vector3(tSelf.x, tSelf.y, tSelf.z);
+        if (impactSpeed > 0.001) {
+          const dirIntoSurface = lastVel.current.clone().normalize();
+          sample.addScaledVector(dirIntoSurface, 0.25);
+        }
+        const mat = terrainRuntime.getMaterialAtWorld(sample.x, sample.y, sample.z);
+        if (!isHardImpactSurface(mat)) return;
+
         // Shatter!
         const t = rigidBody.current!.translation();
 
