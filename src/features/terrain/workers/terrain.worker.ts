@@ -1,5 +1,5 @@
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { generateMesh } from '@features/terrain/logic/mesher';
+import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 import { BiomeManager } from '../logic/BiomeManager';
@@ -41,7 +41,9 @@ ctx.onmessage = async (e: MessageEvent) => {
             // 2. Generate with mods
             const { density, material, metadata, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
-            // --- OPTIMIZATION: Early Out for Empty Chunks ---
+            // --- OPTIMIZATION: Early Out for Terrain-Empty Chunks ---
+            // NOTE: Do not treat "liquid-only" chunks as empty: they still need a water surface mesh
+            // and shoreline mask (computed at sea-level in `mesher.ts`).
             let isEmpty = true;
             for (let i = 0; i < density.length; i++) {
                 if (density[i] > ISO_LEVEL) {
@@ -51,6 +53,10 @@ ctx.onmessage = async (e: MessageEvent) => {
             }
 
             if (isEmpty) {
+                const water = generateWaterSurfaceMesh(density, material);
+                const hasWaterSurface = water.indices.length > 0;
+                const waterShoreMask = hasWaterSurface ? water.shoreMask : new Uint8Array(0);
+
                 const emptyResponse = {
                     key: `${cx},${cz}`,
                     cx, cz,
@@ -78,10 +84,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                     meshWetness: new Float32Array(0),
                     meshMossiness: new Float32Array(0),
                     meshCavity: new Float32Array(0),
-                    meshWaterPositions: new Float32Array(0),
-                    meshWaterIndices: new Uint32Array(0),
-                    meshWaterNormals: new Float32Array(0),
-                    meshWaterShoreMask: new Uint8Array(0)
+                    meshWaterPositions: water.positions,
+                    meshWaterIndices: water.indices,
+                    meshWaterNormals: water.normals,
+                    meshWaterShoreMask: waterShoreMask
                 };
 
                 ctx.postMessage({ type: 'GENERATED', payload: emptyResponse }, [
@@ -95,7 +101,11 @@ ctx.onmessage = async (e: MessageEvent) => {
                     rockPositions.buffer,
                     largeRockPositions.buffer,
                     rootHollowPositions.buffer,
-                    fireflyPositions.buffer
+                    fireflyPositions.buffer,
+                    water.positions.buffer,
+                    water.indices.buffer,
+                    water.normals.buffer,
+                    waterShoreMask.buffer
                 ]);
                 return;
             }

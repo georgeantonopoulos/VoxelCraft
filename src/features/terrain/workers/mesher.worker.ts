@@ -34,7 +34,9 @@ ctx.onmessage = (e: MessageEvent) => {
         // Water is a distinct surface mesh (separate from terrain Surface-Nets geometry).
         meshWaterPositions: mesh.waterPositions,
         meshWaterIndices: mesh.waterIndices,
-        meshWaterNormals: mesh.waterNormals
+        meshWaterNormals: mesh.waterNormals,
+        // Pre-computed shoreline SDF mask (avoids main-thread BFS).
+        meshWaterShoreMask: mesh.waterShoreMask
       };
 
       ctx.postMessage({ type: 'MESH_DONE', payload: response }, [
@@ -50,11 +52,11 @@ ctx.onmessage = (e: MessageEvent) => {
         mesh.cavity.buffer,
         mesh.waterPositions.buffer,
         mesh.waterIndices.buffer,
-        mesh.waterNormals.buffer
+        mesh.waterNormals.buffer,
+        mesh.waterShoreMask.buffer
       ]);
     }
   } catch (error) {
     console.error('[mesher.worker] Error:', error);
   }
 };
-

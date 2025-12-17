@@ -61,6 +61,181 @@ const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
 
 const isLiquidMaterial = (mat: number) => mat === MaterialType.WATER || mat === MaterialType.ICE;
 
+export type WaterSurfaceMeshData = {
+  positions: Float32Array;
+  indices: Uint32Array;
+  normals: Float32Array;
+  shoreMask: Uint8Array;
+};
+
+export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8Array): WaterSurfaceMeshData {
+  // --- Water Surface Mesh (Sea-level surface + shoreline mask) ---
+  //
+  // Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
+  // We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
+  // a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
+  //
+  // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
+  // material grid at runtime rather than relying on physics for water.
+  const waterVerts: number[] = [];
+  const waterInds: number[] = [];
+  const waterNorms: number[] = [];
+
+  // Convert world-space sea level to the chunk's padded grid Y index.
+  // Grid worldY = (yIndex - PAD) + MESH_Y_OFFSET  =>  yIndex = worldY - MESH_Y_OFFSET + PAD.
+  const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
+  const seaGridY = Math.max(0, Math.min(SIZE_Y - 2, seaGridYRaw));
+
+  const isLiquidCell = (x: number, y: number, z: number) => {
+    const mat = getMat(material, x, y, z);
+    if (!isLiquidMaterial(mat)) return false;
+    return getVal(density, x, y, z) <= ISO_LEVEL;
+  };
+
+  // Build a 2D mask of water-present columns at the sea-level plane.
+  const waterW = CHUNK_SIZE_XZ;
+  const waterH = CHUNK_SIZE_XZ;
+  const waterMask = new Uint8Array(waterW * waterH);
+  let hasAnyWater = false;
+
+  for (let lz = 0; lz < waterH; lz++) {
+    const gz = PAD + lz;
+    for (let lx = 0; lx < waterW; lx++) {
+      const gx = PAD + lx;
+      const hasLiquid = isLiquidCell(gx, seaGridY, gz);
+      const hasLiquidAbove = isLiquidCell(gx, seaGridY + 1, gz);
+      const v = hasLiquid && !hasLiquidAbove ? 1 : 0;
+      waterMask[lx + lz * waterW] = v;
+      if (v) hasAnyWater = true;
+    }
+  }
+
+  // Emit a chunk-wide sea-level quad only if this chunk actually has sea-level water.
+  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple and smooth.
+  if (hasAnyWater) {
+    const base = waterVerts.length / 3;
+    const y = WATER_LEVEL;
+    waterVerts.push(
+      0, y, 0,
+      CHUNK_SIZE_XZ, y, 0,
+      0, y, CHUNK_SIZE_XZ,
+      CHUNK_SIZE_XZ, y, CHUNK_SIZE_XZ
+    );
+    waterNorms.push(
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0,
+      0, 1, 0
+    );
+    waterInds.push(
+      base + 0, base + 2, base + 1,
+      base + 2, base + 3, base + 1
+    );
+  }
+
+  // --- Compute shoreline SDF mask in the worker so main thread doesn't run BFS ---
+  const shoreMask = new Uint8Array(waterW * waterH);
+  if (hasAnyWater) {
+    const INF = 0x3fff;
+    const insideDist = new Int16Array(waterW * waterH);
+    const outsideDist = new Int16Array(waterW * waterH);
+    insideDist.fill(INF);
+    outsideDist.fill(INF);
+
+    const qx: number[] = [];
+    const qz: number[] = [];
+    let qh = 0;
+    const push = (x: number, z: number) => { qx.push(x); qz.push(z); };
+    const isWater = (x: number, z: number) => waterMask[x + z * waterW] === 1;
+
+    const hasDiffNeighbor = (x: number, z: number) => {
+      const v = isWater(x, z);
+      if (x > 0 && isWater(x - 1, z) !== v) return true;
+      if (x < waterW - 1 && isWater(x + 1, z) !== v) return true;
+      if (z > 0 && isWater(x, z - 1) !== v) return true;
+      if (z < waterH - 1 && isWater(x, z + 1) !== v) return true;
+      return false;
+    };
+
+    // Seed inside-water boundary cells
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (isWater(x, z)) {
+          insideDist[x + z * waterW] = 0;
+          push(x, z);
+        }
+      }
+    }
+    // BFS inside water
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = insideDist[x + z * waterW];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
+        if (!isWater(nx, nz)) return;
+        const i = nx + nz * waterW;
+        if (insideDist[i] <= nd) return;
+        insideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
+    }
+
+    // Reset queue for outside (land)
+    qx.length = 0; qz.length = 0; qh = 0;
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        if (!hasDiffNeighbor(x, z)) continue;
+        if (!isWater(x, z)) {
+          outsideDist[x + z * waterW] = 0;
+          push(x, z);
+        }
+      }
+    }
+    // BFS outside water
+    while (qh < qx.length) {
+      const x = qx[qh];
+      const z = qz[qh];
+      qh++;
+      const d = outsideDist[x + z * waterW];
+      const nd = d + 1;
+      const step = (nx: number, nz: number) => {
+        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
+        if (isWater(nx, nz)) return;
+        const i = nx + nz * waterW;
+        if (outsideDist[i] <= nd) return;
+        outsideDist[i] = nd;
+        push(nx, nz);
+      };
+      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
+    }
+
+    // Encode signed distance: water positive, land negative, boundary = 0.5
+    const maxDist = 10.0;
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        const i = x + z * waterW;
+        const sdf = isWater(x, z)
+          ? Math.min(maxDist, insideDist[i])
+          : -Math.min(maxDist, outsideDist[i]);
+        const n = Math.max(0, Math.min(1, 0.5 + (sdf / maxDist) * 0.5));
+        shoreMask[i] = Math.floor(n * 255);
+      }
+    }
+  }
+
+  return {
+    positions: new Float32Array(waterVerts),
+    indices: new Uint32Array(waterInds),
+    normals: new Float32Array(waterNorms),
+    shoreMask,
+  };
+}
+
 export function generateMesh(
   density: Float32Array,
   material: Uint8Array,
@@ -384,156 +559,7 @@ export function generateMesh(
   //
   // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
   // material grid at runtime rather than relying on physics for water.
-  const waterVerts: number[] = [];
-  const waterInds: number[] = [];
-  const waterNorms: number[] = [];
-
-  // Convert world-space sea level to the chunk's padded grid Y index.
-  // Grid worldY = (yIndex - PAD) + MESH_Y_OFFSET  =>  yIndex = worldY - MESH_Y_OFFSET + PAD.
-  const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
-  const seaGridY = Math.max(0, Math.min(SIZE_Y - 2, seaGridYRaw));
-
-  const isLiquidCell = (x: number, y: number, z: number) => {
-    const mat = getMat(material, x, y, z);
-    if (!isLiquidMaterial(mat)) return false;
-    return getVal(density, x, y, z) <= ISO_LEVEL;
-  };
-
-  // Build a 2D mask of water-present columns at the sea-level plane.
-  const waterW = CHUNK_SIZE_XZ;
-  const waterH = CHUNK_SIZE_XZ;
-  const waterMask = new Uint8Array(waterW * waterH);
-  let hasAnyWater = false;
-
-  for (let lz = 0; lz < waterH; lz++) {
-    const gz = PAD + lz;
-    for (let lx = 0; lx < waterW; lx++) {
-      const gx = PAD + lx;
-      const hasLiquid = isLiquidCell(gx, seaGridY, gz);
-      const hasLiquidAbove = isLiquidCell(gx, seaGridY + 1, gz);
-      const v = hasLiquid && !hasLiquidAbove ? 1 : 0;
-      waterMask[lx + lz * waterW] = v;
-      if (v) hasAnyWater = true;
-    }
-  }
-
-  // Emit a chunk-wide sea-level quad only if this chunk actually has sea-level water.
-  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple and smooth.
-  if (hasAnyWater) {
-    const base = waterVerts.length / 3;
-    const y = WATER_LEVEL;
-    waterVerts.push(
-      0, y, 0,
-      CHUNK_SIZE_XZ, y, 0,
-      0, y, CHUNK_SIZE_XZ,
-      CHUNK_SIZE_XZ, y, CHUNK_SIZE_XZ
-    );
-    waterNorms.push(
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0
-    );
-    waterInds.push(
-      base + 0, base + 2, base + 1,
-      base + 2, base + 3, base + 1
-    );
-  }
-
-  // --- Compute shoreline SDF mask in the worker so main thread doesn't run BFS ---
-  const shoreMask = new Uint8Array(waterW * waterH);
-  if (hasAnyWater) {
-    const INF = 0x3fff;
-    const insideDist = new Int16Array(waterW * waterH);
-    const outsideDist = new Int16Array(waterW * waterH);
-    insideDist.fill(INF);
-    outsideDist.fill(INF);
-
-    const qx: number[] = [];
-    const qz: number[] = [];
-    let qh = 0;
-    const push = (x: number, z: number) => { qx.push(x); qz.push(z); };
-    const isWater = (x: number, z: number) => waterMask[x + z * waterW] === 1;
-
-    const hasDiffNeighbor = (x: number, z: number) => {
-      const v = isWater(x, z);
-      if (x > 0 && isWater(x - 1, z) !== v) return true;
-      if (x < waterW - 1 && isWater(x + 1, z) !== v) return true;
-      if (z > 0 && isWater(x, z - 1) !== v) return true;
-      if (z < waterH - 1 && isWater(x, z + 1) !== v) return true;
-      return false;
-    };
-
-    // Seed inside-water boundary cells
-    for (let z = 0; z < waterH; z++) {
-      for (let x = 0; x < waterW; x++) {
-        if (!hasDiffNeighbor(x, z)) continue;
-        if (isWater(x, z)) {
-          insideDist[x + z * waterW] = 0;
-          push(x, z);
-        }
-      }
-    }
-    // BFS inside water
-    while (qh < qx.length) {
-      const x = qx[qh];
-      const z = qz[qh];
-      qh++;
-      const d = insideDist[x + z * waterW];
-      const nd = d + 1;
-      const step = (nx: number, nz: number) => {
-        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
-        if (!isWater(nx, nz)) return;
-        const i = nx + nz * waterW;
-        if (insideDist[i] <= nd) return;
-        insideDist[i] = nd;
-        push(nx, nz);
-      };
-      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
-    }
-
-    // Reset queue for outside (land)
-    qx.length = 0; qz.length = 0; qh = 0;
-    for (let z = 0; z < waterH; z++) {
-      for (let x = 0; x < waterW; x++) {
-        if (!hasDiffNeighbor(x, z)) continue;
-        if (!isWater(x, z)) {
-          outsideDist[x + z * waterW] = 0;
-          push(x, z);
-        }
-      }
-    }
-    // BFS outside water
-    while (qh < qx.length) {
-      const x = qx[qh];
-      const z = qz[qh];
-      qh++;
-      const d = outsideDist[x + z * waterW];
-      const nd = d + 1;
-      const step = (nx: number, nz: number) => {
-        if (nx < 0 || nz < 0 || nx >= waterW || nz >= waterH) return;
-        if (isWater(nx, nz)) return;
-        const i = nx + nz * waterW;
-        if (outsideDist[i] <= nd) return;
-        outsideDist[i] = nd;
-        push(nx, nz);
-      };
-      step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
-    }
-
-    // Encode signed distance: water positive, land negative, boundary = 0.5
-    const maxDist = 10.0;
-    for (let z = 0; z < waterH; z++) {
-      for (let x = 0; x < waterW; x++) {
-        const i = x + z * waterW;
-        const sdf = isWater(x, z)
-          ? Math.min(maxDist, insideDist[i])
-          : -Math.min(maxDist, outsideDist[i]);
-        const n = Math.max(0, Math.min(1, 0.5 + (sdf / maxDist) * 0.5));
-        shoreMask[i] = Math.floor(n * 255);
-      }
-    }
-  }
+  const water = generateWaterSurfaceMesh(density, material);
 
   return {
     positions: new Float32Array(tVerts),
@@ -546,9 +572,9 @@ export function generateMesh(
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     cavity: new Float32Array(tCavity),
-    waterPositions: new Float32Array(waterVerts),
-    waterIndices: new Uint32Array(waterInds),
-    waterNormals: new Float32Array(waterNorms),
-    waterShoreMask: shoreMask,
+    waterPositions: water.positions,
+    waterIndices: water.indices,
+    waterNormals: water.normals,
+    waterShoreMask: water.shoreMask,
   } as MeshData;
 }
