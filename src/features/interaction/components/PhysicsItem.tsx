@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider } from '@react-three/rapier';
+import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier } from '@react-three/rapier';
 import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
@@ -30,6 +30,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   const removeItem = usePhysicsItemStore((state) => state.removeItem);
   const spawnItem = usePhysicsItemStore((state) => state.spawnItem);
   const updateItem = usePhysicsItemStore((state) => state.updateItem);
+  const { world, rapier } = useRapier();
 
   // Audio
   const clunkAudio = useMemo(() => new Audio(clunkUrl), []);
@@ -118,15 +119,39 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       }
     } else if (item.type === ItemType.STICK) {
       if (isTerrain && impactSpeed > IMPACT_THRESHOLD_STICK) {
-        // Lock physics: Just update the store state.
-        // The RigidBody will re-render as "fixed" via the 'type' prop below.
-        updateItem(item.id, { isPlanted: true });
-
         if (rigidBody.current) {
-          // Sync position immediately and align upright to avoid a frame of jitter
           const t = rigidBody.current.translation();
-          rigidBody.current.setTranslation({ x: t.x, y: t.y + 0.2, z: t.z }, true);
+
+          // Precise grounding: Raycast down from slightly above the hit point
+          const ray = new rapier.Ray({ x: t.x, y: t.y + 1.0, z: t.z }, { x: 0, y: -1, z: 0 });
+          const hit = world.castRay(ray, 4.0, true, undefined, undefined, undefined, undefined, (c: any) => {
+            return c.parent()?.userData?.type === 'terrain';
+          });
+
+          let targetY = t.y;
+          if (hit) {
+            const groundY = (t.y + 1.0) - hit.timeOfImpact;
+            // The stick is 0.5 units tall. To bury it by 0.15, 
+            // the center should be at groundY + (halfHeight - buryDepth)
+            // 0.25 - 0.15 = 0.1
+            targetY = groundY + 0.1;
+          } else {
+            // Fallback if raycast misses
+            targetY = t.y - 0.05;
+          }
+
+          // Lock physics behavior by updating the store.
+          // The RigidBody type prop will switch to "fixed".
+          updateItem(item.id, {
+            isPlanted: true,
+            position: [t.x, targetY, t.z] // Persist the grounded position
+          });
+
+          // Snapshot position and rotation immediately
+          rigidBody.current.setTranslation({ x: t.x, y: targetY, z: t.z }, true);
           rigidBody.current.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+          rigidBody.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+          rigidBody.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
           // Play sound
           digAudio.currentTime = 0;
@@ -141,6 +166,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
     <RigidBody
       ref={rigidBody}
       position={item.position}
+      rotation={item.isPlanted ? [0, 0, 0] : undefined}
       linearVelocity={item.velocity as any}
       colliders={false} // Custom colliders
       type={(item.isPlanted || item.isAnchored) ? "fixed" : "dynamic"}
