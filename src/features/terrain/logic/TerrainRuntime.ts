@@ -1,5 +1,16 @@
 import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET, ISO_LEVEL, WATER_LEVEL } from '@/constants';
+import * as THREE from 'three';
 import { MaterialType } from '@/types';
+
+// A small cone upward helps detect cave mouths without needing camera-direction raycasts.
+// (Straight-up alone would incorrectly classify shallow overhangs as "no sky".)
+const SKY_VIS_DIRS = [
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0.55, 1, 0).normalize(),
+  new THREE.Vector3(-0.55, 1, 0).normalize(),
+  new THREE.Vector3(0, 1, 0.55).normalize(),
+  new THREE.Vector3(0, 1, -0.55).normalize(),
+];
 
 export interface RuntimeChunkData {
   cx: number;
@@ -114,8 +125,76 @@ export class TerrainRuntime {
 
     return WATER_LEVEL;
   }
+
+  /**
+   * Estimate how much "open sky" is visible from a world position.
+   *
+   * Returns a value in [0..1]:
+   * - 1.0 means rays upward do not hit solid terrain within `maxDistance`
+   * - 0.0 means terrain is very close overhead (deeply occluded)
+   *
+   * This is a cheap, camera-local approximation used by atmosphere/lighting to reduce
+   * sun/moon artifacts inside caverns/overhangs. It is NOT a replacement for real
+   * skylight propagation (which would be computed per-voxel in the worker/mesher).
+   */
+  estimateSkyVisibility(
+    wx: number,
+    wy: number,
+    wz: number,
+    opts?: {
+      /** Maximum ray length to check above the point. */
+      maxDistance?: number;
+      /** Step size along each ray. Larger = cheaper but less accurate. */
+      step?: number;
+    }
+  ): number | null {
+    const maxDistance = opts?.maxDistance ?? 60;
+    const step = opts?.step ?? 3;
+
+    let sum = 0;
+    let count = 0;
+
+    for (const dir of SKY_VIS_DIRS) {
+      let hitDist = maxDistance;
+      let unknown = false;
+
+      // Start a bit above the point to avoid self-intersection with the ground voxel.
+      const startD = 1.0;
+      for (let d = startD; d <= maxDistance; d += step) {
+        const sx = wx + dir.x * d;
+        const sy = wy + dir.y * d;
+        const sz = wz + dir.z * d;
+
+        const chunk = this.getChunkAtWorld(sx, sz);
+        if (!chunk) {
+          unknown = true;
+          break;
+        }
+        const idx = this.getIndexInChunk(chunk, sx, sy, sz);
+        if (idx == null) {
+          unknown = true;
+          break;
+        }
+
+        // Solid terrain is represented by density > ISO_LEVEL (inside the surface).
+        // Liquids (water/ice) are stored in "air space" (density <= ISO_LEVEL), so they do not occlude.
+        if (chunk.density[idx] > ISO_LEVEL) {
+          hitDist = d;
+          break;
+        }
+      }
+
+      // If we couldn't query due to missing chunks, skip this ray (keep last known skyVisibility).
+      if (unknown) continue;
+
+      sum += THREE.MathUtils.clamp(hitDist / maxDistance, 0, 1);
+      count++;
+    }
+
+    if (count === 0) return null;
+    return THREE.MathUtils.clamp(sum / count, 0, 1);
+  }
 }
 
 // Singleton instance used across gameplay systems.
 export const terrainRuntime = new TerrainRuntime();
-

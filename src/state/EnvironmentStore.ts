@@ -33,6 +33,15 @@ interface EnvironmentState {
   isUnderwater: boolean;
   underwaterChangedAt: number;
   setUnderwaterState: (isUnderwater: boolean, changedAt: number) => void;
+
+  /**
+   * Estimated sky visibility from the camera area.
+   * 1.0 = open sky, 0.0 = strongly occluded (deep cave/overhang).
+   *
+   * Updated by AtmosphereController using runtime voxel queries (TerrainRuntime.estimateSkyVisibility).
+   */
+  skyVisibility: number;
+  setSkyVisibility: (v: number) => void;
 }
 
 export const useEnvironmentStore = create<EnvironmentState>((set) => ({
@@ -66,5 +75,11 @@ export const useEnvironmentStore = create<EnvironmentState>((set) => ({
         isUnderwater,
         underwaterChangedAt: changedAt,
       };
+    }),
+
+  skyVisibility: 1,
+  setSkyVisibility: (v) =>
+    set({
+      skyVisibility: Math.min(1, Math.max(0, v)),
     }),
 }));

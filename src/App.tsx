@@ -35,6 +35,7 @@ import { TouchControls } from '@/ui/TouchControls';
 import { TouchCameraControls } from '@features/player/TouchCameraControls';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
+import { calculateOrbitAngle as calculateOrbitAngleCore, getOrbitOffset } from '@core/graphics/celestial';
 
 // Keyboard Map
 const keyboardMap = [
@@ -235,27 +236,8 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
  * @returns The calculated orbit angle
  */
 const calculateOrbitAngle = (t: number, speed: number, offset: number = 0): number => {
-  const cycleTime = t * speed;
-  const normalizedCycle = (cycleTime % (Math.PI * 2)) / (Math.PI * 2); // 0 to 1
-
-  // Stretch day (when sun is above horizon): spend ~70% of cycle in day, ~30% in night
-  // Day corresponds to angles where cos(angle) > 0, i.e., -π/2 to π/2
-  let angle;
-  if (normalizedCycle < 0.35) {
-    // First half of day: map 0-0.35 to -π/2 to 0
-    angle = -Math.PI / 2 + (normalizedCycle / 0.35) * (Math.PI / 2);
-  } else if (normalizedCycle < 0.65) {
-    // Second half of day: map 0.35-0.65 to 0 to π/2
-    angle = ((normalizedCycle - 0.35) / 0.3) * (Math.PI / 2);
-  } else {
-    // Night: map 0.65-1.0 to π/2 to 3π/2 (faster through night)
-    angle = Math.PI / 2 + ((normalizedCycle - 0.65) / 0.35) * Math.PI;
-  }
-
-  // Add full cycle offset
-  angle += Math.floor(cycleTime / (Math.PI * 2)) * Math.PI * 2;
-
-  return angle + offset;
+  // Delegate to the shared helper so all systems (lighting, sky, IBL) stay in sync.
+  return calculateOrbitAngleCore(t, speed, offset);
 };
 
 /**
@@ -401,10 +383,16 @@ const SunFollower: React.FC<{
     const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
     const target = useMemo(() => new THREE.Object3D(), []);
     const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+    const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+    const skyVisibility = useEnvironmentStore((s) => s.skyVisibility);
 
     // Smooth position tracking to prevent choppy updates
     const smoothSunPos = useRef(new THREE.Vector3());
     const lastCameraPos = useRef(new THREE.Vector3());
+    const tmpDelta = useRef(new THREE.Vector3());
+    const tmpLightOffset = useRef(new THREE.Vector3());
+    const tmpVisualOffset = useRef(new THREE.Vector3());
+    const tmpTargetSunPos = useRef(new THREE.Vector3());
 
     // Initialize smooth position tracking
     useEffect(() => {
@@ -414,28 +402,28 @@ const SunFollower: React.FC<{
 
     useFrame(({ clock }) => {
       if (lightRef.current) {
-        const t = clock.getElapsedTime() + orbitConfig.offset;
-        const { radius, speed } = orbitConfig;
+        const t = clock.getElapsedTime();
+        const { radius, speed, offset } = orbitConfig;
 
         // Non-linear angle mapping to make day longer and night shorter
-        const angle = calculateOrbitAngle(t, speed);
+        const angle = calculateOrbitAngle(t, speed, offset);
 
-        // Radius of orbit relative to player
-        const sx = Math.sin(angle) * radius;
-        const sy = Math.cos(angle) * radius;
-        const sz = 30;
+        // Orbit offsets (in a stable vertical plane with a small forward bias to avoid clipping).
+        // The "light rig" uses the configured radius; the visual sun uses a larger distance.
+        getOrbitOffset(tmpLightOffset.current, angle, radius, 0, 30);
 
         // Smooth sun position relative to camera to prevent choppy updates
-        const cameraDelta = camera.position.clone().sub(lastCameraPos.current);
-        smoothSunPos.current.add(cameraDelta);
+        tmpDelta.current.copy(camera.position).sub(lastCameraPos.current);
+        smoothSunPos.current.add(tmpDelta.current);
         lastCameraPos.current.copy(camera.position);
 
         // Calculate smooth sun position (only for visual sun, light stays snapped for performance)
         const sunDist = 350;
-        const targetSunPos = new THREE.Vector3(
-          smoothSunPos.current.x + Math.sin(angle) * sunDist,
-          Math.cos(angle) * sunDist,
-          smoothSunPos.current.z + sz
+        getOrbitOffset(tmpVisualOffset.current, angle, sunDist, 0, 30);
+        tmpTargetSunPos.current.set(
+          smoothSunPos.current.x + tmpVisualOffset.current.x,
+          tmpVisualOffset.current.y,
+          smoothSunPos.current.z + tmpVisualOffset.current.z
         );
 
         // Light position: snap to grid for performance (shadows don't need smooth movement)
@@ -443,7 +431,11 @@ const SunFollower: React.FC<{
         const lx = Math.round(camera.position.x / q) * q;
         const lz = Math.round(camera.position.z / q) * q;
 
-        lightRef.current.position.set(lx + sx, sy, lz + sz);
+        lightRef.current.position.set(
+          lx + tmpLightOffset.current.x,
+          tmpLightOffset.current.y,
+          lz + tmpLightOffset.current.z
+        );
         target.position.set(lx, 0, lz);
 
         lightRef.current.target = target;
@@ -453,14 +445,11 @@ const SunFollower: React.FC<{
         // Expose the live sun direction for water/terrain shading and dynamic IBL.
         // We update a mutable Vector3 to avoid React state churn.
         if (sunDirection) {
-          sunDirection.set(
-            lightRef.current.position.x - target.position.x,
-            lightRef.current.position.y - target.position.y,
-            lightRef.current.position.z - target.position.z
-          ).normalize();
+          sunDirection.copy(tmpLightOffset.current).normalize();
         }
 
         // Calculate sun color based on height
+        const sy = tmpLightOffset.current.y;
         const sunColor = getSunColor(sy, radius);
 
         // Update light color
@@ -485,17 +474,25 @@ const SunFollower: React.FC<{
           baseIntensity = 1.0;
         }
 
-        // Underground: keep outside readable by not hard-killing the sun globally.
-        // We only dim moderately at depth to reduce "sun in caves" artifacts.
+        // Direct visibility gates:
+        // - skyVisibility: cheap local proxy for "does direct sky reach here?"
+        // - underwaterBlend: underwater should not render a direct sun disc and should heavily suppress direct light
+        const skyOpen = THREE.MathUtils.smoothstep(skyVisibility, 0.08, 0.45);
+        const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.35);
+        const directVis = skyOpen * (1.0 - waterBlock);
+
+        // Underground: keep outdoor readability when looking out, but reduce cave bleed.
         const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-        const sunDimming = THREE.MathUtils.lerp(1.0, 0.45, depthFade);
-        lightRef.current.intensity = baseIntensity * sunDimming * intensityMul;
+        const sunDimming = THREE.MathUtils.lerp(1.0, 0.55, depthFade);
+
+        lightRef.current.intensity = baseIntensity * sunDimming * directVis * intensityMul;
 
         // Update Visual Sun color and glow
         if (sunMeshRef.current) {
           // Use smooth position for visual sun to prevent choppy updates
-          sunMeshRef.current.position.copy(targetSunPos);
+          sunMeshRef.current.position.copy(tmpTargetSunPos.current);
           sunMeshRef.current.lookAt(camera.position);
+          sunMeshRef.current.visible = directVis > 0.02;
 
           // Update sun material color
           if (sunMaterialRef.current) {
@@ -515,6 +512,8 @@ const SunFollower: React.FC<{
             // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
             const depthFade2 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
             sunMeshColor.multiplyScalar(THREE.MathUtils.lerp(1.0, 0.35, depthFade2));
+            sunMaterialRef.current.transparent = true;
+            sunMaterialRef.current.opacity = THREE.MathUtils.clamp(directVis, 0, 1);
 
             sunMaterialRef.current.color.copy(sunMeshColor);
           }
@@ -522,10 +521,11 @@ const SunFollower: React.FC<{
           // Update glow - make it more visible during sunset
           if (glowMeshRef.current && glowMaterialRef.current) {
             // Position glow at sun location (using smooth position)
-            glowMeshRef.current.position.copy(targetSunPos);
+            glowMeshRef.current.position.copy(tmpTargetSunPos.current);
 
             // Make glow always face camera
             glowMeshRef.current.lookAt(camera.position);
+            glowMeshRef.current.visible = directVis > 0.02;
 
             // Calculate glow intensity and size based on sun position
             const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
@@ -534,7 +534,8 @@ const SunFollower: React.FC<{
 
             // Underground: reduce glow strength to keep caves moodier
             const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
-            const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3);
+            const glowOpacity =
+              glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3) * THREE.MathUtils.clamp(directVis, 0, 1);
 
             glowMeshRef.current.scale.setScalar(glowScale);
 
@@ -685,15 +686,19 @@ const MoonFollower: React.FC<{
     const lightRef = useRef<THREE.DirectionalLight>(null);
     const target = useMemo(() => new THREE.Object3D(), []);
     const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+    const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+    const skyVisibility = useEnvironmentStore((s) => s.skyVisibility);
+    const tmpLightOffset = useRef(new THREE.Vector3());
+    const tmpVisualOffset = useRef(new THREE.Vector3());
 
     useFrame(({ clock }) => {
       if (!moonMeshRef.current || !lightRef.current) return;
 
-      const t = clock.getElapsedTime() + orbitConfig.offset;
-      const { radius, speed } = orbitConfig;
+      const t = clock.getElapsedTime();
+      const { radius, speed, offset } = orbitConfig;
 
       // ROTATION: Exact opposite of Sun (add Math.PI for 180° offset)
-      const angle = calculateOrbitAngle(t, speed, Math.PI);
+      const angle = calculateOrbitAngle(t, speed, offset + Math.PI);
 
       // --- VISUAL MOON (Mesh) ---
       // Push the moon mesh far away (1200 units) so it doesn't clip through 
@@ -701,25 +706,22 @@ const MoonFollower: React.FC<{
       // Real moon is ~0.5 degrees. Radius 12 @ Dist 1200 ~= 0.57 degrees.
       const visualDistance = 1200;
 
-      const vx = Math.sin(angle) * visualDistance;
-      const vy = Math.cos(angle) * visualDistance;
+      getOrbitOffset(tmpVisualOffset.current, angle, visualDistance, 0, 30);
 
       // Position relative to camera so it's always "at infinity"
-      const mPx = camera.position.x + vx;
-      const mPy = vy;
-      const mPz = camera.position.z + 30; // Keep same Z plane offset
+      const mPx = camera.position.x + tmpVisualOffset.current.x;
+      const mPy = tmpVisualOffset.current.y;
+      const mPz = camera.position.z + tmpVisualOffset.current.z;
 
       moonMeshRef.current.position.set(mPx, mPy, mPz);
       // Ensure specific render order if needed, but distance usually sorts it.
 
       // --- LIGHTING (Physics) ---
       // Keep light at the configured orbital radius for consistent shadow map behavior
-      const lx = Math.sin(angle) * radius;
-      const ly = Math.cos(angle) * radius;
-
-      const lPx = camera.position.x + lx;
-      const lPy = ly;
-      const lPz = camera.position.z + 30;
+      getOrbitOffset(tmpLightOffset.current, angle, radius, 0, 30);
+      const lPx = camera.position.x + tmpLightOffset.current.x;
+      const lPy = tmpLightOffset.current.y;
+      const lPz = camera.position.z + tmpLightOffset.current.z;
 
       lightRef.current.position.set(lPx, lPy, lPz);
       target.position.set(camera.position.x, 0, camera.position.z);
@@ -728,14 +730,21 @@ const MoonFollower: React.FC<{
 
       // VISIBILITY: Only visible when above the horizon
       const isAboveHorizon = mPy > -150; // Buffer allows it to "set" below visual horizon
-      moonMeshRef.current.visible = isAboveHorizon;
+      const skyOpen = THREE.MathUtils.smoothstep(skyVisibility, 0.08, 0.45);
+      const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.35);
+      const directVis = skyOpen * (1.0 - waterBlock);
+      // Fade the moon disc out when underwater / heavily occluded to avoid "moon in caves".
+      const moonMat = moonMeshRef.current.material as THREE.MeshBasicMaterial;
+      moonMat.transparent = true;
+      moonMat.opacity = THREE.MathUtils.clamp(directVis, 0, 1);
+      moonMeshRef.current.visible = isAboveHorizon && directVis > 0.02;
 
       // Underground: keep outside moon/sky readable but reduce cave bleed.
       const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
       const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
 
       // Light intensity check - use the mathematical height (ly) not visual height
-      lightRef.current.intensity = (ly > -50) ? 0.2 * moonDimming * intensityMul : 0;
+      lightRef.current.intensity = (lPy > -50) ? 0.2 * moonDimming * directVis * intensityMul : 0;
 
       if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
     });
@@ -763,7 +772,15 @@ const MoonFollower: React.FC<{
  * Controls fog, background, hemisphere light colors, and sky gradient based on sun position.
  * Renders the SkyDome with dynamic gradients and updates fog to match horizon color.
  */
-const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }> = ({ baseFogNear, baseFogFar }) => {
+const AtmosphereController: React.FC<{
+  baseFogNear: number;
+  baseFogFar: number;
+  orbitConfig: {
+    radius: number;
+    speed: number;
+    offset: number;
+  };
+}> = ({ baseFogNear, baseFogFar, orbitConfig }) => {
   const { scene, camera } = useThree();
   const hemisphereLightRef = useRef<THREE.HemisphereLight>(null);
   const gradientRef = useRef<{ top: THREE.Color, bottom: THREE.Color }>({
@@ -786,8 +803,18 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
   const setUnderwaterBlend = useEnvironmentStore((s) => s.setUnderwaterBlend);
   const setUnderwaterState = useEnvironmentStore((s) => s.setUnderwaterState);
 
+  // Sky visibility: camera-local proxy for "is there open sky nearby?"
+  // This is computed from runtime voxel queries (cheap upward cone raymarch).
+  const skyVisibilityRef = useRef(1);
+  const skyVisibilityTargetRef = useRef(1);
+  const lastSkyQueryAtRef = useRef(0);
+  const lastSentSkyVisibilityRef = useRef(1);
+  const setSkyVisibility = useEnvironmentStore((s) => s.setSkyVisibility);
+
   // Cave palette is used only for ground bounce/ambient cues.
   const caveGround = useMemo(() => new THREE.Color('#14101a'), []);
+  const caveTop = useMemo(() => new THREE.Color('#07080f'), []);
+  const caveBottom = useMemo(() => new THREE.Color('#090812'), []);
 
   // Underwater palette: cooler and denser (applied after sky/cave palette).
   const waterTop = useMemo(() => new THREE.Color('#061526'), []);
@@ -796,14 +823,12 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
   useFrame((state, delta) => {
     const t = state.clock.getElapsedTime();
 
-    // Use the same non-linear orbit calculation as SunFollower
-    const speed = 0.025;
-    const angle = calculateOrbitAngle(t, speed);
-    const radius = 300;
-    const sy = Math.cos(angle) * radius;
+    // Use the shared orbit config so the sky/fog stay in sync with SunFollower/MoonFollower.
+    const angle = calculateOrbitAngle(t, orbitConfig.speed, orbitConfig.offset);
+    const sy = Math.cos(angle) * orbitConfig.radius;
 
     // Calculate sky gradient colors based on sun position
-    const { top, bottom } = getSkyGradient(sy, radius);
+    const { top, bottom } = getSkyGradient(sy, orbitConfig.radius);
 
     // --- Underground detection ---
     // Use TerrainService height approximation as a proxy for "surface above".
@@ -867,10 +892,44 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
       setUnderwaterBlend(uwBlend);
     }
 
-    // Keep sky/fog driven by the sun even when underground so looking out remains bright.
-    // Underwater is the only state that should override the whole palette.
-    const finalTop = top.clone().lerp(waterTop, uwBlend);
-    const finalBottom = bottom.clone().lerp(waterBottom, uwBlend);
+    // --- Sky visibility (runtime voxel query) ---
+    // We throttle this slightly because it's multiple voxel lookups per ray.
+    if (t - lastSkyQueryAtRef.current > 0.12) {
+      lastSkyQueryAtRef.current = t;
+      const est = terrainRuntime.estimateSkyVisibility(
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+        { maxDistance: 60, step: 3 }
+      );
+      if (est != null) skyVisibilityTargetRef.current = est;
+    }
+    skyVisibilityRef.current = THREE.MathUtils.damp(
+      skyVisibilityRef.current,
+      skyVisibilityTargetRef.current,
+      6.0,
+      delta
+    );
+
+    const skyVis = skyVisibilityRef.current;
+    if (Math.abs(skyVis - lastSentSkyVisibilityRef.current) > 0.01) {
+      lastSentSkyVisibilityRef.current = skyVis;
+      setSkyVisibility(skyVis);
+    }
+
+    // Palette blending:
+    // - Use sun-driven sky gradient when sky is visible.
+    // - Blend toward a cave palette when sky is occluded to avoid "sun haze" deep inside caverns.
+    // - Underwater remains a full-palette override for readability/immersion.
+    const skyOpen = THREE.MathUtils.smoothstep(skyVis, 0.10, 0.55);
+    const caveFromSky = 1.0 - skyOpen;
+    const caveBlend = Math.max(caveFromSky, blend * 0.35);
+
+    // `getSkyGradient()` returns fresh Colors, so it's safe to mutate them as scratch values.
+    top.lerp(caveTop, caveBlend).lerp(waterTop, uwBlend);
+    bottom.lerp(caveBottom, caveBlend).lerp(waterBottom, uwBlend);
+    const finalTop = top;
+    const finalBottom = bottom;
 
     // Update gradient ref for SkyDome
     gradientRef.current.top.copy(finalTop);
@@ -882,8 +941,9 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
       fog.color.copy(finalBottom);
 
       // Underground: adjust fog distances gradually with depth (but keep outdoor color).
-      const caveNear = THREE.MathUtils.lerp(baseFogNear, Math.max(2.0, baseFogNear * 0.66), blend);
-      const caveFar = THREE.MathUtils.lerp(baseFogFar, baseFogFar * 1.2, blend);
+      const fogBlend = Math.max(blend, caveFromSky);
+      const caveNear = THREE.MathUtils.lerp(baseFogNear, Math.max(2.0, baseFogNear * 0.66), fogBlend);
+      const caveFar = THREE.MathUtils.lerp(baseFogFar, baseFogFar * 1.2, fogBlend);
 
       // Underwater: much denser fog to sell immersion.
       fog.near = THREE.MathUtils.lerp(caveNear, 2.0, uwBlend);
@@ -897,7 +957,7 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
 
     // Update hemisphere light colors to match atmosphere
     if (hemisphereLightRef.current) {
-      const normalizedHeight = sy / radius;
+      const normalizedHeight = sy / orbitConfig.radius;
       hemisphereLightRef.current.color.copy(finalTop);
 
       if (normalizedHeight < -0.1) {
@@ -1392,7 +1452,15 @@ const App: React.FC = () => {
           <AmbientController intensityMul={ambientIntensityMul} />
 
           {/* Atmosphere Controller: Renders gradient SkyDome and updates fog/hemisphere light colors */}
-          <AtmosphereController baseFogNear={fogNear} baseFogFar={fogFar * viewDistance} />
+          <AtmosphereController
+            baseFogNear={fogNear}
+            baseFogFar={fogFar * viewDistance}
+            orbitConfig={{
+              radius: sunOrbitRadius,
+              speed: sunOrbitSpeed,
+              offset: sunTimeOffset
+            }}
+          />
 
           {/* Sun: Strong directional light */}
           <SunFollower

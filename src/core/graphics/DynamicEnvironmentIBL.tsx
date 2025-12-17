@@ -30,6 +30,8 @@ export const DynamicEnvironmentIBL: React.FC<{
 }> = ({ sunDirection, resolution = 96, minUpdateSeconds = 6, intensity = 1.0, enabled = true }) => {
   const { gl, scene } = useThree();
   const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
+  const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+  const skyVisibility = useEnvironmentStore((s) => s.skyVisibility);
 
   const envScene = useMemo(() => new THREE.Scene(), []);
   const sky = useMemo(() => {
@@ -114,8 +116,9 @@ export const DynamicEnvironmentIBL: React.FC<{
     const sunY = THREE.MathUtils.clamp(tmpSun.current.y, -1, 1);
     const sunKey = Math.round((sunY + 1) * 20) / 20; // ~5% steps
 
-    // Environmental condition: deep underground should not reflect bright sky.
-    const caveKey = undergroundBlend > 0.65 ? 'cave' : 'sky';
+    // Environmental condition: if the sky is not meaningfully visible (or we're underwater),
+    // avoid reflecting a bright blue sky into caves/underwater interiors.
+    const caveKey = (undergroundBlend > 0.65 || underwaterBlend > 0.2 || skyVisibility < 0.25) ? 'cave' : 'sky';
 
     // Global env intensity: keep it *very* conservative.
     // Env maps act like broad ambient light when roughness is high, so even small values can wash out terrain.

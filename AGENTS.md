@@ -99,6 +99,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Main-thread chunk arrival spikes**: Avoid expensive `useMemo` computation when chunks stream in; prefer precomputing in workers (shoreline mask note in `src/features/terrain/components/ChunkMesh.tsx`).
 - **Terrain streaming “loaded” state can stall**: If chunk updates are wrapped in `startTransition`, UI state may lag; gate initial-load readiness off `chunksRef.current` in `src/features/terrain/components/VoxelTerrain.tsx` (keyword: `initialLoadTriggered`).
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
+- **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
 
 ---
 
@@ -109,6 +110,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
 - **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
 - **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
+- If implementing significant new feature, add a new test. 
 
 ---
 
