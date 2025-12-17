@@ -1,37 +1,59 @@
-import React, { useMemo } from 'react';
-import { useTexture } from '@react-three/drei';
+import React, { useRef } from 'react';
 import * as THREE from 'three';
-import floraImg from '@/assets/images/flower_blue.png';
+import { useFrame } from '@react-three/fiber';
 
 /**
  * FloraTool
- * Lightweight held "flora" item for first-person.
- * Uses a textured quad so it loads instantly and matches the inventory icon.
+ * Held "flora" item for first-person.
+ * Uses the actual 3D mesh of the glowing blue flora (3 spheres).
  */
 export const FloraTool: React.FC = () => {
-  const texture = useTexture(floraImg);
-  const material = useMemo(() => {
-    const mat = new THREE.MeshStandardMaterial({
-      map: texture,
-      transparent: true,
-      alphaTest: 0.15,
-      side: THREE.DoubleSide,
-      color: new THREE.Color('#ffffff'),
-      emissive: new THREE.Color('#66ccff'),
-      emissiveIntensity: 0.35,
-      roughness: 0.85,
-      metalness: 0.0,
-    });
-    // Don't let tone mapping crush the icon colors.
-    mat.toneMapped = false;
-    return mat;
-  }, [texture]);
+  const bulbRef = useRef<THREE.MeshStandardMaterial>(null);
+
+  useFrame(({ clock }) => {
+    if (bulbRef.current) {
+      const t = clock.getElapsedTime();
+      const pulse = Math.sin(t * 2.0) * 0.35 + 1.15;
+      bulbRef.current.emissiveIntensity = 1.35 * pulse;
+    }
+  });
 
   return (
     <group>
-      <mesh material={material} castShadow receiveShadow>
-        {/* Keep roughly similar screen size to the held stone. */}
-        <planeGeometry args={[0.25, 0.25]} />
+      {/* Main Bulb */}
+      <mesh castShadow receiveShadow>
+        <sphereGeometry args={[0.2, 24, 24]} />
+        <meshStandardMaterial
+          ref={bulbRef}
+          color="#111"
+          emissive="#00FFFF"
+          emissiveIntensity={1.35}
+          roughness={0.4}
+          metalness={0.0}
+          toneMapped={false}
+        />
+      </mesh>
+
+      {/* Side Bulb 1 */}
+      <mesh position={[0.12, -0.08, 0.08]} castShadow receiveShadow>
+        <sphereGeometry args={[0.12, 16, 16]} />
+        <meshStandardMaterial
+          color="#111"
+          emissive="#00FFFF"
+          emissiveIntensity={0.5}
+          toneMapped={false}
+        />
+      </mesh>
+
+      {/* Side Bulb 2 */}
+      <mesh position={[-0.12, -0.12, -0.04]} castShadow receiveShadow>
+        <sphereGeometry args={[0.1, 16, 16]} />
+        <meshStandardMaterial
+          color="#111"
+          emissive="#00FFFF"
+          emissiveIntensity={0.5}
+          toneMapped={false}
+        />
       </mesh>
     </group>
   );

@@ -28,11 +28,34 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
       if (!document.pointerLockElement) return;
       if (isTextInputTarget(e.target)) return;
 
-      // 1..9 selects the corresponding slot (as long as it exists).
-      const n = Number(e.key);
-      if (Number.isInteger(n) && n >= 1 && n <= slotCount) {
+      // Handle both top-row digits and numpad digits.
+      // e.code is more reliable for physical key locations.
+      let slotIndex = -1;
+
+      if (e.code.startsWith('Digit')) {
+        const val = parseInt(e.code.replace('Digit', ''), 10);
+        if (!isNaN(val) && val >= 1 && val <= 9) {
+          slotIndex = val - 1;
+        }
+      } else if (e.code.startsWith('Numpad') && e.code.length === 7) {
+        // e.code for Numpad digits is "Numpad1", "Numpad2", etc.
+        const val = parseInt(e.code.replace('Numpad', ''), 10);
+        if (!isNaN(val) && val >= 1 && val <= 9) {
+          slotIndex = val - 1;
+        }
+      }
+
+      // Fallback to e.key for non-standard keyboards if slotIndex wasn't set.
+      if (slotIndex === -1) {
+        const n = Number(e.key);
+        if (Number.isInteger(n) && n >= 1 && n <= 9) {
+          slotIndex = n - 1;
+        }
+      }
+
+      if (slotIndex >= 0 && slotIndex < slotCount) {
         e.preventDefault();
-        setSelectedSlotIndex(n - 1);
+        setSelectedSlotIndex(slotIndex);
       }
     };
 

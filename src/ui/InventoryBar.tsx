@@ -2,7 +2,7 @@
 import React from 'react';
 import { useInventoryStore } from '@/state/InventoryStore';
 import torchImg from '@/assets/images/torch_gemini.png';
-import floraImg from '@/assets/images/flower_blue.png';
+import floraImg from '@/assets/images/flora_icon.png';
 import stickImg from '@/assets/images/stick.svg';
 import stoneImg from '@/assets/images/stone.svg';
 // Reuse stone image for shard for now, or just use a generic shape if we had one.
@@ -24,16 +24,16 @@ export const InventoryBar: React.FC = () => {
                 const isSelected = index === selectedSlotIndex;
                 const showCount = item === 'flora' || item === 'torch' || item === 'stick' || item === 'stone' || item === 'shard';
                 const count = item === 'flora'
-                  ? floraCount
-                  : (item === 'torch'
-                    ? torchCount
-                    : (item === 'stick'
-                      ? stickCount
-                      : (item === 'stone'
-                        ? stoneCount
-                        : (item === 'shard'
-                            ? shardCount
-                            : 0))));
+                    ? floraCount
+                    : (item === 'torch'
+                        ? torchCount
+                        : (item === 'stick'
+                            ? stickCount
+                            : (item === 'stone'
+                                ? stoneCount
+                                : (item === 'shard'
+                                    ? shardCount
+                                    : 0))));
                 return (
                     <div
                         key={index}
@@ -77,10 +77,10 @@ export const InventoryBar: React.FC = () => {
                             />
                         )}
                         {item === 'shard' && (
-                             <div className={`relative w-8 h-8 flex items-center justify-center ${count > 0 ? '' : 'opacity-30'}`}>
-                                 {/* Simple CSS shape for shard if no image */}
-                                 <div className="w-0 h-0 border-l-[6px] border-l-transparent border-b-[16px] border-b-slate-300 border-r-[6px] border-r-transparent transform rotate-45 drop-shadow-md"></div>
-                             </div>
+                            <div className={`relative w-8 h-8 flex items-center justify-center ${count > 0 ? '' : 'opacity-30'}`}>
+                                {/* Simple CSS shape for shard if no image */}
+                                <div className="w-0 h-0 border-l-[6px] border-l-transparent border-b-[16px] border-b-slate-300 border-r-[6px] border-r-transparent transform rotate-45 drop-shadow-md"></div>
+                            </div>
                         )}
                         {item === 'pickaxe' && (
                             <div className="w-8 h-8 flex items-center justify-center rounded bg-slate-700/50 border border-white/10 text-[10px] font-mono text-white/90">
