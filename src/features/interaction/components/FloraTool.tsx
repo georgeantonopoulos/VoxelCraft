@@ -5,7 +5,7 @@ import floraImg from '@/assets/images/flower_blue.png';
 
 /**
  * FloraTool
- * Lightweight held "flora" item for the left hand.
+ * Lightweight held "flora" item for first-person.
  * Uses a textured quad so it loads instantly and matches the inventory icon.
  */
 export const FloraTool: React.FC = () => {
@@ -30,9 +30,9 @@ export const FloraTool: React.FC = () => {
   return (
     <group>
       <mesh material={material} castShadow receiveShadow>
-        <planeGeometry args={[0.35, 0.35]} />
+        {/* Keep roughly similar screen size to the held stone. */}
+        <planeGeometry args={[0.25, 0.25]} />
       </mesh>
     </group>
   );
 };
-

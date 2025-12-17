@@ -240,7 +240,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 <group position={[0, 1.5, 0]}> {/* Lift slightly above stump */}
                     <Suspense fallback={
                         <>
-                            <pointLight color="#ff00ff" distance={10} decay={2} intensity={10} />
                             <mesh>
                                 <sphereGeometry args={[0.5, 16, 16]} />
                                 <meshStandardMaterial 
@@ -257,8 +256,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
 	                </group>
 	            )}
 
-            {status === 'GROWING' && (
+            {(status === 'CHARGING' || status === 'GROWING') && (
+                // Prewarm the tree during CHARGING so the worker finishes before GROWING starts.
+                // This avoids a visible "gap" where the swarm is present but the tree hasn't generated yet.
                 <FractalTree
+                    active={status === 'GROWING'}
+                    visible={status === 'GROWING'}
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
                     position={new THREE.Vector3(0, 0.5, 0)}
                     baseRadius={stumpRadius}

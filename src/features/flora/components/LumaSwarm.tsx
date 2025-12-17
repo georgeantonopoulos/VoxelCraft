@@ -38,6 +38,11 @@ const SHAPE_HEIGHT = EST_FLORA_TREE_HEIGHT * 1.15 * SHAPE_SCALE;
 const DEBUG_LUMA_SWARM = false;
 const DEBUG_LUMA_SIMPLE_MATERIAL = false; // Renders all instances at origin (no shader animation)
 
+// Cache the expensive silhouette sampling so RootHollow transitions don't hitch on swarm mount.
+// This is safe because the swarm shape is derived solely from `luma_shape.png` + constants above.
+let cachedParticleData: { targets: Float32Array; randoms: Float32Array; count: number } | null = null;
+let cachedParticleKey: string | null = null;
+
 export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const materialRef = useRef<any>(null);
@@ -61,6 +66,8 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
             if (DEBUG_LUMA_SWARM) console.warn('[LumaSwarm] No texture or image data available');
             return null;
         }
+        const key = `${texture.image.width}x${texture.image.height}`;
+        if (cachedParticleData && cachedParticleKey === key) return cachedParticleData;
         if (DEBUG_LUMA_SWARM) {
             console.log('[LumaSwarm] Processing texture, size:', texture.image.width, 'x', texture.image.height);
         }
@@ -109,11 +116,14 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
         const count = targets.length / 3;
         if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Particle count:', count);
-        return {
+        const computed = {
             targets: new Float32Array(targets),
             randoms: new Float32Array(randoms),
             count
         };
+        cachedParticleData = computed;
+        cachedParticleKey = key;
+        return computed;
     }, [texture]);
 
     // 2. Setup InstancedMesh Attributes
@@ -164,10 +174,12 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         // Set start time on first frame (not on mount)
         if (startTimeRef.current === null) {
             startTimeRef.current = currentTime;
-            console.log('[LumaSwarm] Animation start time set on first frame:', startTimeRef.current);
+            if (DEBUG_LUMA_SWARM) console.log('[LumaSwarm] Animation start time set on first frame:', startTimeRef.current);
         }
 
-        const validStart = startTimeRef.current + 1.0; // 1s delay
+        // Keep a tiny delay so the swarm doesn't "pop" the instant a flora is consumed.
+        const START_DELAY_S = 0.15;
+        const validStart = startTimeRef.current + START_DELAY_S;
         const elapsed = Math.max(0, currentTime - validStart);
 
         // Update Uniforms

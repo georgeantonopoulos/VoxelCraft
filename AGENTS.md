@@ -113,3 +113,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 2025-12-16: Implemented Fire Creation mechanics: Stone-on-Stone sparks (InteractionHandler), Heat accumulation, Fire spawning, and Stick-on-Fire -> Torch conversion. Added `SparkSystem.tsx` and `ItemType.FIRE`.
 - 2025-12-17: Fixed fire mechanics physics issue where target stone was pushed away when struck. Added `isAnchored` flag to anchor stones with 4+ nearby sticks, making them fixed bodies during fire-starting.
 - 2025-12-17: Refined Fire mechanics: Fire now stays when converting stick to torch, rock stays when igniting fire. Enhanced fire visuals with PointLight, Glow billboard, and improved particles.
+- 2025-12-17: Improved Underwater Transition & Effects.
+  - Delayed underwater state trigger (+0.2y offset) so it matches visual submersion.
+  - Added `BubbleSystem.tsx` for rising bubble particles.
+  - Enhanced underwater post-processing: increased Chromatic Aberration (distortion) and Vignette (darkness) based on submersion depth.

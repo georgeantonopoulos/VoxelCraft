@@ -14,19 +14,41 @@ interface FractalTreeProps {
     orientation?: THREE.Quaternion;
     worldPosition?: THREE.Vector3;
     worldQuaternion?: THREE.Quaternion;
+    /**
+     * When false, prewarms generation but does not animate growth or enable physics.
+     * Useful for hiding worker latency (e.g. RootHollow CHARGING -> GROWING transition).
+     */
+    active?: boolean;
+    /**
+     * Render visibility toggle (keeps component mounted so worker/shaders can warm up).
+     */
+    visible?: boolean;
 }
 
-export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRadius = 0.6, type = 0, userData, orientation, worldPosition, worldQuaternion }) => {
+export const FractalTree: React.FC<FractalTreeProps> = ({
+    seed,
+    position,
+    baseRadius = 0.6,
+    type = 0,
+    userData,
+    orientation,
+    worldPosition,
+    worldQuaternion,
+    active = true,
+    visible = true
+}) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const leafRef = useRef<THREE.InstancedMesh>(null);
+    const lightRef = useRef<THREE.PointLight>(null);
     const [data, setData] = useState<{
         matrices: Float32Array;
         depths: Float32Array;
         leafMatrices: Float32Array;
         boundingBox: { min: THREE.Vector3, max: THREE.Vector3 };
     } | null>(null);
-    const [growth, setGrowth] = useState(0);
+    const growthRef = useRef(0);
     const [physicsReady, setPhysicsReady] = useState(false);
+    const physicsReadyRef = useRef(false);
 
     const geometry = useMemo(() => {
         const geo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 7);
@@ -54,6 +76,13 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         };
         return () => worker.terminate();
     }, [seed, baseRadius, type]);
+
+    useEffect(() => {
+        // Reset growth/physics when activation toggles or when a new tree is generated.
+        growthRef.current = 0;
+        physicsReadyRef.current = false;
+        setPhysicsReady(false);
+    }, [seed, baseRadius, type, active]);
 
     useEffect(() => {
         if (!data || !meshRef.current) return;
@@ -87,26 +116,27 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         }
     }, [data, geometry]);
 
-    useFrame((state, delta) => {
-        if (!data) return;
-        if (growth < 1.0) {
-            setGrowth(g => Math.min(g + delta * growthSpeed, 1.0));
-        } else if (!physicsReady) {
-            setPhysicsReady(true);
-        }
-
-        if (uniforms.uGrowthProgress) {
-            uniforms.uGrowthProgress.value = growth;
-        }
-    });
-
     // Physics Generation
     // NOTE: We must clone pos/quat before passing to RigidBody, otherwise all colliders
     // share the same reference and end up at the last computed position (all bunched up).
     const physicsBodies = useMemo(() => {
         if (!physicsReady || !data) return null;
 
-        const bodies = [];
+        // RootHollow flora-trees don't need per-branch colliders (expensive to create all at once).
+        // Use a single coarse trunk collider to avoid a hitch at the end of the growth animation.
+        if (userData?.type === 'flora_tree') {
+            const { min, max } = data.boundingBox;
+            const height = Math.max(max.y - min.y, 1.0);
+            const halfHeight = height * 0.5;
+            const radius = Math.max(baseRadius * 0.75, 0.35);
+            return (
+                <RigidBody type="fixed" colliders={false} userData={userData}>
+                    <CylinderCollider args={[halfHeight, radius]} position={[0, halfHeight, 0]} />
+                </RigidBody>
+            );
+        }
+
+        const bodies: React.ReactNode[] = [];
         const { matrices, depths } = data;
         const tempMatrix = new THREE.Matrix4();
         const pos = new THREE.Vector3();
@@ -173,7 +203,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         }
 
         return bodies;
-    }, [physicsReady, data, userData]);
+    }, [physicsReady, data, userData, baseRadius]);
 
     const uniforms = useMemo(() => {
         let base = '#3e2723';
@@ -203,8 +233,33 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
         };
     }, [type]);
 
-    useFrame((state) => {
-        if (uniforms.uTime) uniforms.uTime.value = state.clock.elapsedTime;
+    useFrame((state, delta) => {
+        if (!data) return;
+
+        const t = state.clock.elapsedTime;
+        if (uniforms.uTime) uniforms.uTime.value = t;
+
+        // Prewarm mode: keep everything at "seeded but not growing".
+        if (!active) {
+            if (uniforms.uGrowthProgress) uniforms.uGrowthProgress.value = 0;
+            if (lightRef.current) lightRef.current.intensity = 0;
+            return;
+        }
+
+        // Growth is uniform-driven; avoid per-frame React state updates (reduces render hitches).
+        if (growthRef.current < 1.0) {
+            growthRef.current = Math.min(growthRef.current + delta * growthSpeed, 1.0);
+        } else if (!physicsReadyRef.current) {
+            physicsReadyRef.current = true;
+            setPhysicsReady(true);
+        }
+
+        if (uniforms.uGrowthProgress) {
+            uniforms.uGrowthProgress.value = growthRef.current;
+        }
+        if (lightRef.current) {
+            lightRef.current.intensity = growthRef.current * 2.5;
+        }
     });
 
     const topCenter = useMemo(() => {
@@ -236,7 +291,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
     if (!data) return null;
 
     return (
-        <group position={position}>
+        <group position={position} visible={visible}>
             <instancedMesh
                 ref={meshRef}
                 args={[geometry, undefined, data.matrices.length / 16]}
@@ -433,8 +488,9 @@ export const FractalTree: React.FC<FractalTreeProps> = ({ seed, position, baseRa
                 </RigidBody>
             )}
             <pointLight
+                ref={lightRef}
                 color="#E0F7FA"
-                intensity={growth * 2.5}
+                intensity={0}
                 distance={8}
                 decay={2}
                 position={topCenter}

@@ -34,6 +34,7 @@ import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 import { TouchCameraControls } from '@features/player/TouchCameraControls';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
+import { BubbleSystem } from '@features/environment/BubbleSystem';
 
 // Keyboard Map
 const keyboardMap = [
@@ -841,9 +842,11 @@ const AtmosphereController: React.FC<{ baseFogNear: number; baseFogFar: number }
     }
 
     // --- Underwater detection ---
+    // Check slightly above camera (+0.2m) so transition happens only when head is truly submerged
+    const checkY = camera.position.y + 0.2;
     const nextIsUnderwater = terrainRuntime.isLiquidAtWorld(
       camera.position.x,
-      camera.position.y,
+      checkY,
       camera.position.z
     );
     if (nextIsUnderwater !== isUnderwaterRef.current) {
@@ -1076,6 +1079,7 @@ const App: React.FC = () => {
   const setAoEnabled = useSettingsStore(s => s.setAo);
   const bloomEnabled = useSettingsStore(s => s.bloom);
   const viewDistance = useSettingsStore(s => s.viewDistance);
+  const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
 
   const [triplanarDetail, setTriplanarDetail] = useState(1.0);
   const [postProcessingEnabled, setPostProcessingEnabled] = useState(true);
@@ -1491,15 +1495,22 @@ const App: React.FC = () => {
                 underwaterExposure={exposureUnderwater}
               />
 
-              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection, giving a subtle "motion" feel at edges without velocity cost */}
+              {/* Cinematic Polish: Chromatic Aberration simulates lens imperfection/underwater refraction */}
               <ChromaticAberration
-                offset={[caOffset * 0.1, caOffset * 0.1]}
+                offset={[
+                  caOffset * 0.1 + (underwaterBlend * 0.004),
+                  caOffset * 0.1 + (underwaterBlend * 0.004)
+                ]}
                 radialModulation={true}
                 modulationOffset={0}
               />
 
-              {/* Vignette: Focuses eyes on center, premium feel */}
-              <Vignette eskil={false} offset={0.1} darkness={vignetteDarkness} />
+              {/* Vignette: Focuses eyes on center, premium feel. Darker underwater. */}
+              <Vignette
+                eskil={false}
+                offset={0.1}
+                darkness={vignetteDarkness + (underwaterBlend * 0.35)}
+              />
             </EffectComposer>
           ) : null}
 
@@ -1507,6 +1518,7 @@ const App: React.FC = () => {
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
           <SparkSystem />
+          <BubbleSystem />
           <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
         </Canvas>
 

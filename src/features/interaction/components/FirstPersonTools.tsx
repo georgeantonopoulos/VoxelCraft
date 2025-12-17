@@ -21,7 +21,7 @@ export const FirstPersonTools: React.FC = () => {
     const { camera, scene } = useThree(); // Needed for parenting
     const groupRef = useRef<THREE.Group>(null);
     const axeRef = useRef<THREE.Group>(null);
-    const torchRef = useRef<THREE.Group>(null); // left hand (torch/flora)
+    const torchRef = useRef<THREE.Group>(null); // left hand (torch)
     const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
     const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
 
@@ -336,8 +336,8 @@ export const FirstPersonTools: React.FC = () => {
         rotationX += kick * 0.10;  // Tiny upward recoil
 
         const selectedItem = inventorySlots[selectedSlotIndex];
-        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
-        const leftHandShown = selectedItem === 'torch' || selectedItem === 'flora';
+        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard' || selectedItem === 'flora';
+        const leftHandShown = selectedItem === 'torch';
 
         // Apply transforms to the inner Axe group (local offsets)
         // Pickaxe only shows when explicitly selected.
@@ -347,7 +347,7 @@ export const FirstPersonTools: React.FC = () => {
             axeRef.current.rotation.set(rotationX, rotationY, rotationZ);
         }
 
-        // Left-hand held item logic: torch/flora.
+        // Left-hand held item logic: torch.
         const targetShown = leftHandShown;
         const speedIn = 2.2;  // ~0.45s in
         const speedOut = 2.8; // slightly faster out
@@ -360,7 +360,7 @@ export const FirstPersonTools: React.FC = () => {
         const p = torchProgress.current;
         const ease = p * p * (3 - 2 * p); // smoothstep
 
-        // Keep torch/flora on left and slide from below camera.
+        // Keep torch on left and slide from below camera.
         if (torchRef.current) {
             // Re-declare ‘now’ for animation usage using state.clock
             const now = state.clock.getElapsedTime();
@@ -387,7 +387,7 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        // Right-hand item logic: stick/stone/shard replaces pickaxe.
+        // Right-hand item logic: stick/stone/shard/flora replaces pickaxe.
         const rightShown = rightHandOverride;
         const rTargetProg = rightShown ? 1 : 0;
         rightItemProgress.current = THREE.MathUtils.lerp(
@@ -400,7 +400,7 @@ export const FirstPersonTools: React.FC = () => {
 
         if (rightItemRef.current) {
             const now = state.clock.getElapsedTime();
-            const isRightHandItem = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
+            const isRightHandItem = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard' || selectedItem === 'flora';
             const pose = isRightHandItem
                 ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
                     ? (selectedItem === 'stick'
@@ -498,14 +498,11 @@ export const FirstPersonTools: React.FC = () => {
             {/* Ambient light for the tool itself to ensure it's never pitch black */}
             <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
 
-            {/* Left-hand torch/flora. Positioned/rotated in useFrame above. */}
+            {/* Left-hand torch. Positioned/rotated in useFrame above. */}
             <group ref={torchRef}>
                 {/* Swap held left-hand item based on inventory selection (same pose/animation). */}
                 <group visible={inventorySlots[selectedSlotIndex] === 'torch'}>
                     <TorchTool />
-                </group>
-                <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
-                    <FloraTool />
                 </group>
             </group>
 
@@ -516,6 +513,9 @@ export const FirstPersonTools: React.FC = () => {
                 </group>
                 <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
                     <StoneTool />
+                </group>
+                <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
+                    <FloraTool />
                 </group>
                 <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
                     <ShardTool />
