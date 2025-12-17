@@ -175,6 +175,11 @@ const fragmentShader = `
 	  uniform float uCavityStrength;
 	  uniform vec2 uWindDirXZ;
 	  uniform float uNormalStrength;
+    
+    // Caustics Uniforms
+    uniform float uTime;
+    uniform vec3 uSunDirection;
+    uniform float uWaterLevel;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -217,6 +222,26 @@ const fragmentShader = `
       float len = length(v);
       if (len < 0.0001) return vec2(1.0, 0.0);
       return v / len;
+  }
+
+  // Fast procedural caustics pattern
+  float getCaustics(vec3 pos, vec3 sunDir, float t) {
+      // Project UVs based on sun direction (light refraction approximation)
+      vec2 uv = pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.5);
+      
+      // Animate
+      uv += vec2(t * 0.5, t * 0.3);
+
+      vec3 p = vec3(uv * 0.8, t * 0.8);
+      float n1 = texture(uNoiseTexture, p * 0.05).r; // Large low freq
+      float n2 = texture(uNoiseTexture, p * 0.2 + vec3(0.5)).g; // High freq
+      
+      float c = n1 * 0.6 + n2 * 0.4;
+      
+      // Sharpen to create caustic lines
+      c = pow(max(c, 0.0), 4.0) * 4.0;
+      
+      return c;
   }
 
   struct MatInfo {
@@ -496,6 +521,29 @@ const fragmentShader = `
     // Add Emission
     col += accEmission * accColor; 
 
+    // --- Caustics (Underwater Ground) ---
+    // Only applied if below water level, sun is up, AND surface is wet (proxy for submerged)
+    if (vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
+        float waterDepth = uWaterLevel - vWorldPosition.y;
+        
+        // Mask: strong near surface, fade deep down
+        float depthMask = smoothstep(60.0, 0.0, waterDepth);
+        // Mask: must be somewhat facing up to catch light
+        float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);
+        // Mask: Cavity check. 
+        // vCavity is 0.0 for open surfaces (seabed) and >0.0 for enclosed spaces (caves).
+        // We mask out areas with significant enclosure to avoid "underground" caustics.
+        float openMask = 1.0 - smoothstep(0.0, 0.3, vCavity);
+        
+        if (depthMask > 0.01 && normalMask > 0.01 && openMask > 0.01) {
+             float caus = getCaustics(vWorldPosition, uSunDirection, uTime);
+             
+             // Tint caustics slightly cyan/white
+             vec3 causticColor = vec3(0.8, 0.95, 1.0);
+             col += causticColor * caus * depthMask * normalMask * openMask * 0.5;
+        }
+    } 
+
 	    // Apply strong distance fog to blend toward the sky color and hide terrain generation.
 	    // Note: Three.js base fog may also be enabled on the material; use debug toggles to isolate stacking.
 	    if (uShaderFogEnabled > 0.5) {
@@ -537,6 +585,7 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetUnits?: number;
   weightsView?: string;
   wireframe?: boolean;
+  waterLevel?: number; // Pass constant if needed
 }> = ({
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
@@ -549,122 +598,132 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetFactor = -1.0,
   polygonOffsetUnits = -1.0,
   weightsView = 'off',
-  wireframe = false
+  wireframe = false,
+  waterLevel = 4.5,
+  sunDirection
 }) => {
-  const materialRef = useRef<any>(null);
-  const { scene } = useThree();
-  const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
+    const materialRef = useRef<any>(null);
+    const { scene, clock } = useThree(); // Added clock for uTime
+    const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
 
-  useFrame(() => {
-    if (materialRef.current) {
-      const mat = materialRef.current;
+    useFrame(() => {
+      if (materialRef.current) {
+        const mat = materialRef.current;
 
-      // NOTE:
-      // Chunk-level opacity fade was removed to avoid transparency-induced hitches during streaming.
-      // Keep the shader uniform at 1.0 (fully opaque).
-      if (mat.uniforms.uOpacity.value !== 1.0) mat.uniforms.uOpacity.value = 1.0;
+        // NOTE:
+        // Chunk-level opacity fade was removed to avoid transparency-induced hitches during streaming.
+        // Keep the shader uniform at 1.0 (fully opaque).
+        if (mat.uniforms.uOpacity.value !== 1.0) mat.uniforms.uOpacity.value = 1.0;
 
-      // Keep shared noise up to date (can change if resources are reloaded).
-      if (mat.uniforms.uNoiseTexture.value !== noiseTexture) mat.uniforms.uNoiseTexture.value = noiseTexture;
+        // Keep shared noise up to date (can change if resources are reloaded).
+        if (mat.uniforms.uNoiseTexture.value !== noiseTexture) mat.uniforms.uNoiseTexture.value = noiseTexture;
 
-      // Avoid per-frame churn: only touch uniforms when values actually change.
-      if (mat.uniforms.uTriplanarDetail.value !== triplanarDetail) mat.uniforms.uTriplanarDetail.value = triplanarDetail;
-      const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
-      if (mat.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) mat.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
-      if (mat.uniforms.uShaderFogStrength.value !== shaderFogStrength) mat.uniforms.uShaderFogStrength.value = shaderFogStrength;
-      const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
-      if (mat.uniforms.uWetnessEnabled.value !== wetnessEnabledF) mat.uniforms.uWetnessEnabled.value = wetnessEnabledF;
-      const mossEnabledF = mossEnabled ? 1.0 : 0.0;
-      if (mat.uniforms.uMossEnabled.value !== mossEnabledF) mat.uniforms.uMossEnabled.value = mossEnabledF;
-      if (mat.uniforms.uRoughnessMin.value !== roughnessMin) mat.uniforms.uRoughnessMin.value = roughnessMin;
-      mat.polygonOffset = polygonOffsetEnabled;
-      mat.polygonOffsetFactor = polygonOffsetFactor;
-      mat.polygonOffsetUnits = polygonOffsetUnits;
-      mat.wireframe = wireframe;
-      const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-      const nextWeightsView = viewMap[weightsView] ?? 0;
-      if (mat.uniforms.uWeightsView.value !== nextWeightsView) mat.uniforms.uWeightsView.value = nextWeightsView;
-      // Base material fog (MeshStandardMaterial) can stack with shader fog; allow toggling for isolation.
-      mat.fog = threeFogEnabled;
+        // Avoid per-frame churn: only touch uniforms when values actually change.
+        if (mat.uniforms.uTriplanarDetail.value !== triplanarDetail) mat.uniforms.uTriplanarDetail.value = triplanarDetail;
+        const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
+        if (mat.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) mat.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
+        if (mat.uniforms.uShaderFogStrength.value !== shaderFogStrength) mat.uniforms.uShaderFogStrength.value = shaderFogStrength;
+        const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
+        if (mat.uniforms.uWetnessEnabled.value !== wetnessEnabledF) mat.uniforms.uWetnessEnabled.value = wetnessEnabledF;
+        const mossEnabledF = mossEnabled ? 1.0 : 0.0;
+        if (mat.uniforms.uMossEnabled.value !== mossEnabledF) mat.uniforms.uMossEnabled.value = mossEnabledF;
+        if (mat.uniforms.uRoughnessMin.value !== roughnessMin) mat.uniforms.uRoughnessMin.value = roughnessMin;
+        mat.polygonOffset = polygonOffsetEnabled;
+        mat.polygonOffsetFactor = polygonOffsetFactor;
+        mat.polygonOffsetUnits = polygonOffsetUnits;
+        mat.wireframe = wireframe;
+        const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+        const nextWeightsView = viewMap[weightsView] ?? 0;
+        if (mat.uniforms.uWeightsView.value !== nextWeightsView) mat.uniforms.uWeightsView.value = nextWeightsView;
+        // Base material fog (MeshStandardMaterial) can stack with shader fog; allow toggling for isolation.
+        mat.fog = threeFogEnabled;
 
-      // Always keep terrain opaque; fog hides chunk streaming at distance.
-      mat.transparent = false;
-      mat.depthWrite = true;
+        // Updates for Caustics
+        if (sunDirection) mat.uniforms.uSunDirection.value.copy(sunDirection);
+        mat.uniforms.uTime.value = clock.getElapsedTime();
+        mat.uniforms.uWaterLevel.value = waterLevel;
 
-      const fog = scene.fog as THREE.Fog | undefined;
-      if (fog) {
-        const colorHex = `#${fog.color.getHexString()}`;
-        const lastFog = lastFogRef.current;
-        if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
-          mat.uniforms.uFogColor.value.copy(fog.color);
-          mat.uniforms.uFogNear.value = fog.near;
-          mat.uniforms.uFogFar.value = fog.far;
-          lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
-        }
-      } else {
-        const lastFog = lastFogRef.current;
-        if (!lastFog || lastFog.near !== 1e6 || lastFog.far !== 1e6 + 1.0 || lastFog.colorHex !== '#87CEEB') {
-          mat.uniforms.uFogColor.value.set('#87CEEB');
-          mat.uniforms.uFogNear.value = 1e6;
-          mat.uniforms.uFogFar.value = 1e6 + 1.0;
-          lastFogRef.current = { near: 1e6, far: 1e6 + 1.0, colorHex: '#87CEEB' };
+        // Always keep terrain opaque; fog hides chunk streaming at distance.
+        mat.transparent = false;
+        mat.depthWrite = true;
+
+        const fog = scene.fog as THREE.Fog | undefined;
+        if (fog) {
+          const colorHex = `#${fog.color.getHexString()}`;
+          const lastFog = lastFogRef.current;
+          if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
+            mat.uniforms.uFogColor.value.copy(fog.color);
+            mat.uniforms.uFogNear.value = fog.near;
+            mat.uniforms.uFogFar.value = fog.far;
+            lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
+          }
+        } else {
+          const lastFog = lastFogRef.current;
+          if (!lastFog || lastFog.near !== 1e6 || lastFog.far !== 1e6 + 1.0 || lastFog.colorHex !== '#87CEEB') {
+            mat.uniforms.uFogColor.value.set('#87CEEB');
+            mat.uniforms.uFogNear.value = 1e6;
+            mat.uniforms.uFogFar.value = 1e6 + 1.0;
+            lastFogRef.current = { near: 1e6, far: 1e6 + 1.0, colorHex: '#87CEEB' };
+          }
         }
       }
-    }
-  });
+    });
 
-  const uniforms = useMemo(() => ({
-    uNoiseTexture: { value: noiseTexture },
-    uColorStone: { value: new THREE.Color('#888c8d') },
-    uColorGrass: { value: new THREE.Color('#41a024') },
-    uColorDirt: { value: new THREE.Color('#755339') },
-    uColorSand: { value: new THREE.Color('#ebd89f') },
-    uColorSnow: { value: new THREE.Color('#ffffff') },
-    uColorWater: { value: new THREE.Color('#0099ff') },
-    uColorClay: { value: new THREE.Color('#a67b5b') },
-    uColorMoss: { value: new THREE.Color('#4a6b2f') }, // Tune: Darker organic green
-    uColorBedrock: { value: new THREE.Color('#2a2a2a') },
+    const uniforms = useMemo(() => ({
+      uNoiseTexture: { value: noiseTexture },
+      uColorStone: { value: new THREE.Color('#888c8d') },
+      uColorGrass: { value: new THREE.Color('#41a024') },
+      uColorDirt: { value: new THREE.Color('#755339') },
+      uColorSand: { value: new THREE.Color('#ebd89f') },
+      uColorSnow: { value: new THREE.Color('#ffffff') },
+      uColorWater: { value: new THREE.Color('#0099ff') },
+      uColorClay: { value: new THREE.Color('#a67b5b') },
+      uColorMoss: { value: new THREE.Color('#4a6b2f') }, // Tune: Darker organic green
+      uColorBedrock: { value: new THREE.Color('#2a2a2a') },
 
-    // New Colors (Tuned)
-    uColorRedSand: { value: new THREE.Color('#d45d35') },
-    uColorTerracotta: { value: new THREE.Color('#9e5e45') }, // Tune: Richer Earthy Red
-    uColorIce: { value: new THREE.Color('#a3d9ff') },
-    uColorJungleGrass: { value: new THREE.Color('#2e8b1d') },
-    uColorGlowStone: { value: new THREE.Color('#00e5ff') }, // Tune: Cyan/Teal Luma
-    uColorObsidian: { value: new THREE.Color('#0a0814') }, // Tune: Deepest Black/Purple
+      // New Colors (Tuned)
+      uColorRedSand: { value: new THREE.Color('#d45d35') },
+      uColorTerracotta: { value: new THREE.Color('#9e5e45') }, // Tune: Richer Earthy Red
+      uColorIce: { value: new THREE.Color('#a3d9ff') },
+      uColorJungleGrass: { value: new THREE.Color('#2e8b1d') },
+      uColorGlowStone: { value: new THREE.Color('#00e5ff') }, // Tune: Cyan/Teal Luma
+      uColorObsidian: { value: new THREE.Color('#0a0814') }, // Tune: Deepest Black/Purple
 
-	    uFogColor: { value: new THREE.Color('#87CEEB') },
-	    uFogNear: { value: 30 },
-	    uFogFar: { value: 400 },
-	    uOpacity: { value: 1 },
-	    uTriplanarDetail: { value: 1.0 },
-	    uShaderFogEnabled: { value: 1.0 },
-	    uShaderFogStrength: { value: 0.9 },
-	    uWetnessEnabled: { value: 1.0 },
-	    uMossEnabled: { value: 1.0 },
-	    uRoughnessMin: { value: 0.0 },
-	    uWeightsView: { value: 0 },
-	    // Procedural detail controls (kept conservative for stability/perf).
-	    uMacroStrength: { value: 1.0 },
-	    uCavityStrength: { value: 1.0 },
-	    uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
-	    uNormalStrength: { value: 1.0 },
-	  }), []);
+      uFogColor: { value: new THREE.Color('#87CEEB') },
+      uFogNear: { value: 30 },
+      uFogFar: { value: 400 },
+      uOpacity: { value: 1 },
+      uTime: { value: 0 },
+      uSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      uWaterLevel: { value: 4.5 },
+      uTriplanarDetail: { value: 1.0 },
+      uShaderFogEnabled: { value: 1.0 },
+      uShaderFogStrength: { value: 0.9 },
+      uWetnessEnabled: { value: 1.0 },
+      uMossEnabled: { value: 1.0 },
+      uRoughnessMin: { value: 0.0 },
+      uWeightsView: { value: 0 },
+      // Procedural detail controls (kept conservative for stability/perf).
+      uMacroStrength: { value: 1.0 },
+      uCavityStrength: { value: 1.0 },
+      uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
+      uNormalStrength: { value: 1.0 },
+    }), []);
 
-  return (
-    <CustomShaderMaterial
-      ref={materialRef}
-      baseMaterial={THREE.MeshStandardMaterial}
-      // REMOVED glslVersion to allow automatic compatibility
-      roughness={0.9}
-      metalness={0.0}
-      depthWrite
-      depthTest
-      // AAA FIX: Use FrontSide to prevent backface Z-fighting artifacts
-      side={THREE.FrontSide}
-      vertexShader={vertexShader}
-      fragmentShader={fragmentShader}
-      uniforms={uniforms}
-    />
-  );
-};
+    return (
+      <CustomShaderMaterial
+        ref={materialRef}
+        baseMaterial={THREE.MeshStandardMaterial}
+        // REMOVED glslVersion to allow automatic compatibility
+        roughness={0.9}
+        metalness={0.0}
+        depthWrite
+        depthTest
+        // AAA FIX: Use FrontSide to prevent backface Z-fighting artifacts
+        side={THREE.FrontSide}
+        vertexShader={vertexShader}
+        fragmentShader={fragmentShader}
+        uniforms={uniforms}
+      />
+    );
+  };

@@ -117,3 +117,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Delayed underwater state trigger (+0.2y offset) so it matches visual submersion.
   - Added `BubbleSystem.tsx` for rising bubble particles.
   - Enhanced underwater post-processing: increased Chromatic Aberration (distortion) and Vignette (darkness) based on submersion depth.
+- 2025-12-17: Optimized Underwater FX & Added Caustics.
+  - Implemented procedural caustics in `TriplanarMaterial.tsx` (efficient vertex/frag projection) visible on underwater terrain during the day.
+  - Added strict `wetMask > 0.5` check to caustics to prevent them from appearing in dry caves below sea level.
+  - Increased Bubble density (50 -> 150) and fixed "first-dive lag" by keeping the BubbleSystem active but scaled-out when dry.
+  - Fixed shader redefinition error (`uWindDirXZ` duplicated) in `TriplanarMaterial.tsx`.
+  - Removed unreliable `vWetness` check from caustics logic to ensure visibility on underwater terrain.
+  - Implemented correct `vCavity` check (`0.0` = open seabed, `>0.3` = cave) to robustly mask caustics from caves without breaking seabed visibility.

@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
 
-const COUNT = 50;
+const COUNT = 150;
 const RADIUS = 15;
 const Y_RANGE = 20;
 
@@ -30,17 +30,23 @@ export const BubbleSystem: React.FC = () => {
     useFrame(({ camera, clock }) => {
         if (!meshRef.current) return;
 
-        // Only show if somewhat underwater
-        if (underwaterBlend < 0.1) {
-            meshRef.current.visible = false;
-            return;
-        }
-        meshRef.current.visible = true;
+        // Optimization: Always keep mesh visible to prevent shader re-compile lag.
+        // Instead, we just hide instances by scaling to 0 when not needed.
+        const isUnderwater = underwaterBlend > 0.1;
 
         const t = clock.getElapsedTime();
         const camPos = camera.position;
 
         particles.forEach((p, i) => {
+            if (!isUnderwater) {
+                // Hide by scaling to 0
+                dummy.position.set(0, -9999, 0); // Also move away
+                dummy.scale.setScalar(0);
+                dummy.updateMatrix();
+                meshRef.current!.setMatrixAt(i, dummy.matrix);
+                return;
+            }
+
             // Float up
             p.y += p.speed * 0.01;
 
