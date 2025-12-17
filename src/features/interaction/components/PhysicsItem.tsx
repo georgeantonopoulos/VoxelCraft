@@ -171,6 +171,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       linearVelocity={item.velocity as any}
       colliders={false} // Custom colliders
       type={(item.isPlanted || item.isAnchored) ? "fixed" : "dynamic"}
+      ccd={!(item.isPlanted || item.isAnchored)}
       userData={{ type: item.type, id: item.id }}
       onCollisionEnter={onCollisionEnter}
       friction={0.8}

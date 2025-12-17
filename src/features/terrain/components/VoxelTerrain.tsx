@@ -899,12 +899,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             buildChunkLocalHotspots(payload.cx, payload.cz, rockPositions)
           );
 
-          // Defer collider creation to a later frame (reduces "chunk arrived" hitches).
-          // Exception: during initial boot, keep physics in a 3x3 so the player can immediately move.
-          const dCheby = Math.max(Math.abs(payload.cx - px), Math.abs(payload.cz - pz));
-          const colliderEnabled = !initialLoadTriggered.current
-            ? dCheby <= COLLIDER_RADIUS
-            : (payload.cx === px && payload.cz === pz);
+          // Collider gating: keep physics in a small window around the player (and slightly ahead)
+          // so thrown items + movement don't "fall through" chunks that are visually present.
+          // We still defer enabling farther-away colliders via the per-frame enable queue below.
+          const dChebyPlayer = Math.max(Math.abs(payload.cx - px), Math.abs(payload.cz - pz));
+          const dChebyAhead = Math.max(Math.abs(payload.cx - (px + offsetCx)), Math.abs(payload.cz - (pz + offsetCz)));
+          const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS || dChebyAhead <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {
             ...payload,
