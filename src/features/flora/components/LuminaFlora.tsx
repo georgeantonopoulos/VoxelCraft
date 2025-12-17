@@ -1,10 +1,7 @@
-import React, { useRef, useMemo, useEffect, useState } from 'react';
+import React, { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
-import CustomShaderMaterial from 'three-custom-shader-material';
-
-let activeShadowFlora = 0;
 
 interface LuminaFloraProps {
   id: string;
@@ -15,33 +12,23 @@ interface LuminaFloraProps {
 }
 
 export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0, bodyRef }) => {
-  const materialRef = useRef<any>(null);
+  const bulbMaterialRef = useRef<THREE.MeshStandardMaterial>(null);
   // If no external ref provided, use internal one (though for placed flora, bodyRef is expected)
   const internalRef = useRef<any>(null);
   const refToUse = bodyRef || internalRef;
-  const [castsShadow, setCastsShadow] = useState(false);
 
-  // Uniforms for the shader
+  // Keep these stable to avoid re-allocations; we reuse the seed and a shared color.
   const uniforms = useMemo(() => ({
-    uTime: { value: 0 },
     uColor: { value: new THREE.Color('#00FFFF') }, // Cyan
     uSeed: { value: seed }
   }), [seed]);
 
-  // Keep shadows, but cap active shadow-casting flora to avoid blowing the 16 texture unit limit.
-  useEffect(() => {
-    const MAX_SHADOW_FLORA = 2;
-    if (activeShadowFlora >= MAX_SHADOW_FLORA) return undefined;
-    activeShadowFlora += 1;
-    setCastsShadow(true);
-    return () => {
-      activeShadowFlora = Math.max(0, activeShadowFlora - 1);
-    };
-  }, []);
-
   useFrame(({ clock }) => {
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+    const t = clock.getElapsedTime();
+    if (bulbMaterialRef.current) {
+      // Breathing effect (keeps it "alive") without custom shaders.
+      const pulse = Math.sin(t * 2.0 + uniforms.uSeed.value) * 0.35 + 1.15; // ~0.8..1.5
+      bulbMaterialRef.current.emissiveIntensity = 1.35 * pulse;
     }
   });
 
@@ -57,46 +44,20 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
     >
       <group>
         {/* The Light Source - Cool White, moderate range */}
-        {/* Only render this for Placed Flora (which this component represents) */}
-        <pointLight
-          color="#E0F7FA"
-          intensity={2.0}
-          distance={8}
-          decay={2}
-          castShadow={castsShadow}
-        />
+        {/* NOTE: moved to a small pooled light set (see `src/features/flora/components/FloraPlacer.tsx`)
+            to avoid a frame hitch when creating/removing point lights at runtime. */}
 
         {/* The Visual Bulb - Cyan Emissive with Shader Pulse */}
         <mesh castShadow receiveShadow>
           {/* A cluster of spheres or a single sphere for now. User said "Group of 3 spheres" in plan Phase 1 */}
-          <sphereGeometry args={[0.25, 32, 32]} />
-
-          <CustomShaderMaterial
-            ref={materialRef}
-            baseMaterial={THREE.MeshStandardMaterial}
-            vertexShader={`
-              varying vec3 vPosition;
-              void main() {
-                vPosition = position;
-              }
-            `}
-            fragmentShader={`
-              uniform float uTime;
-              uniform vec3 uColor;
-              uniform float uSeed;
-
-              void main() {
-                // Breathing effect
-                float pulse = sin(uTime * 2.0 + uSeed) * 0.5 + 1.5; // 1.0 to 2.0
-
-                // Emissive is added to the lighting
-                csm_Emissive = uColor * pulse;
-              }
-            `}
-            uniforms={uniforms}
-            // MeshStandardMaterial props
+          <sphereGeometry args={[0.25, 24, 24]} />
+          <meshStandardMaterial
+            ref={bulbMaterialRef}
             color="#222"
+            emissive={uniforms.uColor.value}
+            emissiveIntensity={1.35}
             roughness={0.4}
+            metalness={0.0}
             toneMapped={false} // Crucial for Bloom
           />
         </mesh>

@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useMemo } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore } from '@state/WorldStore';
 import { Vector2, Vector3, Object3D, Matrix3, Quaternion } from 'three';
+import type { PointLight } from 'three';
 import { LuminaFlora } from '@features/flora/components/LuminaFlora';
 import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
 
@@ -21,6 +22,7 @@ export const FloraPlacer: React.FC = () => {
     const torches = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'TORCH'), [floraEntities]);
     const lastPlaceTime = useRef(0);
     const terrainTargets = useRef<Object3D[]>([]);
+    const lumaLightRefs = useRef<Array<PointLight | null>>([]);
     const debugMode = useMemo(() => {
         // Enable via `?debug`, `localStorage.vcDebugPlacement = "1"`, or `window.__vcDebugPlacement = true`.
         // Using multiple toggles helps when URL params aren't convenient during testing.
@@ -35,6 +37,63 @@ export const FloraPlacer: React.FC = () => {
         }
         return viaQuery || viaWindow || viaStorage;
     }, []);
+
+    // Keep a small, fixed number of point lights mounted at all times.
+    // Creating/removing point lights can cause a noticeable hitch due to shader/light reconfiguration.
+    const LUMA_LIGHT_POOL_SIZE = 1;
+    useFrame(() => {
+        // Pick the nearest placed flora and attach the pooled light to it.
+        // We intentionally do not create one light per flora.
+        const entities = useWorldStore.getState().entities;
+        let bestD2 = Infinity;
+        let bestX = 0;
+        let bestY = 0;
+        let bestZ = 0;
+        let found = false;
+
+        entities.forEach((entity) => {
+            if (entity.type !== 'FLORA') return;
+            const body = (entity as any).bodyRef?.current;
+            if (body && typeof body.translation === 'function') {
+                const t = body.translation();
+                const dx = t.x - camera.position.x;
+                const dy = t.y - camera.position.y;
+                const dz = t.z - camera.position.z;
+                const d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < bestD2) {
+                    bestD2 = d2;
+                    bestX = t.x;
+                    bestY = t.y;
+                    bestZ = t.z;
+                    found = true;
+                }
+            } else if (entity.position) {
+                const dx = entity.position.x - camera.position.x;
+                const dy = entity.position.y - camera.position.y;
+                const dz = entity.position.z - camera.position.z;
+                const d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < bestD2) {
+                    bestD2 = d2;
+                    bestX = entity.position.x;
+                    bestY = entity.position.y;
+                    bestZ = entity.position.z;
+                    found = true;
+                }
+            }
+        });
+
+        // Pool size is currently 1; keep loop to make it easy to scale.
+        for (let i = 0; i < LUMA_LIGHT_POOL_SIZE; i++) {
+            const light = lumaLightRefs.current[i];
+            if (!light) continue;
+            if (!found) {
+                light.intensity = 0;
+                continue;
+            }
+            light.position.set(bestX, bestY + 0.15, bestZ);
+            light.intensity = 1.6;
+        }
+    });
 
     useEffect(() => {
         /**
@@ -163,6 +222,20 @@ export const FloraPlacer: React.FC = () => {
 
     return (
         <>
+            {Array.from({ length: LUMA_LIGHT_POOL_SIZE }).map((_, i) => (
+                <pointLight
+                    // Pool key must be stable to keep the underlying Three light mounted.
+                    key={`luma-light-${i}`}
+                    ref={(light) => {
+                        lumaLightRefs.current[i] = light;
+                    }}
+                    color="#E0F7FA"
+                    intensity={0}
+                    distance={10}
+                    decay={2}
+                    castShadow={false}
+                />
+            ))}
             {floras.map(flora => (
                 <LuminaFlora
                     key={flora.id}
