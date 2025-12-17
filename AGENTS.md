@@ -27,6 +27,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Do not remove code comments**. Add clarifying comments when missing.
 - **Do not force GLSL versions** (avoid adding `#version ...` unless you fully understand the shader pipeline impact).
 - Always run **both** `npm run build` and a quick `npm run dev` smoke-start before finishing work.
+- Always run vite tests, check Testing Strategy section
 
 ---
 
@@ -46,8 +47,17 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - `src/state/`: Zustand stores and debug toggles (e.g. `src/state/InventoryStore.ts`).
 - `src/ui/`: HUD and debug screens (e.g. `src/ui/MapDebug.tsx`).
 
-## Testing Strategy (verified)
+#### Terrain System
+- **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`src/core/math/noise.ts`) to create a density field.
+  - **Density > ISO_LEVEL (0.5)** = Solid.
+  - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
+  - **Caverns**: Stateless "Noodle" Algorithm using domain-warped 3D ridged noise (`abs(noise) < threshold`) in `TerrainService.ts`. Configured per-biome via `BiomeManager.ts`.
+- **Meshing**: `src/features/terrain/logic/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
+  - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
+- **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
+  - **Shader Stability**: Implements `safeNormalize` to prevent NaNs on degenerate geometry (e.g., sharp concave features from digging) which prevents flashing artifacts.
 
+## Testing Strategy
 - **Headless Tests**: Run via `npm test` (Vitest).
 - **Location**: All unit/kernel tests live in `src/tests/` (centralized).
 - **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
@@ -132,3 +142,5 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Fixed shader redefinition error (`uWindDirXZ` duplicated) in `TriplanarMaterial.tsx`.
   - Removed unreliable `vWetness` check from caustics logic to ensure visibility on underwater terrain.
   - Implemented correct `vCavity` check (`0.0` = open seabed, `>0.3` = cave) to robustly mask caustics from caves without breaking seabed visibility.
+  - Refined Caustics pattern: replaced simple noise with a "Ridged Multifractal" domain-warped shader to create a realistic "web-like" cellular light pattern.
+  - Adjusted Caustics color: Shifted from pure white (`0.8, 0.95, 1.0`) to a deeper cyan/blue tint (`0.2, 0.8, 1.0`) to match underwater reference photos.

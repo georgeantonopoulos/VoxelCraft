@@ -224,24 +224,38 @@ const fragmentShader = `
       return v / len;
   }
 
-  // Fast procedural caustics pattern
+  // Fast procedural caustics pattern (Ridged Multifractal for Web-like look)
   float getCaustics(vec3 pos, vec3 sunDir, float t) {
-      // Project UVs based on sun direction (light refraction approximation)
-      vec2 uv = pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.5);
+      // 1. Projection (Simple refraction Approx)
+      // Scale depth influence to keep pattern consistent
+      vec2 uv = pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.4);
       
-      // Animate
-      uv += vec2(t * 0.5, t * 0.3);
+      // 2. Slow Flow Animation
+      vec2 flow1 = vec2(t * 0.15, t * 0.05);
+      vec2 flow2 = vec2(-t * 0.05, t * 0.1);
 
-      vec3 p = vec3(uv * 0.8, t * 0.8);
-      float n1 = texture(uNoiseTexture, p * 0.05).r; // Large low freq
-      float n2 = texture(uNoiseTexture, p * 0.2 + vec3(0.5)).g; // High freq
+      // 3. Domain Warp (Liquid Distortion)
+      // Sample noise to displace the lookup coordinates
+      vec3 warpP = vec3(uv * 0.2 + flow1 * 0.2, t * 0.05);
+      float warp = texture(uNoiseTexture, warpP).r;
+      vec2 distUV = uv + vec2(warp, warp * 0.5) * 1.5;
+
+      // 4. Layer 1: Ridged Noise
+      // (1.0 - abs(noise - 0.5) * 2.0) creates sharp peaks ("ridges") from smooth noise
+      vec3 p1 = vec3(distUV * 0.8 + flow1, t * 0.1);
+      float n1 = texture(uNoiseTexture, p1).r;
+      float r1 = pow(clamp(1.0 - abs(n1 - 0.5) * 2.0, 0.0, 1.0), 8.0);
+
+      // 5. Layer 2: Smaller details, opposing flow
+      vec3 p2 = vec3(distUV * 1.3 - flow2, t * 0.15);
+      float n2 = texture(uNoiseTexture, p2).r;
+      float r2 = pow(clamp(1.0 - abs(n2 - 0.5) * 2.0, 0.0, 1.0), 8.0);
+
+      // 6. Combine: 'min' creates a cellular/web-like intersection pattern
+      float cell = min(r1, r2);
       
-      float c = n1 * 0.6 + n2 * 0.4;
-      
-      // Sharpen to create caustic lines
-      c = pow(max(c, 0.0), 4.0) * 4.0;
-      
-      return c;
+      // Boost brightness of the thin lines
+      return cell * 12.0;
   }
 
   struct MatInfo {
