@@ -295,14 +295,16 @@ export class TerrainService {
                             const luminaNoise = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                             const veinNoise = noise3D(wx * 0.15, wy * 0.15, wz * 0.15);
 
-                            if (luminaNoise > 0.0) {
+                            // FIX: Ensure bedrock exists at the bottom even in Lumina Depths
+                            if (wy <= MESH_Y_OFFSET + 4) {
+                                material[idx] = MaterialType.BEDROCK;
+                            } else if (luminaNoise > 0.0) {
                                 material[idx] = MaterialType.OBSIDIAN;
                                 if (veinNoise > 0.6) {
                                     material[idx] = MaterialType.GLOW_STONE;
                                 }
                             } else {
-                                if (wy < -40) material[idx] = MaterialType.BEDROCK;
-                                else material[idx] = MaterialType.STONE;
+                                material[idx] = MaterialType.STONE;
                             }
 
                         } else if (isSkyIsland) {

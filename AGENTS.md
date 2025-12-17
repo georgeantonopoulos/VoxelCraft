@@ -46,6 +46,14 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - `src/state/`: Zustand stores and debug toggles (e.g. `src/state/InventoryStore.ts`).
 - `src/ui/`: HUD and debug screens (e.g. `src/ui/MapDebug.tsx`).
 
+## Testing Strategy (verified)
+
+- **Headless Tests**: Run via `npm test` (Vitest).
+- **Location**: All unit/kernel tests live in `src/tests/` (centralized).
+- **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
+- **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
+- **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
+
 ---
 
 ## Terrain: Hard Invariants (verified)
