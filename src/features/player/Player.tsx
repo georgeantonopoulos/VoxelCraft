@@ -5,6 +5,7 @@ import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { usePlayerInput } from './usePlayerInput';
+import { useWorldStore } from '@/state/WorldStore';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
@@ -19,6 +20,10 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const lastSpacePress = useRef<number>(0);
   const wasJumpPressed = useRef<boolean>(false);
   const spacePressHandled = useRef<boolean>(false);
+
+  // Use the transient update pattern if performance becomes an issue.
+  // For now, simple state setting is cleaner.
+  const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
 
   useEffect(() => {
     if (!body.current) return;
@@ -55,14 +60,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     // East (1,0,0) -> atan2(-1, 0) = -PI/2. Map East (Right) rotates -90 to Top. Correct.
     const rotation = Math.atan2(-dir.x, -dir.z);
 
-    window.dispatchEvent(new CustomEvent('player-moved', {
-      detail: {
-        x: pos.x,
-        y: pos.y,
-        z: pos.z,
-        rotation: rotation
-      }
-    }));
+    setPlayerParams({
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      rotation: rotation
+    });
 
     const { move, jump, shift } = getInput();
     // REMOVED: The Flora Placement logic that was conflicting

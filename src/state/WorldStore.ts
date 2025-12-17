@@ -27,7 +27,18 @@ export interface EntityData {
   bodyRef?: React.RefObject<any>;
 }
 
+export interface PlayerParams {
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+}
+
 interface WorldState {
+  // Player Position & Rotation
+  playerParams: PlayerParams;
+  setPlayerParams: (params: PlayerParams) => void;
+
   // The "Database": Instant lookup by ID
   entities: Map<string, EntityData>;
 
@@ -75,6 +86,9 @@ interface WorldState {
 }
 
 export const useWorldStore = create<WorldState>((set, get) => ({
+  playerParams: { x: 0, y: 0, z: 0, rotation: 0 },
+  setPlayerParams: (params) => set({ playerParams: params }),
+
   entities: new Map(),
   spatialMap: new Map(),
   floraHotspots: new Map(),
