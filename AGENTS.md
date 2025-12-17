@@ -100,6 +100,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Terrain streaming “loaded” state can stall**: If chunk updates are wrapped in `startTransition`, UI state may lag; gate initial-load readiness off `chunksRef.current` in `src/features/terrain/components/VoxelTerrain.tsx` (keyword: `initialLoadTriggered`).
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
 - **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
+- **CustomShaderMaterial redefinition errors**: When using `three-custom-shader-material` (CSM) with `MeshStandardMaterial`, do NOT declare `varying vec3 vNormal` or `varying vec3 vViewDir`. These are already defined by Three.js and will cause a `redefinition` error during merging. Use `csm_Normal` to set normals in the vertex shader; Three.js handles the fragment-side varying internally.
 
 ---
 
@@ -136,6 +137,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-17: Enhanced ground item variation (sticks and stones).
+  - Implemented `ROCK_SHADER` with 3D noise vertex displacement to create unique, jagged shapes for every stone.
+  - Implemented `STICK_SHADER` with bending and knobby node procedural logic to make sticks look like natural branches.
+  - Increased geometry detail (more segments) for sticks and rocks to support smooth shader-based deformation.
 - 2025-12-17: Improved vegetation realism, specifically for the Grove biome.
   - Upgraded `VegetationLayer` shader with multi-frequency wind (gusts + jitters), fake Subsurface Scattering (SSS), and Ambient Occlusion.
   - Added world-space 3D noise variation to break up color uniformity in dense patches.

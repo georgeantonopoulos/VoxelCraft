@@ -4,8 +4,10 @@ import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider } from '@re
 import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
-import { useInventoryStore } from '@state/InventoryStore';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import CustomShaderMaterial from 'three-custom-shader-material';
+import { noiseTexture } from '@core/memory/sharedResources';
+import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
 
 // Sounds
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
@@ -16,7 +18,7 @@ interface PhysicsItemProps {
 }
 
 const IMPACT_THRESHOLD_STONE = 12.0;
-const IMPACT_THRESHOLD_STICK = 8.0;
+const IMPACT_THRESHOLD_STICK = 5.0; // Lowered to make planting more reliable
 
 const isHardImpactSurface = (mat: MaterialType | null): boolean => {
   // Only shatter stones when hitting hard/cavern-like materials.
@@ -28,32 +30,11 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   const removeItem = usePhysicsItemStore((state) => state.removeItem);
   const spawnItem = usePhysicsItemStore((state) => state.spawnItem);
   const updateItem = usePhysicsItemStore((state) => state.updateItem);
-  const setHasAxe = useInventoryStore((state) => state.setHasAxe);
 
   // Audio
   const clunkAudio = useMemo(() => new Audio(clunkUrl), []);
   const digAudio = useMemo(() => new Audio(dig1Url), []);
 
-  const handleCollision = (e: any) => {
-    // Only process dynamic collisions (prevent multiple triggers)
-    if (item.isPlanted && item.type === ItemType.STICK) return;
-
-    // Check relative velocity
-    // Rapier v2 payload structure for contact force or velocity?
-    // Usually e.contact.impulse or we calculate from velocities.
-    // However, onCollisionEnter provides a `other` and sometimes details.
-    // Let's stick to checking velocity magnitude of SELF just before impact,
-    // OR rely on the `contact` event if it provides relative velocity.
-    // Simplest proxy: Check self velocity magnitude at time of impact.
-
-    // Actually, `e.totalForceMagnitude` is available if we enable it, but we decided against it.
-    // We can look at the `rigidBody.current.linvel()` inside the callback?
-    // It might already be zeroed out if post-solve.
-    // Better: use `enter` event which often has relative velocity if available,
-    // OR track velocity in useFrame and use last frame's velocity.
-    // Since we don't have a reliable relative velocity in the event payload by default without config:
-    // We will track it.
-  };
 
   const lastVel = useRef(new THREE.Vector3());
 
@@ -137,20 +118,12 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       }
     } else if (item.type === ItemType.STICK) {
       if (isTerrain && impactSpeed > IMPACT_THRESHOLD_STICK) {
-        // Plant!
+        // Lock physics: Just update the store state.
+        // The RigidBody will re-render as "fixed" via the 'type' prop below.
         updateItem(item.id, { isPlanted: true });
 
-        // Lock physics
         if (rigidBody.current) {
-          // @ts-ignore - setBodyType exists on the raw handle
-          rigidBody.current.setBodyType(2); // 2 = KinematicPosition? Rapier types: 0=Dynamic, 1=Fixed, 2=KinematicPos, 3=KinematicVel
-          // Actually, we want it fixed.
-          // rigidBody.current.setBodyType(1); // Fixed
-
-          rigidBody.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
-          rigidBody.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
-
-          // Align upright
+          // Sync position immediately and align upright to avoid a frame of jitter
           const t = rigidBody.current.translation();
           rigidBody.current.setTranslation({ x: t.x, y: t.y + 0.2, z: t.z }, true);
           rigidBody.current.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
@@ -181,8 +154,17 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         <>
           <CuboidCollider args={[0.15, 0.15, 0.15]} />
           <mesh castShadow receiveShadow>
-            <icosahedronGeometry args={[0.15, 0]} />
-            <meshStandardMaterial color="#888888" roughness={0.9} />
+            <dodecahedronGeometry args={[0.15, 1]} />
+            <CustomShaderMaterial
+              baseMaterial={THREE.MeshStandardMaterial}
+              vertexShader={ROCK_SHADER.vertex}
+              uniforms={{
+                uNoiseTexture: { value: noiseTexture },
+                uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 }
+              }}
+              color="#888888"
+              roughness={0.9}
+            />
           </mesh>
         </>
       )}
@@ -191,8 +173,17 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         <>
           <CapsuleCollider args={[0.25, 0.04]} />
           <mesh castShadow receiveShadow>
-            <cylinderGeometry args={[0.04, 0.04, 0.5, 8]} />
-            <meshStandardMaterial color="#5d4037" roughness={1.0} />
+            <cylinderGeometry args={[0.045, 0.04, 0.5, 8, 4]} />
+            <CustomShaderMaterial
+              baseMaterial={THREE.MeshStandardMaterial}
+              vertexShader={STICK_SHADER.vertex}
+              uniforms={{
+                uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 },
+                uHeight: { value: 0.5 }
+              }}
+              color="#5d4037"
+              roughness={1.0}
+            />
           </mesh>
         </>
       )}
