@@ -52,9 +52,9 @@ export const FirstPersonTools: React.FC = () => {
         { hidden: !debugMode }
     );
 
-    const rightHandStickPoseDebug = useControls(
+    const [rightHandStickPoseDebug, setRightHandStickPoseDebug] = useControls(
         'Right Hand / Stick',
-        {
+        () => ({
             xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.z, min: -2.0, max: -0.1, step: 0.01 },
@@ -64,14 +64,15 @@ export const FirstPersonTools: React.FC = () => {
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
-                    const folder = (typeof get === 'function' ? get('Right Hand / Stick') : null) as any;
-                    const xOffset = folder?.xOffset ?? rightHandStickPoseDebug.xOffset;
-                    const y = folder?.y ?? rightHandStickPoseDebug.y;
-                    const z = folder?.z ?? rightHandStickPoseDebug.z;
-                    const scale = folder?.scale ?? rightHandStickPoseDebug.scale;
-                    const rotXDeg = folder?.rotXDeg ?? rightHandStickPoseDebug.rotXDeg;
-                    const rotYDeg = folder?.rotYDeg ?? rightHandStickPoseDebug.rotYDeg;
-                    const rotZDeg = folder?.rotZDeg ?? rightHandStickPoseDebug.rotZDeg;
+                    // Leva buttons run outside React's render lifecycle; read the latest values
+                    // from the Leva store instead of relying on closures from initial mount.
+                    const xOffset = (typeof get === 'function' ? (get('Right Hand / Stick.xOffset') as number) : undefined) ?? rightHandStickPoseDebug.xOffset;
+                    const y = (typeof get === 'function' ? (get('Right Hand / Stick.y') as number) : undefined) ?? rightHandStickPoseDebug.y;
+                    const z = (typeof get === 'function' ? (get('Right Hand / Stick.z') as number) : undefined) ?? rightHandStickPoseDebug.z;
+                    const scale = (typeof get === 'function' ? (get('Right Hand / Stick.scale') as number) : undefined) ?? rightHandStickPoseDebug.scale;
+                    const rotXDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotXDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotXDeg;
+                    const rotYDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotYDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotYDeg;
+                    const rotZDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotZDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotZDeg;
 
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
@@ -100,13 +101,13 @@ export const FirstPersonTools: React.FC = () => {
                     alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
             })()),
-        },
+        }),
         { hidden: !debugMode }
     );
 
-    const rightHandStonePoseDebug = useControls(
+    const [rightHandStonePoseDebug, setRightHandStonePoseDebug] = useControls(
         'Right Hand / Stone',
-        {
+        () => ({
             xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.z, min: -2.0, max: -0.1, step: 0.01 },
@@ -116,14 +117,13 @@ export const FirstPersonTools: React.FC = () => {
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
-                    const folder = (typeof get === 'function' ? get('Right Hand / Stone') : null) as any;
-                    const xOffset = folder?.xOffset ?? rightHandStonePoseDebug.xOffset;
-                    const y = folder?.y ?? rightHandStonePoseDebug.y;
-                    const z = folder?.z ?? rightHandStonePoseDebug.z;
-                    const scale = folder?.scale ?? rightHandStonePoseDebug.scale;
-                    const rotXDeg = folder?.rotXDeg ?? rightHandStonePoseDebug.rotXDeg;
-                    const rotYDeg = folder?.rotYDeg ?? rightHandStonePoseDebug.rotYDeg;
-                    const rotZDeg = folder?.rotZDeg ?? rightHandStonePoseDebug.rotZDeg;
+                    const xOffset = (typeof get === 'function' ? (get('Right Hand / Stone.xOffset') as number) : undefined) ?? rightHandStonePoseDebug.xOffset;
+                    const y = (typeof get === 'function' ? (get('Right Hand / Stone.y') as number) : undefined) ?? rightHandStonePoseDebug.y;
+                    const z = (typeof get === 'function' ? (get('Right Hand / Stone.z') as number) : undefined) ?? rightHandStonePoseDebug.z;
+                    const scale = (typeof get === 'function' ? (get('Right Hand / Stone.scale') as number) : undefined) ?? rightHandStonePoseDebug.scale;
+                    const rotXDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotXDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotXDeg;
+                    const rotYDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotYDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotYDeg;
+                    const rotZDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotZDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotZDeg;
 
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
@@ -151,9 +151,33 @@ export const FirstPersonTools: React.FC = () => {
                     alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
             })()),
-        },
+        }),
         { hidden: !debugMode }
     );
+
+    // Leva keeps values around across HMR; in debug mode we want the sliders to start
+    // from the current in-game pose constants (unless the user tweaks them afterwards).
+    useEffect(() => {
+        if (!debugMode) return;
+        setRightHandStickPoseDebug({
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stick.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stick.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stick.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0),
+        });
+        setRightHandStonePoseDebug({
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stone.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stone.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stone.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0),
+        });
+    }, [debugMode, setRightHandStickPoseDebug, setRightHandStonePoseDebug]);
 
     // Load the GLB model using the imported URL
     const { scene: modelScene } = useGLTF(pickaxeUrl);

@@ -143,6 +143,11 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
                 );
 
                 if (nearbySticks.length >= 4) {
+                  // Anchor the stone so it can't be pushed around during fire-starting
+                  if (!targetItem.isAnchored) {
+                    usePhysicsItemStore.getState().updateItem(targetItem.id, { isAnchored: true });
+                  }
+
                   // Correct Ingredients Found!
                   const currentHeat = targetItem.heat || 0;
 

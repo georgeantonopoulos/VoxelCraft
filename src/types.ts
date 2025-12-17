@@ -142,5 +142,6 @@ export interface ActivePhysicsItem {
   position: [number, number, number];
   velocity: [number, number, number];
   isPlanted?: boolean; // For sticks
+  isAnchored?: boolean; // For stones near fire materials - prevents physics push
   heat?: number; // 0-10, for fire creation progress
 }
