@@ -1,116 +1,163 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
+import { WATER_LEVEL } from '@/constants';
 
-const COUNT = 600;
-const RADIUS = 25;
-const Y_RANGE = 30;
+const MAX_BUBBLES = 800;
+
+interface BubbleParticle {
+    active: boolean;
+    pos: THREE.Vector3;
+    vel: THREE.Vector3;
+    age: number;
+    life: number;
+    scaleMult: number;
+}
 
 export const BubbleSystem: React.FC = () => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
-    const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
+    const isUnderwater = useEnvironmentStore((s) => s.isUnderwater);
+    const underwaterChangedAt = useEnvironmentStore((s) => s.underwaterChangedAt);
 
-    // Particle state: [x, y, z, speed, offset, scaleMult]
-    const particles = useMemo(() => {
-        const temp = [];
-        for (let i = 0; i < COUNT; i++) {
-            // Some bubbles are randomly scattered, some are in loose vertical streams
-            const isStream = Math.random() > 0.8;
-            let x, z;
-
-            if (isStream) {
-                // Clustered around a few stream centers
-                const streamCenterX = (Math.random() - 0.5) * RADIUS * 1.8;
-                const streamCenterZ = (Math.random() - 0.5) * RADIUS * 1.8;
-                x = streamCenterX + (Math.random() - 0.5) * 1.0;
-                z = streamCenterZ + (Math.random() - 0.5) * 1.0;
-            } else {
-                x = (Math.random() - 0.5) * RADIUS * 2;
-                z = (Math.random() - 0.5) * RADIUS * 2;
-            }
-
-            const y = (Math.random() - 0.5) * Y_RANGE;
-            const speed = 0.8 + Math.random() * 2.5; // Faster rise
-            const offset = Math.random() * Math.PI * 2;
-            const scaleMult = 0.4 + Math.pow(Math.random(), 2) * 1.6; // Variety in sizes
-            temp.push({ x, y, z, speed, offset, scaleMult });
-        }
-        return temp;
+    // Particle pool
+    const particles = useRef<BubbleParticle[]>([]);
+    useEffect(() => {
+        particles.current = Array.from({ length: MAX_BUBBLES }, () => ({
+            active: false,
+            pos: new THREE.Vector3(),
+            vel: new THREE.Vector3(),
+            age: 0,
+            life: 2.0,
+            scaleMult: 1.0
+        }));
     }, []);
 
     const dummy = useMemo(() => new THREE.Object3D(), []);
+    const lastPos = useRef(new THREE.Vector3());
+    const lastSubmergeAt = useRef(0);
+    const lastBreathAt = useRef(0);
+    const velYRef = useRef(0);
 
-    useFrame(({ camera, clock }) => {
-        if (!meshRef.current) return;
+    const spawnBubbles = (origin: THREE.Vector3, count: number, speed: number, radius: number) => {
+        let spawned = 0;
+        for (let i = 0; i < MAX_BUBBLES && spawned < count; i++) {
+            const p = particles.current[i];
+            if (!p.active) {
+                p.active = true;
+                p.age = 0;
+                p.life = 1.0 + Math.random() * 2.5;
+                p.scaleMult = 0.5 + Math.pow(Math.random(), 2) * 2.0;
 
-        // Optimization: Always keep mesh visible to prevent shader re-compile lag.
-        // Instead, we just hide instances by scaling to 0 when not needed.
-        const isUnderwater = underwaterBlend > 0.05;
+                // Position with some random spread
+                p.pos.copy(origin);
+                p.pos.x += (Math.random() - 0.5) * radius;
+                p.pos.y += (Math.random() - 0.5) * radius;
+                p.pos.z += (Math.random() - 0.5) * radius;
+
+                // Velocity: rising speed + random splash/drift
+                p.vel.set(
+                    (Math.random() - 0.5) * speed * 0.5,
+                    0.5 + Math.random() * 1.5 + speed * 0.2, // Rising + some entry momentum
+                    (Math.random() - 0.5) * speed * 0.5
+                );
+                spawned++;
+            }
+        }
+    };
+
+    useFrame(({ camera, clock }, delta) => {
+        if (!meshRef.current || particles.current.length === 0) return;
 
         const t = clock.getElapsedTime();
         const camPos = camera.position;
 
-        particles.forEach((p, i) => {
-            if (!isUnderwater) {
-                // Hide by scaling to 0
-                dummy.position.set(0, -9999, 0);
+        // Calculate vertical velocity
+        velYRef.current = (camPos.y - lastPos.current.y) / Math.max(0.001, delta);
+        lastPos.current.copy(camPos);
+
+        // Detect entry burst
+        if (isUnderwater && underwaterChangedAt !== lastSubmergeAt.current) {
+            lastSubmergeAt.current = underwaterChangedAt;
+            // Negative velocity means falling in
+            const entrySpeed = Math.abs(Math.min(0, velYRef.current));
+            if (entrySpeed > 2.0) {
+                const burstCount = Math.floor(THREE.MathUtils.clamp(entrySpeed * 20, 30, 150));
+                const burstRadius = THREE.MathUtils.clamp(entrySpeed * 0.1, 0.5, 2.0);
+                spawnBubbles(camPos, burstCount, entrySpeed * 0.5, burstRadius);
+            }
+        }
+
+        // Oxygen emission (breath)
+        if (isUnderwater && t - lastBreathAt.current > 0.4 + Math.random() * 0.6) {
+            lastBreathAt.current = t;
+            // Spawn a few bubbles near the face/mouth area
+            // We'll place them slightly in front of camera
+            const front = new THREE.Vector3(0, -0.2, -0.4).applyEuler(camera.rotation);
+            const mouthPos = camPos.clone().add(front);
+            spawnBubbles(mouthPos, 2 + Math.floor(Math.random() * 3), 0.5, 0.2);
+        }
+
+        // Update active particles
+        let anyActive = false;
+        particles.current.forEach((p, i) => {
+            if (!p.active) {
                 dummy.scale.setScalar(0);
                 dummy.updateMatrix();
                 meshRef.current!.setMatrixAt(i, dummy.matrix);
                 return;
             }
 
-            // Float up in world space relative to camera spawn
-            p.y += p.speed * 0.015;
+            anyActive = true;
+            p.age += delta;
 
-            // Wiggle (more organic)
-            const wiggleX = Math.sin(t * 1.8 + p.offset) * 0.15;
-            const wiggleZ = Math.cos(t * 1.2 + p.offset) * 0.15;
+            // Physics: float up + drift
+            p.vel.y += 0.5 * delta; // Accelerate rise slightly
+            p.pos.addScaledVector(p.vel, delta);
 
-            let relY = p.y;
+            // Wiggle
+            p.pos.x += Math.sin(t * 1.5 + i) * 0.01;
+            p.pos.z += Math.cos(t * 1.5 + i) * 0.01;
 
-            // Wrap Y relative to camera to keep volume filled
-            const halfY = Y_RANGE / 2;
-            if (relY > halfY) {
-                p.y -= Y_RANGE;
-                relY = p.y;
+            // Surface mask
+            const surfaceDist = WATER_LEVEL - p.pos.y;
+            const surfaceMask = THREE.MathUtils.clamp(surfaceDist * 5.0, 0, 1);
+
+            const lifeProgress = p.age / p.life;
+            if (lifeProgress >= 1.0 || surfaceMask <= 0) {
+                p.active = false;
+                dummy.scale.setScalar(0);
+            } else {
+                // Scale animation
+                const s = (0.7 + Math.sin(t * 4 + i) * 0.3) * p.scaleMult * Math.min(1.0, (1.0 - lifeProgress) * 4.0) * surfaceMask;
+                dummy.position.copy(p.pos);
+                dummy.scale.setScalar(Math.max(0, s));
             }
-
-            // Apply to world space centered on camera
-            dummy.position.set(
-                camPos.x + p.x + wiggleX,
-                camPos.y + relY,
-                camPos.z + p.z + wiggleZ
-            );
-
-            // Scale oscillation + base scale variety + fade in with submerged blend
-            const s = (0.7 + Math.sin(t * 4 + p.offset) * 0.3) * p.scaleMult * underwaterBlend;
-            dummy.scale.setScalar(Math.max(0, s));
-
-            // Face camera for better highlight consistency? No, they are spheres.
 
             dummy.updateMatrix();
             meshRef.current!.setMatrixAt(i, dummy.matrix);
         });
-        meshRef.current.instanceMatrix.needsUpdate = true;
+
+        if (anyActive) {
+            meshRef.current.instanceMatrix.needsUpdate = true;
+        }
     });
 
     return (
-        <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
-            <sphereGeometry args={[0.08, 12, 10]} />
+        <instancedMesh ref={meshRef} args={[undefined, undefined, MAX_BUBBLES]} frustumCulled={false}>
+            <sphereGeometry args={[0.08, 10, 8]} />
             <meshPhysicalMaterial
                 transparent
                 opacity={0.8}
                 color="#e0f4ff"
                 roughness={0.0}
                 metalness={0.2}
-                transmission={0.4} // Less transparent for visibility
+                transmission={0.4}
                 thickness={0.5}
                 ior={1.33}
                 depthWrite={false}
-                emissive="#99ccff" // Subtle glow to help in dark water
-                emissiveIntensity={0.4}
+                emissive="#99ccff"
+                emissiveIntensity={0.6} // Brighter glow for "oxygen" visibility
             />
         </instancedMesh>
     );
