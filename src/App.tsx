@@ -528,9 +528,14 @@ const SunFollower: React.FC<{
             glowMeshRef.current.visible = directVis > 0.02;
 
             // Calculate glow intensity and size based on sun position
-            const isSunset = normalizedHeight >= 0.0 && normalizedHeight < 0.3;
-            const glowScale = isSunset ? 5.0 : 3.5;
-            const glowOpacityBase = isSunset ? 0.9 : (normalizedHeight < -0.15 ? 0.2 : 0.5);
+            // Smooth sunset boost to avoid a visible "pop" when crossing the sunset threshold.
+            // Previously this used a boolean `normalizedHeight < 0.3`, which caused a hard jump in scale/opacity.
+            const sunsetBoost = normalizedHeight >= 0.0
+              ? THREE.MathUtils.clamp(1.0 - THREE.MathUtils.smoothstep(normalizedHeight, 0.22, 0.35), 0, 1)
+              : 0.0;
+            const glowScale = THREE.MathUtils.lerp(3.5, 5.0, sunsetBoost);
+            const baseGlowOpacity = (normalizedHeight < -0.15 ? 0.2 : 0.5);
+            const glowOpacityBase = THREE.MathUtils.lerp(baseGlowOpacity, 0.9, sunsetBoost);
 
             // Underground: reduce glow strength to keep caves moodier
             const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);

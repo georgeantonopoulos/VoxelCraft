@@ -3,24 +3,38 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
 
-const COUNT = 150;
-const RADIUS = 15;
-const Y_RANGE = 20;
+const COUNT = 600;
+const RADIUS = 25;
+const Y_RANGE = 30;
 
 export const BubbleSystem: React.FC = () => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
 
-    // Particle state: [x, y, z, speed, offset]
+    // Particle state: [x, y, z, speed, offset, scaleMult]
     const particles = useMemo(() => {
         const temp = [];
         for (let i = 0; i < COUNT; i++) {
-            const x = (Math.random() - 0.5) * RADIUS * 2;
+            // Some bubbles are randomly scattered, some are in loose vertical streams
+            const isStream = Math.random() > 0.8;
+            let x, z;
+
+            if (isStream) {
+                // Clustered around a few stream centers
+                const streamCenterX = (Math.random() - 0.5) * RADIUS * 1.8;
+                const streamCenterZ = (Math.random() - 0.5) * RADIUS * 1.8;
+                x = streamCenterX + (Math.random() - 0.5) * 1.0;
+                z = streamCenterZ + (Math.random() - 0.5) * 1.0;
+            } else {
+                x = (Math.random() - 0.5) * RADIUS * 2;
+                z = (Math.random() - 0.5) * RADIUS * 2;
+            }
+
             const y = (Math.random() - 0.5) * Y_RANGE;
-            const z = (Math.random() - 0.5) * RADIUS * 2;
-            const speed = 0.5 + Math.random() * 1.5;
+            const speed = 0.8 + Math.random() * 2.5; // Faster rise
             const offset = Math.random() * Math.PI * 2;
-            temp.push({ x, y, z, speed, offset });
+            const scaleMult = 0.4 + Math.pow(Math.random(), 2) * 1.6; // Variety in sizes
+            temp.push({ x, y, z, speed, offset, scaleMult });
         }
         return temp;
     }, []);
@@ -32,7 +46,7 @@ export const BubbleSystem: React.FC = () => {
 
         // Optimization: Always keep mesh visible to prevent shader re-compile lag.
         // Instead, we just hide instances by scaling to 0 when not needed.
-        const isUnderwater = underwaterBlend > 0.1;
+        const isUnderwater = underwaterBlend > 0.05;
 
         const t = clock.getElapsedTime();
         const camPos = camera.position;
@@ -40,51 +54,41 @@ export const BubbleSystem: React.FC = () => {
         particles.forEach((p, i) => {
             if (!isUnderwater) {
                 // Hide by scaling to 0
-                dummy.position.set(0, -9999, 0); // Also move away
+                dummy.position.set(0, -9999, 0);
                 dummy.scale.setScalar(0);
                 dummy.updateMatrix();
                 meshRef.current!.setMatrixAt(i, dummy.matrix);
                 return;
             }
 
-            // Float up
-            p.y += p.speed * 0.01;
+            // Float up in world space relative to camera spawn
+            p.y += p.speed * 0.015;
 
-            // Wiggle
-            const wiggleX = Math.sin(t * 2 + p.offset) * 0.1;
-            const wiggleZ = Math.cos(t * 1.5 + p.offset) * 0.1;
+            // Wiggle (more organic)
+            const wiggleX = Math.sin(t * 1.8 + p.offset) * 0.15;
+            const wiggleZ = Math.cos(t * 1.2 + p.offset) * 0.15;
 
-            // Relative wrapping logic to keep bubbles around camera without abrupt pops
-            // We want them to spawn below and float up past camera?
-            // Or just float around in a toroid/cube?
-
-            // Let's keep them in a box relative to camera
-            const relX = p.x + wiggleX;
             let relY = p.y;
-            const relZ = p.z + wiggleZ;
 
-            // Wrap Y
-            if (relY > Y_RANGE / 2) {
+            // Wrap Y relative to camera to keep volume filled
+            const halfY = Y_RANGE / 2;
+            if (relY > halfY) {
                 p.y -= Y_RANGE;
                 relY = p.y;
             }
 
-            // Apply to world space
+            // Apply to world space centered on camera
             dummy.position.set(
-                camPos.x + relX,
-                camPos.y + relY, // Bubbles move with camera Y? No, they should stay in world Y?
-                // If they loop relative to camera, they naturally follow.
-                // But bubbles should rise in world space.
-                // If we offset by camPos.y, they move with player vertical movement, which is weird.
-                // Better: Local simulation box that follows camera position coarsely but bubbles float up.
-                // Actually, for a simple effect, attached to camera frame is fine, 
-                // but we add a counter-movement or just let them float up relative to camera frame is easier.
-                camPos.z + relZ
+                camPos.x + p.x + wiggleX,
+                camPos.y + relY,
+                camPos.z + p.z + wiggleZ
             );
 
-            // Simple scale oscillation
-            const s = 0.5 + Math.sin(t * 3 + p.offset) * 0.2;
-            dummy.scale.setScalar(s);
+            // Scale oscillation + base scale variety + fade in with submerged blend
+            const s = (0.7 + Math.sin(t * 4 + p.offset) * 0.3) * p.scaleMult * underwaterBlend;
+            dummy.scale.setScalar(Math.max(0, s));
+
+            // Face camera for better highlight consistency? No, they are spheres.
 
             dummy.updateMatrix();
             meshRef.current!.setMatrixAt(i, dummy.matrix);
@@ -93,18 +97,22 @@ export const BubbleSystem: React.FC = () => {
     });
 
     return (
-        <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]}>
-            <sphereGeometry args={[0.05, 8, 8]} /> {/* Low poly bubbles */}
+        <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
+            <sphereGeometry args={[0.08, 12, 10]} />
             <meshPhysicalMaterial
                 transparent
-                opacity={0.4}
-                color="#aaccff"
-                roughness={0.1}
-                metalness={0.1}
-                transmission={0.9} // Glassy
-                thickness={0.1}
+                opacity={0.8}
+                color="#e0f4ff"
+                roughness={0.0}
+                metalness={0.2}
+                transmission={0.4} // Less transparent for visibility
+                thickness={0.5}
+                ior={1.33}
                 depthWrite={false}
+                emissive="#99ccff" // Subtle glow to help in dark water
+                emissiveIntensity={0.4}
             />
         </instancedMesh>
     );
 };
+

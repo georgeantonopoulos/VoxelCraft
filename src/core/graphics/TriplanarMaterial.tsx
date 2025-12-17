@@ -226,36 +226,49 @@ const fragmentShader = `
 
   // Fast procedural caustics pattern (Ridged Multifractal for Web-like look)
   float getCaustics(vec3 pos, vec3 sunDir, float t) {
+      // Important: Keep caustics motion time-periodic to avoid visible "jumps" when
+      // sampling a repeating noise texture over long, unbounded time values.
+      const float TWO_PI = 6.28318530718;
+      const float CAUSTICS_LOOP_SECONDS = 20.0;
+      float lt = mod(t, CAUSTICS_LOOP_SECONDS);
+      float ang = (lt / CAUSTICS_LOOP_SECONDS) * TWO_PI;
+
       // 1. Projection (Simple refraction Approx)
       // Scale depth influence to keep pattern consistent
       // 3x Scale Increase: Multiply UV coords by 0.33 to stretch the noise.
       vec2 uv = (pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.4)) * 0.33;
       
       // 2. Slow Flow Animation
-      vec2 flow1 = vec2(t * 0.05, t * 0.016); // scaled down speed to match new scale
-      vec2 flow2 = vec2(-t * 0.016, t * 0.033);
+      // Bounded (sin/cos) offsets loop cleanly and avoid seam-jumps from wrapping.
+      vec2 flow1 = vec2(cos(ang), sin(ang)) * 0.65;
+      vec2 flow2 = vec2(cos(ang + 2.1), sin(ang + 2.1)) * 0.45;
+      float tz1 = 0.5 + 0.5 * sin(ang + 1.3);
+      float tz2 = 0.5 + 0.5 * sin(ang + 4.0);
 
       // 3. Domain Warp (Liquid Distortion)
       // Sample noise to displace the lookup coordinates
-      vec3 warpP = vec3(uv * 0.2 + flow1 * 0.2, t * 0.05);
-      float warp = texture(uNoiseTexture, warpP).r;
-      vec2 distUV = uv + vec2(warp, warp * 0.5) * 1.5;
+      vec3 warpP = vec3(uv * 0.2 + flow1 * 0.18, tz1);
+      float warp = texture(uNoiseTexture, warpP).r * 2.0 - 1.0;
+      vec2 distUV = uv + vec2(warp, warp * 0.5) * 1.2;
 
       // 4. Layer 1: Ridged Noise
       // (1.0 - abs(noise - 0.5) * 2.0) creates sharp peaks ("ridges") from smooth noise
-      vec3 p1 = vec3(distUV * 0.8 + flow1, t * 0.1);
+      // Slightly lower frequency + lower ridge exponent = subtly blurred caustics.
+      vec3 p1 = vec3(distUV * 0.65 + flow1, tz2);
       float n1 = texture(uNoiseTexture, p1).r;
-      float r1 = pow(clamp(1.0 - abs(n1 - 0.5) * 2.0, 0.0, 1.0), 8.0);
+      float r1 = pow(clamp(1.0 - abs(n1 - 0.5) * 2.0, 0.0, 1.0), 6.0);
 
       // 5. Layer 2: Smaller details, opposing flow
-      vec3 p2 = vec3(distUV * 1.3 - flow2, t * 0.15);
+      vec3 p2 = vec3(distUV * 1.05 - flow2, tz1);
       float n2 = texture(uNoiseTexture, p2).r;
-      float r2 = pow(clamp(1.0 - abs(n2 - 0.5) * 2.0, 0.0, 1.0), 8.0);
+      float r2 = pow(clamp(1.0 - abs(n2 - 0.5) * 2.0, 0.0, 1.0), 6.0);
 
       // 6. Combine: 'min' creates a cellular/web-like intersection pattern
       float cell = min(r1, r2);
       
       // Boost brightness of the thin lines
+      // Note: avoid clamping to 1.0 here; the brightest caustic lines rely on values > 1
+      // (final visibility is controlled at the application site).
       return cell * 12.0;
   }
 
@@ -560,8 +573,8 @@ const fragmentShader = `
 
              // Tint: Deep Cyan/Blue
              vec3 causticColor = vec3(0.2, 0.8, 1.0); 
-             // Opacity: Reduced to ~30% (0.3) per user request
-             col += causticColor * caus * depthMask * normalMask * openMask * floorMask * variationMask * 0.3;
+             // Opacity: reduced by ~33% (0.3 -> 0.2)
+             col += causticColor * caus * depthMask * normalMask * openMask * floorMask * variationMask * 0.2;
         }
     } 
 

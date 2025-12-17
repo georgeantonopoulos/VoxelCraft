@@ -160,3 +160,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - Reduced final opacity to 10% (was 30%) for a subtler effect.
     - Verified build (`npm run build`), dev startup (`npm run dev`), and headless tests (`npm test`).
   - Fixed shader compilation error: Passed `vec3` to 3D noise texture lookup for the secondary variation mask.
+- 2025-12-17: Significantly improved BubbleSystem visibility and density. 
+  - Increased bubble count (150 -> 600) and added size/speed variation for a more organic feel.
+  - Fixed "invisible bubbles" bug by adding `frustumCulled={false}` to the instanced mesh (previously culled far from origin).
+  - Enhanced material visibility with custom emissive glow and lower transmission.
+  - Bubbles now scale with `underwaterBlend` for smooth entry/exit transitions.
