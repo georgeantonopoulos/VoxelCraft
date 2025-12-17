@@ -40,7 +40,7 @@ export const VEGETATION_ASSETS: Record<number, {
   [VegetationType.SNOW_GRASS]: { color: '#ddeedd', scale: [1, 0.5, 1], geometry: 'cross', sway: 0.4, roughness: 0.6 },
   [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2, 1.5, 2], geometry: 'cross', sway: 0.8, roughness: 0.6 },
   [VegetationType.JUNGLE_GRASS]: { color: '#22aa22', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6, roughness: 0.5 }, // Matches JUNGLE_GRASS material
-  [VegetationType.GROVE_GRASS]: { color: '#88ee44', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
+  [VegetationType.GROVE_GRASS]: { color: '#4fa02a', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
   // Jungle palette + silhouette variety:
   // - Broadleaf plants add chunky, low canopy shapes.
   // - Flowers are rare bright accents.

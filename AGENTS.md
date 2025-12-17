@@ -136,6 +136,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-17: Improved vegetation realism, specifically for the Grove biome.
+  - Upgraded `VegetationLayer` shader with multi-frequency wind (gusts + jitters), fake Subsurface Scattering (SSS), and Ambient Occlusion.
+  - Added world-space 3D noise variation to break up color uniformity in dense patches.
+  - Randomized individual blade heights in grass clumps for a more organic silhouette.
+  - Tuned Grove grass color to a richer, lusher green (#4fa02a).
 - 2025-12-17: Implemented Numpad shortcuts for inventory slot selection. Users can now use Digit1-9 and Numpad1-9 to select slots 1-8. Flora is confirmed to be in slot 5 (index 4).
 - 2025-12-14: Implemented persistent Graphics Settings (Resolution, Quality) and Touchscreen Support (Virtual Joystick). Added `SettingsStore.ts` and `SettingsMenu.tsx`. Refactored `Player` input.
 - 2025-12-14: Fixed per-tree leaf color variation not being visible. Root causes: (1) hue variation was too subtle (0.10→0.30 radians), (2) noise was sampled at world position making nearby trees identical, (3) tint range was too narrow. Fix: offset noise coords by per-tree seed, add per-tree brightness/saturation, widen tint range.

@@ -222,7 +222,7 @@ export const ChunkMesh: React.FC<{
       )}
 
       {chunk.vegetationData && (
-        <VegetationLayer data={chunk.vegetationData} />
+        <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} />
       )}
 
       {chunk.treePositions && chunk.treePositions.length > 0 && (

@@ -3,78 +3,101 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
+import { noiseTexture } from '@core/memory/sharedResources';
 
 // The "Life" Shader: Wind sway and subtle color variation
 const VEGETATION_SHADER = {
-  // inside VEGETATION_SHADER object
   vertex: `
   uniform float uTime;
   uniform float uSway;
+  uniform vec2 uWindDir;
   varying vec2 vUv;
   varying vec3 vWorldPos;
+  varying vec3 vViewDir;
 
   void main() {
     vUv = uv;
     vec3 pos = position;
 
     // Get world position from instance matrix
-    // instanceMatrix is a mat4 attribute available in InstancedMesh vertex shader
     vec4 worldInstancePos = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     float worldX = worldInstancePos.x;
     float worldZ = worldInstancePos.z;
 
     // --- Wind Simulation ---
-    // Simple sway based on time and position
-    // We use the world position to offset the phase so they don't all sway in unison
-    float wind = sin(uTime * 2.0 + worldX * 0.5 + worldZ * 0.3) + sin(uTime * 1.0 + worldX * 0.2);
+    // Multi-frequency wind for more organic movement
+    float t = uTime * 0.8;
+    // Layer 1: Macro sway
+    float wind1 = sin(t * 1.5 + worldX * 0.4 + worldZ * 0.2);
+    // Layer 2: Micro jitter
+    float wind2 = sin(t * 4.0 + worldX * 2.0 + worldZ * 1.5) * 0.3;
+    // Layer 3: Gust (traveling)
+    float gust = sin(t * 2.0 - (worldX * uWindDir.x + worldZ * uWindDir.y) * 0.3);
     
-    // Apply sway primarily to the top of the vegetation (uv.y is 0 at bottom, 1 at top)
-    // uSway controls the magnitude from config
-    float swayStrength = uSway * pow(uv.y, 2.0) * 0.15; 
+    float wind = wind1 + wind2 + (gust * 0.5);
     
-    pos.x += wind * swayStrength;
-    pos.z += wind * swayStrength * 0.5;
+    // Apply sway primarily to the top of the vegetation
+    float swayStrength = uSway * pow(uv.y, 1.5) * 0.12; 
+    
+    pos.x += wind * swayStrength * uWindDir.x;
+    pos.z += wind * swayStrength * uWindDir.y;
 
-    // --- THE FIX: Normal Hack ---
-    // We blend the actual normal with a straight-up vector.
-    // 0.0 = Realism (Jagged), 1.0 = Cartoon Softness (fluffy)
-    vec3 originalNormal = normal;
+    // Normal Hack: Blend with up vector for softer illumination
+    vec3 originalNormal = normalize(mat3(instanceMatrix) * normal);
     vec3 upNormal = vec3(0.0, 1.0, 0.0);
+    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.7));
     
-    // Mix based on how 'fluffy' you want it. 0.8 makes it look like a soft carpet.
-    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.8));
-    
-    // Pass this to the built-in Three.js material handling
     csm_Normal = newNormal; 
     
     csm_Position = pos;
-    vWorldPos = vec3(worldX, worldInstancePos.y, worldZ);
+    vWorldPos = worldInstancePos.xyz;
+    
+    // Calculate view direction in world space
+    vec4 worldPos = modelMatrix * instanceMatrix * vec4(pos, 1.0);
+    vViewDir = normalize(cameraPosition - worldPos.xyz);
   }
 `,
   fragment: `
     uniform float uOpacity;
+    uniform vec3 uSunDir;
+    uniform sampler3D uNoiseTexture;
     varying vec3 vWorldPos;
     varying vec2 vUv;
+    varying vec3 vViewDir;
     
     void main() {
-       // Lush Gradient: Darker at bottom (roots), lighter at top (tips)
-       // Mix from a dark root color (multiply) to normal color
-       float gradient = smoothstep(0.0, 1.0, vUv.y);
-       
-       // Add subtle variation to color based on position to break uniformity
-       // Increased scale for larger patches
-       float noise = sin(vWorldPos.x * 0.2) * cos(vWorldPos.z * 0.2);
+       // --- Color Variation ---
+       // Use 3D noise for large-scale biome-consistent variation
+       vec3 noiseCoord = vWorldPos * 0.08;
+       float noise = texture(uNoiseTexture, noiseCoord).r;
+       float noise2 = texture(uNoiseTexture, noiseCoord * 2.5).g;
        
        vec3 col = csm_DiffuseColor.rgb;
        
-       // Apply noise variation - increased intensity for more "patchy" look
-       col += noise * 0.08;
+       // Break uniformity with noise (Hue & Value variation)
+       col *= (0.85 + noise * 0.3); // Brightness variation
+       col = mix(col, col * vec3(1.1, 1.0, 0.9), noise2 * 0.4); // Subtle hue shift to yellow-green
        
-       // Apply lush gradient (dark roots)
-       vec3 rootCol = col * 0.75; // Much brighter roots (was 0.5)
-       col = mix(rootCol, col * 1.1, gradient); // Tips slightly brighter
+       // --- Lush Gradient ---
+       float gradient = smoothstep(0.0, 1.0, vUv.y);
+       
+       // Fake Ambient Occlusion (darken base)
+       float ao = smoothstep(0.0, 0.6, vUv.y);
+       col *= mix(0.45, 1.0, ao);
+       
+       // Tips are slightly brighter and more saturated
+       vec3 tipCol = col * 1.25;
+       col = mix(col, tipCol, gradient);
 
-       // Smooth alpha fade (no dither). Render state toggles are handled on the material.
+       // --- Fake Subsurface Scattering (SSS) ---
+       // Light coming from behind the blade
+       float sss = pow(clamp(dot(vViewDir, -uSunDir), 0.0, 1.0), 3.0) * gradient;
+       col += csm_DiffuseColor.rgb * sss * 0.6;
+
+       // Translucency overlay
+       float translucency = pow(gradient, 2.0) * 0.15;
+       col += vec3(0.8, 1.0, 0.6) * translucency;
+
        csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     }
   `
@@ -82,16 +105,20 @@ const VEGETATION_SHADER = {
 
 interface VegetationLayerProps {
   data: Record<string, Float32Array>; // vegetationData from worker
+  sunDirection?: THREE.Vector3;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data }) => {
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, sunDirection }) => {
   const materials = useRef<THREE.ShaderMaterial[]>([]);
 
-  // Update time uniform every frame
+  // Update uniforms every frame
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     materials.current.forEach(mat => {
-      if (mat && mat.uniforms?.uTime) mat.uniforms.uTime.value = t;
+      if (!mat) return;
+      if (mat.uniforms.uTime) mat.uniforms.uTime.value = t;
+      if (sunDirection && mat.uniforms.uSunDir) mat.uniforms.uSunDir.value.copy(sunDirection);
+      // uWindDir is currently static in the config but could be dynamic
     });
   });
 
@@ -119,7 +146,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
 
         // Blade properties - Wider base
         const w = width * (1.2 + Math.random() * 0.5); // Wider (was 0.8)
-        const h = height * (0.8 + Math.random() * 0.4);
+        const h = height * (0.7 + Math.random() * 0.6); // Randomized height (0.7 to 1.3x)
 
         // Base center
         const bx = 0;
@@ -352,7 +379,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
             uniforms={{
               uTime: { value: 0 },
               uSway: { value: batch!.asset.sway },
-              // Chunk opacity fade is intentionally disabled; rely on fog to hide streaming pop-in.
+              uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
+              uSunDir: { value: sunDirection || new THREE.Vector3(0, 1, 0) },
+              uNoiseTexture: { value: noiseTexture },
               uOpacity: { value: 1.0 },
             }}
             color={batch!.asset.color}
