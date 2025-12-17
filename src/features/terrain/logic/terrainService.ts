@@ -374,8 +374,8 @@ export class TerrainService {
         const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
         const seaGridY = Math.max(PAD, Math.min(sizeY - PAD - 2, seaGridYRaw));
 
-        for (let z = PAD; z < PAD + CHUNK_SIZE_XZ; z++) {
-            for (let x = PAD; x < PAD + CHUNK_SIZE_XZ; x++) {
+        for (let z = 0; z < sizeZ; z++) {
+            for (let x = 0; x < sizeX; x++) {
                 const wx = (x - PAD) + worldOffsetX;
                 const wz = (z - PAD) + worldOffsetZ;
 
@@ -388,8 +388,9 @@ export class TerrainService {
                     : MaterialType.WATER;
 
                 // 1) Must be vertically open to the sky above sea level (prevents flooding under overhangs).
+                // We check from sea level + 1 to avoid self-shadowing or tiny ground-level details.
                 let skyVisible = true;
-                for (let y = sizeY - PAD - 1; y > seaGridY; y--) {
+                for (let y = sizeY - 2; y > seaGridY; y--) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
                     if (density[idx] > ISO_LEVEL) {
                         skyVisible = false;
@@ -402,11 +403,14 @@ export class TerrainService {
                 // We scan from the top of the water down. Any solid we find becomes 
                 // part of the seabed and must be wet so caustics render correctly.
                 let topSolidY = -1;
-                for (let y = seaGridY; y >= PAD; y--) {
+                for (let y = seaGridY; y >= 0; y--) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
                     if (density[idx] > ISO_LEVEL) {
                         if (topSolidY < 0) topSolidY = y;
                         wetness[idx] = 255;
+                        // Stop tagging after a few blocks of depth to avoid darkening the entire deep earth,
+                        // which can cause interpolation weirdness on vertical shafts.
+                        if (y < topSolidY - 4) break;
                     }
                 }
                 if (topSolidY < 0) continue;

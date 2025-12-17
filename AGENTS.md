@@ -168,8 +168,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Reduced caustic animation speed by 50% for a calmer underwater feel.
   - Reduced overall visibility and busy-ness by 3x (intensity multiplier 18.0 -> 6.0).
   - Sharpened lines (higher ridge exponents) and reduced high-frequency noise.
-  - **Fix**: Implemented "Deep Seabed Tagging": all submerged solid voxels are now marked wet down the entire water column. This ensures the mesher consistently provides the wetness attribute to the shader for triplanar mapping, regardless of surface slope or density interpolation.
-  - **Refinement**: Bubbles reduced to 1/10th of previous size (radius 0.004) for microscopic atmospheric detail.
+  - **Fix**: Resolved "sharp seabed cutoffs" by expanding the water-fill post-pass to cover the entire chunk volume, including PAD regions. This ensures consistent sampling at chunk boundaries and prevents grid-like artifacts.
+  - **Refinement**: Optimized wetness tagging to only affect the top layers of the seabed, preventing unnecessary darkening of deep underground terrain.
 - 2025-12-17: Sun Realistic Overhaul & Refinement.
   - Completely refactored the Sun billboard shader with a multi-layered core, dynamic volumetric rays, and atmospheric scattering simulation.
   - Implemented smoother "Golden Hour" and "Midday" color transitions in `getSunColor`.
