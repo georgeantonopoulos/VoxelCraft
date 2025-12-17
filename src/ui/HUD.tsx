@@ -156,7 +156,10 @@ export const HUD: React.FC = () => {
   const stickCount = useGameStore((state) => state.stickCount);
   const stoneCount = useGameStore((state) => state.stoneCount);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
-  const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
+
+  // Use store for player coordinates instead of event listener
+  const coords = useWorldStore((state) => state.playerParams);
+
   const [crosshairHit, setCrosshairHit] = useState(false);
   const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');
   const [placementDebug, setPlacementDebug] = useState<string>('');
@@ -171,15 +174,6 @@ export const HUD: React.FC = () => {
       viaStorage = false;
     }
     return viaQuery || viaWindow || viaStorage;
-  }, []);
-
-  // Quick hack to get camera position: App.tsx will update a DOM element or Custom Event
-  useEffect(() => {
-    const handlePosUpdate = (e: CustomEvent) => {
-      setCoords(e.detail);
-    };
-    window.addEventListener('player-moved', handlePosUpdate as EventListener);
-    return () => window.removeEventListener('player-moved', handlePosUpdate as EventListener);
   }, []);
 
   // Placement debugging (enabled with ?debug).
