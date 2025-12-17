@@ -153,19 +153,22 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
 
                   if (currentHeat >= 10) {
                     // IGNITE!
-                    // Remove Stone
+                    // REMOVED: Remove Stone (User request: rock stays)
+                    // const removeItem = usePhysicsItemStore.getState().removeItem;
+                    // removeItem(targetItem.id);
+
                     const removeItem = usePhysicsItemStore.getState().removeItem;
 
-                    removeItem(targetItem.id);
                     // Remove 4 sticks
                     for (let i = 0; i < 4; i++) {
                       removeItem(nearbySticks[i].id);
                     }
 
                     // Spawn Fire
+                    // Place fire slightly above rock so it doesn't clip perfectly
                     spawnPhysicsItem(
                       ItemType.FIRE,
-                      targetItem.position,
+                      [targetItem.position[0], targetItem.position[1] + 0.3, targetItem.position[2]],
                       [0, 0, 0]
                     );
                   } else {
@@ -199,14 +202,11 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
 
             if (obj && obj.userData && obj.userData.type === ItemType.FIRE) {
               // Hit Fire with Stick!
-              // Remove Stick from inventory? Actually we are holding it.
-              // Just convert one stick + remove fire -> +1 Torch (or replace stick).
-              // User requirement: "converts into a torch in the inventory"
+              // User requirement: "converts into a torch in the inventory" but "fire stays"
 
-              const removeItem = usePhysicsItemStore.getState().removeItem;
-
-              // Remove Fire
-              removeItem(obj.userData.id);
+              // const removeItem = usePhysicsItemStore.getState().removeItem;
+              // Remove Fire -> REMOVED per user request
+              // removeItem(obj.userData.id);
 
               // Update Inventory: Remove 1 stick, Add 1 torch
               const inv = useInventoryStore.getState();

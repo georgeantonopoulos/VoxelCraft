@@ -239,14 +239,16 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
               <cylinderGeometry args={[0.05, 0.05, 0.6]} />
               <meshStandardMaterial color="#4e342e" />
             </mesh>
+            <mesh position={[0, 0.1, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.05, 0.05, 0.6]} />
+              <meshStandardMaterial color="#5d4037" />
+            </mesh>
           </group>
 
-          {/* Fire Particles (simple BILLBOARD plane with shader or just stacked simple geometry for now) */}
-          {/* Since we want "realistic", a simple particle system attached to the object is best. 
-                We can reuse a small version of the SparkSystem idea or just a few emissive cubes converting upwards. 
-                Or a simple fire shader on a plane. 
-                Let's go with a few animated cubes for a "voxel fire" look. 
-            */}
+          {/* Fire Light */}
+          <pointLight position={[0, 0.5, 0]} intensity={2.5} distance={10} color="#ffaa00" decay={2} castShadow />
+
+          {/* Fire Visuals */}
           <FireParticles />
         </>
       )}
@@ -257,57 +259,83 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
 const FireParticles: React.FC = () => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const particles = useRef<{ pos: THREE.Vector3, vel: THREE.Vector3, scale: number, life: number }[]>([]);
+  // Increase particle count for richer effect
+  const COUNT = 30;
+
+  const particles = useRef<{ pos: THREE.Vector3, vel: THREE.Vector3, scale: number, life: number, speed: number }[]>([]);
 
   useEffect(() => {
-    // Init 20 particles
-    for (let i = 0; i < 20; i++) {
+    // Init particles
+    for (let i = 0; i < COUNT; i++) {
       particles.current.push({
         pos: new THREE.Vector3((Math.random() - 0.5) * 0.3, Math.random() * 0.5, (Math.random() - 0.5) * 0.3),
-        vel: new THREE.Vector3(0, Math.random() * 0.5 + 0.2, 0),
+        vel: new THREE.Vector3(0, Math.random() * 0.8 + 0.4, 0),
         scale: Math.random(),
-        life: Math.random() // offset start
+        life: Math.random(),
+        speed: 0.5 + Math.random() * 0.5
       });
     }
   }, []);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
+    // Animate Glow
+    if (glowRef.current) {
+      // Pulse scale
+      const pulse = 1.0 + Math.sin(state.clock.elapsedTime * 8) * 0.1;
+      glowRef.current.scale.setScalar(pulse);
+      // Face camera (billboard) logic if needed, but for a sphere/glow it's omni.
+      // Actually let's just make it a simple meshBasicMaterial sphere with low opacity
+    }
+
     if (!meshRef.current) return;
 
     particles.current.forEach((p, i) => {
-      p.life += delta;
+      p.life += delta * p.speed;
+
       // Reset loop
       if (p.life > 1.0) {
         p.life -= 1.0;
-        p.pos.set((Math.random() - 0.5) * 0.3, 0, (Math.random() - 0.5) * 0.3);
-        p.scale = 1.0;
+        // Reset to bottom center with some spread
+        p.pos.set((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.2);
+        p.scale = 0.5 + Math.random() * 0.5;
+        p.vel.y = Math.random() * 0.8 + 0.4;
       }
 
+      // Physics
       p.pos.y += p.vel.y * delta;
 
-      // Wiggle
-      p.pos.x += Math.sin(p.life * 10 + i) * 0.002;
-      p.pos.z += Math.cos(p.life * 8 + i) * 0.002;
+      // Turbulent Wiggle
+      const time = state.clock.elapsedTime;
+      p.pos.x += Math.sin(time * 5 + i * 0.5) * 0.005;
+      p.pos.z += Math.cos(time * 3 + i * 0.3) * 0.005;
 
-      // Shrink
-      const scale = (1.0 - p.life) * 0.15; // Max size
+      // Shrink and Color trick (via scale)
+      const lifeFactor = 1.0 - p.life;
+      const size = lifeFactor * 0.25 * p.scale;
 
       dummy.position.copy(p.pos);
-      dummy.scale.setScalar(scale);
+      dummy.scale.setScalar(size);
       dummy.updateMatrix();
       meshRef.current!.setMatrixAt(i, dummy.matrix);
-
-      // Color logic could go into shader, but for now fixed orange.
-      // We can iterate color via instanceColor if needed.
     });
     meshRef.current.instanceMatrix.needsUpdate = true;
   });
 
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, 20]} frustumCulled={false}>
-      <boxGeometry args={[1, 1, 1]} />
-      <meshBasicMaterial color="#ff5500" toneMapped={false} />
-    </instancedMesh>
+    <group>
+      {/* Core Glow */}
+      <mesh ref={glowRef} position={[0, 0.2, 0]}>
+        <sphereGeometry args={[0.3, 16, 16]} />
+        <meshBasicMaterial color="#ff5500" transparent opacity={0.3} depthWrite={false} />
+      </mesh>
+
+      {/* Particles */}
+      <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#ffcc00" toneMapped={false} />
+      </instancedMesh>
+    </group>
   );
 };
