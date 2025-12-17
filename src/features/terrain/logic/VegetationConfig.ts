@@ -33,14 +33,14 @@ export const VEGETATION_ASSETS: Record<number, {
   sway: number; // How much it reacts to wind (0-1)
   roughness: number; // Material roughness (0-1)
 }> = {
-  [VegetationType.GRASS_LOW]: { color: '#66cc33', scale: [1, 0.6, 1], geometry: 'cross', sway: 0.5, roughness: 0.4 },
-  [VegetationType.GRASS_TALL]: { color: '#66cc33', scale: [1, 1.2, 1], geometry: 'cross', sway: 1.0, roughness: 0.4 },
+  [VegetationType.GRASS_LOW]: { color: '#41a024', scale: [1, 0.6, 1], geometry: 'cross', sway: 0.5, roughness: 0.4 },
+  [VegetationType.GRASS_TALL]: { color: '#41a024', scale: [1, 1.2, 1], geometry: 'cross', sway: 1.0, roughness: 0.4 },
   [VegetationType.FLOWER_BLUE]: { color: '#4444ff', scale: [0.8, 0.8, 0.8], geometry: 'cross', sway: 0.3, roughness: 0.8 },
   [VegetationType.DESERT_SHRUB]: { color: '#8b6c42', scale: [1.2, 0.8, 1.2], geometry: 'box', sway: 0.1, roughness: 1.0 },
   [VegetationType.SNOW_GRASS]: { color: '#ddeedd', scale: [1, 0.5, 1], geometry: 'cross', sway: 0.4, roughness: 0.6 },
   [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2, 1.5, 2], geometry: 'cross', sway: 0.8, roughness: 0.6 },
-  [VegetationType.JUNGLE_GRASS]: { color: '#22aa22', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6, roughness: 0.5 }, // Matches JUNGLE_GRASS material
-  [VegetationType.GROVE_GRASS]: { color: '#4fa02a', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
+  [VegetationType.JUNGLE_GRASS]: { color: '#2e8b1d', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6, roughness: 0.5 }, // Matches JUNGLE_GRASS material
+  [VegetationType.GROVE_GRASS]: { color: '#41a024', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
   // Jungle palette + silhouette variety:
   // - Broadleaf plants add chunky, low canopy shapes.
   // - Flowers are rare bright accents.

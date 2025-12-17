@@ -75,15 +75,21 @@ const VEGETATION_SHADER = {
        vec3 col = csm_DiffuseColor.rgb;
        
        // Break uniformity with noise (Hue & Value variation)
-       col *= (0.85 + noise * 0.3); // Brightness variation
-       col = mix(col, col * vec3(1.1, 1.0, 0.9), noise2 * 0.4); // Subtle hue shift to yellow-green
+       // Range: 0.9 to 1.1
+       col *= (0.9 + noise * 0.2); 
+       
+       // Added hue variation as requested: Shift color toward slightly warmer or cooler tones
+       vec3 warmShift = vec3(1.05, 1.0, 0.9); // More yellowish
+       vec3 coolShift = vec3(0.9, 1.0, 1.05); // More bluish
+       col = mix(col * coolShift, col * warmShift, noise2);
        
        // --- Lush Gradient ---
        float gradient = smoothstep(0.0, 1.0, vUv.y);
        
        // Fake Ambient Occlusion (darken base)
-       float ao = smoothstep(0.0, 0.6, vUv.y);
-       col *= mix(0.45, 1.0, ao);
+       // Softened to 0.7 to blend better with terrain (was 0.45)
+       float ao = smoothstep(0.0, 0.7, vUv.y);
+       col *= mix(0.7, 1.0, ao);
        
        // Tips are slightly brighter and more saturated
        vec3 tipCol = col * 1.25;
