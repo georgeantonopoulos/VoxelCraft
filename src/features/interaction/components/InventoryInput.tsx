@@ -10,6 +10,7 @@ function isTextInputTarget(target: EventTarget | null): boolean {
 export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
   const cycleSlot = useInventoryStore((s) => s.cycleSlot);
   const setSelectedSlotIndex = useInventoryStore((s) => s.setSelectedSlotIndex);
+  const slotCount = useInventoryStore((s) => s.inventorySlots.length);
 
   useEffect(() => {
     if (!enabled) return;
@@ -27,10 +28,11 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
       if (!document.pointerLockElement) return;
       if (isTextInputTarget(e.target)) return;
 
-      // 1..5 selects the corresponding slot.
-      if (e.key >= '1' && e.key <= '5') {
+      // 1..9 selects the corresponding slot (as long as it exists).
+      const n = Number(e.key);
+      if (Number.isInteger(n) && n >= 1 && n <= slotCount) {
         e.preventDefault();
-        setSelectedSlotIndex(Number(e.key) - 1);
+        setSelectedSlotIndex(n - 1);
       }
     };
 
@@ -41,8 +43,7 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
       window.removeEventListener('wheel', handleWheel as EventListener);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [enabled, cycleSlot, setSelectedSlotIndex]);
+  }, [enabled, cycleSlot, setSelectedSlotIndex, slotCount]);
 
   return null;
 };
-

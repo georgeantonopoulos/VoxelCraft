@@ -9,6 +9,7 @@ import { TorchTool } from './TorchTool';
 import { FloraTool } from './FloraTool';
 import { StickTool } from './StickTool';
 import { StoneTool } from './StoneTool';
+import { ShardTool } from './ShardTool';
 import { RIGHT_HAND_HELD_ITEM_POSES } from '@features/interaction/logic/HeldItemPoses';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
@@ -22,8 +23,7 @@ export const FirstPersonTools: React.FC = () => {
     const axeRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch/flora)
     const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
-    const hasAxe = useInventoryStore(state => state.hasAxe);
-    const currentTool = useInventoryStore(state => state.currentTool);
+    const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -52,9 +52,9 @@ export const FirstPersonTools: React.FC = () => {
         { hidden: !debugMode }
     );
 
-    const rightHandStickPoseDebug = useControls(
+    const [rightHandStickPoseDebug, setRightHandStickPoseDebug] = useControls(
         'Right Hand / Stick',
-        {
+        () => ({
             xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.z, min: -2.0, max: -0.1, step: 0.01 },
@@ -64,14 +64,15 @@ export const FirstPersonTools: React.FC = () => {
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
-                    const folder = (typeof get === 'function' ? get('Right Hand / Stick') : null) as any;
-                    const xOffset = folder?.xOffset ?? rightHandStickPoseDebug.xOffset;
-                    const y = folder?.y ?? rightHandStickPoseDebug.y;
-                    const z = folder?.z ?? rightHandStickPoseDebug.z;
-                    const scale = folder?.scale ?? rightHandStickPoseDebug.scale;
-                    const rotXDeg = folder?.rotXDeg ?? rightHandStickPoseDebug.rotXDeg;
-                    const rotYDeg = folder?.rotYDeg ?? rightHandStickPoseDebug.rotYDeg;
-                    const rotZDeg = folder?.rotZDeg ?? rightHandStickPoseDebug.rotZDeg;
+                    // Leva buttons run outside React's render lifecycle; read the latest values
+                    // from the Leva store instead of relying on closures from initial mount.
+                    const xOffset = (typeof get === 'function' ? (get('Right Hand / Stick.xOffset') as number) : undefined) ?? rightHandStickPoseDebug.xOffset;
+                    const y = (typeof get === 'function' ? (get('Right Hand / Stick.y') as number) : undefined) ?? rightHandStickPoseDebug.y;
+                    const z = (typeof get === 'function' ? (get('Right Hand / Stick.z') as number) : undefined) ?? rightHandStickPoseDebug.z;
+                    const scale = (typeof get === 'function' ? (get('Right Hand / Stick.scale') as number) : undefined) ?? rightHandStickPoseDebug.scale;
+                    const rotXDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotXDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotXDeg;
+                    const rotYDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotYDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotYDeg;
+                    const rotZDeg = (typeof get === 'function' ? (get('Right Hand / Stick.rotZDeg') as number) : undefined) ?? rightHandStickPoseDebug.rotZDeg;
 
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
@@ -100,13 +101,13 @@ export const FirstPersonTools: React.FC = () => {
                     alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
             })()),
-        },
+        }),
         { hidden: !debugMode }
     );
 
-    const rightHandStonePoseDebug = useControls(
+    const [rightHandStonePoseDebug, setRightHandStonePoseDebug] = useControls(
         'Right Hand / Stone',
-        {
+        () => ({
             xOffset: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0, min: -1.0, max: 1.0, step: 0.01 },
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.z, min: -2.0, max: -0.1, step: 0.01 },
@@ -116,14 +117,13 @@ export const FirstPersonTools: React.FC = () => {
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
-                    const folder = (typeof get === 'function' ? get('Right Hand / Stone') : null) as any;
-                    const xOffset = folder?.xOffset ?? rightHandStonePoseDebug.xOffset;
-                    const y = folder?.y ?? rightHandStonePoseDebug.y;
-                    const z = folder?.z ?? rightHandStonePoseDebug.z;
-                    const scale = folder?.scale ?? rightHandStonePoseDebug.scale;
-                    const rotXDeg = folder?.rotXDeg ?? rightHandStonePoseDebug.rotXDeg;
-                    const rotYDeg = folder?.rotYDeg ?? rightHandStonePoseDebug.rotYDeg;
-                    const rotZDeg = folder?.rotZDeg ?? rightHandStonePoseDebug.rotZDeg;
+                    const xOffset = (typeof get === 'function' ? (get('Right Hand / Stone.xOffset') as number) : undefined) ?? rightHandStonePoseDebug.xOffset;
+                    const y = (typeof get === 'function' ? (get('Right Hand / Stone.y') as number) : undefined) ?? rightHandStonePoseDebug.y;
+                    const z = (typeof get === 'function' ? (get('Right Hand / Stone.z') as number) : undefined) ?? rightHandStonePoseDebug.z;
+                    const scale = (typeof get === 'function' ? (get('Right Hand / Stone.scale') as number) : undefined) ?? rightHandStonePoseDebug.scale;
+                    const rotXDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotXDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotXDeg;
+                    const rotYDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotYDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotYDeg;
+                    const rotZDeg = (typeof get === 'function' ? (get('Right Hand / Stone.rotZDeg') as number) : undefined) ?? rightHandStonePoseDebug.rotZDeg;
 
                     const res = await fetch('/__vc/held-item-poses', {
                         method: 'POST',
@@ -151,9 +151,33 @@ export const FirstPersonTools: React.FC = () => {
                     alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)}`);
                 }
             })()),
-        },
+        }),
         { hidden: !debugMode }
     );
+
+    // Leva keeps values around across HMR; in debug mode we want the sliders to start
+    // from the current in-game pose constants (unless the user tweaks them afterwards).
+    useEffect(() => {
+        if (!debugMode) return;
+        setRightHandStickPoseDebug({
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stick.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stick.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stick.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0),
+        });
+        setRightHandStonePoseDebug({
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stone.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stone.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stone.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0),
+        });
+    }, [debugMode, setRightHandStickPoseDebug, setRightHandStonePoseDebug]);
 
     // Load the GLB model using the imported URL
     const { scene: modelScene } = useGLTF(pickaxeUrl);
@@ -196,9 +220,9 @@ export const FirstPersonTools: React.FC = () => {
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            // Stick/stone are held as right-hand items (not tools), so don't animate pickaxe swings.
-            if (selectedItem === 'stick' || selectedItem === 'stone') return;
-            if (e.button === 0 && currentTool === 'pickaxe' && !isDigging.current) {
+            // Only animate when pickaxe is explicitly selected.
+            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
+            if (e.button === 0 && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
             }
@@ -208,7 +232,7 @@ export const FirstPersonTools: React.FC = () => {
         return () => {
             window.removeEventListener('mousedown', handleMouseDown);
         };
-    }, [currentTool, hasAxe]);
+    }, []);
 
     // Sync tool motion to actual terrain impacts (hit/clunk/build).
     // This makes the pickaxe feel connected to the world, even if interaction rate changes.
@@ -219,20 +243,21 @@ export const FirstPersonTools: React.FC = () => {
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            if (selectedItem === 'stick' || selectedItem === 'stone') return;
+            // Allow animation for pickaxe, stone, and stick
+            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
-            if (detail.action === 'DIG' && currentTool === 'pickaxe') {
+            if (detail.action === 'DIG') {
                 isDigging.current = true;
                 digProgress.current = 0;
                 // Kick stronger on failures (e.g. bedrock/clunk) to make it readable.
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
-            } else if (detail.action === 'BUILD' && currentTool === 'pickaxe') {
+            } else if (detail.action === 'BUILD') {
                 impactKickTarget.current = 0.25;
             }
         };
         window.addEventListener('tool-impact', handleImpact as EventListener);
         return () => window.removeEventListener('tool-impact', handleImpact as EventListener);
-    }, [currentTool]);
+    }, []);
 
     // Hard Camera Attachment - The only way to get ZERO jitter
     // We attach the group to the camera object so it moves 1:1 with the camera matrix.
@@ -311,13 +336,13 @@ export const FirstPersonTools: React.FC = () => {
         rotationX += kick * 0.10;  // Tiny upward recoil
 
         const selectedItem = inventorySlots[selectedSlotIndex];
-        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone';
+        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
         const leftHandShown = selectedItem === 'torch' || selectedItem === 'flora';
 
         // Apply transforms to the inner Axe group (local offsets)
-        // Pickaxe stays visible unless a right-hand override item is selected.
+        // Pickaxe only shows when explicitly selected.
         if (axeRef.current) {
-            axeRef.current.visible = !rightHandOverride;
+            axeRef.current.visible = !rightHandOverride && selectedItem === 'pickaxe';
             axeRef.current.position.set(positionX, positionY, positionZ);
             axeRef.current.rotation.set(rotationX, rotationY, rotationZ);
         }
@@ -362,7 +387,7 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        // Right-hand item logic: stick/stone replaces pickaxe.
+        // Right-hand item logic: stick/stone/shard replaces pickaxe.
         const rightShown = rightHandOverride;
         const rTargetProg = rightShown ? 1 : 0;
         rightItemProgress.current = THREE.MathUtils.lerp(
@@ -375,8 +400,9 @@ export const FirstPersonTools: React.FC = () => {
 
         if (rightItemRef.current) {
             const now = state.clock.getElapsedTime();
-            const pose = selectedItem === 'stick' || selectedItem === 'stone'
-                ? (debugMode
+            const isRightHandItem = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard';
+            const pose = isRightHandItem
+                ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
                     ? (selectedItem === 'stick'
                         ? {
                             xOffset: rightHandStickPoseDebug.xOffset,
@@ -403,8 +429,13 @@ export const FirstPersonTools: React.FC = () => {
                     : RIGHT_HAND_HELD_ITEM_POSES[selectedItem])
                 : null;
             if (pose) {
+                // Apply animation offsets (delta from base/debug pos)
+                const animOffsetY = positionY - (debugPos.current.y + swayY);
+                const animOffsetZ = positionZ - debugPos.current.z;
+
                 const x = positionX + (pose.xOffset ?? 0);
-                rightItemTargetPos.current.set(x, pose.y, pose.z);
+                // Combine pose position with animation offset
+                rightItemTargetPos.current.set(x, pose.y + animOffsetY, pose.z + animOffsetZ);
                 rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
                 rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
                 rightItemRef.current.position.copy(rightItemPosTemp.current);
@@ -458,7 +489,7 @@ export const FirstPersonTools: React.FC = () => {
         }
     }, [modelScene]);
 
-    // if (!hasAxe) return null; // DEBUG: Force visible
+    // if (!hasPickaxe) return null; // DEBUG: Force visible
 
     // Compute offset to center the model if needed (based on logs, but we'll try a visual offset adjustment wrapper)
 
@@ -486,23 +517,28 @@ export const FirstPersonTools: React.FC = () => {
                 <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
                     <StoneTool />
                 </group>
-            </group>
-
-            <group ref={axeRef}>
-                <group>
-                    {/* Move model down/center if it was high up? We will check logs. 
-	                         For now, just render it as is, we have the Red Box as reference. */}
-                    <primitive
-                        object={modelScene}
-                        scale={0.5}
-                    // Removed HUD hacks to ensure proper lighting integration
-                    // If clipping occurs, we can tune the Z-position or near plane, 
-                    // but keeping it in the scene graph is best for lighting.
-                    // renderOrder={999} 
-                    // material-depthTest={false} 
-                    />
+                <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
+                    <ShardTool />
                 </group>
             </group>
+
+            {hasPickaxe && (
+                <group ref={axeRef}>
+                    <group>
+                        {/* Move model down/center if it was high up? We will check logs. 
+	                             For now, just render it as is, we have the Red Box as reference. */}
+                        <primitive
+                            object={modelScene}
+                            scale={0.5}
+                        // Removed HUD hacks to ensure proper lighting integration
+                        // If clipping occurs, we can tune the Z-position or near plane, 
+                        // but keeping it in the scene graph is best for lighting.
+                        // renderOrder={999} 
+                        // material-depthTest={false} 
+                        />
+                    </group>
+                </group>
+            )}
         </group>
     );
 };
