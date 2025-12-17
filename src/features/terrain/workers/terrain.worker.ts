@@ -41,6 +41,65 @@ ctx.onmessage = async (e: MessageEvent) => {
             // 2. Generate with mods
             const { density, material, metadata, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = TerrainService.generateChunk(cx, cz, modifications);
 
+            // --- OPTIMIZATION: Early Out for Empty Chunks ---
+            let isEmpty = true;
+            for (let i = 0; i < density.length; i++) {
+                if (density[i] > ISO_LEVEL) {
+                    isEmpty = false;
+                    break;
+                }
+            }
+
+            if (isEmpty) {
+                const emptyResponse = {
+                    key: `${cx},${cz}`,
+                    cx, cz,
+                    density,
+                    material,
+                    metadata,
+                    // Preserve entities (they might exist even in empty chunks)
+                    floraPositions,
+                    treePositions,
+                    stickPositions,
+                    rockPositions,
+                    largeRockPositions,
+                    rootHollowPositions,
+                    fireflyPositions,
+
+                    // Stubbed data for empty chunk
+                    vegetationData: {},
+                    meshPositions: new Float32Array(0),
+                    meshIndices: new Uint32Array(0),
+                    meshMatWeightsA: new Float32Array(0),
+                    meshMatWeightsB: new Float32Array(0),
+                    meshMatWeightsC: new Float32Array(0),
+                    meshMatWeightsD: new Float32Array(0),
+                    meshNormals: new Float32Array(0),
+                    meshWetness: new Float32Array(0),
+                    meshMossiness: new Float32Array(0),
+                    meshCavity: new Float32Array(0),
+                    meshWaterPositions: new Float32Array(0),
+                    meshWaterIndices: new Uint32Array(0),
+                    meshWaterNormals: new Float32Array(0),
+                    meshWaterShoreMask: new Uint8Array(0)
+                };
+
+                ctx.postMessage({ type: 'GENERATED', payload: emptyResponse }, [
+                    density.buffer,
+                    material.buffer,
+                    metadata.wetness.buffer,
+                    metadata.mossiness.buffer,
+                    floraPositions.buffer,
+                    treePositions.buffer,
+                    stickPositions.buffer,
+                    rockPositions.buffer,
+                    largeRockPositions.buffer,
+                    rootHollowPositions.buffer,
+                    fireflyPositions.buffer
+                ]);
+                return;
+            }
+
             // 3. Compute Light Clusters (Async in Worker)
             // const lightPositions = TerrainService.computeLightClusters(floraPositions);
 
