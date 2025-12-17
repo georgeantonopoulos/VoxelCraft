@@ -228,11 +228,12 @@ const fragmentShader = `
   float getCaustics(vec3 pos, vec3 sunDir, float t) {
       // 1. Projection (Simple refraction Approx)
       // Scale depth influence to keep pattern consistent
-      vec2 uv = pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.4);
+      // 3x Scale Increase: Multiply UV coords by 0.33 to stretch the noise.
+      vec2 uv = (pos.xz - sunDir.xz * ((uWaterLevel - pos.y) * 0.4)) * 0.33;
       
       // 2. Slow Flow Animation
-      vec2 flow1 = vec2(t * 0.15, t * 0.05);
-      vec2 flow2 = vec2(-t * 0.05, t * 0.1);
+      vec2 flow1 = vec2(t * 0.05, t * 0.016); // scaled down speed to match new scale
+      vec2 flow2 = vec2(-t * 0.016, t * 0.033);
 
       // 3. Domain Warp (Liquid Distortion)
       // Sample noise to displace the lookup coordinates
@@ -544,17 +545,23 @@ const fragmentShader = `
         float depthMask = smoothstep(60.0, 0.0, waterDepth);
         // Mask: must be somewhat facing up to catch light
         float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);
-        // Mask: Cavity check. 
-        // vCavity is 0.0 for open surfaces (seabed) and >0.0 for enclosed spaces (caves).
-        // We mask out areas with significant enclosure to avoid "underground" caustics.
+        // Mask: Cavity check (vCavity > 0.3 means cave).
         float openMask = 1.0 - smoothstep(0.0, 0.3, vCavity);
+        // Mask: Floor check (Fixes vertical stretching by hiding caustics on walls)
+        float floorMask = smoothstep(0.25, 0.65, N.y);
         
-        if (depthMask > 0.01 && normalMask > 0.01 && openMask > 0.01) {
+        if (depthMask > 0.01 && normalMask > 0.01 && openMask > 0.01 && floorMask > 0.01) {
              float caus = getCaustics(vWorldPosition, uSunDirection, uTime);
              
-             // Tint caustics slightly cyan/white
-             vec3 causticColor = vec3(0.8, 0.95, 1.0);
-             col += causticColor * caus * depthMask * normalMask * openMask * 0.5;
+             // Secondary Mask: Large scale variation to break up uniformity
+             // Use vec3 for 3D texture lookup (z=0)
+             float variation = texture(uNoiseTexture, vec3(vWorldPosition.xz * 0.008, 0.0)).b;
+             float variationMask = smoothstep(0.35, 0.65, variation);
+
+             // Tint: Deep Cyan/Blue
+             vec3 causticColor = vec3(0.2, 0.8, 1.0); 
+             // Opacity: Reduced to ~30% (0.3) per user request
+             col += causticColor * caus * depthMask * normalMask * openMask * floorMask * variationMask * 0.3;
         }
     } 
 

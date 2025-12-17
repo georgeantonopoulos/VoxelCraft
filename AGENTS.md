@@ -102,6 +102,16 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ---
 
+## Testing Strategy (verified)
+
+- **Headless Tests**: Run via `npm test` (Vitest).
+- **Location**: All unit/kernel tests live in `src/tests/` (centralized).
+- **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
+- **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
+- **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
+
+---
+
 ## Debug Switches (verified)
 
 - `?debug`: enables debug UI paths (Leva/HUD/placement debug) (`src/App.tsx`, `src/ui/HUD.tsx`, `src/state/InventoryStore.ts`). Now includes **Granular Sun Controls**:
@@ -120,6 +130,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 - `npm run build`
 - `npm run dev` (confirm server starts; stop it once ready)
+- 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (short, keep last ~5 entries)
 
@@ -144,3 +155,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Implemented correct `vCavity` check (`0.0` = open seabed, `>0.3` = cave) to robustly mask caustics from caves without breaking seabed visibility.
   - Refined Caustics pattern: replaced simple noise with a "Ridged Multifractal" domain-warped shader to create a realistic "web-like" cellular light pattern.
   - Adjusted Caustics color: Shifted from pure white (`0.8, 0.95, 1.0`) to a deeper cyan/blue tint (`0.2, 0.8, 1.0`) to match underwater reference photos.
+    - Reduced final opacity to 10% (was 30%) for a subtler effect.
+    - Verified build (`npm run build`), dev startup (`npm run dev`), and headless tests (`npm test`).
+  - Fixed shader compilation error: Passed `vec3` to 3D noise texture lookup for the secondary variation mask.
