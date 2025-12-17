@@ -237,13 +237,12 @@ export const HUD: React.FC = () => {
         <h1 className="font-semibold text-base text-emerald-700 mb-1">Organic Voxel Engine</h1>
         <div className="space-y-0.5 text-xs font-medium leading-tight">
           <p>WASD + Space to move</p>
-          <p>Left Click: <span className="text-red-500 font-semibold">DIG</span></p>
-          <p>Right Click: <span className="text-emerald-600 font-semibold">BUILD</span></p>
-          <p>E: <span className="text-cyan-600 font-semibold">Place Selected</span></p>
+          <p>Left Click: <span className="text-red-500 font-semibold">DIG</span> (pickaxe selected)</p>
+          <p>Right Click: <span className="text-emerald-600 font-semibold">USE</span> (place/throw)</p>
           <p>
             Q: <span className="text-cyan-600 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})
           </p>
-          <p>Scroll: <span className="text-amber-500 font-semibold">Inventory</span></p>
+          <p>Scroll / 1-9: <span className="text-amber-500 font-semibold">Inventory</span></p>
         </div>
         {debugMode && placementDebug && (
           <div className="mt-1 text-[10px] font-mono text-slate-700">

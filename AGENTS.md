@@ -69,6 +69,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Global Settings**: `src/state/SettingsStore.ts` is the source of truth for graphics (resolution, shadows) and input mode (mouse vs touch). `App.tsx` subscribes to this.
 - **Input Logic**: `src/features/player/usePlayerInput.ts` abstracts input sources (`useKeyboardControls` vs `InputStore`).
 - **Touch Camera**: `src/features/player/TouchCameraControls.tsx` handles look rotation for touch mode, bypassing `PointerLockControls`.
+- **Fire Mechanics**: `InteractionHandler.tsx` manages Raycast detection for Stone-on-Stone (sparks) and Stick-on-Fire (torch) events.
 
 ## Known Pitfalls (keep this list small)
 
@@ -76,6 +77,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **React StrictMode timer bugs**: Effects can mount/unmount twice in dev; store timeout IDs in refs and clear them before setting new ones (see `src/features/flora/components/RootHollow.tsx`).
 - **InstancedMesh scaling can “shrink your shader space”**: If instance matrices scale, shader-driven offsets may also scale; size particles via geometry radius when offsets must stay in world units (see `src/features/flora/components/LumaSwarm.tsx`).
 - **Three.js fog uniform crash**: If a `ShaderMaterial` has `fog=true` but lacks `fogColor/fogNear/fogFar`, Three may throw during `refreshFogUniforms()` (see `src/features/creatures/FogDeer.tsx`).
+- **Never edit held-item pose constants**: Do not touch `src/features/interaction/logic/HeldItemPoses.ts` (`RIGHT_HAND_HELD_ITEM_POSES`); these are hand-tuned and must only change via the in-game pose tooling (`src/features/interaction/components/FirstPersonTools.tsx` keyword: `/__vc/held-item-poses`).
 - **Main-thread chunk arrival spikes**: Avoid expensive `useMemo` computation when chunks stream in; prefer precomputing in workers (shoreline mask note in `src/features/terrain/components/ChunkMesh.tsx`).
 - **Terrain streaming “loaded” state can stall**: If chunk updates are wrapped in `startTransition`, UI state may lag; gate initial-load readiness off `chunksRef.current` in `src/features/terrain/components/VoxelTerrain.tsx` (keyword: `initialLoadTriggered`).
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
@@ -108,3 +110,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 2025-12-14: Added volumetric God Rays (post-processing) linked to the sun mesh for dramatic atmospheric lighting.
 - 2025-12-15: Fixed "enormous/clipping" Moon by decoupling visual distance (1200) from orbit physics (300) and reducing mesh radius (20->12). Moon now renders behind terrain and at correct angular size (~0.5 deg).
 - 2025-12-15: Improved chunk streaming hitching by buffering worker applies and deferring most trimesh colliders; also shifted the active chunk window forward in movement direction (`src/features/terrain/components/VoxelTerrain.tsx`). Terrain/geo can still pop at the render boundary (not visually verified here).
+- 2025-12-16: Implemented Fire Creation mechanics: Stone-on-Stone sparks (InteractionHandler), Heat accumulation, Fire spawning, and Stick-on-Fire -> Torch conversion. Added `SparkSystem.tsx` and `ItemType.FIRE`.
+- 2025-12-17: Fixed fire mechanics physics issue where target stone was pushed away when struck. Added `isAnchored` flag to anchor stones with 4+ nearby sticks, making them fixed bodies during fire-starting.
+- 2025-12-17: Refined Fire mechanics: Fire now stays when converting stick to torch, rock stays when igniting fire. Enhanced fire visuals with PointLight, Glow billboard, and improved particles.

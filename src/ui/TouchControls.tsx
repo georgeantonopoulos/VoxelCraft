@@ -4,7 +4,7 @@ import { useSettingsStore } from '@/state/SettingsStore';
 
 export const TouchControls: React.FC = () => {
   const inputMode = useSettingsStore(s => s.inputMode);
-  const { setMoveVector, setLookDelta, setJumping, setDigging, setBuilding } = useInputStore();
+  const { setMoveVector, setLookDelta, setJumping, setDigging } = useInputStore();
 
   // Joystick State
   const joystickRef = useRef<HTMLDivElement>(null);
@@ -137,16 +137,6 @@ export const TouchControls: React.FC = () => {
                 onPointerLeave={() => setDigging(false)}
             >
                 DIG
-            </button>
-
-            {/* BUILD (Right Click) */}
-            <button
-                className="w-16 h-16 rounded-full bg-emerald-500/50 border-2 border-emerald-400 text-white font-bold backdrop-blur-sm active:bg-emerald-500/80 active:scale-95 transition-all flex items-center justify-center"
-                onPointerDown={() => setBuilding(true)}
-                onPointerUp={() => setBuilding(false)}
-                onPointerLeave={() => setBuilding(false)}
-            >
-                BUILD
             </button>
         </div>
 
