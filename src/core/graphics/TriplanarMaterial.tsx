@@ -235,24 +235,25 @@ const fragmentShader = `
       vec3 p1b = vec3(uv * 0.7 - flow1, tz2);
       float n1a = texture(uNoiseTexture, p1a).r;
       float n1b = texture(uNoiseTexture, p1b).r;
-      // High exponent (8.0) for sharp, bright lines like the reference
-      float r1 = pow(1.0 - abs(min(n1a, n1b) - 0.5) * 2.0, 8.0);
+      // High exponent (10.0) for cleaner, thinner lines (less "busy")
+      float r1 = pow(1.0 - abs(min(n1a, n1b) - 0.5) * 2.0, 10.0);
 
-      // Layer 2: Micro Shimmer (High Frequency)
+      // Layer 2: Micro Shimmer (High Frequency) - significantly reduced in weight
       vec3 p2a = vec3(uv * 2.5 + flow2, tz2);
       vec3 p2b = vec3(uv * 2.5 - flow2, tz1);
       float n2a = texture(uNoiseTexture, p2a).r;
       float n2b = texture(uNoiseTexture, p2b).r;
-      float r2 = pow(1.0 - abs(min(n2a, n2b) - 0.5) * 2.0, 10.0);
+      float r2 = pow(1.0 - abs(min(n2a, n2b) - 0.5) * 2.0, 12.0);
 
-      return r1 * 1.2 + r2 * 0.4;
+      return r1 * 0.4 + r2 * 0.05;
   }
 
   // Fast procedural caustics pattern with dispersion and layering
   vec3 getRealisticCaustics(vec3 pos, vec3 sunDir, float t) {
       const float TWO_PI = 6.28318530718;
       const float CAUSTICS_LOOP_SECONDS = 20.0;
-      float lt = mod(t, CAUSTICS_LOOP_SECONDS);
+      // Halved speed as requested
+      float lt = mod(t * 0.5, CAUSTICS_LOOP_SECONDS);
       float ang = (lt / CAUSTICS_LOOP_SECONDS) * TWO_PI;
 
       // Projection (Refraction Approx)
@@ -265,7 +266,6 @@ const fragmentShader = `
       float tz2 = 0.5 + 0.5 * cos(ang);
 
       // Chromatic Aberration / Dispersion (Scale-based)
-      // Reference shows Blue -> Cyan -> White -> Yellow -> Red
       float disp = 0.012; 
       
       float r = sampleCausticPattern(uv * (1.0 + disp), ang, tz1, tz2);
@@ -275,13 +275,14 @@ const fragmentShader = `
       // Mix for white core: where they overlap, we get additive white
       vec3 finalC = vec3(r, g, b);
       
-      // Boost core intensity: any overlap between channels creates a bright "sun ray" look
+      // Boost core intensity
       float overlap = min(r, min(g, b));
-      finalC += overlap * 2.0;
+      finalC += overlap * 1.5;
 
-      finalC *= 18.0; // Global brightness boost
+      // Visibility reduced to roughly 1/3 of previous (was 18.0)
+      finalC *= 6.0; 
       
-      // Depth-based intensity: brighter near surface, fade with depth
+      // Depth-based intensity
       float depthFade = exp(-distToSurface * 0.18); 
       return finalC * depthFade;
   }
@@ -565,7 +566,9 @@ const fragmentShader = `
 
     // --- Caustics (Underwater Ground) ---
     // Only applied if below water level, sun is up, AND surface is wet (proxy for submerged)
-    if (vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
+    // Use vWetness > 0.05 to ensure caustics only render on surfaces that are actually in water.
+    // This prevents them appearing in dry caves that are below sea level.
+    if (vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
         
         // Mask: strong near surface, fade deep down

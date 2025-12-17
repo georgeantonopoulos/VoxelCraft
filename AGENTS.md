@@ -164,8 +164,15 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Reduced bubble radius to half the original size (0.04) for better scale.
   - Eliminated global "infinite volume" bubbles in favor of localized "oxygen" bubbles emitted from the camera.
   - Implemented water entry bursts based on downward velocity.
-- 2025-12-17: Fixed Caustics Animation Looping and Color Fidelity.
-  - Resolved the 20s animation "jump" by refactoring all time-based frequencies to integer ratios.
-  - Achieved "White Core" caustics by boosting additive overlap between dispersive R,G,B channels.
-  - Sharpened caustic lines (higher ridge exponent) and removed muddy tints to match reference imagery.
-  - Fine-tuned scale-based dispersion and depth falloff for a more realistic underwater atmosphere.
+- 2025-12-17: Refined Caustics Intensity, Speed, and Masking.
+  - Reduced caustic animation speed by 50% for a calmer underwater feel.
+  - Reduced overall visibility and busy-ness by 3x (intensity multiplier 18.0 -> 6.0).
+  - Sharpened lines (higher ridge exponents) and reduced high-frequency noise.
+  - **Fix**: Implemented "Deep Seabed Tagging": all submerged solid voxels are now marked wet down the entire water column. This ensures the mesher consistently provides the wetness attribute to the shader for triplanar mapping, regardless of surface slope or density interpolation.
+  - **Refinement**: Bubbles reduced to 1/10th of previous size (radius 0.004) for microscopic atmospheric detail.
+- 2025-12-17: Sun Realistic Overhaul & Refinement.
+  - Completely refactored the Sun billboard shader with a multi-layered core, dynamic volumetric rays, and atmospheric scattering simulation.
+  - Implemented smoother "Golden Hour" and "Midday" color transitions in `getSunColor`.
+  - Added subtle chromatic fringing to the sun's outer halo for a more natural lens/atmospheric effect.
+  - **Refinement**: Shortened volumetric rays by ~40% and sharpened peaks for a cleaner look.
+  - **Refinement**: Fixed "dark core" issue by boosting sun mesh emissivity (5.0x) and offsetting the billboard toward the camera (2.0 units) to prevent depth occlusion.

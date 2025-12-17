@@ -251,26 +251,29 @@ const getSunColor = (sunY: number, radius: number): THREE.Color => {
   // Normalize sun height: -1 (fully below) to 1 (noon)
   const normalizedHeight = sunY / radius;
 
-  // Define color states
-  const nightColor = new THREE.Color(0x4a5a7a); // Blue, darker
-  const sunriseSunsetColor = new THREE.Color(0xff7f42); // Orange (more orange, less pink)
-  const dayColor = new THREE.Color(0xfffcf0); // White/yellow
+  // Define color states - more "premium" and natural palette
+  const nightColor = new THREE.Color(0x3a4a6a); // Deeper, more atmospheric blue
+  const sunriseSunsetColor = new THREE.Color(0xff6a33); // Vibrant deep orange/vermilion
+  const middayColor = new THREE.Color(0xfffdf5); // Crisp, slightly warm white
+  const goldenHourColor = new THREE.Color(0xffd580); // Soft gold
 
   // Determine which phase we're in
   if (normalizedHeight < -0.15) {
-    // Deep night: sun is well below horizon
     return nightColor;
   } else if (normalizedHeight < 0.0) {
     // Transition from Night to Sunset
     const t = (normalizedHeight + 0.15) / 0.15; // 0 at -0.15, 1 at 0.0
     return new THREE.Color().lerpColors(nightColor, sunriseSunsetColor, t);
-  } else if (normalizedHeight < 0.3) {
-    // Transition from Sunset to Day
-    const t = normalizedHeight / 0.3; // 0 at 0.0, 1 at 0.3
-    return new THREE.Color().lerpColors(sunriseSunsetColor, dayColor, t);
+  } else if (normalizedHeight < 0.25) {
+    // Transition from Sunset to Golden Hour
+    const t = normalizedHeight / 0.25;
+    return new THREE.Color().lerpColors(sunriseSunsetColor, goldenHourColor, t);
+  } else if (normalizedHeight < 0.5) {
+    // Transition from Golden Hour to Midday
+    const t = (normalizedHeight - 0.25) / 0.25;
+    return new THREE.Color().lerpColors(goldenHourColor, middayColor, t);
   } else {
-    // Day: sun is high
-    return dayColor;
+    return middayColor;
   }
 };
 
@@ -498,15 +501,13 @@ const SunFollower: React.FC<{
           if (sunMaterialRef.current) {
             const sunMeshColor = sunColor.clone();
             if (normalizedHeight < -0.15) {
-              // Deep night: make sun mesh dim
               sunMeshColor.multiplyScalar(0.4);
             } else if (normalizedHeight < 0.0) {
-              // Transition from sunset to night - fade smoothly
               const t = (normalizedHeight + 0.15) / 0.15;
               sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * t);
             } else {
-              // Day/sunrise: bright sun core
-              sunMeshColor.multiplyScalar(1.5);
+              // Day/sunrise: Extremely bright sun core to match billboard
+              sunMeshColor.multiplyScalar(5.0);
             }
 
             // Underground: dim visual sun a bit (avoid glow leaks), but keep it visible when looking out.
@@ -521,7 +522,9 @@ const SunFollower: React.FC<{
           // Update glow - make it more visible during sunset
           if (glowMeshRef.current && glowMaterialRef.current) {
             // Position glow at sun location (using smooth position)
-            glowMeshRef.current.position.copy(tmpTargetSunPos.current);
+            // Slightly offset toward camera to ensure it renders over the mesh core
+            const toCam = tmpDelta.current.copy(camera.position).sub(tmpTargetSunPos.current).normalize();
+            glowMeshRef.current.position.copy(tmpTargetSunPos.current).addScaledVector(toCam, 2.0);
 
             // Make glow always face camera
             glowMeshRef.current.lookAt(camera.position);
@@ -610,10 +613,10 @@ const SunFollower: React.FC<{
             uniform float uTime;
             varying vec2 vUv;
 
-            // Pseudo-random
+            // Pseudo-random hash
             float hash(float n) { return fract(sin(n) * 43758.5453123); }
 
-            // Value noise for softer, cloud-like rays
+            // Value noise for natural movement
             float noise(float p) {
                 float fl = floor(p);
                 float fc = fract(p);
@@ -624,44 +627,56 @@ const SunFollower: React.FC<{
               vec2 centered = vUv - 0.5;
               float dist = length(centered);
               
-              // 0. Hard circular clip to standard plane (safety)
+              // 0. Circle check
               if (dist > 0.5) discard;
 
-              // 1. Core Glow (Tiighter to match smaller rays)
-              float core = 1.0 / (dist * 25.0 + 0.8);
-              core = pow(core, 2.8);
-
-              // 2. Volumetric Ray Simulation
               float angle = atan(centered.y, centered.x);
-              float t = uTime * 0.05;
-              
-              // Layered noise for variation
-              float raysA = noise(angle * 8.0 + t) * 0.5 + 0.5;
-              float raysB = noise(angle * 16.0 - t * 1.5); // Range -0.5 to 1.5
-              
-              // Combine layers (straighter, sharper rays)
-              float rays = raysA * 0.6 + raysB * 0.4;
-              
-              // **Ray Variation & Tip Fade**:
-              // Mask rays to be VERY short (1/3rd size: fade start 0.03, fade end 0.09)
-              float rayMask = smoothstep(0.02, 0.05, dist) * (1.0 - smoothstep(0.05, 0.09, dist));
-              
-              // Per-ray length variation
-              float lengthVar = noise(angle * 3.0 + 52.0); 
-              rayMask *= smoothstep(0.09, 0.05 + 0.03 * lengthVar, dist);
+              float t = uTime;
 
-              // Anisotropy: Sharpen the beams
-              rays = pow(max(0.0, rays), 4.0); 
-
-              float totalLight = core * 0.75 + rays * rayMask * 0.65;
+              // 1. Core Glow: Multi-layered for a "hot" center
+              float coreInner = 1.0 / (dist * 45.0 + 0.4);
+              coreInner = pow(coreInner, 3.2);
               
-              // Clamp opacity
-              float alpha = smoothstep(0.0, 1.0, totalLight) * uOpacity;
+              float coreMid = 1.0 / (dist * 20.0 + 0.8);
+              coreMid = pow(coreMid, 2.0);
+              
+              float core = coreInner * 1.2 + coreMid * 0.4;
 
-              // Color: Core is white-hot, rays are atmospheric
-              vec3 finalColor = mix(uColor, vec3(1.0, 1.0, 0.95), core * 0.9);
+              // 2. Halo / Atmospheric Scattering
+              float halo = exp(-dist * 12.0) * 0.3;
+              halo += exp(-dist * 4.5) * 0.15;
 
-              gl_FragColor = vec4(finalColor, alpha);
+              // 3. Volumetric Rays: Layered and animated
+              // Layer 1: Large sparse beams
+              float rayA = noise(angle * 6.0 + t * 0.15);
+              // Layer 2: Medium dense ray-let clusters
+              float rayB = noise(angle * 18.0 - t * 0.45);
+              // Layer 3: High frequency "twinkle"
+              float rayC = noise(angle * 42.0 + t * 1.2);
+              
+              float rays = (rayA * 0.5 + rayB * 0.3 + rayC * 0.2);
+              rays = pow(max(0.0, rays), 5.5); // Sharper the ray peaks
+              
+              // Dynamic Ray Length: Significantly shorter (fade start closer to core)
+              float rayLen = 0.1 + 0.08 * noise(angle * 4.0 + t * 0.1);
+              float rayMask = smoothstep(rayLen, 0.0, dist);
+              
+              // 4. Composition
+              float finalGlow = core + halo + (rays * rayMask * 2.5);
+              
+              // 5. Color Toning: Core is incandescent white, outer is atmospheric
+              vec3 coreCol = vec3(1.0, 1.0, 0.95);
+              vec3 scatteringCol = uColor;
+              
+              // Mix colors based on core intensity
+              vec3 finalColor = mix(scatteringCol, coreCol, clamp(core * 0.8, 0.0, 1.0));
+              
+              // Add subtle chromatic fringe at the edge of the halo
+              float fringe = smoothstep(0.4, 0.5, dist);
+              finalColor.r += fringe * 0.05;
+              finalColor.b -= fringe * 0.05;
+
+              gl_FragColor = vec4(finalColor, finalGlow * uOpacity);
             }
           `}
           />

@@ -2,7 +2,7 @@
 import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
 import { noise as noise3D } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
-import { BiomeManager, BiomeType, getCaveSettings } from './BiomeManager';
+import { BiomeManager, getCaveSettings } from './BiomeManager';
 import { RockVariant } from './GroundItemKinds';
 
 export const MATERIAL_HARDNESS: Record<number, number> = {
@@ -398,13 +398,15 @@ export class TerrainService {
                 }
                 if (!skyVisible) continue;
 
-                // 2) Find the top-most solid at/below sea level.
+                // 2) Mark all SUBMERGED solid voxels as wet.
+                // We scan from the top of the water down. Any solid we find becomes 
+                // part of the seabed and must be wet so caustics render correctly.
                 let topSolidY = -1;
                 for (let y = seaGridY; y >= PAD; y--) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
                     if (density[idx] > ISO_LEVEL) {
-                        topSolidY = y;
-                        break;
+                        if (topSolidY < 0) topSolidY = y;
+                        wetness[idx] = 255;
                     }
                 }
                 if (topSolidY < 0) continue;

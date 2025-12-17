@@ -145,7 +145,7 @@ export const BubbleSystem: React.FC = () => {
 
     return (
         <instancedMesh ref={meshRef} args={[undefined, undefined, MAX_BUBBLES]} frustumCulled={false}>
-            <sphereGeometry args={[0.04, 10, 8]} />
+            <sphereGeometry args={[0.004, 10, 8]} />
             <meshPhysicalMaterial
                 transparent
                 opacity={0.8}
