@@ -161,7 +161,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - Verified build (`npm run build`), dev startup (`npm run dev`), and headless tests (`npm test`).
   - Fixed shader compilation error: Passed `vec3` to 3D noise texture lookup for the secondary variation mask.
 - 2025-12-17: Completely refactored `BubbleSystem` into a dynamic particle emitter.
+  - Reduced bubble radius to half the original size (0.04) for better scale.
   - Eliminated global "infinite volume" bubbles in favor of localized "oxygen" bubbles emitted from the camera.
-  - Implemented water entry bursts: The number and speed of bubbles now depend on the player's downward velocity at the moment of impact.
-  - Fixed "bubbles in air" bug by using a strict `WATER_LEVEL` world-space mask for every particle.
-  - Bubbles now have a finite lifetime and fade out/shrink organically.
+  - Implemented water entry bursts based on downward velocity.
+- 2025-12-17: Fixed Caustics Animation Looping and Color Fidelity.
+  - Resolved the 20s animation "jump" by refactoring all time-based frequencies to integer ratios.
+  - Achieved "White Core" caustics by boosting additive overlap between dispersive R,G,B channels.
+  - Sharpened caustic lines (higher ridge exponent) and removed muddy tints to match reference imagery.
+  - Fine-tuned scale-based dispersion and depth falloff for a more realistic underwater atmosphere.
