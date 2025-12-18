@@ -74,7 +74,11 @@ export class TerrainService {
     // Helper to find surface height at specific world coordinates
     // Now delegates to BiomeManager's parameter system
     static getHeightAt(wx: number, wz: number): number {
-        // We use the same logic as the loop, but simplified for single point
+        const biome = BiomeManager.getBiomeAt(wx, wz);
+        if (biome === 'SKY_ISLANDS') {
+            return 40; // islandCenterY from generation logic
+        }
+
         const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
 
         const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
@@ -83,10 +87,10 @@ export class TerrainService {
         const px = wx + qx;
         const pz = wz + qz;
 
-        // Base 2D noise for the biome
         const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
+        const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
-        return clampSurfaceHeight(baseHeight + (baseNoise * amp));
+        return clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
     }
 
     static generateChunk(cx: number, cz: number, modifications: ChunkModification[] = []): {

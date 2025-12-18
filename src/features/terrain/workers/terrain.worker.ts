@@ -85,6 +85,97 @@ const buildRockData = (rockPositions: Float32Array, cx: number, cz: number) => {
     };
 };
 
+/**
+ * Pre-compute tree instance matrices in the worker to avoid main-thread matrix calculation loops.
+ * Returns batched data grouped by tree type and variant, with pre-computed Float32Array matrices.
+ */
+const JUNGLE_VARIANTS = 4;
+
+const buildTreeInstanceData = (treePositions: Float32Array) => {
+    // Group trees by type:variant
+    const batches = new Map<string, { type: number; variant: number; positions: number[] }>();
+
+    for (let i = 0; i < treePositions.length; i += 4) {
+        const x = treePositions[i];
+        const y = treePositions[i + 1];
+        const z = treePositions[i + 2];
+        const type = treePositions[i + 3];
+
+        // Deterministic variant selection for jungle trees
+        let variant = 0;
+        if (type === 5) { // TreeType.JUNGLE = 5
+            const seed = x * 12.9898 + z * 78.233;
+            const h = Math.abs(Math.sin(seed)) * 43758.5453;
+            variant = Math.floor((h % 1) * JUNGLE_VARIANTS);
+        }
+
+        const key = `${type}:${variant}`;
+        if (!batches.has(key)) {
+            batches.set(key, { type, variant, positions: [] });
+        }
+        batches.get(key)!.positions.push(x, y, z);
+    }
+
+    // Now compute matrices for each batch
+    const result: Record<string, { type: number; variant: number; count: number; matrices: Float32Array }> = {};
+    const buffers: ArrayBuffer[] = [];
+
+    for (const [key, batch] of batches.entries()) {
+        const count = batch.positions.length / 3;
+        // 16 floats per 4x4 matrix
+        const matrices = new Float32Array(count * 16);
+
+        for (let i = 0; i < count; i++) {
+            const x = batch.positions[i * 3];
+            const y = batch.positions[i * 3 + 1];
+            const z = batch.positions[i * 3 + 2];
+
+            // Compute rotation and scale (same logic as was in TreeLayer.tsx)
+            const seed = x * 12.9898 + z * 78.233;
+            const rotY = (seed % 1) * Math.PI * 2;
+            const scale = 0.8 + (seed % 0.4);
+
+            // Build the 4x4 matrix directly (TRS composition)
+            // This is equivalent to: translate(x,y,z) * rotateY(rotY) * scale(scale)
+            const c = Math.cos(rotY);
+            const s = Math.sin(rotY);
+
+            const offset = i * 16;
+            // Column-major order for Three.js Matrix4
+            // Column 0
+            matrices[offset + 0] = c * scale;
+            matrices[offset + 1] = 0;
+            matrices[offset + 2] = -s * scale;
+            matrices[offset + 3] = 0;
+            // Column 1
+            matrices[offset + 4] = 0;
+            matrices[offset + 5] = scale;
+            matrices[offset + 6] = 0;
+            matrices[offset + 7] = 0;
+            // Column 2
+            matrices[offset + 8] = s * scale;
+            matrices[offset + 9] = 0;
+            matrices[offset + 10] = c * scale;
+            matrices[offset + 11] = 0;
+            // Column 3 (translation)
+            matrices[offset + 12] = x;
+            matrices[offset + 13] = y;
+            matrices[offset + 14] = z;
+            matrices[offset + 15] = 1;
+        }
+
+        result[key] = {
+            type: batch.type,
+            variant: batch.variant,
+            count,
+            matrices
+        };
+        buffers.push(matrices.buffer);
+    }
+
+    return { treeInstanceBatches: result, treeMatrixBuffers: buffers };
+};
+
 ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
 
@@ -132,6 +223,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 const floraHotspots = buildFloraHotspotsPacked(floraPositions);
                 const stickData = buildStickData(stickPositions, cx, cz);
                 const rockData = buildRockData(rockPositions, cx, cz);
+                const treeInstanceData = buildTreeInstanceData(treePositions);
 
                 const emptyResponse = {
                     key: `${cx},${cz}`,
@@ -144,6 +236,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                     // Preserve entities (they might exist even in empty chunks)
                     floraPositions,
                     treePositions,
+                    treeInstanceBatches: treeInstanceData.treeInstanceBatches,
                     stickPositions,
                     rockPositions,
                     drySticks: stickData.drySticks,
@@ -181,6 +274,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                     stickData.jungleSticks.buffer,
                     rockData.rockHotspots.buffer,
                     ...rockData.rockBuffers,
+                    ...treeInstanceData.treeMatrixBuffers,
                     density.buffer,
                     material.buffer,
                     metadata.wetness.buffer,
@@ -309,6 +403,8 @@ ctx.onmessage = async (e: MessageEvent) => {
             const floraHotspots = buildFloraHotspotsPacked(floraPositions);
             const stickData = buildStickData(stickPositions, cx, cz);
             const rockData = buildRockData(rockPositions, cx, cz);
+            // Pre-compute tree instance matrices to avoid main-thread loops
+            const treeInstanceData = buildTreeInstanceData(treePositions);
 
             const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as MeshData;
 
@@ -329,6 +425,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 visualVersion: 0,
                 vegetationData,
                 floraPositions, treePositions,
+                treeInstanceBatches: treeInstanceData.treeInstanceBatches,
                 rootHollowPositions,
                 stickPositions, rockPositions,
                 drySticks: stickData.drySticks,
@@ -358,6 +455,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
                 ...vegetationBuffers,
                 ...rockData.rockBuffers,
+                ...treeInstanceData.treeMatrixBuffers,
                 floraHotspots.buffer,
                 stickData.stickHotspots.buffer,
                 stickData.drySticks.buffer,

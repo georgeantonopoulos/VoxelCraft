@@ -2,9 +2,37 @@ import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
-import CustomShaderMaterial from 'three-custom-shader-material';
+import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
+
+// Material pool for ground items (sticks, rocks)
+const groundItemMaterialPool: Record<string, THREE.Material> = {};
+
+const getGroundItemMaterial = (shader: any, color: string, roughness: number, isInstanced: boolean) => {
+  const key = `${shader === STICK_SHADER ? 'stick' : 'rock'}-${color}-${roughness}-${isInstanced}`;
+  if (groundItemMaterialPool[key]) return groundItemMaterialPool[key];
+
+  groundItemMaterialPool[key] = new (CustomShaderMaterial as any)({
+    baseMaterial: THREE.MeshStandardMaterial,
+    vertexShader: shader.vertex,
+    uniforms: {
+      ...sharedUniforms,
+      uInstancing: { value: isInstanced },
+      uSeed: { value: 0 },
+      uHeight: { value: 1.0 },
+      uNoiseTexture: { value: noiseTexture }
+    },
+    color: color,
+    roughness: roughness,
+    metalness: 0.0,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  });
+
+  return groundItemMaterialPool[key];
+};
 
 const LARGE_ROCK_STRIDE = 6; // x, y, z, radius, variant, seed
 
@@ -88,23 +116,16 @@ export const GroundItemsLayer: React.FC<{
       {collidersEnabled && Array.from(largeRockInstanceGroups.entries()).map(([variant, instances]) => {
         const config = rockMats.get(variant);
         if (!config) return null;
+        const material = getGroundItemMaterial(ROCK_SHADER, config.color, config.roughness, false);
         return (
           <InstancedRigidBodies key={`large-rocks-${variant}`} instances={instances} type="fixed" colliders="ball">
-            <instancedMesh args={[largeRockGeometry, undefined, instances.length]} castShadow receiveShadow frustumCulled={true}>
-              <CustomShaderMaterial
-                baseMaterial={THREE.MeshStandardMaterial}
-                vertexShader={ROCK_SHADER.vertex}
-                uniforms={{
-                  uInstancing: { value: false },
-                  uNoiseTexture: { value: noiseTexture },
-                  uSeed: { value: 123 }
-                }}
-                color={config.color}
-                roughness={config.roughness}
-                metalness={0.0}
-                toneMapped={false}
-              />
-            </instancedMesh>
+            <instancedMesh
+              args={[largeRockGeometry, material, instances.length]}
+              castShadow
+              receiveShadow
+              frustumCulled={true}
+              material={material}
+            />
           </InstancedRigidBodies>
         );
       })}
@@ -157,23 +178,16 @@ const GroundItemBatch: React.FC<{
     };
   }, [instGeo]);
 
+  const material = useMemo(() => getGroundItemMaterial(shader, color, roughness, true), [shader, color, roughness]);
+
   return (
-    <instancedMesh ref={meshRef} args={[instGeo, undefined, count]} castShadow receiveShadow frustumCulled={true}>
-      <CustomShaderMaterial
-        baseMaterial={THREE.MeshStandardMaterial}
-        vertexShader={shader.vertex}
-        uniforms={{
-          uInstancing: { value: true },
-          uSeed: { value: 0 },
-          uHeight: { value: 1.0 },
-          uNoiseTexture: { value: noiseTexture }
-        }}
-        color={color}
-        roughness={roughness}
-        metalness={0.0}
-        toneMapped={false}
-        side={THREE.DoubleSide}
-      />
-    </instancedMesh>
+    <instancedMesh
+      ref={meshRef}
+      args={[instGeo, material, count]}
+      castShadow
+      receiveShadow
+      frustumCulled={true}
+      material={material}
+    />
   );
 };

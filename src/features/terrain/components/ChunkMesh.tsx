@@ -65,6 +65,15 @@ export const ChunkMesh: React.FC<{
     void terrainFadeEnabled;
   }, [terrainFadeEnabled]);
 
+  const [showLayers, setShowLayers] = React.useState(false);
+
+  // Staged Mounting: Mount terrain first, then wait one frame to mount heavy layers (vegetation, trees, etc.)
+  // This spreads the React reconciliation and GPU upload cost over two frames.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShowLayers(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   const renderCount = useRef(0);
 
   const terrainGeometry = useMemo(() => {
@@ -87,6 +96,7 @@ export const ChunkMesh: React.FC<{
     if (chunk.meshNormals?.length > 0) geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
     else geom.computeVertexNormals();
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
+
     const r = Math.sqrt((CHUNK_SIZE_XZ + PAD * 2) ** 2 * 2 + (CHUNK_SIZE_Y + PAD * 2) ** 2) * 0.5;
     geom.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(CHUNK_SIZE_XZ * 0.5 - PAD, MESH_Y_OFFSET + CHUNK_SIZE_Y * 0.5, CHUNK_SIZE_XZ * 0.5 - PAD),
@@ -102,6 +112,9 @@ export const ChunkMesh: React.FC<{
     }
     return geom;
   }, [chunk.meshPositions, chunk.visualVersion]);
+
+  // Resource Disposal: Explicitly free GPU memory
+  useEffect(() => () => terrainGeometry?.dispose(), [terrainGeometry]);
 
   renderCount.current++;
   if (typeof window !== 'undefined') {
@@ -121,6 +134,8 @@ export const ChunkMesh: React.FC<{
     return geom;
   }, [chunk.meshWaterPositions, chunk.visualVersion]);
 
+  useEffect(() => () => waterGeometry?.dispose(), [waterGeometry]);
+
   // The shoreline SDF mask is now pre-computed in the worker (mesher.ts) to avoid
   // running the expensive BFS on the main thread when chunks arrive.
   const waterShoreMask = useMemo(() => {
@@ -137,6 +152,8 @@ export const ChunkMesh: React.FC<{
     tex.wrapT = THREE.ClampToEdgeWrapping;
     return tex;
   }, [chunk.meshWaterShoreMask, chunk.visualVersion]);
+
+  useEffect(() => () => waterShoreMask?.dispose(), [waterShoreMask]);
 
   const chunkTintColor = useMemo(() => {
     // Deterministic color per chunk to expose overlap/z-fighting (you'll see both colors).
@@ -184,7 +201,6 @@ export const ChunkMesh: React.FC<{
                 polygonOffsetUnits={terrainPolygonOffsetUnits}
                 weightsView={terrainWeightsView}
                 wireframe={terrainWireframeEnabled}
-                spawnTime={chunk.spawnedAt}
               />
             )}
           </mesh>
@@ -219,7 +235,6 @@ export const ChunkMesh: React.FC<{
               polygonOffsetUnits={terrainPolygonOffsetUnits}
               weightsView={terrainWeightsView}
               wireframe={terrainWireframeEnabled}
-              spawnTime={chunk.spawnedAt}
             />
           )}
         </mesh>
@@ -237,32 +252,40 @@ export const ChunkMesh: React.FC<{
         </mesh>
       )}
 
-      {chunk.vegetationData && (
-        <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} />
-      )}
+      {showLayers && (
+        <>
+          {chunk.vegetationData && (
+            <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} />
+          )}
 
-      {chunk.treePositions && chunk.treePositions.length > 0 && (
-        <TreeLayer data={chunk.treePositions} collidersEnabled={colliderEnabled} />
-      )}
+          {chunk.treePositions && chunk.treePositions.length > 0 && (
+            <TreeLayer
+              data={chunk.treePositions}
+              treeInstanceBatches={chunk.treeInstanceBatches}
+              collidersEnabled={colliderEnabled}
+            />
+          )}
 
-      {(chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (
-        <GroundItemsLayer
-          drySticks={chunk.drySticks}
-          jungleSticks={chunk.jungleSticks}
-          rockDataBuckets={chunk.rockDataBuckets}
-          largeRockData={chunk.largeRockPositions}
-          collidersEnabled={colliderEnabled}
-        />
-      ) : null}
+          {(chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (
+            <GroundItemsLayer
+              drySticks={chunk.drySticks}
+              jungleSticks={chunk.jungleSticks}
+              rockDataBuckets={chunk.rockDataBuckets}
+              largeRockData={chunk.largeRockPositions}
+              collidersEnabled={colliderEnabled}
+            />
+          ) : null}
 
-      {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer
-          data={chunk.floraPositions}
-          lightPositions={chunk.lightPositions}
-          cx={chunk.cx}
-          cz={chunk.cz}
-          collidersEnabled={colliderEnabled}
-        />
+          {chunk.floraPositions && chunk.floraPositions.length > 0 && (
+            <LuminaLayer
+              data={chunk.floraPositions}
+              lightPositions={chunk.lightPositions}
+              cx={chunk.cx}
+              cz={chunk.cz}
+              collidersEnabled={colliderEnabled}
+            />
+          )}
+        </>
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

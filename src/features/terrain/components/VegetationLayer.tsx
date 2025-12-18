@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import CustomShaderMaterial from 'three-custom-shader-material';
+import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
@@ -109,6 +109,33 @@ const VEGETATION_SHADER = {
   `
 };
 
+// Pool for vegetation materials to avoid per-chunk material creation overhead.
+// Keyed by Asset ID.
+const vegetationMaterialPool: Record<number, THREE.Material> = {};
+
+const getVegetationMaterial = (asset: any) => {
+  if (vegetationMaterialPool[asset.id]) return vegetationMaterialPool[asset.id];
+
+  vegetationMaterialPool[asset.id] = new (CustomShaderMaterial as any)({
+    baseMaterial: THREE.MeshStandardMaterial,
+    vertexShader: VEGETATION_SHADER.vertex,
+    fragmentShader: VEGETATION_SHADER.fragment,
+    uniforms: {
+      ...sharedUniforms,
+      uSway: { value: asset.sway },
+      uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
+      uNoiseTexture: { value: noiseTexture },
+      uOpacity: { value: 1.0 },
+    },
+    color: asset.color,
+    roughness: asset.roughness,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+  });
+
+  return vegetationMaterialPool[asset.id];
+};
+
 interface VegetationLayerProps {
   data: Record<string, Float32Array>; // vegetationData from worker
   sunDirection?: THREE.Vector3;
@@ -119,6 +146,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
   const batches = useMemo(() => {
     if (!data) return [];
     return Object.entries(data).map(([typeStr, positions]) => {
+      const posArray = positions as Float32Array;
       const typeId = parseInt(typeStr);
       const asset = VEGETATION_ASSETS[typeId];
       if (!asset) return null;
@@ -139,13 +167,13 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 11: geoName = 'giant_fern'; break;
       }
 
-      const count = positions.length / 6;
+      const count = posArray.length / 6;
       const geometry = VEGETATION_GEOMETRIES[geoName];
 
       return {
         id: typeId,
-        asset,
-        positions,
+        asset: { ...asset, id: typeId }, // Ensure ID is present for pooling
+        positions: posArray,
         count,
         geometry
       };
@@ -177,9 +205,6 @@ const VegetationBatch: React.FC<{
     instGeo.attributes.normal = batch.geometry.attributes.normal;
     instGeo.attributes.uv = batch.geometry.attributes.uv;
 
-    // Set a manual bounding box for the entire batch so frustum culling works.
-    // Chunks are roughly 32x32 in XZ. Y range is roughly -35 to +25.
-    // Overestimating slightly is fine and cheaper than precise compute.
     instGeo.boundingBox = new THREE.Box3(
       new THREE.Vector3(-2, -40, -2),
       new THREE.Vector3(34, 40, 34)
@@ -204,6 +229,8 @@ const VegetationBatch: React.FC<{
     };
   }, [geometry]);
 
+  const material = useMemo(() => getVegetationMaterial(batch.asset), [batch.asset]);
+
   return (
     <instancedMesh
       ref={meshRef}
@@ -211,23 +238,7 @@ const VegetationBatch: React.FC<{
       castShadow={false}
       receiveShadow
       frustumCulled={true}
-    >
-      <CustomShaderMaterial
-        baseMaterial={THREE.MeshStandardMaterial}
-        vertexShader={VEGETATION_SHADER.vertex}
-        fragmentShader={VEGETATION_SHADER.fragment}
-        uniforms={{
-          ...sharedUniforms,
-          uSway: { value: batch.asset.sway },
-          uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
-          uNoiseTexture: { value: noiseTexture },
-          uOpacity: { value: 1.0 },
-        }}
-        color={batch.asset.color}
-        roughness={batch.asset.roughness}
-        toneMapped={false}
-        side={THREE.DoubleSide}
-      />
-    </instancedMesh>
+      material={material}
+    />
   );
 };

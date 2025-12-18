@@ -1149,13 +1149,13 @@ const CinematicCamera: React.FC<{ spawnPos: [number, number, number] | null }> =
   const angle = useRef(0);
 
   useFrame((_state, delta) => {
-    angle.current += delta * 0.05; // Slow rotation
-    const radius = 60;
-    const centerX = 16;
-    const centerZ = 16;
+    angle.current += delta * 0.03; // Even slower rotation
+    const radius = 25; // Much closer so we don't stream too many chunks
+    const centerX = spawnPos ? spawnPos[0] : 16;
+    const centerZ = spawnPos ? spawnPos[2] : 16;
 
     const targetY = spawnPos ? spawnPos[1] : 20;
-    const camY = targetY + 40; // Fly above
+    const camY = targetY + 25; // Fly lower
 
     const x = centerX + Math.sin(angle.current) * radius;
     const z = centerZ + Math.cos(angle.current) * radius;
@@ -1302,7 +1302,12 @@ const App: React.FC = () => {
     return null;
   }, []);
 
+  // Sync main-thread BiomeManager and find spawn point
   useEffect(() => {
+    if (!worldType) return;
+
+    BiomeManager.setWorldType(worldType);
+
     const params = new URLSearchParams(window.location.search);
     const requestedBiome = params.get('vcSpawnBiome') as BiomeType | null;
 
@@ -1320,13 +1325,6 @@ const App: React.FC = () => {
     const h = TerrainService.getHeightAt(x, z);
     setSpawnPos([x, h + 5, z]);
   }, [findSpawnForBiome, worldType]);
-
-  // Sync main-thread BiomeManager for height calculations
-  useEffect(() => {
-    if (worldType) {
-      BiomeManager.setWorldType(worldType);
-    }
-  }, [worldType]);
 
   // Debug flow: allow bypassing the world selection + enter click for automated checks.
   useEffect(() => {

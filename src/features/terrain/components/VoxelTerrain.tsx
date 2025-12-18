@@ -807,29 +807,32 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     return () => worker.terminate();
   }, [worldType]);
 
+  // Determine a stable target for initial loading (don't chase moving camera)
+  const initialLoadTarget = useMemo(() => {
+    if (initialSpawnPos) return { x: initialSpawnPos[0], z: initialSpawnPos[2] };
+    return { x: 16, z: 16 }; // Fallback to origin
+  }, [initialSpawnPos]);
+
   useEffect(() => {
     if (initialLoadTriggered.current || !onInitialLoad) return;
 
-    // Check if central chunks are ready (3x3 grid around 0,0)
-    // 3x3 is enough to cover the immediate view so player doesn't see void
-    // Check if spawn or central chunks are ready
-    const targetX = initialSpawnPos ? initialSpawnPos[0] : camera.position.x;
-    const targetZ = initialSpawnPos ? initialSpawnPos[2] : camera.position.z;
-
-    const px = Math.floor(targetX / CHUNK_SIZE_XZ);
-    const pz = Math.floor(targetZ / CHUNK_SIZE_XZ);
+    const px = Math.floor(initialLoadTarget.x / CHUNK_SIZE_XZ);
+    const pz = Math.floor(initialLoadTarget.z / CHUNK_SIZE_XZ);
     const essentialKeys = [
       `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
       `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
     ];
 
-    const allLoaded = essentialKeys.every(key => chunks[key]);
+    const allReady = essentialKeys.every(key => {
+      const c = chunks[key];
+      return c && c.colliderEnabled && c.terrainVersion >= 0;
+    });
 
-    if (allLoaded) {
+    if (allReady) {
       initialLoadTriggered.current = true;
       onInitialLoad();
     }
-  }, [chunks, onInitialLoad]);
+  }, [chunks, onInitialLoad, initialLoadTarget]);
 
   const mountQueue = useRef<any[]>([]);
   const lastTimeRef = useRef(0);
@@ -1065,20 +1068,49 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     // 4. THROTTLED COLLIDER ENABLES
+    // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
+    // to push collider BVH construction to idle time when possible.
     if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
       const key = colliderEnableQueue.current.shift();
       if (key) {
         colliderEnablePending.current.delete(key);
         const current = chunksRef.current[key];
         if (current && !current.colliderEnabled) {
-          const updated = { ...current, colliderEnabled: true };
-          chunksRef.current[key] = updated;
-          if (initialLoadTriggered.current) {
-            startTransition(() => {
-              setChunks(prev => ({ ...prev, [key]: updated }));
-            });
+          // Check if this chunk is directly under the player (critical) or adjacent (can defer)
+          const [cxStr, czStr] = key.split(',');
+          const cx = parseInt(cxStr);
+          const cz = parseInt(czStr);
+          const distToPlayer = Math.max(
+            Math.abs(cx - playerChunk.current.px),
+            Math.abs(cz - playerChunk.current.pz)
+          );
+
+          const enableCollider = () => {
+            const latest = chunksRef.current[key];
+            if (latest && !latest.colliderEnabled) {
+              const updated = { ...latest, colliderEnabled: true };
+              chunksRef.current[key] = updated;
+              if (initialLoadTriggered.current) {
+                startTransition(() => {
+                  setChunks(prev => ({ ...prev, [key]: updated }));
+                });
+              } else {
+                setChunks(prev => ({ ...prev, [key]: updated }));
+              }
+            }
+          };
+
+          // Critical chunks (distance 0 = player is standing on it): enable immediately
+          // Adjacent chunks (distance 1): defer to idle callback if available
+          if (distToPlayer === 0 || !initialLoadTriggered.current) {
+            // Synchronous enable for player chunk or during initial load
+            enableCollider();
+          } else if (typeof requestIdleCallback !== 'undefined') {
+            // Defer to idle time for adjacent chunks
+            requestIdleCallback(enableCollider, { timeout: 100 });
           } else {
-            setChunks(prev => ({ ...prev, [key]: updated }));
+            // Fallback for browsers without requestIdleCallback
+            setTimeout(enableCollider, 0);
           }
         }
       }

@@ -11,6 +11,22 @@ interface LuminaLayerProps {
   collidersEnabled: boolean;
 }
 
+// Shared material pool for Lumina flora
+let sharedLuminaMaterial: THREE.MeshStandardMaterial | null = null;
+
+const getSharedLuminaMaterial = () => {
+  if (sharedLuminaMaterial) return sharedLuminaMaterial;
+  sharedLuminaMaterial = new THREE.MeshStandardMaterial({
+    color: '#00e5ff',
+    emissive: '#00e5ff',
+    emissiveIntensity: 2.0,
+    roughness: 0.4,
+    metalness: 0.1,
+    toneMapped: false // Important for bloom
+  });
+  return sharedLuminaMaterial;
+};
+
 /**
  * Lightweight instanced renderer for cavern lumina flora.
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
@@ -19,11 +35,9 @@ interface LuminaLayerProps {
 export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, collidersEnabled }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  // const { camera } = useThree(); // Unused
 
   const count = data.length / 4;
 
-  // 1. Lights are now pre-computed in worker and passed as prop
   const lights = useMemo(() => {
     if (!lightPositions) return [];
     const arr: THREE.Vector3[] = [];
@@ -33,27 +47,18 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     return arr;
   }, [lightPositions]);
 
-  // 2. Setup Instances
   useLayoutEffect(() => {
     if (!meshRef.current) return;
-
-    // CRITICAL FIX: Manually set bounding sphere to prevent aggressive culling
-    // Since we disable frustumCulled, this is less critical but good practice if we re-enable it later with a proper sphere.
-    // For now, we just disable culling.
 
     const originX = cx * CHUNK_SIZE_XZ;
     const originZ = cz * CHUNK_SIZE_XZ;
 
-    // Deterministic pseudo-random for stable instance transforms (no "all bulbs change" on updates).
-    // We avoid Math.random() here because any data refresh (pickup/removal) would reshuffle everything.
     const hash01 = (x: number, y: number, z: number, salt: number) => {
       const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + salt * 19.19) * 43758.5453;
       return s - Math.floor(s);
     };
 
     for (let i = 0; i < count; i++) {
-      // Data is in WORLD SPACE, but we are inside a group at [originX, 0, originZ]
-      // So we must subtract the origin to get local space.
       const wx = data[i * 4];
       const wy = data[i * 4 + 1];
       const wz = data[i * 4 + 2];
@@ -62,11 +67,9 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
       const z = wz - originZ;
 
       dummy.position.set(x, y, z);
-      // Randomize scale slightly
       const scale = 0.3 + hash01(wx, wy, wz, 0) * 0.15;
       dummy.scale.setScalar(scale);
 
-      // Random rotation
       dummy.rotation.y = hash01(wx, wy, wz, 1) * Math.PI * 2;
       dummy.rotation.x = (hash01(wx, wy, wz, 2) - 0.5) * 0.5;
 
@@ -74,35 +77,22 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
       meshRef.current.setMatrixAt(i, dummy.matrix);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
-  }, [data, count, dummy]);
+  }, [data, count, dummy, cx, cz]);
 
-  const mat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#00e5ff',
-    emissive: '#00e5ff',
-    emissiveIntensity: 2.0,
-    roughness: 0.4,
-    metalness: 0.1,
-    toneMapped: false // Important for bloom
-  }), []);
-  // NOTE:
-  // Chunk opacity fade was removed because the transparent render path can introduce
-  // noticeable hitches while streaming. Lumina remains fully opaque; fog hides pop-in.
+  const mat = useMemo(() => getSharedLuminaMaterial(), []);
 
   return (
     <group>
-      {/* Flora Mesh - Frustum Culling Disabled to fix visibility */}
       <instancedMesh
         ref={meshRef}
-        args={[undefined, undefined, count]}
+        args={[undefined, mat, count]}
         castShadow={false}
         receiveShadow={false}
         frustumCulled={false}
       >
         <sphereGeometry args={[0.25, 12, 12]} />
-        <primitive object={mat} attach="material" />
       </instancedMesh>
 
-      {/* Clustered Lights - Distance Culled */}
       {collidersEnabled && lights.map((pos, i) => (
         <DistanceCulledLight key={i} position={pos} intensityMul={1.0} />
       ))}

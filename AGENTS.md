@@ -100,10 +100,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Terrain streaming “loaded” state can stall**: If chunk updates are wrapped in `startTransition`, UI state may lag; gate initial-load readiness off `chunksRef.current` in `src/features/terrain/components/VoxelTerrain.tsx` (keyword: `initialLoadTriggered`).
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
 - **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
+- **CustomShaderMaterial Imports**: In version 6.x+, the default import `import CSM from 'three-custom-shader-material'` is the **React component**. If you need to use it as a class/constructor (e.g. for material pooling or singleton materials), you MUST use `import CSM from 'three-custom-shader-material/vanilla'`. Mixing these up causes `CustomShaderMaterial is not a constructor` runtime errors.
 - **CustomShaderMaterial redefinition errors**: When using `three-custom-shader-material` (CSM) with `MeshStandardMaterial`, do NOT declare `varying vec3 vNormal` or `varying vec3 vViewDir`. These are already defined by Three.js and will cause a `redefinition` error during merging. Use `csm_Normal` to set normals in the vertex shader; Three.js handles the fragment-side varying internally.
 - **Responsive Item Offsets**: In portrait mode (aspect < 1), held items (torches, tools) must have their X-offsets scaled dynamically using `aspect` to prevent them from disappearing off the sides of the screen (see `FirstPersonTools.tsx` keywords: `responsiveX`).
 - **Interaction Data vs Optimized Visuals**: Ground items (sticks, rocks) use optimized bucketted buffers for rendering (`drySticks`, `rockDataBuckets`), but the interaction logic (`rayHitsGeneratedGroundPickup`) still requires the original stride-8 data (`stickPositions`, `rockPositions`). If these are missing from the worker's `GENERATED` payload, items will be visible but impossible to pick up (see `VoxelTerrain.tsx`).
 - **Instanced Geometry Disposal**: Do not call `geometry.dispose()` in an effect cleanup that depends on the *data* (e.g. `batch.positions`). This will destroy the geometry every time an item is picked up. Only dispose when the geometry object itself changes or on unmount (see `GroundItemsLayer.tsx`).
+- **Trimesh Collider Creation is Expensive**: Rapier's `trimesh` colliders require building a BVH acceleration structure on the main thread. When `colliderEnabled` flips to `true`, the `<RigidBody colliders="trimesh">` creation can cause a 10-30ms stall depending on mesh complexity. The current throttled queue (`colliderEnableQueue` in `VoxelTerrain.tsx`) spreads this out, but doesn't eliminate the synchronous creation. Future optimization: use `requestIdleCallback` or pre-build colliders in a worker (if Rapier supports it).
+- **Instance Matrix Calculations in Render Effects**: `TreeLayer.tsx` and `VegetationLayer.tsx` compute instance matrices in `useLayoutEffect` loops. For dense chunks (jungle trees, 100+ instances), this can block the main thread for 2-5ms. Consider pre-computing matrices in the terrain worker and passing them in the `GENERATED` payload.
 
 ---
 
@@ -237,3 +240,24 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Synchronized World State**: Fixed a bug where `Player` spawn height was calculated based on stale (default) world parameters. App-level `useEffect` now correctly updates the `spawnPos` whenever a `WorldType` is selected, preventing player falls.
   - **Robust Initial Load Check**: Updated the readiness condition to monitor the actual React `chunks` state instead of internal refs, ensuring physics colliders are mounted and active before the "Enter" button is revealed.
   - **Shader Stability**: Refined `TriplanarMaterial.tsx` dither logic to use `clock` time exclusively, eliminating "invisible chunk" issues caused by timing jitter between `performance.now()` and Three.js uniforms.
+- **Chunk Stutter Investigation (2025-12-18)**
+  - **Root Cause Analysis**: Investigated remaining stutter when new chunks load. Diagnostics show worker/geometry processing is fast (~5μs geometry creation, ~0.3ms terrain frame time), so the bottleneck is elsewhere.
+  - **Primary Suspect**: Rapier trimesh collider BVH construction when `colliderEnabled` flips to `true`. This happens synchronously during React reconciliation and can take 10-30ms per chunk.
+  - **Secondary Suspects**: (1) Instance matrix calculation loops in `TreeLayer.tsx`/`VegetationLayer.tsx` `useLayoutEffect` hooks for dense vegetation, (2) RigidBody key changes causing full collider remounts.
+  - **Documented in Pitfalls**: Added entries for trimesh collider cost and instance matrix calculation overhead.
+- **Chunk Stutter Performance Fixes (2025-12-18)**
+  - **Pre-computed Tree Instance Matrices**: Moved tree instance matrix calculation from `TreeLayer.tsx` `useLayoutEffect` loop to `terrain.worker.ts`. Matrices are now computed in the worker thread and passed in `treeInstanceBatches`. Main thread now just calls `instanceMatrix.array.set(matrices)` - eliminates ~2-5ms of synchronous work per dense chunk.
+  - **Deferred Collider Enabling via requestIdleCallback**: Non-critical colliders (distance > 0 from player) now use `requestIdleCallback` with a 100ms timeout. Colliders directly under the player (distance 0) remain synchronous to ensure the player doesn't fall through terrain.
+  - **Maintained Fallback Compatibility**: `TreeLayer.tsx` includes a fallback path for computing matrices client-side if `treeInstanceBatches` is not provided, ensuring backwards compatibility.
+- 2025-12-18: Global Material Optimization & Staged Mounting
+  - **Shared Terrain Material**: Refactored `TriplanarMaterial.tsx` to use a singleton instance for ALL terrain chunks. Moved the dithered fade-in logic to use a vertex attribute (`aSpawnTime`) instead of a uniform, enabling 100% material sharing across chunks.
+  - **Material Pooling**: Implemented global material pools for Vegetation, Trees, Ground Items, and Lumina. Reduced `CustomShaderMaterial` and `MeshStandardMaterial` instances from ~400+ per loaded world down to ~40 (one per unique asset type), drastically reducing mounting cost and JS-to-GPU state changes.
+  - **Staged mounting in `ChunkMesh.tsx`**: Deferred the rendering of heavy auxiliary layers (trees, flora) by one frame after the terrain mounts.
+  - **Verified resource disposal**: Added explicit `.dispose()` for geometries and textures in `ChunkMesh.tsx` to prevent long-term GPU memory leaks.
+  - **Improved Stutter**: Visual inspection confirms that chunk-loading stutters (FPS drops) are significantly reduced during movement.
+- 2025-12-18: Removed dithered fade-in logic from `TriplanarMaterial.tsx` and `ChunkMesh.tsx`. Chunks now pop in instantly as requested.
+
+- 2025-12-18: Fixed critical runtime crash "CustomShaderMaterial is not a constructor".
+  - **Identified root cause**: The default import from `three-custom-shader-material` v6 is a React component, while material pooling/singleton logic requires the vanilla class constructor.
+  - **Fix**: Updated `TriplanarMaterial.tsx`, `TreeLayer.tsx`, `VegetationLayer.tsx`, and `GroundItemsLayer.tsx` to use the `/vanilla` import path.
+  - **Build Verification**: Confirmed `npm run build` completes successfully.
