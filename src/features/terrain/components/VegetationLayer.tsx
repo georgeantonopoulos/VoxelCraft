@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useLayoutEffect } from 'react';
+import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
@@ -197,13 +197,44 @@ const VegetationBatch: React.FC<{
 }> = ({ batch }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Use InstancedBufferGeometry to share buffers without cloning the massive attribute arrays.
+  // Clone the source geometry to avoid sharing attribute references across multiple
+  // InstancedBufferGeometry instances. Sharing references caused crashes because
+  // WebGL's internal attribute update/removal tracking got confused when the same
+  // BufferAttribute was attached to multiple geometries.
   const geometry = useMemo(() => {
+    const sourceGeo = batch.geometry as THREE.BufferGeometry;
     const instGeo = new THREE.InstancedBufferGeometry();
-    instGeo.index = batch.geometry.index;
-    instGeo.attributes.position = batch.geometry.attributes.position;
-    instGeo.attributes.normal = batch.geometry.attributes.normal;
-    instGeo.attributes.uv = batch.geometry.attributes.uv;
+
+    // Clone index if present
+    if (sourceGeo.index) {
+      instGeo.setIndex(sourceGeo.index.clone());
+    }
+
+    // Clone position (required)
+    if (sourceGeo.attributes.position) {
+      instGeo.setAttribute('position', sourceGeo.attributes.position.clone());
+    }
+
+    // Clone normal (required)
+    if (sourceGeo.attributes.normal) {
+      instGeo.setAttribute('normal', sourceGeo.attributes.normal.clone());
+    }
+
+    // Clone UV if present, otherwise create a dummy one (some geometries may lack UVs)
+    if (sourceGeo.attributes.uv) {
+      instGeo.setAttribute('uv', sourceGeo.attributes.uv.clone());
+    } else {
+      // Create dummy UVs based on position count
+      const posCount = sourceGeo.attributes.position?.count || 0;
+      const dummyUvs = new Float32Array(posCount * 2);
+      instGeo.setAttribute('uv', new THREE.BufferAttribute(dummyUvs, 2));
+    }
+
+    // Stride 6 (x,y,z, nx,ny,nz)
+    // Create and attach instance attributes
+    const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
+    instGeo.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
+    instGeo.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
 
     instGeo.boundingBox = new THREE.Box3(
       new THREE.Vector3(-2, -40, -2),
@@ -212,20 +243,13 @@ const VegetationBatch: React.FC<{
     instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
 
     return instGeo;
-  }, [batch.geometry]);
+  }, [batch.geometry, batch.positions]);
 
-  useLayoutEffect(() => {
-    if (!meshRef.current) return;
-
-    // Stride 6 (x,y,z, nx,ny,nz)
-    const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
-    geometry.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
-    geometry.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
-  }, [batch.positions, geometry]);
-
+  // Clean up the cloned geometry when component unmounts
   React.useEffect(() => {
+    const geo = geometry;
     return () => {
-      geometry.dispose();
+      geo.dispose();
     };
   }, [geometry]);
 

@@ -190,12 +190,23 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Sharpened lines (higher ridge exponents) and reduced high-frequency noise.
   - **Fix**: Resolved "sharp seabed cutoffs" by expanding the water-fill post-pass to cover the entire chunk volume, including PAD regions. This ensures consistent sampling at chunk boundaries and prevents grid-like artifacts.
   - **Refinement**: Optimized wetness tagging to only affect the top layers of the seabed, preventing unnecessary darkening of deep underground terrain.
-- 2025-12-17: Sun Realistic Overhaul & Refinement.
+- 2025-12-18: Sun Realistic Overhaul & Refinement.
   - Completely refactored the Sun billboard shader with a multi-layered core, dynamic volumetric rays, and atmospheric scattering simulation.
   - Implemented smoother "Golden Hour" and "Midday" color transitions in `getSunColor`.
   - Added subtle chromatic fringing to the sun's outer halo for a more natural lens/atmospheric effect.
   - **Refinement**: Shortened volumetric rays by ~40% and sharpened peaks for a cleaner look.
   - **Refinement**: Fixed "dark core" issue by boosting sun mesh emissivity (5.0x) and offsetting the billboard toward the camera (2.0 units) to prevent depth occlusion.
+- 2025-12-18: Night Beautification (Stars & Painterly Moon).
+  - **Procedural Sky**: Upgraded `SkyDomeRefLink` (SkyDome shader) to include procedural twinkling stars and a subtle Milky Way nebula band that fades in at night. stars use a 3D noise hash for stability.
+  - **Realistic Moon**: Replaced the simple white sphere with a procedural shader (`MoonFollower`) featuring craters, shadow shading, and edge fresnel for a "painterly realistic" look.
+  - **Fixed Sun Halo**: Replaced the hard-edge `discard` in the sun glow shader with a `smoothstep` mask to eliminate the "hard shape halo" artifact.
+  - **Increased Draw Distance**: Updated `App.tsx` camera far plane to 2000 (was 600) to ensure celestial bodies (distance ~1200) don't get clipped.
+  - **Refined Star Logic**: Fixed bug where stars were visible in caves by decoupling brightness check from `gradientRef` (which gets darkened by ambient logic). Now uses `calculateOrbitAngle` to detect true astronomical night.
+  - **Refined Star Logic**: Fixed critical math error where `smoothstep` was checking `sunHeight` against reversed min/max, causing stars to be visible at noon. Now correctly uses `1.0 - smoothstep(-0.4, -0.1, sunHeight)` to ensure stars only appear when the sun is well below the horizon.
+  - **Stability**: Memoized `orbitConfig` in `App.tsx` to prevent `AtmosphereController` and `SkyDome` from re-rendering unnecessarilly when other state changes, potentially reducing geometry thrashing.
+  - **Fixed Vegetation Crash**: Resolved persistent `Cannot read properties of undefined (reading 'isInterleavedBufferAttribute')` crash in `VegetationLayer.tsx`. The issue was a race condition where `geometry.dispose()` was called in `useEffect` cleanup for a geometry that had been created in `useMemo` but had its attributes attached later in `useLayoutEffect`. By moving attribute creation entirely into `useMemo`, the geometry is now atomically fully formed before any potential disposal, preventing the renderer from inspecting an incomplete geometry during cleanup.
+  - **Rotating Sky**: Added a rotation matrix to the star field shader so stars rotate in sync with the moon's orbit (simulating Earth's rotation).
+  - **Visual Tweaks**: Slowed down default day/night speed by 50% for realism. Replaced linear nebula band with organic FBM clouds. Made stars sharper and smaller to fix "pixelated" look.
 
 - 2025-12-18: VoxelCraft Performance Enhancements (Physics & Particles).
   - Optimized \`PhysicsItem.tsx\`: Removed per-frame store syncing of item positions; implemented a global shared Audio pool for \`clunk\` and \`dig\` sounds (reducing 100+ Audio object creates during mass spawning).

@@ -653,7 +653,9 @@ const SunFollower: React.FC<{
               float dist = length(centered);
               
               // 0. Circle check
-              if (dist > 0.5) discard;
+              // 0. Circle check (smooth edge to avoid hard cut-off)
+              float mask = smoothstep(0.5, 0.46, dist);
+              if (mask <= 0.0) discard;
 
               float angle = atan(centered.y, centered.x);
               float t = uTime;
@@ -701,7 +703,7 @@ const SunFollower: React.FC<{
               finalColor.r += fringe * 0.05;
               finalColor.b -= fringe * 0.05;
 
-              gl_FragColor = vec4(finalColor, finalGlow * uOpacity);
+              gl_FragColor = vec4(finalColor, finalGlow * uOpacity * mask);
             }
           `}
           />
@@ -779,9 +781,10 @@ const MoonFollower: React.FC<{
       const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.35);
       const directVis = skyOpen * (1.0 - waterBlock);
       // Fade the moon disc out when underwater / heavily occluded to avoid "moon in caves".
-      const moonMat = moonMeshRef.current.material as THREE.MeshBasicMaterial;
-      moonMat.transparent = true;
-      moonMat.opacity = THREE.MathUtils.clamp(directVis, 0, 1);
+      const moonMat = moonMeshRef.current.material as THREE.ShaderMaterial;
+      if (moonMat.uniforms) {
+        moonMat.uniforms.uOpacity.value = THREE.MathUtils.clamp(directVis, 0, 1);
+      }
       moonMeshRef.current.visible = isAboveHorizon && directVis > 0.02;
 
       // Underground: keep outside moon/sky readable but reduce cave bleed.
@@ -804,10 +807,74 @@ const MoonFollower: React.FC<{
         />
         <primitive object={target} />
 
-        {/* Small White Sphere - fog={false} so scene fog doesn't hide the moon */}
         <mesh ref={moonMeshRef}>
           <sphereGeometry args={[12, 32, 32]} />
-          <meshBasicMaterial color="#ffffff" fog={false} />
+          <shaderMaterial
+            transparent
+            depthWrite={false}
+            fog={false}
+            uniforms={{
+              uColor: { value: new THREE.Color('#f0f5ff') },
+              uOpacity: { value: 1.0 }
+            }}
+            vertexShader={`
+              varying vec3 vNormal;
+              varying vec3 vViewDir;
+              varying vec2 vUv;
+              void main() {
+                vUv = uv;
+                vNormal = normalize(normalMatrix * normal);
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                vViewDir = normalize(-mvPosition.xyz);
+                gl_Position = projectionMatrix * mvPosition;
+              }
+            `}
+            fragmentShader={`
+              uniform vec3 uColor;
+              uniform float uOpacity;
+              varying vec3 vNormal;
+              varying vec3 vViewDir;
+              varying vec2 vUv;
+
+              float hash(vec2 p) {
+                return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+              }
+
+              float noise(vec2 p) {
+                vec2 i = floor(p);
+                vec2 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                return mix(mix(hash(i + vec2(0,0)), hash(i + vec2(1,0)), f.x),
+                           mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y);
+              }
+
+              void main() {
+                // Procedural craters
+                float n = noise(vUv * 8.0) * 0.5;
+                n += noise(vUv * 16.0) * 0.25;
+                n += noise(vUv * 32.0) * 0.125;
+                
+                // Crater-like dark spots
+                float craters = pow(1.0 - n, 4.0) * 0.4;
+                vec3 moonBase = mix(uColor, uColor * 0.7, craters);
+                
+                // Subtle ray patterns
+                float rays = pow(noise(vUv * 4.0 + 0.5), 10.0) * 0.2;
+                moonBase += rays * 0.3;
+
+                // Simple shading (Moon is mostly flat but has some volume)
+                float diff = max(0.0, dot(vNormal, normalize(vec3(0.5, 0.5, 1.0))));
+                
+                // Fresnel glow
+                float fresnel = pow(1.0 - dot(vNormal, vViewDir), 3.0);
+                
+                vec3 finalColor = moonBase * (0.8 + 0.2 * diff);
+                finalColor += uColor * fresnel * 0.4; // Soft rim light
+
+                gl_FragColor = vec4(finalColor, uOpacity);
+              }
+            `}
+          />
         </mesh>
       </>
     );
@@ -1034,7 +1101,7 @@ const AtmosphereController: React.FC<{
         ref={hemisphereLightRef}
         args={['#87CEEB', '#2a2a4a', 0.5]}
       />
-      <SkyDomeRefLink gradientRef={gradientRef} />
+      <SkyDomeRefLink gradientRef={gradientRef} orbitConfig={orbitConfig} />
     </>
   );
 };
@@ -1090,15 +1157,18 @@ const ExposureToneMapping: React.FC<{
  * Updates SkyDome colors without triggering React re-renders.
  */
 const SkyDomeRefLink: React.FC<{
-  gradientRef: React.MutableRefObject<{ top: THREE.Color, bottom: THREE.Color }>
-}> = ({ gradientRef }) => {
+  gradientRef: React.MutableRefObject<{ top: THREE.Color, bottom: THREE.Color }>;
+  orbitConfig: { speed: number; offset: number };
+}> = ({ gradientRef, orbitConfig }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
   // Create stable uniform references
   const uniforms = useMemo(() => ({
     uTopColor: { value: new THREE.Color('#87CEEB') },
     uBottomColor: { value: new THREE.Color('#87CEEB') },
-    uExponent: { value: 0.6 }
+    uExponent: { value: 0.6 },
+    uTime: { value: 0 },
+    uNightMix: { value: 0 }
   }), []);
 
   useFrame((state) => {
@@ -1108,12 +1178,34 @@ const SkyDomeRefLink: React.FC<{
       // Update uniforms from gradient ref
       uniforms.uTopColor.value.copy(gradientRef.current.top);
       uniforms.uBottomColor.value.copy(gradientRef.current.bottom);
+      uniforms.uTime.value = state.clock.getElapsedTime();
+
+      // Fade stars as sun rises. Use orbit angle instead of sky brightness
+      // to ensure stars appear even if the local environment (cave) is dark.
+      // angle 0 = noon (day), PI = midnight (night).
+      // Normalized Day Phase: cos(angle) > 0 is day, < 0 is night.
+      // Recalculate orbit angle dynamically to ensure star fade is synced with actual time
+      const angle = calculateOrbitAngle(state.clock.getElapsedTime(), orbitConfig.speed, orbitConfig.offset);
+      const sunHeight = Math.cos(angle);
+
+      // Start fading in when sun is -10 deg below horizon (-0.17), fully visible at -25 deg (-0.4)
+      // Correct Smoothstep Logic:
+      // We want Mix=1 when sunHeight is LOW (-0.4 or less).
+      // We want Mix=0 when sunHeight is HIGH (-0.1 or more).
+
+      // smoothstep(min, max, x) returns 0 if x < min, 1 if x > max.
+      // We want the INVERSE mapping for height.
+      // Use smoothstep(-0.4, -0.1, sunHeight).
+      // If sunHeight = -0.5 (Night): -0.5 < -0.4 -> Returns 0. Result: 1.0 - 0 = 1.0 (Stars ON). Correct.
+      // If sunHeight = 0.0 (Day): 0.0 > -0.1 -> Returns 1. Result: 1.0 - 1 = 0.0 (Stars OFF). Correct.
+
+      uniforms.uNightMix.value = 1.0 - THREE.MathUtils.smoothstep(sunHeight, -0.4, -0.1);
     }
   });
 
   return (
     <mesh ref={meshRef} scale={[400, 400, 400]}>
-      <sphereGeometry args={[1, 32, 32]} />
+      <sphereGeometry args={[1, 32, 32] as [number, number, number]} />
       <shaderMaterial
         side={THREE.BackSide}
         depthWrite={false}
@@ -1131,12 +1223,103 @@ const SkyDomeRefLink: React.FC<{
           uniform vec3 uTopColor;
           uniform vec3 uBottomColor;
           uniform float uExponent;
+          uniform float uTime;
+          uniform float uNightMix;
           varying vec3 vWorldPosition;
+
+          // Stable 3D hash
+          float hash(vec3 p) {
+            p = fract(p * 0.3183099 + 0.1);
+            p *= 17.0;
+            return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+          }
+
+          // Fractional Brownian Motion for clouds
+          float noise(vec3 x) {
+            vec3 p = floor(x);
+            vec3 f = fract(x);
+            f = f * f * (3.0 - 2.0 * f);
+            float n = p.x + p.y * 57.0 + 113.0 * p.z;
+            return mix(mix(mix(hash(p + vec3(0,0,0)), hash(p + vec3(1,0,0)), f.x),
+                           mix(hash(p + vec3(0,1,0)), hash(p + vec3(1,1,0)), f.x), f.y),
+                       mix(mix(hash(p + vec3(0,0,1)), hash(p + vec3(1,0,1)), f.x),
+                           mix(hash(p + vec3(0,1,1)), hash(p + vec3(1,1,1)), f.x), f.y), f.z);
+          }
+
+          float fbm(vec3 x) {
+            float v = 0.0;
+            float a = 0.5;
+            for(int i=0; i<3; ++i) {
+              v += a * noise(x);
+              x *= 2.0;
+              a *= 0.5;
+            }
+            return v;
+          }
+
+          // Rotation matrix for celestial movement
+          mat3 rotateY(float t) {
+            float c = cos(t);
+            float s = sin(t);
+            return mat3(
+              c, 0.0, -s,
+              0.0, 1.0, 0.0,
+              s, 0.0, c
+            );
+          }
+
           void main() {
-            float h = normalize(vWorldPosition).y;
+            vec3 skyDir = normalize(vWorldPosition);
+            
+            // rotate sky with time so stars move with the moon
+            // We use negative time to match the standard sun/moon orbit direction
+            vec3 skyPos = rotateY(-uTime * 0.05) * skyDir;
+
+            float h = skyDir.y;
             float p = max(0.0, (h + 0.2) / 1.2);
             p = pow(p, uExponent);
-            gl_FragColor = vec4(mix(uBottomColor, uTopColor, p), 1.0);
+            
+            vec3 finalColor = mix(uBottomColor, uTopColor, p);
+
+            // Add stars and nebula at night
+            if (uNightMix > 0.01) {
+              // 1. Stars - sharp points
+              vec3 starCoord = skyPos * 350.0; // Higher freq = smaller stars
+              float s = hash(floor(starCoord));
+              
+              if (s > 0.9985) { // sparse stars
+                // Twinkle: high frequency time + star ID offset
+                float twinkle = 0.5 + 0.5 * sin(uTime * 3.0 + s * 123.45);
+                
+                // Sharpness
+                vec3 f = fract(starCoord) - 0.5;
+                float d = length(f);
+                float starShape = max(0.0, 1.0 - d * 2.5); // circular falloff
+                starShape = pow(starShape, 3.0); // sharpen
+
+                float starIntensity = starShape * twinkle * 2.5;
+                
+                // Color variation (blue/white/orange)
+                vec3 starCol = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.9, 0.6), fract(s * 10.0));
+                
+                // Fade near horizon
+                float horizonFade = smoothstep(-0.1, 0.3, h);
+                finalColor += starCol * starIntensity * uNightMix * horizonFade;
+              }
+
+              // 2. Nebula - Organic Clouds (FBM)
+              // Reduced intensity and removed the hard "band" shape
+              float cloud = fbm(skyPos * 2.0); 
+              float cloud2 = fbm(skyPos * 4.0 + vec3(1.0));
+              
+              // Mask to patches
+              float nebMask = smoothstep(0.4, 0.8, cloud * cloud2);
+              
+              vec3 nebColor = mix(vec3(0.02, 0.0, 0.05), vec3(0.05, 0.02, 0.08), cloud);
+              finalColor += nebColor * nebMask * uNightMix * 1.2;
+            }
+
+            gl_FragColor = vec4(finalColor, 1.0);
           }
         `}
       />
@@ -1243,6 +1426,14 @@ const App: React.FC = () => {
   const [sunOrbitRadius, setSunOrbitRadius] = useState(300);
   const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.025);
   const [sunTimeOffset, setSunTimeOffset] = useState(0.0);
+
+  // Memoize orbit config to prevent SkyDome spam-re-rendering which might cause geometry races
+  const orbitConfig = useMemo(() => ({
+    radius: sunOrbitRadius,
+    speed: sunOrbitSpeed / 2.0, // SLOW DOWN day/night cycle significantly
+    offset: sunTimeOffset
+  }), [sunOrbitRadius, sunOrbitSpeed, sunTimeOffset]);
+
   const skipPost = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('noPP');
@@ -1485,8 +1676,8 @@ const App: React.FC = () => {
             // CRITICAL: Disable default tone mapping so EffectComposer can handle it
             toneMapping: THREE.NoToneMapping
           }}
-          // Keep far plane large enough to include the Sun/Moon (r=300) + buffer
-          camera={{ fov: 75, near: 0.1, far: 600 }}
+          // Keep far plane large enough to include the Sun/Moon (r=1200) + buffer
+          camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
           <PerformanceMonitor />
 
@@ -1505,11 +1696,7 @@ const App: React.FC = () => {
           <AtmosphereController
             baseFogNear={fogNear}
             baseFogFar={fogFar * viewDistance}
-            orbitConfig={{
-              radius: sunOrbitRadius,
-              speed: sunOrbitSpeed,
-              offset: sunTimeOffset
-            }}
+            orbitConfig={orbitConfig}
           />
 
           {/* Sun: Strong directional light */}
@@ -1522,21 +1709,13 @@ const App: React.FC = () => {
               mapSize: sunShadowMapSize,
               camSize: sunShadowCamSize
             }}
-            orbitConfig={{
-              radius: sunOrbitRadius,
-              speed: sunOrbitSpeed,
-              offset: sunTimeOffset
-            }}
+            orbitConfig={orbitConfig}
           />
 
           {/* Moon: Subtle night lighting */}
           <MoonFollower
             intensityMul={moonIntensityMul}
-            orbitConfig={{
-              radius: sunOrbitRadius,
-              speed: sunOrbitSpeed,
-              offset: sunTimeOffset
-            }}
+            orbitConfig={orbitConfig}
           />
 
           {/* Dynamic IBL: time-of-day aware environment reflections for PBR materials. */}
