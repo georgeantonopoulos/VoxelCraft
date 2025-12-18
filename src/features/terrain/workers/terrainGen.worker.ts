@@ -90,7 +90,6 @@ ctx.onmessage = async (e: MessageEvent) => {
           const dz = z + pad;
           const sizeX = TOTAL_SIZE_XZ;
           const sizeY = TOTAL_SIZE_Y;
-          const sizeZ = TOTAL_SIZE_XZ;
 
           // Scan down
           for (let y = sizeY - 2; y >= 0; y--) {

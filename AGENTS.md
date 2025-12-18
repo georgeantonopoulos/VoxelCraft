@@ -187,3 +187,18 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Added subtle chromatic fringing to the sun's outer halo for a more natural lens/atmospheric effect.
   - **Refinement**: Shortened volumetric rays by ~40% and sharpened peaks for a cleaner look.
   - **Refinement**: Fixed "dark core" issue by boosting sun mesh emissivity (5.0x) and offsetting the billboard toward the camera (2.0 units) to prevent depth occlusion.
+
+- 2025-12-18: VoxelCraft Performance Enhancements (Physics & Particles).
+  - Optimized \`PhysicsItem.tsx\`: Removed per-frame store syncing of item positions; implemented a global shared Audio pool for \`clunk\` and \`dig\` sounds (reducing 100+ Audio object creates during mass spawning).
+  - Optimized `InteractionHandler.tsx`: 
+    - Replaced Three.js `Raycaster` (scene graph traversal) with Rapier's native `world.castRay` for all stone/stick/fire interactions.
+    - Optimized "fire creation" proximity checks by replacing O(N) array filtering with Rapier's native `world.intersectionsWithShape` sphere query, leveraging spatial partitioning.
+  - GPU-Accelerated Particles: Completely refactored `BubbleSystem`, `SparkSystem`, and `FireParticles` to use custom shaders and `InstancedMesh` attributes.
+    - Moved all physics (gravity, buoyancy), turbulence, and scale animations from the CPU (\`useFrame\` loops) to the GPU (vertex shaders).
+    - Reduced per-frame matrix update overhead to near-zero for active particles.
+  - Fixed various Rapier API incompatibilities and lint warnings in the interaction logic.
+  - Optimized `VoxelTerrain.tsx` Particles & Streaming:
+    - GPU-accelerated debris and spark particles using `CustomShaderMaterial`.
+    - Throttled streaming logic to only execute when player crosses chunk boundaries.
+    - Implemented prioritized job queues for chunk generation and collider enabling.
+  - Fixed Rapier Context Error: Moved `InteractionHandler` inside the `<Physics>` provider in `App.tsx`.

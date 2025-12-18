@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier } from '@react-three/rapier';
 import * as THREE from 'three';
@@ -8,10 +8,15 @@ import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
+import { getItemColor, getItemMetadata } from '../logic/ItemRegistry';
 
 // Sounds
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
+
+// Shared Audio Pool for performance
+const CLUNK_AUDIO = new Audio(clunkUrl);
+const DIG_AUDIO = new Audio(dig1Url);
 
 interface PhysicsItemProps {
   item: ActivePhysicsItem;
@@ -32,9 +37,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   const updateItem = usePhysicsItemStore((state) => state.updateItem);
   const { world, rapier } = useRapier();
 
-  // Audio
-  const clunkAudio = useMemo(() => new Audio(clunkUrl), []);
-  const digAudio = useMemo(() => new Audio(dig1Url), []);
+  // Audio hooks replaced with shared pool references
 
 
   const lastVel = useRef(new THREE.Vector3());
@@ -44,9 +47,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       const v = rigidBody.current.linvel();
       lastVel.current.set(v.x, v.y, v.z);
 
-      // Sync position to store for persistence (optional, but good for "Q" pickup logic)
-      const t = rigidBody.current.translation();
-      item.position = [t.x, t.y, t.z];
+      // OPTIMIZATION: Removed per-frame store sync of item.position.
+      // The store position is now only updated when the item is planted or removed.
     }
   });
 
@@ -64,9 +66,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           const t = rigidBody.current!.translation();
           spawnItem(ItemType.PICKAXE, [t.x, t.y + 0.5, t.z], [0, 2, 0]);
 
-          // Play Sound
-          clunkAudio.currentTime = 0;
-          clunkAudio.play().catch(() => { });
+          // Play Sound using shared pool
+          CLUNK_AUDIO.currentTime = 0;
+          CLUNK_AUDIO.play().catch(() => { });
 
           // Remove Stick (me)
           removeItem(item.id);
@@ -108,11 +110,11 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           spawnItem(ItemType.SHARD, [t.x, t.y + 0.2, t.z], [vx, vy, vz]);
         }
 
-        // Play Sound
-        clunkAudio.currentTime = 0;
-        clunkAudio.volume = 0.5;
-        clunkAudio.playbackRate = 1.2; // higher pitch for shatter
-        clunkAudio.play().catch(() => { });
+        // Play Sound using shared pool
+        CLUNK_AUDIO.currentTime = 0;
+        CLUNK_AUDIO.volume = 0.5;
+        CLUNK_AUDIO.playbackRate = 1.2; // higher pitch for shatter
+        CLUNK_AUDIO.play().catch(() => { });
 
         // Remove self
         removeItem(item.id);
@@ -153,9 +155,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           rigidBody.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
           rigidBody.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-          // Play sound
-          digAudio.currentTime = 0;
-          digAudio.play().catch(() => { });
+          // Play sound using shared pool
+          DIG_AUDIO.currentTime = 0;
+          DIG_AUDIO.play().catch(() => { });
         }
       }
     }
@@ -164,6 +166,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   // Visuals
   return (
     <RigidBody
+      key={`${item.id}-${item.isPlanted ? 'planted' : 'flying'}`}
       ref={rigidBody}
       position={item.position}
       rotation={item.isPlanted ? [0, 0, 0] : undefined}
@@ -188,7 +191,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
                 uNoiseTexture: { value: noiseTexture },
                 uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 }
               }}
-              color="#888888"
+              color={getItemColor(ItemType.STONE)}
               roughness={0.9}
             />
           </mesh>
@@ -207,7 +210,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
                 uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 },
                 uHeight: { value: 0.5 }
               }}
-              color="#5d4037"
+              color={getItemColor(ItemType.STICK)}
               roughness={1.0}
             />
           </mesh>
@@ -220,7 +223,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           <CuboidCollider args={[0.08, 0.08, 0.08]} />
           <mesh castShadow receiveShadow>
             <tetrahedronGeometry args={[0.12, 0]} />
-            <meshStandardMaterial color="#aaaaaa" roughness={0.5} />
+            <meshStandardMaterial color={getItemColor(ItemType.SHARD)} roughness={0.5} />
           </mesh>
         </>
       )}
@@ -232,13 +235,13 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
             {/* Handle */}
             <mesh position={[0, -0.2, 0]}>
               <cylinderGeometry args={[0.04, 0.04, 0.6]} />
-              <meshStandardMaterial color="#5d4037" />
+              <meshStandardMaterial color={getItemColor(ItemType.STICK)} />
             </mesh>
             {/* Head */}
             <mesh position={[0, 0.1, 0]} rotation={[0, 0, Math.PI / 2]}>
               <boxGeometry args={[0.1, 0.5, 0.1]} />
               {/* Or Tetrahedron for sharp look */}
-              <meshStandardMaterial color="#666666" />
+              <meshStandardMaterial color={getItemColor(ItemType.PICKAXE)} />
             </mesh>
           </group>
         </>
@@ -264,7 +267,14 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           </group>
 
           {/* Fire Light */}
-          <pointLight position={[0, 0.5, 0]} intensity={2.5} distance={10} color="#ffaa00" decay={2} castShadow />
+          <pointLight
+            position={[0, 0.5, 0]}
+            intensity={getItemMetadata(ItemType.FIRE)?.emissiveIntensity || 2.5}
+            distance={10}
+            color={getItemMetadata(ItemType.FIRE)?.emissive || "#ffaa00"}
+            decay={2}
+            castShadow
+          />
 
           {/* Fire Visuals */}
           <FireParticles />
@@ -278,81 +288,94 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 const FireParticles: React.FC = () => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  // Increase particle count for richer effect
+  const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+  const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+
   const COUNT = 30;
 
-  const particles = useRef<{ pos: THREE.Vector3, vel: THREE.Vector3, scale: number, life: number, speed: number }[]>([]);
+  const FIRE_VSHADER = `
+    attribute vec3 aOffset;
+    attribute vec4 aParams; // [startTime, life, speed, scale]
+    uniform float uTime;
+
+    void main() {
+        float startTime = aParams.x;
+        float life = aParams.y;
+        float speed = aParams.z;
+        float baseScale = aParams.w;
+        
+        float t = mod(uTime + startTime, life);
+        float progress = t / life;
+        
+        vec3 pos = aOffset;
+        pos.y += t * speed;
+        
+        // Turbulent Wiggle
+        pos.x += sin(uTime * 5.0 + float(gl_InstanceID) * 0.5) * 0.008;
+        pos.z += cos(uTime * 3.0 + float(gl_InstanceID) * 0.3) * 0.008;
+        
+        float lifeFactor = 1.0 - progress;
+        float size = lifeFactor * 0.25 * baseScale;
+        
+        csm_Position = pos + csm_Position * size;
+    }
+  `;
 
   useEffect(() => {
-    // Init particles
+    if (!paramsAttr.current || !offsetsAttr.current) return;
     for (let i = 0; i < COUNT; i++) {
-      particles.current.push({
-        pos: new THREE.Vector3((Math.random() - 0.5) * 0.3, Math.random() * 0.5, (Math.random() - 0.5) * 0.3),
-        vel: new THREE.Vector3(0, Math.random() * 0.8 + 0.4, 0),
-        scale: Math.random(),
-        life: Math.random(),
-        speed: 0.5 + Math.random() * 0.5
-      });
+      // Initial Offset
+      offsetsAttr.current.setXYZ(i,
+        (Math.random() - 0.5) * 0.3,
+        Math.random() * 0.2,
+        (Math.random() - 0.5) * 0.3
+      );
+
+      // Params: [startTime, life, speed, scale]
+      paramsAttr.current.setXYZW(i,
+        Math.random() * 2.0,
+        1.0 + Math.random() * 0.5,
+        0.4 + Math.random() * 0.8,
+        0.5 + Math.random() * 0.5
+      );
     }
+    paramsAttr.current.needsUpdate = true;
+    offsetsAttr.current.needsUpdate = true;
   }, []);
 
-  useFrame((state, delta) => {
-    // Animate Glow
+  useFrame((state) => {
     if (glowRef.current) {
-      // Pulse scale
       const pulse = 1.0 + Math.sin(state.clock.elapsedTime * 8) * 0.1;
       glowRef.current.scale.setScalar(pulse);
-      // Face camera (billboard) logic if needed, but for a sphere/glow it's omni.
-      // Actually let's just make it a simple meshBasicMaterial sphere with low opacity
     }
 
-    if (!meshRef.current) return;
-
-    particles.current.forEach((p, i) => {
-      p.life += delta * p.speed;
-
-      // Reset loop
-      if (p.life > 1.0) {
-        p.life -= 1.0;
-        // Reset to bottom center with some spread
-        p.pos.set((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.2);
-        p.scale = 0.5 + Math.random() * 0.5;
-        p.vel.y = Math.random() * 0.8 + 0.4;
+    if (meshRef.current) {
+      const mat = meshRef.current.material as any;
+      if (mat.uniforms) {
+        mat.uniforms.uTime.value = state.clock.elapsedTime;
       }
-
-      // Physics
-      p.pos.y += p.vel.y * delta;
-
-      // Turbulent Wiggle
-      const time = state.clock.elapsedTime;
-      p.pos.x += Math.sin(time * 5 + i * 0.5) * 0.005;
-      p.pos.z += Math.cos(time * 3 + i * 0.3) * 0.005;
-
-      // Shrink and Color trick (via scale)
-      const lifeFactor = 1.0 - p.life;
-      const size = lifeFactor * 0.25 * p.scale;
-
-      dummy.position.copy(p.pos);
-      dummy.scale.setScalar(size);
-      dummy.updateMatrix();
-      meshRef.current!.setMatrixAt(i, dummy.matrix);
-    });
-    meshRef.current.instanceMatrix.needsUpdate = true;
+    }
   });
 
   return (
     <group>
-      {/* Core Glow */}
       <mesh ref={glowRef} position={[0, 0.2, 0]}>
         <sphereGeometry args={[0.3, 16, 16]} />
         <meshBasicMaterial color="#ff5500" transparent opacity={0.3} depthWrite={false} />
       </mesh>
 
-      {/* Particles */}
       <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshBasicMaterial color="#ffcc00" toneMapped={false} />
+        <boxGeometry args={[1, 1, 1]}>
+          <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(COUNT * 3), 3]} />
+          <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={[new Float32Array(COUNT * 4), 4]} />
+        </boxGeometry>
+        <CustomShaderMaterial
+          baseMaterial={THREE.MeshBasicMaterial}
+          vertexShader={FIRE_VSHADER}
+          uniforms={{ uTime: { value: 0 } }}
+          color={getItemMetadata(ItemType.FIRE)?.color || "#ffcc00"}
+          toneMapped={false}
+        />
       </instancedMesh>
     </group>
   );

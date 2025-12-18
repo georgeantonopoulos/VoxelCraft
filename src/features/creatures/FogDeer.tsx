@@ -28,14 +28,9 @@ function biomeDeerFactor(biome: BiomeType): number {
   }
 }
 
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
-}
 
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  const t = clamp01((x - edge0) / (edge1 - edge0));
-  return t * t * (3 - 2 * t);
-}
+
+
 
 /**
  * FogDeer

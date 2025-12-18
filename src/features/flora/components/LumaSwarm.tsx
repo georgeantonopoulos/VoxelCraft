@@ -92,10 +92,13 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         for (let y = 0; y < SAMPLE_RESOLUTION; y++) {
             for (let x = 0; x < SAMPLE_RESOLUTION; x++) {
                 const i = (y * SAMPLE_RESOLUTION + x) * 4;
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
+                const _r = data[i];
+                const _g = data[i + 1];
+                const _b = data[i + 2];
                 const a = data[i + 3];
+
+                // Note: _r, _g, _b are sampled to preserve original logic for potential future use
+                void (_r + _g + _b);
 
                 // Detect visible pixels (Blueish or just Opaque)
                 // The prompt implies we use the shape, color is overridden to Cyan.
@@ -166,7 +169,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     }, [particleData]);
 
     // 3. Animation Loop
-    useFrame(({ clock, camera }, delta) => {
+    useFrame(({ clock }, delta) => {
         if (!materialRef.current || !meshRef.current) return;
 
         const currentTime = clock.getElapsedTime();

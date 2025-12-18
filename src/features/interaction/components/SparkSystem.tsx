@@ -1,121 +1,104 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import CustomShaderMaterial from 'three-custom-shader-material';
 
-interface SparkEvent {
-    id: number;
-    position: THREE.Vector3;
-    startTime: number;
-}
+const MAX_PARTICLES = 120; // Increased pool slightly
 
-// Global event bus for sparks (simple window event for now to decouple)
 export const emitSpark = (position: THREE.Vector3) => {
     window.dispatchEvent(new CustomEvent('vc-spark', { detail: { position } }));
 };
 
 export const SparkSystem: React.FC = () => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
-    // We'll use a pool of particles. Each "Spark" event might spawn multiple particles.
-    // Actually, for performance, let's make this a simple "Burst" system.
-    // We can render N particles.
-    // Let's say max 100 particles alive.
+    const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+    const directionsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+    const lifeAttr = useRef<THREE.InstancedBufferAttribute>(null);
 
-    const MAX_PARTICLES = 100;
-    const dummy = useMemo(() => new THREE.Object3D(), []);
+    const nextIdx = useRef(0);
 
-    // Store particle state: [active(0/1), age(0..1), velocityX, velocityY, velocityZ]
-    // We can just use an array of objects for simplicity since N is small.
-    const particles = useRef<{
-        active: boolean;
-        pos: THREE.Vector3;
-        vel: THREE.Vector3;
-        age: number;
-        life: number;
-    }[]>([]);
+    const SPARK_VSHADER = `
+        attribute vec3 aOffset;
+        attribute vec4 aDirection; // [vx, vy, vz, startTime]
+        attribute float aLife;
+        uniform float uTime;
+
+        void main() {
+            float startTime = aDirection.w;
+            float age = uTime - startTime;
+
+            if (age < 0.0 || age > aLife) {
+                csm_Position = vec3(0.0, -9999.0, 0.0);
+                return;
+            }
+
+            float progress = age / aLife;
+            vec3 worldPos = aOffset + aDirection.xyz * age;
+            worldPos.y -= 4.9 * age * age; // Gravity effect
+
+            float s = max(0.0, 1.0 - progress);
+            csm_Position = worldPos + csm_Position * s;
+        }
+    `;
 
     useEffect(() => {
-        // Init pool
-        for (let i = 0; i < MAX_PARTICLES; i++) {
-            particles.current.push({
-                active: false,
-                pos: new THREE.Vector3(),
-                vel: new THREE.Vector3(),
-                age: 0,
-                life: 0.5 // seconds
-            });
-        }
-
         const handleSpark = (e: Event) => {
+            if (!offsetsAttr.current || !directionsAttr.current || !lifeAttr.current) return;
             const detail = (e as CustomEvent).detail;
             const origin = detail.position as THREE.Vector3;
+            const time = performance.now() / 1000; // Use consistent time source
 
-            // Spawn a burst of 5-10 particles
-            let spawned = 0;
             const count = 8;
-            for (let i = 0; i < MAX_PARTICLES && spawned < count; i++) {
-                if (!particles.current[i].active) {
-                    const p = particles.current[i];
-                    p.active = true;
-                    p.pos.copy(origin);
-                    // Random velocity cone
-                    p.vel.set(
-                        (Math.random() - 0.5) * 4,
-                        Math.random() * 4 + 2, // Upward bias
-                        (Math.random() - 0.5) * 4
-                    );
-                    p.age = 0;
-                    p.life = 0.3 + Math.random() * 0.3;
-                    spawned++;
-                }
+            for (let i = 0; i < count; i++) {
+                const idx = nextIdx.current;
+                offsetsAttr.current.setXYZ(idx, origin.x, origin.y, origin.z);
+
+                // Velocity
+                const vx = (Math.random() - 0.5) * 4;
+                const vy = Math.random() * 4 + 2;
+                const vz = (Math.random() - 0.5) * 4;
+                directionsAttr.current.setXYZW(idx, vx, vy, vz, time);
+
+                // Life
+                const life = 0.3 + Math.random() * 0.3;
+                lifeAttr.current.setX(idx, life);
+
+                nextIdx.current = (nextIdx.current + 1) % MAX_PARTICLES;
             }
+
+            offsetsAttr.current.needsUpdate = true;
+            directionsAttr.current.needsUpdate = true;
+            lifeAttr.current.needsUpdate = true;
         };
 
         window.addEventListener('vc-spark', handleSpark);
         return () => window.removeEventListener('vc-spark', handleSpark);
     }, []);
 
-    useFrame((_, delta) => {
+    useFrame(({ clock }) => {
         if (!meshRef.current) return;
-
-        let activeCount = 0;
-
-        particles.current.forEach((p, i) => {
-            if (p.active) {
-                p.age += delta;
-                if (p.age >= p.life) {
-                    p.active = false;
-                    // Hide
-                    dummy.position.set(0, -9999, 0);
-                    dummy.updateMatrix();
-                    meshRef.current!.setMatrixAt(i, dummy.matrix);
-                } else {
-                    // Update physics
-                    p.vel.y -= 9.8 * delta; // Gravity
-                    p.pos.addScaledVector(p.vel, delta);
-
-                    dummy.position.copy(p.pos);
-                    dummy.scale.setScalar(Math.max(0, 1.0 - (p.age / p.life))); // Shrink
-                    dummy.updateMatrix();
-                    meshRef.current!.setMatrixAt(i, dummy.matrix);
-                    activeCount++;
-                }
-            } else {
-                // Ensure hidden
-                dummy.position.set(0, -9999, 0);
-                dummy.updateMatrix();
-                meshRef.current!.setMatrixAt(i, dummy.matrix);
-            }
-        });
-
-        if (activeCount > 0 || meshRef.current.count > 0) {
-            meshRef.current.instanceMatrix.needsUpdate = true;
+        const mat = meshRef.current.material as any;
+        if (mat.uniforms) {
+            mat.uniforms.uTime.value = clock.getElapsedTime();
         }
     });
 
     return (
         <instancedMesh ref={meshRef} args={[undefined, undefined, MAX_PARTICLES]} frustumCulled={false}>
-            <boxGeometry args={[0.03, 0.03, 0.03]} /> {/* Tiny cubes */}
-            <meshBasicMaterial color="#ffaa00" toneMapped={false} />
+            <boxGeometry args={[0.03, 0.03, 0.03]}>
+                <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(MAX_PARTICLES * 3), 3]} />
+                <instancedBufferAttribute ref={directionsAttr} attach="attributes-aDirection" args={[new Float32Array(MAX_PARTICLES * 4), 4]} />
+                <instancedBufferAttribute ref={lifeAttr} attach="attributes-aLife" args={[new Float32Array(MAX_PARTICLES), 1]} />
+            </boxGeometry>
+            <CustomShaderMaterial
+                baseMaterial={THREE.MeshBasicMaterial}
+                vertexShader={SPARK_VSHADER}
+                uniforms={{
+                    uTime: { value: 0 }
+                }}
+                color="#ffaa00"
+                toneMapped={false}
+            />
         </instancedMesh>
     );
 };

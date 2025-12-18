@@ -1,6 +1,8 @@
 import { create } from 'zustand';
+import { ItemType } from '@/types';
+import { ITEM_REGISTRY } from '@features/interaction/logic/ItemRegistry';
 
-export type InventoryItemId = 'pickaxe' | 'axe' | 'torch' | 'flora' | 'stick' | 'stone' | 'shard' | null;
+export type InventoryItemId = ItemType.PICKAXE | ItemType.AXE | ItemType.TORCH | ItemType.FLORA | ItemType.STICK | ItemType.STONE | ItemType.SHARD | null;
 
 // Stackables: items that exist as counts and can appear/disappear from slots based on count.
 export type StackableInventoryItemId = Exclude<InventoryItemId, 'pickaxe' | 'axe' | null>;
@@ -38,13 +40,13 @@ const INITIAL_FLORA_COUNT = getDebugModeEnabled() ? 10 : 0;
 
 const computeSlots = (state: Pick<GameState, 'inventoryCount' | 'torchCount' | 'stickCount' | 'stoneCount' | 'shardCount' | 'hasPickaxe' | 'hasAxe'>): InventoryItemId[] => {
   const slots: InventoryItemId[] = new Array(SLOT_COUNT).fill(null);
-  if (state.hasPickaxe) slots[PICKAXE_SLOT_INDEX] = 'pickaxe';
-  if (state.hasAxe) slots[AXE_SLOT_INDEX] = 'axe';
-  if (state.torchCount > 0) slots[TORCH_SLOT_INDEX] = 'torch';
-  if (state.inventoryCount > 0) slots[FLORA_SLOT_INDEX] = 'flora';
-  if (state.stickCount > 0) slots[STICK_SLOT_INDEX] = 'stick';
-  if (state.stoneCount > 0) slots[STONE_SLOT_INDEX] = 'stone';
-  if (state.shardCount > 0) slots[SHARD_SLOT_INDEX] = 'shard';
+  if (state.hasPickaxe) slots[PICKAXE_SLOT_INDEX] = ItemType.PICKAXE;
+  if (state.hasAxe) slots[AXE_SLOT_INDEX] = ItemType.AXE;
+  if (state.torchCount > 0) slots[TORCH_SLOT_INDEX] = ItemType.TORCH;
+  if (state.inventoryCount > 0) slots[FLORA_SLOT_INDEX] = ItemType.FLORA;
+  if (state.stickCount > 0) slots[STICK_SLOT_INDEX] = ItemType.STICK;
+  if (state.stoneCount > 0) slots[STONE_SLOT_INDEX] = ItemType.STONE;
+  if (state.shardCount > 0) slots[SHARD_SLOT_INDEX] = ItemType.SHARD;
   return slots;
 };
 
@@ -67,7 +69,7 @@ interface GameState {
   // Pickaxe is crafted via physics-item crafting; it should not exist by default.
   hasPickaxe: boolean;
   hasAxe: boolean;
-  currentTool: 'pickaxe' | 'axe';
+  currentTool: ItemType.PICKAXE | ItemType.AXE;
   // New Inventory System
   inventorySlots: InventoryItemId[];
   selectedSlotIndex: number;
@@ -76,9 +78,9 @@ interface GameState {
    * General inventory helpers for stackable items.
    * Keep these small and predictable — game logic can build richer behavior on top.
    */
-  addItem: (item: StackableInventoryItemId, amount?: number) => void;
-  removeItem: (item: StackableInventoryItemId, amount?: number) => void;
-  getItemCount: (item: StackableInventoryItemId) => number;
+  addItem: (item: InventoryItemId, amount?: number) => void;
+  removeItem: (item: InventoryItemId, amount?: number) => void;
+  getItemCount: (item: InventoryItemId) => number;
 
   addFlora: () => void;
   removeFlora: () => void;
@@ -87,13 +89,13 @@ interface GameState {
   removeLuminousFlora: () => void;
   setHasPickaxe: (has: boolean) => void;
   setHasAxe: (has: boolean) => void;
-  setCurrentTool: (tool: 'pickaxe' | 'axe') => void;
+  setCurrentTool: (tool: ItemType.PICKAXE | ItemType.AXE) => void;
 
   setSelectedSlotIndex: (index: number) => void;
   cycleSlot: (direction: 1 | -1) => void;
 }
 
-export const useInventoryStore = create<GameState>((set) => ({
+export const useInventoryStore = create<GameState>((set, get) => ({
   // "Flora" starts empty in normal play. In `?debug` mode, start with some for fast iteration.
   inventoryCount: INITIAL_FLORA_COUNT,
   torchCount: 0, // Start with zero torches.
@@ -103,7 +105,7 @@ export const useInventoryStore = create<GameState>((set) => ({
   luminousFloraCount: 0,
   hasPickaxe: false,
   hasAxe: false,
-  currentTool: 'pickaxe',
+  currentTool: ItemType.PICKAXE,
   // New Inventory System
   // Slots are stable; unlocks (like `hasAxe`) control whether some items are usable.
   inventorySlots: computeSlots({ inventoryCount: INITIAL_FLORA_COUNT, torchCount: 0, stickCount: 0, stoneCount: 0, shardCount: 0, hasPickaxe: false, hasAxe: false }),
@@ -113,6 +115,10 @@ export const useInventoryStore = create<GameState>((set) => ({
   addItem: (item, amount = 1) => set((state) => {
     const amt = Math.max(0, Math.floor(amount));
     if (amt === 0) return state;
+
+    const metadata = ITEM_REGISTRY[item];
+    if (!metadata?.stateKey) return state;
+
     const nextCounts = {
       inventoryCount: state.inventoryCount,
       torchCount: state.torchCount,
@@ -120,17 +126,19 @@ export const useInventoryStore = create<GameState>((set) => ({
       stoneCount: state.stoneCount,
       shardCount: state.shardCount,
     };
-    if (item === 'flora') nextCounts.inventoryCount += amt;
-    if (item === 'torch') nextCounts.torchCount += amt;
-    if (item === 'stick') nextCounts.stickCount += amt;
-    if (item === 'stone') nextCounts.stoneCount += amt;
-    if (item === 'shard') nextCounts.shardCount += amt;
+
+    (nextCounts as any)[metadata.stateKey] += amt;
+
     const inventorySlots = computeSlots({ ...nextCounts, hasPickaxe: state.hasPickaxe, hasAxe: state.hasAxe });
     return { ...nextCounts, inventorySlots };
   }),
   removeItem: (item, amount = 1) => set((state) => {
     const amt = Math.max(0, Math.floor(amount));
     if (amt === 0) return state;
+
+    const metadata = ITEM_REGISTRY[item];
+    if (!metadata?.stateKey) return state;
+
     const nextCounts = {
       inventoryCount: state.inventoryCount,
       torchCount: state.torchCount,
@@ -138,11 +146,9 @@ export const useInventoryStore = create<GameState>((set) => ({
       stoneCount: state.stoneCount,
       shardCount: state.shardCount,
     };
-    if (item === 'flora') nextCounts.inventoryCount = Math.max(0, nextCounts.inventoryCount - amt);
-    if (item === 'torch') nextCounts.torchCount = Math.max(0, nextCounts.torchCount - amt);
-    if (item === 'stick') nextCounts.stickCount = Math.max(0, nextCounts.stickCount - amt);
-    if (item === 'stone') nextCounts.stoneCount = Math.max(0, nextCounts.stoneCount - amt);
-    if (item === 'shard') nextCounts.shardCount = Math.max(0, nextCounts.shardCount - amt);
+
+    (nextCounts as any)[metadata.stateKey] = Math.max(0, (nextCounts as any)[metadata.stateKey] - amt);
+
     const inventorySlots = computeSlots({ ...nextCounts, hasPickaxe: state.hasPickaxe, hasAxe: state.hasAxe });
 
     // If the currently selected slot becomes unavailable, fall back to slot 1 (index 0).
@@ -151,22 +157,11 @@ export const useInventoryStore = create<GameState>((set) => ({
 
     return { ...nextCounts, inventorySlots, selectedSlotIndex };
   }),
-  getItemCount: (item) => {
-    const state = useInventoryStore.getState();
-    switch (item) {
-      case 'flora':
-        return state.inventoryCount;
-      case 'torch':
-        return state.torchCount;
-      case 'stick':
-        return state.stickCount;
-      case 'stone':
-        return state.stoneCount;
-      case 'shard':
-        return state.shardCount;
-      default:
-        return 0;
-    }
+  getItemCount: (item: InventoryItemId) => {
+    if (!item) return 0;
+    const state = get();
+    const metadata = ITEM_REGISTRY[item as ItemType];
+    return metadata?.stateKey ? (state as any)[metadata.stateKey] : 0;
   },
 
   // Back-compat convenience helpers (older codepaths). Prefer `addItem/removeItem` for new logic.
@@ -191,7 +186,7 @@ export const useInventoryStore = create<GameState>((set) => ({
   }),
   setHasAxe: (has: boolean) => set((state) => {
     // If the player loses the axe, ensure gameplay doesn't stay in an invalid tool mode.
-    const nextTool = !has && state.currentTool === 'axe' ? 'pickaxe' : state.currentTool;
+    const nextTool = !has && state.currentTool === ItemType.AXE ? ItemType.PICKAXE : state.currentTool;
     const inventorySlots = computeSlots({
       inventoryCount: state.inventoryCount,
       torchCount: state.torchCount,
@@ -214,7 +209,7 @@ export const useInventoryStore = create<GameState>((set) => ({
 
     // Selecting the axe slot only equips it if it's unlocked; otherwise we fall back to pickaxe.
     const nextTool: GameState['currentTool'] =
-      selectedItem === 'axe' && state.hasAxe ? 'axe' : 'pickaxe';
+      selectedItem === ItemType.AXE && state.hasAxe ? ItemType.AXE : ItemType.PICKAXE;
 
     return { selectedSlotIndex: nextIndex, currentTool: nextTool };
   }),
@@ -229,7 +224,7 @@ export const useInventoryStore = create<GameState>((set) => ({
     }
     const selectedItem = state.inventorySlots[nextIndex];
     const nextTool: GameState['currentTool'] =
-      selectedItem === 'axe' && state.hasAxe ? 'axe' : 'pickaxe';
+      selectedItem === ItemType.AXE && state.hasAxe ? ItemType.AXE : ItemType.PICKAXE;
     return { selectedSlotIndex: nextIndex, currentTool: nextTool };
   }),
 }));

@@ -133,7 +133,10 @@ export enum ItemType {
   STICK = 'stick',
   SHARD = 'shard',
   PICKAXE = 'pickaxe',
-  FIRE = 'fire'
+  FIRE = 'fire',
+  FLORA = 'flora',
+  TORCH = 'torch',
+  AXE = 'axe'
 }
 
 export interface ActivePhysicsItem {

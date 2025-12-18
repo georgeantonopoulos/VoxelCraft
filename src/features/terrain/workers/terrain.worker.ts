@@ -25,7 +25,7 @@ ctx.onmessage = async (e: MessageEvent) => {
         } else if (type === 'GENERATE') {
 
             const { cx, cz } = payload;
-            const t0 = performance.now();
+            // const t0 = performance.now();
             // console.log('[terrain.worker] GENERATE start', cx, cz);
 
             // 1. Fetch persistent modifications (Async)

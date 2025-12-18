@@ -6,6 +6,7 @@ import { Vector2, Vector3, Object3D, Matrix3, Quaternion } from 'three';
 import type { PointLight } from 'three';
 import { LuminaFlora } from '@features/flora/components/LuminaFlora';
 import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
+import { ItemType } from '@/types';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
@@ -18,8 +19,8 @@ export const FloraPlacer: React.FC = () => {
 
     const addEntity = useWorldStore(s => s.addEntity);
     const floraEntities = useWorldStore(s => s.entities);
-    const floras = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'FLORA'), [floraEntities]);
-    const torches = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === 'TORCH'), [floraEntities]);
+    const floras = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === ItemType.FLORA), [floraEntities]);
+    const torches = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === ItemType.TORCH), [floraEntities]);
     const lastPlaceTime = useRef(0);
     const terrainTargets = useRef<Object3D[]>([]);
     const lumaLightRefs = useRef<Array<PointLight | null>>([]);
@@ -52,7 +53,7 @@ export const FloraPlacer: React.FC = () => {
         let found = false;
 
         entities.forEach((entity) => {
-            if (entity.type !== 'FLORA') return;
+            if (entity.type !== ItemType.FLORA) return;
             const body = (entity as any).bodyRef?.current;
             if (body && typeof body.translation === 'function') {
                 const t = body.translation();
@@ -130,10 +131,10 @@ export const FloraPlacer: React.FC = () => {
             emitDebug(`selectedSlot=${state.selectedSlotIndex} selectedItem=${selectedItem}`);
 
             // Torches are stackable and are consumed when placed.
-            const wantsTorch = selectedItem === 'torch';
-            const wantsFlora = selectedItem === 'flora';
-            const hasFlora = state.inventoryCount > 0;
-            const hasTorch = state.getItemCount('torch') > 0;
+            const wantsTorch = selectedItem === ItemType.TORCH;
+            const wantsFlora = selectedItem === ItemType.FLORA;
+            const hasFlora = state.getItemCount(ItemType.FLORA) > 0;
+            const hasTorch = state.getItemCount(ItemType.TORCH) > 0;
 
             if ((wantsTorch && hasTorch) || (wantsFlora && hasFlora)) {
                 const now = performance.now();
@@ -141,13 +142,19 @@ export const FloraPlacer: React.FC = () => {
                 emitDebug('placement attempt');
 
                 raycaster.setFromCamera(new Vector2(0, 0), camera);
-                // Limit raycast to terrain meshes (ancestor-aware) to reduce work without breaking hits
-                terrainTargets.current = [];
-                scene.traverse(obj => {
-                    if ((obj as any).isMesh && isTerrain(obj)) {
-                        terrainTargets.current.push(obj);
-                    }
-                });
+                // Optimize: instead of whole-scene traversal, just find top-level terrain or physics groups
+                terrainTargets.current = scene.children.filter(obj =>
+                    (obj as any).isMesh && isTerrain(obj) || obj.userData?.type === 'terrain'
+                );
+
+                // If the terrain is buried in a group (common for VoxelTerrain), traverse only once or use a tag
+                if (terrainTargets.current.length === 0) {
+                    scene.traverse(obj => {
+                        if ((obj as any).isMesh && isTerrain(obj)) {
+                            terrainTargets.current.push(obj);
+                        }
+                    });
+                }
                 emitDebug(`terrainTargets=${terrainTargets.current.length}`);
 
                 scene.updateMatrixWorld();
@@ -177,13 +184,13 @@ export const FloraPlacer: React.FC = () => {
 
                         addEntity({
                             id,
-                            type: 'TORCH',
+                            type: ItemType.TORCH,
                             position: pos,
                             rotation
                         });
                         emitDebug(`Placed Torch id=${id}`);
                         // Consume a torch and stop holding it (back to slot 1 / empty).
-                        state.removeItem('torch', 1);
+                        state.removeItem(ItemType.TORCH, 1);
                         state.setSelectedSlotIndex(0);
                     } else {
                         // Place slightly off surface so physics settles cleanly.
@@ -192,13 +199,13 @@ export const FloraPlacer: React.FC = () => {
                         const bodyRef = React.createRef<any>();
                         addEntity({
                             id,
-                            type: 'FLORA',
+                            type: ItemType.FLORA,
                             position: pos,
                             bodyRef,
                         });
 
                         // Consume one flora.
-                        state.removeItem('flora', 1);
+                        state.removeItem(ItemType.FLORA, 1);
                         emitDebug(`Placed Flora id=${id}`);
                     }
                     lastPlaceTime.current = now;

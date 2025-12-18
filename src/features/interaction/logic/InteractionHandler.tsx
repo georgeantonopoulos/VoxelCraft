@@ -6,6 +6,8 @@ import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType } from '@/types';
 import { useSettingsStore } from '@state/SettingsStore';
 import { useInputStore } from '@/state/InputStore';
+import { useRapier } from '@react-three/rapier';
+import { emitSpark } from '../components/SparkSystem';
 
 interface InteractionHandlerProps {
   setInteracting: (v: boolean) => void;
@@ -13,7 +15,8 @@ interface InteractionHandlerProps {
 }
 
 export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInteracting, setAction }) => {
-  const { camera, scene } = useThree();
+  const { camera } = useThree();
+  const { world, rapier } = useRapier();
   const inputMode = useSettingsStore(s => s.inputMode);
   const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
   const isDigging = useInputStore(s => s.isDigging);
@@ -28,7 +31,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
   useEffect(() => {
     if (inputMode !== 'touch') return;
     const selectedItem = inventorySlots[selectedSlotIndex];
-    const pickaxeSelected = hasPickaxe && selectedItem === 'pickaxe';
+    const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
 
     // Only DIG when the crafted pickaxe is unlocked + explicitly selected.
     // BUILD is intentionally disabled for now.
@@ -46,7 +49,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
     const tryThrowSelected = (): boolean => {
       const selectedItem = inventorySlots[selectedSlotIndex];
       // Note: "fire" is not throwable.
-      if (selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return false;
+      if (selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return false;
 
       // Calculate Throw Vector
       const origin = camera.position.clone();
@@ -63,7 +66,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       velocity.y += 2.0; // slight arc up
 
       // Spawn Item
-      const type = selectedItem === 'stick' ? ItemType.STICK : selectedItem === 'stone' ? ItemType.STONE : ItemType.SHARD;
+      const type = selectedItem === ItemType.STICK ? ItemType.STICK : selectedItem === ItemType.STONE ? ItemType.STONE : ItemType.SHARD;
       spawnPhysicsItem(type, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
 
       // Remove from Inventory
@@ -79,7 +82,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       if (!document.pointerLockElement) return;
 
       const selectedItem = inventorySlots[selectedSlotIndex];
-      const pickaxeSelected = hasPickaxe && selectedItem === 'pickaxe';
+      const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
 
       // Left Click
       if (e.button === 0) {
@@ -92,54 +95,52 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
 
         // 2. Fire Creation (Holding Stone)
         // 2. Fire Creation (Holding Stone)
-        if (selectedItem === 'stone') {
-          // Raycast to find target PhysicsItem
-          const raycaster = new THREE.Raycaster();
-          raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+        if (selectedItem === ItemType.STONE) {
+          // OPTIMIZATION: Use Rapier Raycast instead of Three.js Scene Traversal
+          const origin = camera.position;
+          const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
-          // We need to access the scene to intersect objects.
-          // InteractionHandler doesn't have direct access to the physics objects list meshes easily
-          // unless we traverse the scene.
-          // Best way: Traverse scene children and find RigidBody meshes with userData.type
-          const intersects = raycaster.intersectObjects(scene.children, true);
+          const ray = new rapier.Ray(origin, direction);
+          const hit = world.castRay(ray, 3.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
+            // Filter for Stones
+            return collider.parent()?.userData?.type === ItemType.STONE;
+          });
 
-          for (const hit of intersects) {
-            if (hit.distance > 3.0) continue; // Reach distance
+          if (hit) {
+            const collider = hit.collider;
+            const rigidBody = collider.parent();
+            const hitPoint = origin.clone().add(direction.clone().multiplyScalar(hit.timeOfImpact));
 
-            // Traverse up to find object with userData
-            let obj: THREE.Object3D | null = hit.object;
-            while (obj && (!obj.userData || !obj.userData.type)) {
-              obj = obj.parent;
-            }
-
-            if (obj && obj.userData && obj.userData.type === ItemType.STONE) {
+            if (rigidBody && (rigidBody.userData as any)?.type === ItemType.STONE) {
               // Hit a stone with a stone!
-              // Visuals
-              import('../components/SparkSystem').then(mod => {
-                mod.emitSpark(hit.point);
-              });
+              emitSpark(hitPoint);
 
               // Trigger "Hit" Animation
-              setAction('DIG'); // Reuse DIG animation trigger for now
+              setAction('DIG');
               setTimeout(() => setAction(null), 100);
-
-              // Helper to get distance between two points
-              const distSq = (p1: [number, number, number], p2: [number, number, number]) => {
-                const dx = p1[0] - p2[0];
-                const dy = p1[1] - p2[1];
-                const dz = p1[2] - p2[2];
-                return dx * dx + dy * dy + dz * dz;
-              };
 
               // Logic: Check for 4 sticks nearby
               const state = usePhysicsItemStore.getState();
-              const targetItem = state.items.find(i => i.id === obj!.userData.id);
+              const targetItem = state.items.find(i => i.id === (rigidBody.userData as any).id);
 
               if (targetItem) {
-                // Find sticks nearby (radius 1.5)
-                const nearbySticks = state.items.filter(i =>
-                  i.type === ItemType.STICK &&
-                  distSq(i.position, targetItem.position) < 2.25 // 1.5^2
+                // OPTIMIZATION: Use Rapier's sphere intersection query instead of O(N) Array.filter
+                const nearbySticks: any[] = [];
+                const spherePos = { x: targetItem.position[0], y: targetItem.position[1], z: targetItem.position[2] };
+                const sphereRadius = 1.5;
+
+                world.intersectionsWithShape(
+                  spherePos,
+                  { x: 0, y: 0, z: 0, w: 1 },
+                  new rapier.Ball(sphereRadius),
+                  (collider) => {
+                    const rigidBody = collider.parent();
+                    if (rigidBody && (rigidBody.userData as any)?.type === ItemType.STICK) {
+                      const id = (rigidBody.userData as any).id;
+                      if (id) nearbySticks.push({ id });
+                    }
+                    return true; // continue search
+                  }
                 );
 
                 if (nearbySticks.length >= 4) {
@@ -188,30 +189,24 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
         }
 
         // 3. Torch Collection (Holding Stick)
-        if (selectedItem === 'stick') {
-          const raycaster = new THREE.Raycaster();
-          raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-          const intersects = raycaster.intersectObjects(scene.children, true);
+        if (selectedItem === ItemType.STICK) {
+          const origin = camera.position;
+          const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
-          for (const hit of intersects) {
-            if (hit.distance > 3.0) continue;
-            let obj: THREE.Object3D | null = hit.object;
-            while (obj && (!obj.userData || !obj.userData.type)) {
-              obj = obj.parent;
-            }
+          const ray = new rapier.Ray(origin, direction);
+          const hit = world.castRay(ray, 3.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
+            return collider.parent()?.userData?.type === ItemType.FIRE;
+          });
 
-            if (obj && obj.userData && obj.userData.type === ItemType.FIRE) {
+          if (hit) {
+            const collider = hit.collider;
+            const rigidBody = collider.parent();
+
+            if (rigidBody && (rigidBody.userData as any)?.type === ItemType.FIRE) {
               // Hit Fire with Stick!
-              // User requirement: "converts into a torch in the inventory" but "fire stays"
-
-              // const removeItem = usePhysicsItemStore.getState().removeItem;
-              // Remove Fire -> REMOVED per user request
-              // removeItem(obj.userData.id);
-
-              // Update Inventory: Remove 1 stick, Add 1 torch
               const inv = useInventoryStore.getState();
-              inv.removeItem('stick', 1);
-              inv.addItem('torch', 1);
+              inv.removeItem(ItemType.STICK, 1);
+              inv.addItem(ItemType.TORCH, 1);
 
               // Animation
               setAction('DIG');

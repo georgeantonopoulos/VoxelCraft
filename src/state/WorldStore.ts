@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Quaternion, Vector3 } from 'three';
 import React from 'react';
 import { getChunkKeyFromPos, getNeighborKeys } from '@utils/spatial';
+import { ItemType } from '@/types';
 
 export interface FloraHotspot {
   x: number;
@@ -13,7 +14,7 @@ export interface GroundHotspot {
   z: number;
 }
 
-export type EntityType = 'FLORA' | 'TORCH' | 'TREE_STUMP' | 'BEE';
+export type EntityType = ItemType.FLORA | ItemType.TORCH | 'TREE_STUMP' | 'BEE';
 
 export interface EntityData {
   id: string;

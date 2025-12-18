@@ -29,7 +29,7 @@ import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/Biom
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { useSettingsStore } from '@state/SettingsStore';
-import { useInputStore } from '@/state/InputStore';
+// import { useInputStore } from '@/state/InputStore';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 import { TouchCameraControls } from '@features/player/TouchCameraControls';
@@ -175,7 +175,7 @@ const DebugControls: React.FC<{
       }, { collapsed: true }),
 
       'Tools': folder({
-        'Copy Config': button((get) => {
+        'Copy Config': button(() => {
           const config = { ...props.values };
           console.log('[DebugConfig] JSON:', JSON.stringify(config, null, 2));
           navigator.clipboard.writeText(JSON.stringify(config, null, 2))
@@ -195,7 +195,7 @@ const DebugControls: React.FC<{
 };
 
 const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
-  const { gl, camera } = useThree();
+  const { gl } = useThree();
   const lastLog = useRef(0);
 
   useFrame(({ clock }) => {
@@ -203,7 +203,7 @@ const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
     if (now - lastLog.current < 2.0) return; // Log every 2s
     lastLog.current = now;
 
-    const info = gl.info;
+    // info
     // console.log('[DebugGL] Stats:', {
     //   calls: info.render.calls,
     //   triangles: info.render.triangles,
@@ -1548,6 +1548,7 @@ const App: React.FC = () => {
               <FloraPlacer />
               {bedrockPlaneEnabled && <BedrockPlane />}
               <PhysicsItemRenderer />
+              <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
             </Physics>
             {/* Add FirstPersonTools here, outside Physics but inside Canvas/Suspense if needed, or just inside Canvas */}
             <FirstPersonTools />
@@ -1558,9 +1559,9 @@ const App: React.FC = () => {
           {!skipPost && postProcessingEnabled ? (
             <EffectComposer>
               {/* N8AO: Adds depth to the voxels without darkening the whole screen too much.
-                   distanceFalloff helps prevent artifacts at sky/infinity. 
-                   halfRes fixes black frame issues on high-DPI/Mac devices.
-               */}
+                 distanceFalloff helps prevent artifacts at sky/infinity. 
+                 halfRes fixes black frame issues on high-DPI/Mac devices.
+             */}
               {aoEnabled && (
                 <N8AO
                   halfRes
@@ -1607,7 +1608,6 @@ const App: React.FC = () => {
 
           <SparkSystem />
           <BubbleSystem />
-          <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
         </Canvas>
 
         {gameStarted && (

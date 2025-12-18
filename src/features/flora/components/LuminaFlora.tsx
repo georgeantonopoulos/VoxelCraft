@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 
+import { ItemType } from '@/types';
+import { getItemMetadata } from '../../interaction/logic/ItemRegistry';
+
 interface LuminaFloraProps {
   id: string;
   position: [number, number, number];
@@ -18,10 +21,13 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
   const refToUse = bodyRef || internalRef;
 
   // Keep these stable to avoid re-allocations; we reuse the seed and a shared color.
-  const uniforms = useMemo(() => ({
-    uColor: { value: new THREE.Color('#00FFFF') }, // Cyan
-    uSeed: { value: seed }
-  }), [seed]);
+  const uniforms = useMemo(() => {
+    const metadata = getItemMetadata(ItemType.FLORA);
+    return {
+      uColor: { value: new THREE.Color(metadata?.color || '#00FFFF') }, // Cyan
+      uSeed: { value: seed }
+    };
+  }, [seed]);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
@@ -40,7 +46,7 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
       position={position}
       restitution={0.2}
       friction={0.8}
-      userData={{ type: 'flora', id }} // For interaction (pickup on dig)
+      userData={{ type: ItemType.FLORA, id }} // For interaction (pickup on dig)
     >
       <group>
         {/* The Light Source - Cool White, moderate range */}

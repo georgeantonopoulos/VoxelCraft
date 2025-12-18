@@ -11,6 +11,7 @@ import { StickTool } from './StickTool';
 import { StoneTool } from './StoneTool';
 import { ShardTool } from './ShardTool';
 import { RIGHT_HAND_HELD_ITEM_POSES } from '@features/interaction/logic/HeldItemPoses';
+import { ItemType } from '@/types';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 
@@ -49,7 +50,7 @@ export const FirstPersonTools: React.FC = () => {
             scale: { value: 0.41, min: 0.2, max: 1.5, step: 0.01 },
             hiddenYOffset: { value: -0.8, min: -2.0, max: -0.2, step: 0.01 },
         },
-        { hidden: !debugMode }
+        ({ hidden: !debugMode } as any)
     );
 
     const [rightHandStickPoseDebug, setRightHandStickPoseDebug] = useControls(
@@ -78,7 +79,7 @@ export const FirstPersonTools: React.FC = () => {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            kind: 'stick',
+                            kind: ItemType.STICK,
                             stick: {
                                 xOffset,
                                 y,
@@ -102,7 +103,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        { hidden: !debugMode }
+        ({ hidden: !debugMode } as any)
     );
 
     const [rightHandStonePoseDebug, setRightHandStonePoseDebug] = useControls(
@@ -129,7 +130,7 @@ export const FirstPersonTools: React.FC = () => {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            kind: 'stone',
+                            kind: ItemType.STONE,
                             stone: {
                                 xOffset,
                                 y,
@@ -152,7 +153,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        { hidden: !debugMode }
+        ({ hidden: !debugMode } as any)
     );
 
     // Leva keeps values around across HMR; in debug mode we want the sliders to start
@@ -221,7 +222,7 @@ export const FirstPersonTools: React.FC = () => {
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
             // Only animate when pickaxe is explicitly selected.
-            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
+            if (selectedItem !== ItemType.PICKAXE && selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return;
             if (e.button === 0 && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -244,7 +245,7 @@ export const FirstPersonTools: React.FC = () => {
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
             // Allow animation for pickaxe, stone, and stick
-            if (selectedItem !== 'pickaxe' && selectedItem !== 'stick' && selectedItem !== 'stone' && selectedItem !== 'shard') return;
+            if (selectedItem !== ItemType.PICKAXE && selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return;
             // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
             if (detail.action === 'DIG') {
                 isDigging.current = true;

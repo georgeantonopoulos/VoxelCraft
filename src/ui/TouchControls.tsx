@@ -7,7 +7,6 @@ export const TouchControls: React.FC = () => {
   const { setMoveVector, setLookDelta, setJumping, setDigging } = useInputStore();
 
   // Joystick State
-  const joystickRef = useRef<HTMLDivElement>(null);
   const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 }); // Visual offset
   const joystickOrigin = useRef<{ x: number, y: number } | null>(null);
   const joystickId = useRef<number | null>(null);
@@ -95,59 +94,59 @@ export const TouchControls: React.FC = () => {
       >
         {/* Left Half: Move */}
         <div className="w-1/2 h-full relative">
-            {/* Visual Joystick Indicator (only visible when active) */}
-            {joystickOrigin.current && (
-                <div
-                    className="absolute w-24 h-24 rounded-full border-2 border-white/30 bg-black/20 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                    style={{ left: joystickOrigin.current.x, top: joystickOrigin.current.y }}
-                >
-                    <div
-                        className="absolute w-10 h-10 rounded-full bg-white/50 -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2"
-                        style={{ transform: `translate(calc(-50% + ${joystickPos.x}px), calc(-50% + ${joystickPos.y}px))` }}
-                    />
-                </div>
-            )}
+          {/* Visual Joystick Indicator (only visible when active) */}
+          {joystickOrigin.current && (
+            <div
+              className="absolute w-24 h-24 rounded-full border-2 border-white/30 bg-black/20 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+              style={{ left: joystickOrigin.current.x, top: joystickOrigin.current.y }}
+            >
+              <div
+                className="absolute w-10 h-10 rounded-full bg-white/50 -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2"
+                style={{ transform: `translate(calc(-50% + ${joystickPos.x}px), calc(-50% + ${joystickPos.y}px))` }}
+              />
+            </div>
+          )}
 
-            {/* Hint text if idle */}
-            {!joystickOrigin.current && (
-                <div className="absolute bottom-20 left-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
-                    Move
-                </div>
-            )}
+          {/* Hint text if idle */}
+          {!joystickOrigin.current && (
+            <div className="absolute bottom-20 left-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
+              Move
+            </div>
+          )}
         </div>
 
         {/* Right Half: Look */}
         <div className="w-1/2 h-full relative">
-            {!lookId.current && (
-                <div className="absolute bottom-20 right-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
-                    Look
-                </div>
-            )}
+          {!lookId.current && (
+            <div className="absolute bottom-20 right-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
+              Look
+            </div>
+          )}
         </div>
       </div>
 
       {/* Action Buttons Overlay */}
       <div className="absolute bottom-8 right-8 flex flex-col gap-4 pointer-events-auto">
         <div className="flex gap-4">
-             {/* DIG (Left Click) */}
-             <button
-                className="w-16 h-16 rounded-full bg-red-500/50 border-2 border-red-400 text-white font-bold backdrop-blur-sm active:bg-red-500/80 active:scale-95 transition-all flex items-center justify-center"
-                onPointerDown={() => setDigging(true)}
-                onPointerUp={() => setDigging(false)}
-                onPointerLeave={() => setDigging(false)}
-            >
-                DIG
-            </button>
+          {/* DIG (Left Click) */}
+          <button
+            className="w-16 h-16 rounded-full bg-red-500/50 border-2 border-red-400 text-white font-bold backdrop-blur-sm active:bg-red-500/80 active:scale-95 transition-all flex items-center justify-center"
+            onPointerDown={() => setDigging(true)}
+            onPointerUp={() => setDigging(false)}
+            onPointerLeave={() => setDigging(false)}
+          >
+            DIG
+          </button>
         </div>
 
         {/* JUMP */}
         <button
-            className="w-20 h-20 self-end rounded-full bg-slate-200/50 border-2 border-white text-white font-bold backdrop-blur-sm active:bg-slate-200/80 active:scale-95 transition-all flex items-center justify-center"
-            onPointerDown={() => setJumping(true)}
-            onPointerUp={() => setJumping(false)}
-            onPointerLeave={() => setJumping(false)}
+          className="w-20 h-20 self-end rounded-full bg-slate-200/50 border-2 border-white text-white font-bold backdrop-blur-sm active:bg-slate-200/80 active:scale-95 transition-all flex items-center justify-center"
+          onPointerDown={() => setJumping(true)}
+          onPointerUp={() => setJumping(false)}
+          onPointerLeave={() => setJumping(false)}
         >
-            JUMP
+          JUMP
         </button>
       </div>
     </div>

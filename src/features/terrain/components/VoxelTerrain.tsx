@@ -4,6 +4,7 @@ import { useThree, useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
 import type { Collider } from '@dimforge/rapier3d-compat';
 import { TerrainService } from '@features/terrain/logic/terrainService';
+import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
@@ -17,6 +18,7 @@ import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
+import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 
 
 // Sounds
@@ -97,7 +99,7 @@ const rayHitsFlora = (
 
   // Iterate over placed flora
   for (const flora of state.entities.values()) {
-    if (flora.type !== 'FLORA') continue;
+    if (flora.type !== ItemType.FLORA) continue;
 
     // Use the live physics position if available, otherwise fall back to initial spawn position
     const currentPos = flora.bodyRef?.current
@@ -136,7 +138,7 @@ const rayHitsTorch = (
   const p = new THREE.Vector3();
 
   for (const ent of state.entities.values()) {
-    if (ent.type !== 'TORCH') continue;
+    if (ent.type !== ItemType.TORCH) continue;
     p.copy(ent.position);
     tmp.copy(p).sub(origin);
     const t = tmp.dot(dir);
@@ -327,7 +329,7 @@ const LeafPickupEffect = ({
   start: THREE.Vector3;
   color?: string;
   geometry?: 'octahedron' | 'sphere';
-  item?: 'torch' | 'flora' | 'stick' | 'stone';
+  item?: ItemType;
   onDone: () => void;
 }) => {
   const { camera } = useThree();
@@ -376,17 +378,25 @@ const LeafPickupEffect = ({
     meshRef.current.rotation.y += delta * 4.0;
   });
 
+  const metadata = item ? getItemMetadata(item) : null;
+  const itemColor = color || metadata?.color || '#00FFFF';
+
   return (
     <group ref={meshRef}>
-      {item === 'stick' ? (
+      {item === ItemType.STICK ? (
         <mesh rotation={[Math.PI * 0.5, 0, 0]} castShadow receiveShadow>
           <cylinderGeometry args={[0.05, 0.045, 0.75, 10]} />
-          <meshStandardMaterial color="#8b5a2b" roughness={0.92} metalness={0.0} toneMapped={false} />
+          <meshStandardMaterial color={itemColor} roughness={0.92} metalness={0.0} toneMapped={false} />
         </mesh>
-      ) : item === 'stone' ? (
+      ) : item === ItemType.STONE ? (
         <mesh castShadow receiveShadow>
           <dodecahedronGeometry args={[0.18, 0]} />
-          <meshStandardMaterial color="#8e8e9a" roughness={0.92} metalness={0.0} toneMapped={false} />
+          <meshStandardMaterial color={itemColor} roughness={0.92} metalness={0.0} toneMapped={false} />
+        </mesh>
+      ) : item === ItemType.SHARD ? (
+        <mesh castShadow receiveShadow>
+          <octahedronGeometry args={[0.12, 0]} />
+          <meshStandardMaterial color={itemColor} roughness={0.4} metalness={0.8} toneMapped={false} />
         </mesh>
       ) : (
         <mesh castShadow receiveShadow>
@@ -396,9 +406,9 @@ const LeafPickupEffect = ({
             <octahedronGeometry args={[0.15, 0]} />
           )}
           <meshStandardMaterial
-            color={color}
-            emissive={color}
-            emissiveIntensity={1.2}
+            color={itemColor}
+            emissive={metadata?.emissive || itemColor}
+            emissiveIntensity={metadata?.emissiveIntensity || 1.2}
             roughness={0.3}
             metalness={0.0}
             toneMapped={false}
@@ -413,7 +423,6 @@ type ParticleKind = 'debris' | 'spark';
 
 const Particles = ({
   burstId,
-  active,
   position,
   color,
   direction,
@@ -423,120 +432,158 @@ const Particles = ({
   active: boolean;
   position: THREE.Vector3;
   color: string;
-  // Direction of ejection (usually from the surface toward the camera).
   direction: THREE.Vector3;
   kind: ParticleKind;
 }) => {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const count = 28;
-  const lifetimes = useRef<number[]>(new Array(count).fill(0));
-  // IMPORTANT: Do not use fill(new Vector3()) because it creates shared references.
-  const velocities = useRef<THREE.Vector3[]>(Array.from({ length: count }, () => new THREE.Vector3()));
-  const baseScales = useRef<number[]>(new Array(count).fill(1));
-  const meshMatRef = useRef<THREE.MeshStandardMaterial>(null);
-  const tmpDir = useMemo(() => new THREE.Vector3(), []);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const count = 512;
+  const nextIdx = useRef(0);
+
+  // GPU Attributes
+  const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+  const directionsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+  const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+  const colorsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+
+  const VSHADER = `
+    attribute vec3 aOffset;
+    attribute vec4 aDirection; // [vx, vy, vz, startTime]
+    attribute vec3 aParams;    // [life, scale, type] type 0: debris, 1: spark
+    attribute vec3 aColor;
+    uniform float uTime;
+    varying vec3 vColor;
+    varying float vType;
+
+    void main() {
+      float startTime = aDirection.w;
+      float life = aParams.x;
+      float age = uTime - startTime;
+
+      if (age < 0.0 || age > life) {
+          csm_Position = vec3(0.0, -9999.0, 0.0);
+          return;
+      }
+
+      vColor = aColor;
+      vType = aParams.z;
+
+      float progress = age / life;
+      
+      // Gravity
+      float gravity = mix(25.0, 32.0, vType);
+      
+      // Drag/Velocity dampening (fake)
+      float drag = mix(3.5, 6.0, vType);
+      vec3 animatedPos = aOffset + aDirection.xyz * (1.0 - exp(-drag * age)) / drag;
+      animatedPos.y -= 0.5 * gravity * age * age;
+
+      float s = aParams.y * (vType > 0.5 ? (1.0 - progress) * (1.0 - progress) : (1.0 - progress));
+      
+      // Rotation for debris
+      if (vType < 0.5) {
+          float rX = age * 10.0 + float(gl_InstanceID);
+          float rZ = age * 5.0 + float(gl_InstanceID) * 1.1;
+          
+          // X rotation
+          float sX = sin(rX);
+          float cX = cos(rX);
+          vec3 p = csm_Position;
+          csm_Position.y = p.y * cX - p.z * sX;
+          csm_Position.z = p.y * sX + p.z * cX;
+          
+          // Z rotation
+          float sZ = sin(rZ);
+          float cZ = cos(rZ);
+          p = csm_Position;
+          csm_Position.x = p.x * cZ - p.y * sZ;
+          csm_Position.y = p.x * sZ + p.y * cZ;
+      }
+
+      csm_Position = animatedPos + csm_Position * s;
+    }
+  `;
 
   useEffect(() => {
-    // Ignore the initial mount (burstId starts at 0).
     if (burstId === 0) return;
-    if (mesh.current && meshMatRef.current) {
-      mesh.current.visible = true;
-      meshMatRef.current.color.set(color);
-      meshMatRef.current.emissive.set(color);
-      // Make sparks read clearly even in bright scenes.
-      meshMatRef.current.emissiveIntensity = kind === 'spark' ? 1.35 : 0.35;
-      meshMatRef.current.transparent = kind === 'spark';
-      meshMatRef.current.opacity = kind === 'spark' ? 0.95 : 1.0;
-      meshMatRef.current.depthWrite = kind !== 'spark';
-      meshMatRef.current.blending = kind === 'spark' ? THREE.AdditiveBlending : THREE.NormalBlending;
-      meshMatRef.current.roughness = kind === 'spark' ? 0.15 : 0.8;
-      meshMatRef.current.metalness = kind === 'spark' ? 0.25 : 0.0;
-      meshMatRef.current.needsUpdate = true;
+    const mesh = meshRef.current;
+    if (!mesh || !offsetsAttr.current || !directionsAttr.current || !paramsAttr.current || !colorsAttr.current) return;
 
-      // Normalize direction once per burst.
-      tmpDir.copy(direction);
-      if (tmpDir.lengthSq() < 1e-6) tmpDir.set(0, 1, 0);
-      tmpDir.normalize();
+    const time = performance.now() / 1000;
+    const num = 28;
+    const col = new THREE.Color(color);
 
-      for (let i = 0; i < count; i++) {
-        dummy.position.copy(position);
-        // Small spatial jitter so the burst isn't a single point.
-        const jitter = kind === 'spark' ? 0.10 : 0.22;
-        dummy.position.x += (Math.random() - 0.5) * jitter;
-        dummy.position.y += (Math.random() - 0.5) * jitter;
-        dummy.position.z += (Math.random() - 0.5) * jitter;
-        // Sparks are thinner; debris are chunkier.
-        const baseScale = kind === 'spark' ? 0.06 : 0.14;
-        const scaleVar = kind === 'spark' ? 0.05 : 0.18;
-        const s = baseScale + Math.random() * scaleVar;
-        baseScales.current[i] = s;
-        dummy.scale.setScalar(s);
-        dummy.updateMatrix();
-        mesh.current.setMatrixAt(i, dummy.matrix);
-        lifetimes.current[i] = (kind === 'spark' ? 0.16 : 0.28) + Math.random() * (kind === 'spark' ? 0.18 : 0.42);
+    for (let i = 0; i < num; i++) {
+      const idx = nextIdx.current;
 
-        // Reuse velocity objects to avoid per-burst GC.
-        const v = velocities.current[i];
-        // Burst mostly outward from the hit point with some spread.
-        const spread = kind === 'spark' ? 0.7 : 1.1;
-        v.copy(tmpDir).multiplyScalar(kind === 'spark' ? 10.5 : 7.5);
-        // Avoid per-particle allocations in hot paths.
-        const randX = (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
-        const randY = (Math.random() * 1.0) * spread * (kind === 'spark' ? 2.6 : 3.2);
-        const randZ = (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
-        v.x += randX;
-        v.y += randY;
-        v.z += randZ;
-        // Ensure some upward lift so debris doesn't immediately vanish into the surface.
-        v.y = Math.max(v.y, kind === 'spark' ? 2.0 : 3.0);
-      }
-      mesh.current.instanceMatrix.needsUpdate = true;
+      // Origin with jitter
+      const jitter = kind === 'spark' ? 0.10 : 0.22;
+      offsetsAttr.current.setXYZ(idx,
+        position.x + (Math.random() - 0.5) * jitter,
+        position.y + (Math.random() - 0.5) * jitter,
+        position.z + (Math.random() - 0.5) * jitter
+      );
+
+      // Velocity
+      const spread = kind === 'spark' ? 0.7 : 1.1;
+      const speed = kind === 'spark' ? 10.5 : 7.5;
+      const vx = direction.x * speed + (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
+      const vy = Math.max(direction.y * speed + (Math.random() * 1.0) * spread * (kind === 'spark' ? 2.6 : 3.2), kind === 'spark' ? 2.0 : 3.0);
+      const vz = direction.z * speed + (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
+      directionsAttr.current.setXYZW(idx, vx, vy, vz, time);
+
+      // Params
+      const life = (kind === 'spark' ? 0.16 : 0.28) + Math.random() * (kind === 'spark' ? 0.18 : 0.42);
+      const baseScale = kind === 'spark' ? 0.06 : 0.14;
+      const scaleVar = kind === 'spark' ? 0.05 : 0.18;
+      const s = baseScale + Math.random() * scaleVar;
+      paramsAttr.current.setXYZ(idx, life, s, kind === 'spark' ? 1 : 0);
+
+      // Color
+      colorsAttr.current.setXYZ(idx, col.r, col.g, col.b);
+
+      nextIdx.current = (nextIdx.current + 1) % count;
     }
-    // NOTE: We intentionally key this effect off burstId so repeated clicks always re-trigger the burst.
-  }, [burstId, position, color, direction, kind, dummy, tmpDir]);
 
-  useFrame((_, delta) => {
-    if (!mesh.current || !mesh.current.visible) return;
-    let activeCount = 0;
-    for (let i = 0; i < count; i++) {
-      if (lifetimes.current[i] > 0) {
-        lifetimes.current[i] -= delta;
-        mesh.current.getMatrixAt(i, dummy.matrix);
-        dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
-        const v = velocities.current[i];
-        // Gravity + simple drag. Sparks fall faster and damp quicker.
-        const gravity = kind === 'spark' ? 32.0 : 25.0;
-        v.y -= gravity * delta;
-        const drag = kind === 'spark' ? 6.0 : 3.5;
-        v.multiplyScalar(Math.max(0, 1.0 - drag * delta));
+    offsetsAttr.current.needsUpdate = true;
+    directionsAttr.current.needsUpdate = true;
+    paramsAttr.current.needsUpdate = true;
+    colorsAttr.current.needsUpdate = true;
+  }, [burstId]);
 
-        dummy.position.addScaledVector(v, delta);
-
-        // Spin debris more; sparks can be subtle.
-        if (kind !== 'spark') {
-          dummy.rotation.x += delta * 10;
-          dummy.rotation.z += delta * 5;
-        }
-
-        // Fade out via scale to avoid per-instance opacity.
-        const t = Math.max(0, lifetimes.current[i]);
-        const fade = kind === 'spark' ? t * t : t;
-        dummy.scale.setScalar(baseScales.current[i] * Math.max(0.0, Math.min(1.0, fade)));
-        dummy.updateMatrix();
-        mesh.current.setMatrixAt(i, dummy.matrix);
-        activeCount++;
-      }
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    const mat = meshRef.current.material as any;
+    if (mat.uniforms) {
+      mat.uniforms.uTime.value = state.clock.getElapsedTime();
     }
-    mesh.current.instanceMatrix.needsUpdate = true;
-    if (activeCount === 0 && !active) mesh.current.visible = false;
   });
 
   return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, count]} visible={false} frustumCulled={false}>
-      {/* Slightly more organic than cubes (better read at small sizes). */}
-      <icosahedronGeometry args={[0.12, 0]} />
-      <meshStandardMaterial ref={meshMatRef} color="#fff" roughness={0.8} toneMapped={false} />
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]} frustumCulled={false}>
+      <icosahedronGeometry args={[0.12, 0]}>
+        <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(count * 3), 3]} />
+        <instancedBufferAttribute ref={directionsAttr} attach="attributes-aDirection" args={[new Float32Array(count * 4), 4]} />
+        <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={[new Float32Array(count * 3), 3]} />
+        <instancedBufferAttribute ref={colorsAttr} attach="attributes-aColor" args={[new Float32Array(count * 3), 3]} />
+      </icosahedronGeometry>
+      <CustomShaderMaterial
+        baseMaterial={THREE.MeshStandardMaterial}
+        vertexShader={VSHADER}
+        fragmentShader={`
+            varying vec3 vColor;
+            varying float vType;
+            void main() {
+                float emissive = vType > 0.5 ? 1.35 : 0.35;
+                csm_Emissive = vColor * emissive;
+                csm_DiffuseColor = vec4(vColor, 1.0);
+            }
+        `}
+        uniforms={{
+          uTime: { value: 0 }
+        }}
+        roughness={0.8}
+        toneMapped={false}
+      />
     </instancedMesh>
   );
 };
@@ -708,9 +755,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     active: false
   });
   const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
-  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: 'torch' | 'flora' | 'stick' | 'stone' }>>([]);
+  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
+
+  const lastProcessedPlayerChunk = useRef({ px: -999, pz: -999 });
 
   useEffect(() => {
     simulationManager.start();
@@ -740,19 +789,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     };
 
     return () => worker.terminate();
-  }, []);
+  }, [worldType]);
 
   useEffect(() => {
     if (initialLoadTriggered.current || !onInitialLoad) return;
 
     // Check if central chunks are ready (3x3 grid around 0,0)
     // 3x3 is enough to cover the immediate view so player doesn't see void
+    const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
+    const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
     const essentialKeys = [
-      '0,0', '0,1', '0,-1', '1,0', '-1,0',
-      '1,1', '1,-1', '-1,1', '-1,-1'
+      `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
+      `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
     ];
 
-    const allLoaded = essentialKeys.every(key => chunks[key]);
+    const allLoaded = essentialKeys.every(key => chunksRef.current[key]);
 
     if (allLoaded) {
       initialLoadTriggered.current = true;
@@ -765,76 +816,120 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
     const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
-    playerChunk.current.px = px;
-    playerChunk.current.pz = pz;
 
-    // Drive initial load from the authoritative ref, not React state: during streaming we may
-    // intentionally deprioritize state updates to reduce hitches.
-    if (!initialLoadTriggered.current && onInitialLoad) {
-      const essentialKeys = [
-        `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
-        `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
-      ];
-      const allLoaded = essentialKeys.every(key => chunksRef.current[key]);
-      if (allLoaded) {
-        initialLoadTriggered.current = true;
-        onInitialLoad();
+    // 1. STREAMING WINDOW & QUEUE UPDATES (Only on chunk crossing)
+    const moved = px !== lastProcessedPlayerChunk.current.px || pz !== lastProcessedPlayerChunk.current.pz;
+
+    if (moved) {
+      lastProcessedPlayerChunk.current = { px, pz };
+      playerChunk.current.px = px;
+      playerChunk.current.pz = pz;
+
+      // Update simulation player position
+      simulationManager.updatePlayerPosition(px, pz);
+
+      // Update movement direction estimate (world-space) for forward-shifted streaming window.
+      if (!hasPrevCamPos.current) {
+        prevCamPos.current.copy(camera.position);
+        hasPrevCamPos.current = true;
+      } else {
+        const dx = camera.position.x - prevCamPos.current.x;
+        const dz = camera.position.z - prevCamPos.current.z;
+        const speedSq = dx * dx + dz * dz;
+        if (speedSq > 0.0004) {
+          tmpMoveDir.current.set(dx, 0, dz).normalize();
+          streamForward.current.lerp(tmpMoveDir.current, 0.25).normalize();
+        }
+        prevCamPos.current.copy(camera.position);
       }
-    }
 
-    // Update movement direction estimate (world-space) for forward-shifted streaming window.
-    if (!hasPrevCamPos.current) {
-      prevCamPos.current.copy(camera.position);
-      hasPrevCamPos.current = true;
-    } else {
-      const dx = camera.position.x - prevCamPos.current.x;
-      const dz = camera.position.z - prevCamPos.current.z;
-      const speedSq = dx * dx + dz * dz;
-      // Only update direction when we are actually moving (prevents churn when rotating in place).
-      if (speedSq > 0.0004) {
-        tmpMoveDir.current.set(dx, 0, dz).normalize();
-        // Smooth direction so tiny jitter doesn't thrash the streaming center.
-        streamForward.current.lerp(tmpMoveDir.current, 0.25).normalize();
+      const neededKeys = new Set<string>();
+      const shift = 1;
+      const axisThreshold = 0.35;
+      const offsetCx = Math.abs(streamForward.current.x) > axisThreshold ? Math.sign(streamForward.current.x) * shift : 0;
+      const offsetCz = Math.abs(streamForward.current.z) > axisThreshold ? Math.sign(streamForward.current.z) * shift : 0;
+      const centerCx = px + offsetCx;
+      const centerCz = pz + offsetCz;
+      streamCenter.current.cx = centerCx;
+      streamCenter.current.cz = centerCz;
+
+      for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
+        for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
+          const cx = centerCx + x;
+          const cz = centerCz + z;
+          const key = `${cx},${cz}`;
+          neededKeys.add(key);
+
+          if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
+            pendingChunks.current.add(key);
+            generateQueue.current.push({ cx, cz, key });
+          }
+        }
       }
-      prevCamPos.current.copy(camera.position);
-    }
+      neededKeysRef.current = neededKeys;
 
-    // Update simulation player position
-    simulationManager.updatePlayerPosition(px, pz);
+      // Cleanup unneeded chunks
+      const newChunks = { ...chunksRef.current };
+      let cleanupChanged = false;
+      Object.keys(newChunks).forEach(key => {
+        if (!neededKeys.has(key)) {
+          simulationManager.removeChunk(key);
+          useWorldStore.getState().clearFloraHotspots(key);
+          useWorldStore.getState().clearStickHotspots(key);
+          useWorldStore.getState().clearRockHotspots(key);
+          deleteChunkFireflies(key);
+          terrainRuntime.unregisterChunk(key);
+          delete newChunks[key];
+          cleanupChanged = true;
+        }
+      });
 
-    const neededKeys = new Set<string>();
-    let changed = false;
+      if (cleanupChanged) {
+        chunksRef.current = newChunks;
+        if (initialLoadTriggered.current) {
+          startTransition(() => {
+            setChunks(newChunks);
+          });
+        } else {
+          setChunks(newChunks);
+        }
+      }
 
-    const shift = 1;
-    const axisThreshold = 0.35;
-    const offsetCx = Math.abs(streamForward.current.x) > axisThreshold ? Math.sign(streamForward.current.x) * shift : 0;
-    const offsetCz = Math.abs(streamForward.current.z) > axisThreshold ? Math.sign(streamForward.current.z) * shift : 0;
-    const centerCx = px + offsetCx;
-    const centerCz = pz + offsetCz;
-    streamCenter.current.cx = centerCx;
-    streamCenter.current.cz = centerCz;
+      // Rebuild collider enable queue candidates
+      const colliderCenterKey = `${px},${pz}`;
+      if (colliderCenterKey !== lastColliderCenterKey.current) {
+        lastColliderCenterKey.current = colliderCenterKey;
+        colliderEnableQueue.current.length = 0;
+        colliderEnablePending.current.clear();
 
-    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-      for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-        const cx = centerCx + x;
-        const cz = centerCz + z;
-        const key = `${cx},${cz}`;
-        neededKeys.add(key);
+        const candidates = new Set<string>();
+        const addRadius = (cx: number, cz: number, r: number) => {
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              candidates.add(`${cx + dx},${cz + dz}`);
+            }
+          }
+        };
+        addRadius(px, pz, COLLIDER_RADIUS);
+        addRadius(px + offsetCx, pz + offsetCz, COLLIDER_RADIUS);
 
-        if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
-          pendingChunks.current.add(key);
-          generateQueue.current.push({ cx, cz, key });
+        for (const key of candidates) {
+          const c = chunksRef.current[key];
+          if (c && !c.colliderEnabled && !colliderEnablePending.current.has(key)) {
+            colliderEnablePending.current.add(key);
+            colliderEnableQueue.current.push(key);
+          }
         }
       }
     }
-    neededKeysRef.current = neededKeys;
 
-    // Throttle chunk generation: only send 1 request per frame to spread out
-    // worker responses and main-thread geometry/collider build work.
-    // Prefer nearest-to-player chunks first.
+    // 2. THROTTLED GENERATION (1 per frame)
     if (generateQueue.current.length > 0) {
       let bestIndex = 0;
       let bestDist2 = Infinity;
+      const centerCx = streamCenter.current.cx;
+      const centerCz = streamCenter.current.cz;
+
       for (let i = 0; i < generateQueue.current.length; i++) {
         const job = generateQueue.current[i];
         const dx = job.cx - centerCx;
@@ -849,15 +944,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
-    // Apply at most 1 worker message per frame (chunk mount / remesh is the main-thread hitch source).
-    // Messages are FIFO, but we can safely drop generated chunks that are no longer needed.
+    // 3. THROTTLED WORKER MESSAGES (1 per frame)
     const msg = workerMessageHead.current < workerMessageQueue.current.length
       ? workerMessageQueue.current[workerMessageHead.current++]
       : null;
     let appliedWorkerMessageThisFrame = false;
+
     if (msg) {
       appliedWorkerMessageThisFrame = true;
-      // Compact queue periodically to avoid unbounded growth when head advances.
       if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
         workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
         workerMessageHead.current = 0;
@@ -865,69 +959,33 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = payload;
+        const { key, metadata, material, floraPositions, stickPositions, rockPositions, fireflyPositions, cx, cz } = payload;
         pendingChunks.current.delete(key);
 
-        // If the chunk is already out of the active window, drop it instead of mounting it.
         if (!neededKeysRef.current.has(key)) {
           if (streamDebug) console.log('[VoxelTerrain] Drop generated chunk (not needed):', key);
         } else {
-          // Log flora positions for debugging
-          if (streamDebug && floraPositions && floraPositions.length > 0) {
-            console.log('[VoxelTerrain] Chunk', key, 'has', floraPositions.length / 4, 'lumina flora positions');
-          }
-
-          // Check if metadata exists before initializing
           if (metadata) {
             metadataDB.initChunk(key, metadata);
-            simulationManager.addChunk(key, payload.cx, payload.cz, material, metadata.wetness, metadata.mossiness);
-          } else {
-            // Fallback if worker didn't send metadata structure
-            console.warn('[VoxelTerrain] Received chunk without metadata', key);
+            simulationManager.addChunk(key, cx, cz, material, metadata.wetness, metadata.mossiness);
           }
 
-          useWorldStore.getState().setFloraHotspots(
-            key,
-            buildFloraHotspots(floraPositions)
-          );
-          useWorldStore.getState().setStickHotspots(
-            key,
-            buildChunkLocalHotspots(payload.cx, payload.cz, stickPositions)
-          );
-          useWorldStore.getState().setRockHotspots(
-            key,
-            buildChunkLocalHotspots(payload.cx, payload.cz, rockPositions)
-          );
+          useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(floraPositions));
+          useWorldStore.getState().setStickHotspots(key, buildChunkLocalHotspots(cx, cz, stickPositions));
+          useWorldStore.getState().setRockHotspots(key, buildChunkLocalHotspots(cx, cz, rockPositions));
 
-          // Collider gating: keep physics in a small window around the player (and slightly ahead)
-          // so thrown items + movement don't "fall through" chunks that are visually present.
-          // We still defer enabling farther-away colliders via the per-frame enable queue below.
-          const dChebyPlayer = Math.max(Math.abs(payload.cx - px), Math.abs(payload.cz - pz));
-          const dChebyAhead = Math.max(Math.abs(payload.cx - (px + offsetCx)), Math.abs(payload.cz - (pz + offsetCz)));
-          const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS || dChebyAhead <= COLLIDER_RADIUS;
+          const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
+          const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {
             ...payload,
             colliderEnabled,
-            floraPositions, // Lumina flora (for hotspots)
-            treePositions,  // Surface trees
-            stickPositions, // Surface sticks (forage)
-            rockPositions, // Stones (forage)
-            largeRockPositions, // Large rocks (obstacles)
-            rootHollowPositions, // Persist root hollow positions
-            fireflyPositions, // Ambient fireflies (persisted per chunk)
-            terrainVersion: 0,
-            visualVersion: 0,
-            // Used to time-fade chunks into view (hides render-distance pop-in).
             spawnedAt: performance.now() / 1000
           };
 
-          // Register ambient fireflies for renderers (AmbientLife) without tightly coupling
-          // that system to the terrain chunk state shape.
           setChunkFireflies(key, fireflyPositions);
+          terrainRuntime.registerChunk(key, cx, cz, payload.density, payload.material);
 
-          // Register chunk arrays for runtime queries (water, interaction probes, etc).
-          terrainRuntime.registerChunk(key, payload.cx, payload.cz, payload.density, payload.material);
           chunksRef.current[key] = newChunk;
           if (initialLoadTriggered.current) {
             startTransition(() => {
@@ -936,46 +994,28 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           } else {
             setChunks(prev => ({ ...prev, [key]: newChunk }));
           }
+
+          // If collider was NOT enabled immediately, add to queue
+          if (!colliderEnabled && !colliderEnablePending.current.has(key)) {
+            // Re-check if it's within candidate radius
+            const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
+            const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
+            const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
+            if (dChebyAhead <= COLLIDER_RADIUS) {
+              colliderEnablePending.current.add(key);
+              colliderEnableQueue.current.push(key);
+            }
+          }
         }
       } else if (type === 'REMESHED') {
-        const {
-          key,
-          meshPositions,
-          meshIndices,
-          meshMatWeightsA,
-          meshMatWeightsB,
-          meshMatWeightsC,
-          meshMatWeightsD,
-          meshNormals,
-          meshWetness,
-          meshMossiness,
-          meshCavity,
-          meshWaterPositions,
-          meshWaterIndices,
-          meshWaterNormals,
-          meshWaterShoreMask
-        } = payload;
-
+        const { key } = payload;
         const current = chunksRef.current[key];
         if (current) {
           const updatedChunk = {
             ...current,
-            terrainVersion: current.terrainVersion + 1, // Assume geometry change for remesh
-            visualVersion: current.visualVersion + 1,
-            meshPositions,
-            meshIndices,
-            meshMatWeightsA,
-            meshMatWeightsB,
-            meshMatWeightsC,
-            meshMatWeightsD,
-            meshNormals,
-            meshWetness: meshWetness || current.meshWetness, // Fallback if missing
-            meshMossiness: meshMossiness || current.meshMossiness, // Fallback if missing
-            meshCavity: meshCavity || current.meshCavity, // Fallback if missing
-            meshWaterPositions,
-            meshWaterIndices,
-            meshWaterNormals,
-            meshWaterShoreMask: meshWaterShoreMask || current.meshWaterShoreMask
+            ...payload,
+            terrainVersion: current.terrainVersion + 1,
+            visualVersion: current.visualVersion + 1
           };
           chunksRef.current[key] = updatedChunk;
           if (initialLoadTriggered.current) {
@@ -989,64 +1029,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       }
     }
 
-    const newChunks = { ...chunksRef.current };
-    Object.keys(newChunks).forEach(key => {
-      if (!neededKeys.has(key)) {
-        simulationManager.removeChunk(key);
-        useWorldStore.getState().clearFloraHotspots(key);
-        useWorldStore.getState().clearStickHotspots(key);
-        useWorldStore.getState().clearRockHotspots(key);
-        deleteChunkFireflies(key);
-        terrainRuntime.unregisterChunk(key);
-        delete newChunks[key];
-        changed = true;
-      }
-    });
-
-    if (changed) {
-      chunksRef.current = newChunks;
-      if (initialLoadTriggered.current) {
-        startTransition(() => {
-          setChunks(newChunks);
-        });
-      } else {
-        setChunks(newChunks);
-      }
-    }
-
-    // Queue collider enables for nearby chunks, then enable at most 1 per frame.
-    // This reduces the chance of a single frame doing both "new chunk mount" AND "collider build".
-    const colliderCenterKey = `${px},${pz}`;
-    if (colliderCenterKey !== lastColliderCenterKey.current) {
-      lastColliderCenterKey.current = colliderCenterKey;
-      colliderEnableQueue.current.length = 0;
-      colliderEnablePending.current.clear();
-    }
-    {
-      const candidates = new Set<string>();
-      const addRadius = (cx: number, cz: number, r: number) => {
-        for (let dx = -r; dx <= r; dx++) {
-          for (let dz = -r; dz <= r; dz++) {
-            candidates.add(`${cx + dx},${cz + dz}`);
-          }
-        }
-      };
-      // Always keep physics around the player.
-      addRadius(px, pz, COLLIDER_RADIUS);
-      // Pre-build colliders slightly ahead in the movement direction.
-      addRadius(px + offsetCx, pz + offsetCz, COLLIDER_RADIUS);
-
-      for (const key of candidates) {
-        const c = chunksRef.current[key];
-        if (!c) continue;
-        if (c.colliderEnabled) continue;
-        if (colliderEnablePending.current.has(key)) continue;
-        colliderEnablePending.current.add(key);
-        colliderEnableQueue.current.push(key);
-      }
-    }
-
-    // Only enable a collider on frames where we didn't also apply a worker chunk/remesh.
+    // 4. THROTTLED COLLIDER ENABLES
     if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
       const key = colliderEnableQueue.current.shift();
       if (key) {
@@ -1066,6 +1049,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       }
     }
 
+    // 5. REMESH REQUESTS
     if (remeshQueue.current.size > 0) {
       const maxPerFrame = 8;
       const iterator = remeshQueue.current.values();
@@ -1073,10 +1057,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         const key = iterator.next().value as string | undefined;
         if (!key) break;
         remeshQueue.current.delete(key);
-
         const chunk = chunksRef.current[key];
         const metadata = metadataDB.getChunk(key);
-
         if (chunk && metadata) {
           workerRef.current.postMessage({
             type: 'REMESH',
@@ -1086,9 +1068,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
               cz: chunk.cz,
               density: chunk.density,
               material: chunk.material,
-              wetness: metadata['wetness'],
-              mossiness: metadata['mossiness'],
-              version: chunk.terrainVersion // Pass current version (will be echoed but we ignore it)
+              wetness: metadata.wetness,
+              mossiness: metadata.mossiness,
+              version: chunk.terrainVersion
             }
           });
         }
@@ -1128,13 +1110,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       let physicsItemHit: { id: string, type: ItemType, position: THREE.Vector3, t: number } | null = null;
 
       if (physicsHit && physicsHit.collider) {
-          const parent = physicsHit.collider.parent();
-          const userData = parent?.userData as { type?: ItemType, id?: string };
-          if (userData && userData.id && userData.type) {
-              const t = physicsHit.timeOfImpact;
-              const point = new rapier.Ray(origin, dir).pointAt(t);
-              physicsItemHit = { id: userData.id, type: userData.type, position: new THREE.Vector3(point.x, point.y, point.z), t };
-          }
+        const parent = physicsHit.collider.parent();
+        const userData = parent?.userData as { type?: ItemType, id?: string };
+        if (userData && userData.id && userData.type) {
+          const t = physicsHit.timeOfImpact;
+          const point = new rapier.Ray(origin, dir).pointAt(t);
+          physicsItemHit = { id: userData.id, type: userData.type, position: new THREE.Vector3(point.x, point.y, point.z), t };
+        }
       }
 
       const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
@@ -1173,7 +1155,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       };
 
       let pickedStart: THREE.Vector3 | null = null;
-      let pickedItem: 'torch' | 'flora' | 'stick' | 'stone' | null = null;
+      let pickedItem: ItemType | null = null;
 
       // Determine closest along ray (torch vs flora vs lumina).
       const tTorch = torchHit?.t ?? Infinity;
@@ -1187,48 +1169,45 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       const tGround = groundHit?.t ?? Infinity;
 
       if (tPhysics <= tTorch && tPhysics <= tPlaced && tPhysics <= tLumina && tPhysics <= tGround && physicsItemHit) {
-          // Physics Item Pickup
-          pickedStart = physicsItemHit.position;
-          usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
+        // Physics Item Pickup
+        pickedStart = physicsItemHit.position;
+        usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
 
-          if (physicsItemHit.type === ItemType.PICKAXE) {
-              useGameStore.getState().setHasPickaxe(true);
-              // Pickaxe doesn't go into inventory count, it just unlocks the tool
-              // But we can show a pickup effect
-              const effectId = `${Date.now()}-${Math.random()}`;
-              setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
-              return; // Special case, return early or handle below?
-              // Logic below expects 'pickedItem' to add to inventory count.
-              // Let's just handle it here and return or set null.
-          } else {
-              pickedItem = physicsItemHit.type === ItemType.STICK ? 'stick'
-                         : physicsItemHit.type === ItemType.STONE ? 'stone'
-                         : physicsItemHit.type === ItemType.SHARD ? 'shard'
-                         : null;
-          }
+        if (physicsItemHit.type === ItemType.PICKAXE) {
+          useGameStore.getState().setHasPickaxe(true);
+          // Pickaxe doesn't go into inventory count, it just unlocks the tool
+          // But we can show a pickup effect
+          const effectId = `${Date.now()}-${Math.random()}`;
+          setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
+          return; // Special case, return early or handle below?
+          // Logic below expects 'pickedItem' to add to inventory count.
+          // Let's just handle it here and return or set null.
+        } else {
+          pickedItem = physicsItemHit.type;
+        }
       } else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
-        pickedItem = 'torch';
+        pickedItem = ItemType.TORCH;
         pickedStart = torchHit.position;
         useWorldStore.getState().removeEntity(torchHit.id);
       } else if (tGround <= tPlaced && tGround <= tLumina && groundHit) {
         pickedStart = groundHit.position;
-        pickedItem = groundHit.array === 'stickPositions' ? 'stick' : 'stone';
+        pickedItem = groundHit.array === 'stickPositions' ? ItemType.STICK : ItemType.STONE;
         removeGround(groundHit);
       } else if (placedId && luminaHit) {
         if (placedPos) {
           if (tPlaced <= luminaHit.t) {
             pickedStart = placedPos;
-            pickedItem = 'flora';
+            pickedItem = ItemType.FLORA;
             useWorldStore.getState().removeEntity(placedId);
           } else {
             pickedStart = luminaHit.position;
-            pickedItem = 'flora';
+            pickedItem = ItemType.FLORA;
             removeLumina(luminaHit);
           }
         } else {
           // Fallback: treat as lumina if we can't read the placed entity position.
           pickedStart = luminaHit.position;
-          pickedItem = 'flora';
+          pickedItem = ItemType.FLORA;
           removeLumina(luminaHit);
         }
       } else if (placedId) {
@@ -1237,25 +1216,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         if (p) {
           pickedStart = new THREE.Vector3(p.x, p.y, p.z);
         }
-        pickedItem = 'flora';
+        pickedItem = ItemType.FLORA;
         useWorldStore.getState().removeEntity(placedId);
       } else if (luminaHit) {
         pickedStart = luminaHit.position;
-        pickedItem = 'flora';
+        pickedItem = ItemType.FLORA;
         removeLumina(luminaHit);
       }
 
       if (pickedStart && pickedItem) {
         // Add item to inventory and play a fly-to-player pickup effect.
-        useGameStore.getState().addItem(pickedItem, 1);
+        useGameStore.getState().addItem(pickedItem as any, 1);
         const effectId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const color =
-          pickedItem === 'torch' ? '#ffdbb1' :
-            pickedItem === 'stick' ? '#c99a63' :
-              pickedItem === 'stone' ? '#cfcfd6' :
-                pickedItem === 'shard' ? '#aaaaaa' :
-                '#00FFFF';
-        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color, item: pickedItem }]);
+        const color = getItemColor(pickedItem);
+        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color, item: pickedItem! }]);
       }
     };
 
@@ -1713,19 +1687,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
             Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
               (
-                  <RootHollow
-                key={`${chunk.key}-root-${i}`}
-                position={[
-                  chunk.rootHollowPositions![i * 6] + chunk.cx * CHUNK_SIZE_XZ,
-                  chunk.rootHollowPositions![i * 6 + 1],
-                  chunk.rootHollowPositions![i * 6 + 2] + chunk.cz * CHUNK_SIZE_XZ
-                ]}
-                normal={[
-                  chunk.rootHollowPositions![i * 6 + 3],
-                  chunk.rootHollowPositions![i * 6 + 4],
-                  chunk.rootHollowPositions![i * 6 + 5]
-                ]}
-                  />
+                <RootHollow
+                  key={`${chunk.key}-root-${i}`}
+                  position={[
+                    chunk.rootHollowPositions![i * 6] + chunk.cx * CHUNK_SIZE_XZ,
+                    chunk.rootHollowPositions![i * 6 + 1],
+                    chunk.rootHollowPositions![i * 6 + 2] + chunk.cz * CHUNK_SIZE_XZ
+                  ]}
+                  normal={[
+                    chunk.rootHollowPositions![i * 6 + 3],
+                    chunk.rootHollowPositions![i * 6 + 4],
+                    chunk.rootHollowPositions![i * 6 + 5]
+                  ]}
+                />
               )
             ))
           )}

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
-import { TerrainService } from '@/features/terrain/logic/terrainService';
 
 const BIOME_COLORS: Record<BiomeType, string> = {
     PLAINS: '#7cfc00',    // Lawn Green
@@ -13,6 +12,7 @@ const BIOME_COLORS: Record<BiomeType, string> = {
     RED_DESERT: '#d2691e', // Chocolate
     SKY_ISLANDS: '#8fbc8f',// Dark Sea Green
     THE_GROVE: '#006400',  // Dark Green
+    BEACH: '#f4dc81',      // Sandy Beach
 };
 
 export const MapDebug: React.FC = () => {

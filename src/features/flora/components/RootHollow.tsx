@@ -4,6 +4,7 @@ import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
+import { ItemType } from '@/types';
 import { FractalTree } from '@features/flora/components/FractalTree';
 import { LumaSwarm } from '@features/flora/components/LumaSwarm';
 import stumpUrl from '@assets/models/tree_stump.glb?url';
@@ -38,7 +39,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
-    
+
     // Use ref to track timer so we can properly clean it up
     const growTimerRef = useRef<NodeJS.Timeout | null>(null);
     const dissipateStartTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -124,67 +125,67 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     }, [scene]);
 
     // Transition Logic
-	    useEffect(() => {
-	        // Clear any existing timers when status changes
-	        if (growTimerRef.current) {
-	            clearTimeout(growTimerRef.current);
-	            growTimerRef.current = null;
-	        }
-	        if (dissipateStartTimerRef.current) {
-	            clearTimeout(dissipateStartTimerRef.current);
-	            dissipateStartTimerRef.current = null;
-	        }
-	        if (dissipateTimerRef.current) {
-	            clearTimeout(dissipateTimerRef.current);
-	            dissipateTimerRef.current = null;
-	        }
+    useEffect(() => {
+        // Clear any existing timers when status changes
+        if (growTimerRef.current) {
+            clearTimeout(growTimerRef.current);
+            growTimerRef.current = null;
+        }
+        if (dissipateStartTimerRef.current) {
+            clearTimeout(dissipateStartTimerRef.current);
+            dissipateStartTimerRef.current = null;
+        }
+        if (dissipateTimerRef.current) {
+            clearTimeout(dissipateTimerRef.current);
+            dissipateTimerRef.current = null;
+        }
 
-	        if (status === 'CHARGING') {
-	            console.log('[RootHollow] Starting 10 second particle formation timer');
-	            // Ensure the next run starts "charged" (not dissipating).
-	            setSwarmDissipating(false);
-	            // Wait 10 seconds for particle formation
-	            growTimerRef.current = setTimeout(() => {
-	                console.log('[RootHollow] Timer complete, transitioning to GROWING');
-	                setStatus('GROWING');
-	            }, 10000);
-	        }
+        if (status === 'CHARGING') {
+            console.log('[RootHollow] Starting 10 second particle formation timer');
+            // Ensure the next run starts "charged" (not dissipating).
+            setSwarmDissipating(false);
+            // Wait 10 seconds for particle formation
+            growTimerRef.current = setTimeout(() => {
+                console.log('[RootHollow] Timer complete, transitioning to GROWING');
+                setStatus('GROWING');
+            }, 10000);
+        }
 
-	        if (status === 'GROWING') {
-	            // The fractal tree grows over time; fade the swarm near the end of growth (not instantly).
-	            // `FractalTree` growth speed for type=0 is ~0.4 => ~2.5s to reach full growth.
-	            const startDissipateMs = 2200;
-	            const hideMs = 3800;
+        if (status === 'GROWING') {
+            // The fractal tree grows over time; fade the swarm near the end of growth (not instantly).
+            // `FractalTree` growth speed for type=0 is ~0.4 => ~2.5s to reach full growth.
+            const startDissipateMs = 2200;
+            const hideMs = 3800;
 
-	            dissipateStartTimerRef.current = setTimeout(() => {
-	                console.log('[RootHollow] Starting swarm dissipation (near end of growth)');
-	                setSwarmDissipating(true);
-	            }, startDissipateMs);
+            dissipateStartTimerRef.current = setTimeout(() => {
+                console.log('[RootHollow] Starting swarm dissipation (near end of growth)');
+                setSwarmDissipating(true);
+            }, startDissipateMs);
 
-	            dissipateTimerRef.current = setTimeout(() => {
-	                console.log('[RootHollow] Hiding swarm');
-	                setSwarmVisible(false);
-	            }, hideMs);
-	        }
+            dissipateTimerRef.current = setTimeout(() => {
+                console.log('[RootHollow] Hiding swarm');
+                setSwarmVisible(false);
+            }, hideMs);
+        }
 
-	        return () => {
-	            if (growTimerRef.current) {
-	                console.log('[RootHollow] Cleaning up grow timer');
-	                clearTimeout(growTimerRef.current);
-	                growTimerRef.current = null;
-	            }
-	            if (dissipateStartTimerRef.current) {
-	                console.log('[RootHollow] Cleaning up dissipate start timer');
-	                clearTimeout(dissipateStartTimerRef.current);
-	                dissipateStartTimerRef.current = null;
-	            }
-	            if (dissipateTimerRef.current) {
-	                console.log('[RootHollow] Cleaning up dissipate timer');
-	                clearTimeout(dissipateTimerRef.current);
-	                dissipateTimerRef.current = null;
-	            }
-	        };
-	    }, [status]);
+        return () => {
+            if (growTimerRef.current) {
+                console.log('[RootHollow] Cleaning up grow timer');
+                clearTimeout(growTimerRef.current);
+                growTimerRef.current = null;
+            }
+            if (dissipateStartTimerRef.current) {
+                console.log('[RootHollow] Cleaning up dissipate start timer');
+                clearTimeout(dissipateStartTimerRef.current);
+                dissipateStartTimerRef.current = null;
+            }
+            if (dissipateTimerRef.current) {
+                console.log('[RootHollow] Cleaning up dissipate timer');
+                clearTimeout(dissipateTimerRef.current);
+                dissipateTimerRef.current = null;
+            }
+        };
+    }, [status]);
 
     useFrame(() => {
         if (status !== 'IDLE') return;
@@ -192,7 +193,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         const nearbyEntities = getEntitiesNearby(posVec, 2.0);
 
         for (const entity of nearbyEntities) {
-            if (entity.type !== 'FLORA') continue;
+            if (entity.type !== ItemType.FLORA) continue;
 
             const body = entity.bodyRef?.current;
             if (!body) continue;
@@ -201,16 +202,16 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             const distSq = (fPos.x - posVec.x) ** 2 + (fPos.y - posVec.y) ** 2 + (fPos.z - posVec.z) ** 2;
             if (distSq < 2.25) {
                 const vel = body.linvel();
-	                if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
-	                    console.log('[RootHollow] Flora detected and stationary, triggering CHARGING');
-	                    removeEntity(entity.id);
-	                    setStatus('CHARGING');
-	                    setSwarmVisible(true);
-	                    setSwarmDissipating(false);
-	                }
-	            }
-	        }
-	    });
+                if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
+                    console.log('[RootHollow] Flora detected and stationary, triggering CHARGING');
+                    removeEntity(entity.id);
+                    setStatus('CHARGING');
+                    setSwarmVisible(true);
+                    setSwarmDissipating(false);
+                }
+            }
+        }
+    });
 
     const colliderHeight = stumpHeight || (STUMP_CONFIG.height * STUMP_CONFIG.scale);
     const colliderRadius = stumpRadius ? stumpRadius * 0.6 : 1.4 * STUMP_CONFIG.scale * 0.6;
@@ -242,19 +243,19 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                         <>
                             <mesh>
                                 <sphereGeometry args={[0.5, 16, 16]} />
-                                <meshStandardMaterial 
-                                    emissive="#ff00ff" 
+                                <meshStandardMaterial
+                                    emissive="#ff00ff"
                                     emissiveIntensity={5.0}
                                     toneMapped={false}
                                     color="#ff00ff"
                                 />
                             </mesh>
                         </>
-	                    }>
-	                        <LumaSwarm dissipating={swarmDissipating} />
-	                    </Suspense>
-	                </group>
-	            )}
+                    }>
+                        <LumaSwarm dissipating={swarmDissipating} />
+                    </Suspense>
+                </group>
+            )}
 
             {(status === 'CHARGING' || status === 'GROWING') && (
                 // Prewarm the tree during CHARGING so the worker finishes before GROWING starts.

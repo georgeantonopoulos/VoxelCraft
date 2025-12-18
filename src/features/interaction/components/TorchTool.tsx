@@ -17,38 +17,38 @@ export const TorchTool: React.FC = () => {
   const flameLightRef = useRef<THREE.SpotLight>(null);
   const lightTargetRef = useRef<THREE.Object3D>(null);
   const particlesRef = useRef<THREE.InstancedMesh>(null);
-  
+
   // Preallocated helpers for spotlight aiming (avoid per-frame allocs)
   const worldQuat = useRef(new THREE.Quaternion());
   const forwardWorld = useRef(new THREE.Vector3());
   const lightPosWorld = useRef(new THREE.Vector3());
   const targetWorld = useRef(new THREE.Vector3());
   const downWorld = useRef(new THREE.Vector3(0, -0.35, 0));
-  
+
   // Debug UI: enable with ?debug in URL (same switch as App).
   const debugMode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has('debug');
   }, []);
-  
+
   // Live-tweak spotlight properties in debug mode.
-	  const torchLightDebug = useControls(
-	    'Torch Spotlight',
-	    {
-	      enabled: true,
-	      color: '#ffdbb1',
-	      baseIntensity: { value: 2.1, min: 0.2, max: 12.0, step: 0.1 },
-	      distance: { value: 28, min: 4, max: 120, step: 1 },
-	      decay: { value: 0.4, min: 0, max: 4, step: 0.1 },
-	      // Three.js spotlight angles effectively cap near 90deg (PI/2).
-	      angleDeg: { value: 89, min: 5, max: 89, step: 1 },
-	      penumbra: { value: 1.0, min: 0, max: 1, step: 0.05 },
-	      targetDistance: { value: 12.0, min: 1.5, max: 12, step: 0.1 },
-	      downBias: { value: 0.35, min: 0, max: 1.5, step: 0.05 },
-	      flickerAmount: { value: 0.24, min: 0, max: 0.4, step: 0.01 },
-	    },
-	    { hidden: !debugMode }
-	  );
+  const torchLightDebug = useControls(
+    'Torch Spotlight',
+    {
+      enabled: true,
+      color: '#ffdbb1',
+      baseIntensity: { value: 2.1, min: 0.2, max: 12.0, step: 0.1 },
+      distance: { value: 28, min: 4, max: 120, step: 1 },
+      decay: { value: 0.4, min: 0, max: 4, step: 0.1 },
+      // Three.js spotlight angles effectively cap near 90deg (PI/2).
+      angleDeg: { value: 89, min: 5, max: 89, step: 1 },
+      penumbra: { value: 1.0, min: 0, max: 1, step: 0.05 },
+      targetDistance: { value: 12.0, min: 1.5, max: 12, step: 0.1 },
+      downBias: { value: 0.35, min: 0, max: 1.5, step: 0.05 },
+      flickerAmount: { value: 0.24, min: 0, max: 0.4, step: 0.01 },
+    },
+    { hidden: !debugMode } as any
+  );
 
   // Stable helper objects
   const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -77,7 +77,7 @@ export const TorchTool: React.FC = () => {
       );
     }
   }, []);
-  
+
   // Wire spotlight target once refs are mounted.
   useEffect(() => {
     if (flameLightRef.current && lightTargetRef.current) {
@@ -105,7 +105,7 @@ export const TorchTool: React.FC = () => {
       // Scale flicker amount relative to default 0.12.
       flameLightRef.current.intensity = baseIntensity * (1.0 + (flicker - 1.0) * (flickerAmt / 0.12));
     }
-    
+
     // Aim spotlight forward in world space, with a slight downward bias.
     // The FPS rig rotates the torch, so we can't rely on a fixed local target.
     if (torchRef.current && flameLightRef.current && lightTargetRef.current) {
@@ -113,22 +113,22 @@ export const TorchTool: React.FC = () => {
       // Torch "forward" in world space (-Z by convention).
       forwardWorld.current.set(0, 0, -1).applyQuaternion(worldQuat.current).normalize();
       flameLightRef.current.getWorldPosition(lightPosWorld.current);
-      
+
       const targetDist = debugMode ? torchLightDebug.targetDistance : 12.0;
       const downBias = debugMode ? torchLightDebug.downBias : 0.35;
       downWorld.current.set(0, -downBias, 0);
-      
+
       targetWorld.current
         .copy(lightPosWorld.current)
         .addScaledVector(forwardWorld.current, targetDist)
         .add(downWorld.current);
-      
+
       // Convert to torch local space for the target object.
       torchRef.current.worldToLocal(targetWorld.current);
       lightTargetRef.current.position.copy(targetWorld.current);
       lightTargetRef.current.updateMatrixWorld();
     }
-    
+
     // Apply debug spotlight properties live.
     if (debugMode && flameLightRef.current) {
       flameLightRef.current.visible = torchLightDebug.enabled;

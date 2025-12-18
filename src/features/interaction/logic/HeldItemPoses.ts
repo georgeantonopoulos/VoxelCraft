@@ -1,6 +1,4 @@
-import type { StackableInventoryItemId } from '@state/InventoryStore';
-
-export type RightHandHeldItemId = Extract<StackableInventoryItemId, 'stick' | 'stone' | 'shard' | 'flora'>;
+import { ItemType } from '@/types';
 
 export type HeldItemPose = {
   // X is taken from the pickaxe pose; these tune Y/Z and scale per item.
@@ -11,11 +9,11 @@ export type HeldItemPose = {
   rotOffset?: { x: number; y: number; z: number };
 };
 
-export const RIGHT_HAND_HELD_ITEM_POSES: Record<RightHandHeldItemId, HeldItemPose> = {
+export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>> = {
   // Reference: torch's comfortable Y/Z (but on the right hand).
-  stick: { xOffset: 0.27, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: -18.0, y: 89.0, z: -18.0 } },
-  stone: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } } ,
+  [ItemType.STICK]: { xOffset: 0.27, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: -18.0, y: 89.0, z: -18.0 } },
+  [ItemType.STONE]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
   // Flora is held like a stone (similar size / throw feel).
-  flora: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
-  shard: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } }
+  [ItemType.FLORA]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
+  [ItemType.SHARD]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } }
 };

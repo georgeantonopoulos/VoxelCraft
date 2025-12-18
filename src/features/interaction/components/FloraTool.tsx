@@ -1,6 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
+import { ItemType } from '@/types';
+import { getItemMetadata } from '../logic/ItemRegistry';
 
 /**
  * FloraTool
@@ -9,12 +11,13 @@ import { useFrame } from '@react-three/fiber';
  */
 export const FloraTool: React.FC = () => {
   const bulbRef = useRef<THREE.MeshStandardMaterial>(null);
+  const metadata = useMemo(() => getItemMetadata(ItemType.FLORA), []);
 
   useFrame(({ clock }) => {
     if (bulbRef.current) {
       const t = clock.getElapsedTime();
       const pulse = Math.sin(t * 2.0) * 0.35 + 1.15;
-      bulbRef.current.emissiveIntensity = 1.35 * pulse;
+      bulbRef.current.emissiveIntensity = (metadata?.emissiveIntensity || 1.35) * pulse;
     }
   });
 
@@ -26,8 +29,8 @@ export const FloraTool: React.FC = () => {
         <meshStandardMaterial
           ref={bulbRef}
           color="#111"
-          emissive="#00FFFF"
-          emissiveIntensity={1.35}
+          emissive={metadata?.emissive || '#00FFFF'}
+          emissiveIntensity={metadata?.emissiveIntensity || 1.35}
           roughness={0.4}
           metalness={0.0}
           toneMapped={false}
@@ -39,7 +42,7 @@ export const FloraTool: React.FC = () => {
         <sphereGeometry args={[0.12, 16, 16]} />
         <meshStandardMaterial
           color="#111"
-          emissive="#00FFFF"
+          emissive={metadata?.emissive || '#00FFFF'}
           emissiveIntensity={0.5}
           toneMapped={false}
         />
@@ -50,7 +53,7 @@ export const FloraTool: React.FC = () => {
         <sphereGeometry args={[0.1, 16, 16]} />
         <meshStandardMaterial
           color="#111"
-          emissive="#00FFFF"
+          emissive={metadata?.emissive || '#00FFFF'}
           emissiveIntensity={0.5}
           toneMapped={false}
         />

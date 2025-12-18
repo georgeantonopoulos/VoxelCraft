@@ -31,9 +31,6 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
     baseRadius = 0.6,
     type = 0,
     userData,
-    orientation,
-    worldPosition,
-    worldQuaternion,
     active = true,
     visible = true
 }) => {

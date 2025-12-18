@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { STICK_SHADER } from '@core/graphics/GroundItemShaders';
+import { getItemColor } from '../logic/ItemRegistry';
+import { ItemType } from '@/types';
 
 /**
  * StickTool
@@ -15,7 +17,7 @@ export const StickTool: React.FC = () => {
           baseMaterial={THREE.MeshStandardMaterial}
           vertexShader={STICK_SHADER.vertex}
           uniforms={{ uSeed: { value: 123.45 }, uHeight: { value: 0.95 } }}
-          color="#8b5a2b"
+          color={getItemColor(ItemType.STICK)}
           roughness={0.92}
           metalness={0.0}
           toneMapped={false}
