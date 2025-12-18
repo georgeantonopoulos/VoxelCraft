@@ -10,7 +10,7 @@ import { FloraTool } from './FloraTool';
 import { StickTool } from './StickTool';
 import { StoneTool } from './StoneTool';
 import { ShardTool } from './ShardTool';
-import { RIGHT_HAND_HELD_ITEM_POSES } from '@features/interaction/logic/HeldItemPoses';
+import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/interaction/logic/HeldItemPoses';
 import { ItemType } from '@/types';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
@@ -19,7 +19,7 @@ import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 useGLTF.preload(pickaxeUrl);
 
 export const FirstPersonTools: React.FC = () => {
-    const { camera, scene } = useThree(); // Needed for parenting
+    const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
     const groupRef = useRef<THREE.Group>(null);
     const axeRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch)
@@ -40,15 +40,15 @@ export const FirstPersonTools: React.FC = () => {
         'Torch Pose',
         {
             // Defaults based on latest tuning screenshot.
-            posX: { value: -0.5, min: -1.5, max: 0.0, step: 0.01 },
-            posY: { value: -0.3, min: -1.0, max: 0.5, step: 0.01 },
-            posZ: { value: -0.4, min: -2.0, max: -0.2, step: 0.01 },
+            posX: { value: TORCH_POSE.x, min: -1.5, max: 0.0, step: 0.01 },
+            posY: { value: TORCH_POSE.y, min: -1.0, max: 0.5, step: 0.01 },
+            posZ: { value: TORCH_POSE.z, min: -2.0, max: -0.2, step: 0.01 },
             // Rotations in degrees for easier tuning.
-            rotXDeg: { value: 14, min: -180, max: 180, step: 1 },
-            rotYDeg: { value: -175, min: -180, max: 180, step: 1 },
-            rotZDeg: { value: 28, min: -180, max: 180, step: 1 },
-            scale: { value: 0.41, min: 0.2, max: 1.5, step: 0.01 },
-            hiddenYOffset: { value: -0.8, min: -2.0, max: -0.2, step: 0.01 },
+            rotXDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.x)), min: -180, max: 180, step: 1 },
+            rotYDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.y)), min: -180, max: 180, step: 1 },
+            rotZDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.z)), min: -180, max: 180, step: 1 },
+            scale: { value: TORCH_POSE.scale, min: 0.2, max: 1.5, step: 0.01 },
+            hiddenYOffset: { value: TORCH_POSE.hiddenYOffset ?? -0.8, min: -2.0, max: -0.2, step: 0.01 },
         },
         ({ hidden: !debugMode } as any)
     );
@@ -60,9 +60,9 @@ export const FirstPersonTools: React.FC = () => {
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.z, min: -2.0, max: -0.1, step: 0.01 },
             scale: { value: RIGHT_HAND_HELD_ITEM_POSES.stick.scale, min: 0.1, max: 2.0, step: 0.01 },
-            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
-            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
-            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
+            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rot?.x ?? 0), min: -180, max: 180, step: 1 },
+            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rot?.y ?? 0), min: -180, max: 180, step: 1 },
+            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rot?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
                     // Leva buttons run outside React's render lifecycle; read the latest values
@@ -113,9 +113,9 @@ export const FirstPersonTools: React.FC = () => {
             y: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.y, min: -1.2, max: 0.6, step: 0.01 },
             z: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.z, min: -2.0, max: -0.1, step: 0.01 },
             scale: { value: RIGHT_HAND_HELD_ITEM_POSES.stone.scale, min: 0.1, max: 2.0, step: 0.01 },
-            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0), min: -180, max: 180, step: 1 },
-            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0), min: -180, max: 180, step: 1 },
-            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0), min: -180, max: 180, step: 1 },
+            rotXDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rot?.x ?? 0), min: -180, max: 180, step: 1 },
+            rotYDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rot?.y ?? 0), min: -180, max: 180, step: 1 },
+            rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rot?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
                     const xOffset = (typeof get === 'function' ? (get('Right Hand / Stone.xOffset') as number) : undefined) ?? rightHandStonePoseDebug.xOffset;
@@ -161,22 +161,22 @@ export const FirstPersonTools: React.FC = () => {
     useEffect(() => {
         if (!debugMode) return;
         setRightHandStickPoseDebug({
-            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stick.xOffset ?? 0,
-            y: RIGHT_HAND_HELD_ITEM_POSES.stick.y,
-            z: RIGHT_HAND_HELD_ITEM_POSES.stick.z,
-            scale: RIGHT_HAND_HELD_ITEM_POSES.stick.scale,
-            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.x ?? 0),
-            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.y ?? 0),
-            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rotOffset?.z ?? 0),
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stick!.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stick!.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stick!.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stick!.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick!.rot?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick!.rot?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick!.rot?.z ?? 0),
         });
         setRightHandStonePoseDebug({
-            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stone.xOffset ?? 0,
-            y: RIGHT_HAND_HELD_ITEM_POSES.stone.y,
-            z: RIGHT_HAND_HELD_ITEM_POSES.stone.z,
-            scale: RIGHT_HAND_HELD_ITEM_POSES.stone.scale,
-            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.x ?? 0),
-            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.y ?? 0),
-            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone.rotOffset?.z ?? 0),
+            xOffset: RIGHT_HAND_HELD_ITEM_POSES.stone!.xOffset ?? 0,
+            y: RIGHT_HAND_HELD_ITEM_POSES.stone!.y,
+            z: RIGHT_HAND_HELD_ITEM_POSES.stone!.z,
+            scale: RIGHT_HAND_HELD_ITEM_POSES.stone!.scale,
+            rotXDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone!.rot?.x ?? 0),
+            rotYDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone!.rot?.y ?? 0),
+            rotZDeg: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stone!.rot?.z ?? 0),
         });
     }, [debugMode, setRightHandStickPoseDebug, setRightHandStonePoseDebug]);
 
@@ -198,18 +198,14 @@ export const FirstPersonTools: React.FC = () => {
     const torchHiddenPos = useRef(new THREE.Vector3(-0.5, -1.10, -0.4));
     const torchPosTemp = useRef(new THREE.Vector3());
     const torchRotDefault = useRef(
-        new THREE.Euler(
-            THREE.MathUtils.degToRad(14),
-            THREE.MathUtils.degToRad(-175),
-            THREE.MathUtils.degToRad(28)
-        )
+        new THREE.Euler(TORCH_POSE.rot.x, TORCH_POSE.rot.y, TORCH_POSE.rot.z)
     );
-    const torchScaleDefault = useRef(0.41);
+    const torchScaleDefault = useRef(TORCH_POSE.scale);
 
     // Right-hand item slide animation state (0 hidden -> 1 fully shown)
     const rightItemProgress = useRef(0);
-    const rightItemTargetPos = useRef(new THREE.Vector3(0.715, -0.30, -0.40));
-    const rightItemHiddenPos = useRef(new THREE.Vector3(0.715, -1.10, -0.40));
+    const rightItemTargetPos = useRef(new THREE.Vector3(PICKAXE_POSE.x, 0, 0));
+    const rightItemHiddenPos = useRef(new THREE.Vector3(PICKAXE_POSE.x, -1.10, 0));
     const rightItemPosTemp = useRef(new THREE.Vector3());
 
     // Debug controls ENABLED
@@ -284,6 +280,11 @@ export const FirstPersonTools: React.FC = () => {
     useFrame((state, delta) => {
         if (!axeRef.current && !torchRef.current && !rightItemRef.current) return;
 
+        // Responsive adjustment: pull items closer to center in portrait mode
+        const aspect = size.width / size.height;
+        // Threshold: at 1.2 aspect we are full width. In portrait, we scale X inward.
+        const responsiveX = THREE.MathUtils.clamp(aspect / 1.1, 0.5, 1.0);
+
         // Calculate sway/animations relative to the camera-locked group
 
         const time = state.clock.getElapsedTime();
@@ -293,7 +294,7 @@ export const FirstPersonTools: React.FC = () => {
         const swayY = Math.cos(time * 4) * 0.005;
 
         // Use debug values directly so user can fix rotation
-        let positionX = debugPos.current.x + swayX;
+        let positionX = (debugPos.current.x * responsiveX) + swayX;
         let positionY = debugPos.current.y + swayY;
         let positionZ = debugPos.current.z;
 
@@ -368,8 +369,12 @@ export const FirstPersonTools: React.FC = () => {
 
             // Update target/hidden pose from debug sliders if enabled.
             if (debugMode) {
-                torchTargetPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY, torchPoseDebug.posZ);
-                torchHiddenPos.current.set(torchPoseDebug.posX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
+                torchTargetPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY, torchPoseDebug.posZ);
+                torchHiddenPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
+            } else {
+                // Not in debug: update based on responsiveX but keep the centralized defaults.
+                torchTargetPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y, TORCH_POSE.z);
+                torchHiddenPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
             }
 
             // Target pose (left-hand comfort pose).
@@ -410,7 +415,7 @@ export const FirstPersonTools: React.FC = () => {
                             y: rightHandStickPoseDebug.y,
                             z: rightHandStickPoseDebug.z,
                             scale: rightHandStickPoseDebug.scale,
-                            rotOffset: {
+                            rot: {
                                 x: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotXDeg),
                                 y: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotYDeg),
                                 z: THREE.MathUtils.degToRad(rightHandStickPoseDebug.rotZDeg)
@@ -421,7 +426,7 @@ export const FirstPersonTools: React.FC = () => {
                             y: rightHandStonePoseDebug.y,
                             z: rightHandStonePoseDebug.z,
                             scale: rightHandStonePoseDebug.scale,
-                            rotOffset: {
+                            rot: {
                                 x: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotXDeg),
                                 y: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotYDeg),
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
@@ -434,14 +439,14 @@ export const FirstPersonTools: React.FC = () => {
                 const animOffsetY = positionY - (debugPos.current.y + swayY);
                 const animOffsetZ = positionZ - debugPos.current.z;
 
-                const x = positionX + (pose.xOffset ?? 0);
+                const x = (positionX + (pose.xOffset ?? 0) * responsiveX);
                 // Combine pose position with animation offset
                 rightItemTargetPos.current.set(x, pose.y + animOffsetY, pose.z + animOffsetZ);
                 rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
                 rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
                 rightItemRef.current.position.copy(rightItemPosTemp.current);
 
-                const rot = pose.rotOffset;
+                const rot = pose.rot;
                 rightItemRef.current.rotation.set(
                     rotationX + (rot?.x ?? 0) + Math.sin(now * 1.4) * 0.012,
                     rotationY + (rot?.y ?? 0) + Math.cos(now * 1.1) * 0.012,
@@ -549,8 +554,8 @@ function usePickaxeDebug() {
     // Initial values set to what the user last reported, but they can now adjust them
     // UPDATED: Defaults for Upright + Forward (to avoid clipping)
     // FINAL VALUES: Pos: [0.715, -0.220, -0.800] | Rot: [1.150, -3.062, -1.450]
-    const debugPos = useRef({ x: 0.715, y: -0.220, z: -0.800 });
-    const debugRot = useRef({ x: 1.150, y: -3.062, z: -1.450 });
+    const debugPos = useRef({ x: PICKAXE_POSE.x, y: PICKAXE_POSE.y, z: PICKAXE_POSE.z });
+    const debugRot = useRef({ x: PICKAXE_POSE.rot.x, y: PICKAXE_POSE.rot.y, z: PICKAXE_POSE.rot.z });
     const keysPressed = useRef<Set<string>>(new Set());
 
     // Set to true to re-enable interactive positioning

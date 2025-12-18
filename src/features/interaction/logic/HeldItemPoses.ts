@@ -1,19 +1,78 @@
 import { ItemType } from '@/types';
+import * as THREE from 'three';
 
 export type HeldItemPose = {
-  // X is taken from the pickaxe pose; these tune Y/Z and scale per item.
-  xOffset?: number;
+  x: number;
   y: number;
   z: number;
   scale: number;
-  rotOffset?: { x: number; y: number; z: number };
+  rot: { x: number; y: number; z: number }; // radians
+  xOffset?: number; // relative to pickaxe base if applicable
+  hiddenYOffset?: number;
+};
+
+/**
+ * Poses are defined for a standard 16:9 aspect ratio.
+ * FirstPersonTools.tsx applies a 'responsiveX' multiplier to the X positions
+ * when the screen is in portrait mode (aspect < 1.1).
+ */
+
+export const PICKAXE_POSE: HeldItemPose = {
+  x: 0.715,
+  y: -0.22,
+  z: -0.80,
+  scale: 0.5,
+  rot: { x: 1.15, y: -3.062, z: -1.45 }
+};
+
+export const TORCH_POSE: HeldItemPose = {
+  x: -0.5,
+  y: -0.3,
+  z: -0.4,
+  scale: 0.41,
+  rot: {
+    x: THREE.MathUtils.degToRad(14),
+    y: THREE.MathUtils.degToRad(-175),
+    z: THREE.MathUtils.degToRad(28)
+  },
+  hiddenYOffset: -0.8
 };
 
 export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>> = {
-  // Reference: torch's comfortable Y/Z (but on the right hand).
-  [ItemType.STICK]: { xOffset: 0.27, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: -18.0, y: 89.0, z: -18.0 } },
-  [ItemType.STONE]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
-  // Flora is held like a stone (similar size / throw feel).
-  [ItemType.FLORA]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } },
-  [ItemType.SHARD]: { xOffset: 0.123, y: -0.457, z: -0.789, scale: 1.234, rotOffset: { x: 0.1111, y: 0.2222, z: 0.3333 } }
+  [ItemType.STICK]: {
+    x: PICKAXE_POSE.x, // base
+    xOffset: 0.27,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: {
+      x: THREE.MathUtils.degToRad(-18.0),
+      y: THREE.MathUtils.degToRad(89.0),
+      z: THREE.MathUtils.degToRad(-18.0)
+    }
+  },
+  [ItemType.STONE]: {
+    x: PICKAXE_POSE.x,
+    xOffset: 0.123,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
+  },
+  [ItemType.FLORA]: {
+    x: PICKAXE_POSE.x,
+    xOffset: 0.123,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
+  },
+  [ItemType.SHARD]: {
+    x: PICKAXE_POSE.x,
+    xOffset: 0.123,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
+  }
 };

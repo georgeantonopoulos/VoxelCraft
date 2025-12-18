@@ -101,6 +101,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
 - **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
 - **CustomShaderMaterial redefinition errors**: When using `three-custom-shader-material` (CSM) with `MeshStandardMaterial`, do NOT declare `varying vec3 vNormal` or `varying vec3 vViewDir`. These are already defined by Three.js and will cause a `redefinition` error during merging. Use `csm_Normal` to set normals in the vertex shader; Three.js handles the fragment-side varying internally.
+- **Responsive Item Offsets**: In portrait mode (aspect < 1), held items (torches, tools) must have their X-offsets scaled dynamically using `aspect` to prevent them from disappearing off the sides of the screen (see `FirstPersonTools.tsx` keywords: `responsiveX`).
 
 ---
 
@@ -137,6 +138,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-18: Implemented responsive held-item positioning for portrait mode.
+  - Added `responsiveX` scaling to `FirstPersonTools.tsx` that dynamically adjusts tool X-offsets based on the window aspect ratio.
+  - This ensures torches and held items (sticks, stones, etc.) remain visible when the screen is in portrait orientation.
 - 2025-12-17: Enhanced ground item variation (sticks and stones).
   - Implemented `ROCK_SHADER` with 3D noise vertex displacement to create unique, jagged shapes for every stone.
   - Implemented `STICK_SHADER` with bending and knobby node procedural logic to make sticks look like natural branches.

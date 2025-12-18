@@ -38,14 +38,19 @@ const vcPoseWriterPlugin = (): Plugin => ({
           const rx = fmt(pose.rotOffset?.x ?? 0, 4);
           const ry = fmt(pose.rotOffset?.y ?? 0, 4);
           const rz = fmt(pose.rotOffset?.z ?? 0, 4);
-          return `{ xOffset: ${xOffset}, y: ${y}, z: ${z}, scale: ${scale}, rotOffset: { x: ${rx}, y: ${ry}, z: ${rz} } }`;
+          // Match the new HeldItemPoses.ts format: uses 'rot' instead of 'rotOffset', 
+          // and preserves the PICKAXE_POSE.x base reference if we want (though simple value is fine too).
+          return `{ x: PICKAXE_POSE.x, xOffset: ${xOffset}, y: ${y}, z: ${z}, scale: ${scale}, rot: { x: ${rx}, y: ${ry}, z: ${rz} } }`;
         };
 
         const replacePose = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
-          // Keep the file format stable: one entry per line.
-          const re = new RegExp(`^\\s*${key}\\s*:\\s*\\{[^\\n]*\\}\\s*,?\\s*$`, 'm');
+          // Updated regex to support computed keys like [ItemType.STICK] or simple keys.
+          const enumKey = key.toUpperCase();
+          const re = new RegExp(`^\\s*(\\[ItemType\\.${enumKey}\\]|${key})\\s*:\\s*\\{[^\\n]*\\}\\s*,?\\s*$`, 'm');
           if (!re.test(content)) throw new Error(`Could not find ${key} pose line in HeldItemPoses.ts`);
-          const replacement = `  ${key}: ${formatPose(pose)}${key === 'stick' ? ',' : ''}`;
+          const match = content.match(re);
+          const matchedKey = match ? match[1] : key;
+          const replacement = `  ${matchedKey}: ${formatPose(pose)},`;
           content = content.replace(re, replacement);
         };
 
