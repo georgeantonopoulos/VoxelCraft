@@ -14,6 +14,23 @@ export interface GroundHotspot {
   z: number;
 }
 
+// Packed hotspot storage: [x0, z0, x1, z1, ...] in world space.
+// This avoids allocating/cloning many `{x,z}` objects during chunk streaming.
+type PackedHotspots = Float32Array;
+
+const packHotspots = (
+  hotspots: PackedHotspots | Array<{ x: number; z: number }> | undefined | null
+): PackedHotspots => {
+  if (!hotspots) return new Float32Array(0);
+  if (hotspots instanceof Float32Array) return hotspots;
+  const out = new Float32Array(hotspots.length * 2);
+  for (let i = 0; i < hotspots.length; i++) {
+    out[i * 2] = hotspots[i].x;
+    out[i * 2 + 1] = hotspots[i].z;
+  }
+  return out;
+};
+
 export type EntityType = ItemType.FLORA | ItemType.TORCH | 'TREE_STUMP' | 'BEE';
 
 export interface EntityData {
@@ -48,11 +65,11 @@ interface WorldState {
   spatialMap: Map<string, Set<string>>;
 
   // Hotspots for naturally generated flora (per chunk key)
-  floraHotspots: Map<string, FloraHotspot[]>;
+  floraHotspots: Map<string, PackedHotspots>;
 
   // Hotspots for naturally generated ground pickups (per chunk key)
-  stickHotspots: Map<string, GroundHotspot[]>;
-  rockHotspots: Map<string, GroundHotspot[]>;
+  stickHotspots: Map<string, PackedHotspots>;
+  rockHotspots: Map<string, PackedHotspots>;
 
   addEntity: (data: EntityData) => void;
   addEntities: (data: EntityData[]) => void;
@@ -65,7 +82,7 @@ interface WorldState {
   /**
    * Store or replace flora hotspot positions for a chunk.
    */
-  setFloraHotspots: (chunkKey: string, hotspots: FloraHotspot[]) => void;
+  setFloraHotspots: (chunkKey: string, hotspots: FloraHotspot[] | PackedHotspots) => void;
 
   /**
    * Clear hotspot data when a chunk unloads.
@@ -77,13 +94,28 @@ interface WorldState {
    */
   getFloraHotspotsNearby: (pos: Vector3, searchRadius?: number) => FloraHotspot[];
 
-  setStickHotspots: (chunkKey: string, hotspots: GroundHotspot[]) => void;
+  setStickHotspots: (chunkKey: string, hotspots: GroundHotspot[] | PackedHotspots) => void;
   clearStickHotspots: (chunkKey: string) => void;
   getStickHotspotsNearby: (pos: Vector3, searchRadius?: number) => GroundHotspot[];
 
-  setRockHotspots: (chunkKey: string, hotspots: GroundHotspot[]) => void;
+  setRockHotspots: (chunkKey: string, hotspots: GroundHotspot[] | PackedHotspots) => void;
   clearRockHotspots: (chunkKey: string) => void;
   getRockHotspotsNearby: (pos: Vector3, searchRadius?: number) => GroundHotspot[];
+
+  /**
+   * Combined update for performance during chunk streaming.
+   */
+  setChunkHotspots: (
+    chunkKey: string,
+    flora: FloraHotspot[] | PackedHotspots,
+    sticks: GroundHotspot[] | PackedHotspots,
+    rocks: GroundHotspot[] | PackedHotspots
+  ) => void;
+
+  /**
+   * Combined clear for performance during chunk unload.
+   */
+  clearChunkHotspots: (chunkKey: string) => void;
 }
 
 export const useWorldStore = create<WorldState>((set, get) => ({
@@ -199,7 +231,7 @@ export const useWorldStore = create<WorldState>((set, get) => ({
 
   setFloraHotspots: (chunkKey, hotspots) => set((state) => {
     const next = new Map(state.floraHotspots);
-    next.set(chunkKey, hotspots);
+    next.set(chunkKey, packHotspots(hotspots));
     return { floraHotspots: next };
   }),
 
@@ -215,13 +247,13 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     const results: FloraHotspot[] = [];
     const radiusSq = searchRadius * searchRadius;
 
-    floraHotspots.forEach((spots) => {
-      for (const spot of spots) {
-        const dx = spot.x - pos.x;
-        const dz = spot.z - pos.z;
-        if (dx * dx + dz * dz <= radiusSq) {
-          results.push(spot);
-        }
+    floraHotspots.forEach((packed) => {
+      for (let i = 0; i < packed.length; i += 2) {
+        const x = packed[i];
+        const z = packed[i + 1];
+        const dx = x - pos.x;
+        const dz = z - pos.z;
+        if (dx * dx + dz * dz <= radiusSq) results.push({ x, z });
       }
     });
 
@@ -230,7 +262,7 @@ export const useWorldStore = create<WorldState>((set, get) => ({
 
   setStickHotspots: (chunkKey, hotspots) => set((state) => {
     const next = new Map(state.stickHotspots);
-    next.set(chunkKey, hotspots);
+    next.set(chunkKey, packHotspots(hotspots));
     return { stickHotspots: next };
   }),
 
@@ -246,13 +278,13 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     const results: GroundHotspot[] = [];
     const radiusSq = searchRadius * searchRadius;
 
-    stickHotspots.forEach((spots) => {
-      for (const spot of spots) {
-        const dx = spot.x - pos.x;
-        const dz = spot.z - pos.z;
-        if (dx * dx + dz * dz <= radiusSq) {
-          results.push(spot);
-        }
+    stickHotspots.forEach((packed) => {
+      for (let i = 0; i < packed.length; i += 2) {
+        const x = packed[i];
+        const z = packed[i + 1];
+        const dx = x - pos.x;
+        const dz = z - pos.z;
+        if (dx * dx + dz * dz <= radiusSq) results.push({ x, z });
       }
     });
 
@@ -261,7 +293,7 @@ export const useWorldStore = create<WorldState>((set, get) => ({
 
   setRockHotspots: (chunkKey, hotspots) => set((state) => {
     const next = new Map(state.rockHotspots);
-    next.set(chunkKey, hotspots);
+    next.set(chunkKey, packHotspots(hotspots));
     return { rockHotspots: next };
   }),
 
@@ -277,16 +309,53 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     const results: GroundHotspot[] = [];
     const radiusSq = searchRadius * searchRadius;
 
-    rockHotspots.forEach((spots) => {
-      for (const spot of spots) {
-        const dx = spot.x - pos.x;
-        const dz = spot.z - pos.z;
-        if (dx * dx + dz * dz <= radiusSq) {
-          results.push(spot);
-        }
+    rockHotspots.forEach((packed) => {
+      for (let i = 0; i < packed.length; i += 2) {
+        const x = packed[i];
+        const z = packed[i + 1];
+        const dx = x - pos.x;
+        const dz = z - pos.z;
+        if (dx * dx + dz * dz <= radiusSq) results.push({ x, z });
       }
     });
 
     return results;
-  }
+  },
+
+  setChunkHotspots: (chunkKey, flora, sticks, rocks) => set((state) => {
+    const nextFlora = new Map(state.floraHotspots);
+    const nextSticks = new Map(state.stickHotspots);
+    const nextRocks = new Map(state.rockHotspots);
+
+    nextFlora.set(chunkKey, packHotspots(flora));
+    nextSticks.set(chunkKey, packHotspots(sticks));
+    nextRocks.set(chunkKey, packHotspots(rocks));
+
+    return {
+      floraHotspots: nextFlora,
+      stickHotspots: nextSticks,
+      rockHotspots: nextRocks
+    };
+  }),
+
+  clearChunkHotspots: (chunkKey) => set((state) => {
+    const hasAny =
+      state.floraHotspots.has(chunkKey) ||
+      state.stickHotspots.has(chunkKey) ||
+      state.rockHotspots.has(chunkKey);
+    if (!hasAny) return state;
+
+    const nextFlora = new Map(state.floraHotspots);
+    const nextSticks = new Map(state.stickHotspots);
+    const nextRocks = new Map(state.rockHotspots);
+    nextFlora.delete(chunkKey);
+    nextSticks.delete(chunkKey);
+    nextRocks.delete(chunkKey);
+
+    return {
+      floraHotspots: nextFlora,
+      stickHotspots: nextSticks,
+      rockHotspots: nextRocks
+    };
+  }),
 }));

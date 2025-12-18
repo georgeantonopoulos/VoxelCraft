@@ -188,6 +188,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
               baseMaterial={THREE.MeshStandardMaterial}
               vertexShader={ROCK_SHADER.vertex}
               uniforms={{
+                uInstancing: { value: false },
                 uNoiseTexture: { value: noiseTexture },
                 uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 }
               }}
@@ -207,6 +208,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
               baseMaterial={THREE.MeshStandardMaterial}
               vertexShader={STICK_SHADER.vertex}
               uniforms={{
+                uInstancing: { value: false },
                 uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 },
                 uHeight: { value: 0.5 }
               }}

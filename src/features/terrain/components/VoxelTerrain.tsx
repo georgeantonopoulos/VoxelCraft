@@ -8,10 +8,11 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
-import { useWorldStore, FloraHotspot } from '@state/WorldStore';
+import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
+import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { FallingTree } from '@features/flora/components/FallingTree';
@@ -273,51 +274,28 @@ const rayHitsGeneratedGroundPickup = (
   return best;
 };
 
-/**
- * Convert chunk-local flora positions into world-space hotspots for UI overlays.
- */
-const buildFloraHotspots = (
-  positions: Float32Array | undefined
-): FloraHotspot[] => {
+const buildFloraHotspots = (positions: Float32Array | undefined): FloraHotspot[] => {
   if (!positions || positions.length === 0) return [];
-
   const hotspots: FloraHotspot[] = [];
-
   for (let i = 0; i < positions.length; i += 4) {
-    // Picked/removed lumina flora is "hidden" by sending it far below the world.
-    // Skip those entries so UI hotspots remain accurate.
     if (positions[i + 1] < -9999) continue;
-    hotspots.push({
-      x: positions[i],
-      z: positions[i + 2]
-    });
+    hotspots.push({ x: positions[i], z: positions[i + 2] });
   }
-
   return hotspots;
 };
 
-const buildChunkLocalHotspots = (
-  cx: number,
-  cz: number,
-  positions: Float32Array | undefined
-): FloraHotspot[] => {
+const buildChunkLocalHotspots = (cx: number, cz: number, positions: Float32Array | undefined): GroundHotspot[] => {
   if (!positions || positions.length === 0) return [];
-
   const originX = cx * CHUNK_SIZE_XZ;
   const originZ = cz * CHUNK_SIZE_XZ;
-  const hotspots: FloraHotspot[] = [];
-
-  // stride 8: x, y, z, nx, ny, nz, variant, seed
+  const hotspots: GroundHotspot[] = [];
   for (let i = 0; i < positions.length; i += 8) {
     if (positions[i + 1] < -9999) continue;
-    hotspots.push({
-      x: originX + positions[i + 0],
-      z: originZ + positions[i + 2]
-    });
+    hotspots.push({ x: originX + positions[i], z: originZ + positions[i + 2] });
   }
-
   return hotspots;
 };
+
 
 const LeafPickupEffect = ({
   start,
@@ -874,9 +852,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       Object.keys(newChunks).forEach(key => {
         if (!neededKeys.has(key)) {
           simulationManager.removeChunk(key);
-          useWorldStore.getState().clearFloraHotspots(key);
-          useWorldStore.getState().clearStickHotspots(key);
-          useWorldStore.getState().clearRockHotspots(key);
+          useWorldStore.getState().clearChunkHotspots(key);
           deleteChunkFireflies(key);
           terrainRuntime.unregisterChunk(key);
           delete newChunks[key];
@@ -959,7 +935,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
-        const { key, metadata, material, floraPositions, stickPositions, rockPositions, fireflyPositions, cx, cz } = payload;
+        const { key, cx, cz, fireflyPositions, metadata, material, density } = payload;
         pendingChunks.current.delete(key);
 
         if (!neededKeysRef.current.has(key)) {
@@ -970,9 +946,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             simulationManager.addChunk(key, cx, cz, material, metadata.wetness, metadata.mossiness);
           }
 
-          useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(floraPositions));
-          useWorldStore.getState().setStickHotspots(key, buildChunkLocalHotspots(cx, cz, stickPositions));
-          useWorldStore.getState().setRockHotspots(key, buildChunkLocalHotspots(cx, cz, rockPositions));
+          useWorldStore.getState().setChunkHotspots(
+            key,
+            payload.floraHotspots,
+            payload.stickHotspots,
+            payload.rockHotspots
+          );
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
           const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
@@ -980,11 +959,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           const newChunk: ChunkState = {
             ...payload,
             colliderEnabled,
+            terrainVersion: payload.terrainVersion ?? 0,
+            visualVersion: payload.visualVersion ?? 0,
             spawnedAt: performance.now() / 1000
           };
 
           setChunkFireflies(key, fireflyPositions);
-          terrainRuntime.registerChunk(key, cx, cz, payload.density, payload.material);
+          terrainRuntime.registerChunk(key, cx, cz, density, material);
 
           chunksRef.current[key] = newChunk;
           if (initialLoadTriggered.current) {
@@ -1014,8 +995,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
           const updatedChunk = {
             ...current,
             ...payload,
-            terrainVersion: current.terrainVersion + 1,
-            visualVersion: current.visualVersion + 1
+            terrainVersion: (current.terrainVersion ?? 0) + 1,
+            visualVersion: (current.visualVersion ?? 0) + 1
           };
           chunksRef.current[key] = updatedChunk;
           if (initialLoadTriggered.current) {
@@ -1143,10 +1124,41 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         const positions = chunk?.[hit.array];
         if (!chunk || !positions || positions.length < 8) return;
         const next = new Float32Array(positions);
+
+        // Synchronize visuals for optimized layers
+        let updatedVisuals: Partial<ChunkState> = {};
+        const variant = next[hit.index + 6];
+        const seed = next[hit.index + 7];
+
+        const updateBuffer = (buf: Float32Array | undefined) => {
+          if (!buf) return undefined;
+          const nb = new Float32Array(buf);
+          for (let i = 0; i < nb.length; i += 7) {
+            // Find by seed and approximate position
+            if (Math.abs(nb[i + 6] - seed) < 0.001) {
+              nb[i + 1] = -10000;
+              break;
+            }
+          }
+          return nb;
+        };
+
+        if (hit.array === 'stickPositions') {
+          if (variant === 0) updatedVisuals.drySticks = updateBuffer(chunk.drySticks);
+          else updatedVisuals.jungleSticks = updateBuffer(chunk.jungleSticks);
+        } else if (hit.array === 'rockPositions' && chunk.rockDataBuckets) {
+          const v = variant as RockVariant;
+          updatedVisuals.rockDataBuckets = {
+            ...chunk.rockDataBuckets,
+            [v]: updateBuffer(chunk.rockDataBuckets[v])!
+          };
+        }
+
         next[hit.index + 1] = -10000;
-        const updatedChunk = { ...chunk, [hit.array]: next };
+        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
         chunksRef.current[hit.key] = updatedChunk;
         setChunks((prev) => ({ ...prev, [hit.key]: updatedChunk }));
+
         if (hit.array === 'stickPositions') {
           useWorldStore.getState().setStickHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
         } else {

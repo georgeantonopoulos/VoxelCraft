@@ -14,6 +14,77 @@ const ctx: Worker = self as any;
 // Since `worldDB` is exported as a const instance in `WorldDB.ts`, it is instantiated on module load.
 // We don't need to do anything extra here, just usage is fine.
 
+// Packed hotspot storage: [x0, z0, x1, z1, ...] in world space.
+const buildFloraHotspotsPacked = (floraPositions: Float32Array): Float32Array => {
+    const packed: number[] = [];
+    for (let i = 0; i < floraPositions.length; i += 4) {
+        if (floraPositions[i + 1] < -9999) continue;
+        packed.push(floraPositions[i], floraPositions[i + 2]);
+    }
+    return new Float32Array(packed);
+};
+
+const buildStickData = (stickPositions: Float32Array, cx: number, cz: number) => {
+    const packedHotspots: number[] = [];
+    const drySticks: number[] = [];
+    const jungleSticks: number[] = [];
+
+    for (let i = 0; i < stickPositions.length; i += 8) {
+        if (stickPositions[i + 1] < -9999) continue;
+        const wx = stickPositions[i] + cx * CHUNK_SIZE_XZ;
+        const wz = stickPositions[i + 2] + cz * CHUNK_SIZE_XZ;
+        packedHotspots.push(wx, wz);
+
+        const variant = stickPositions[i + 6];
+        const target = variant === 0 ? drySticks : jungleSticks;
+        target.push(
+            stickPositions[i + 0], stickPositions[i + 1], stickPositions[i + 2],
+            stickPositions[i + 3], stickPositions[i + 4], stickPositions[i + 5],
+            stickPositions[i + 7] // seed
+        );
+    }
+
+    return {
+        stickHotspots: new Float32Array(packedHotspots),
+        drySticks: new Float32Array(drySticks),
+        jungleSticks: new Float32Array(jungleSticks)
+    };
+};
+
+const buildRockData = (rockPositions: Float32Array, cx: number, cz: number) => {
+    const packedHotspots: number[] = [];
+    const rockBuckets: Record<number, number[]> = {};
+
+    for (let i = 0; i < rockPositions.length; i += 8) {
+        if (rockPositions[i + 1] < -9999) continue;
+        const wx = rockPositions[i] + cx * CHUNK_SIZE_XZ;
+        const wz = rockPositions[i + 2] + cz * CHUNK_SIZE_XZ;
+        packedHotspots.push(wx, wz);
+
+        const variant = rockPositions[i + 6];
+        if (!rockBuckets[variant]) rockBuckets[variant] = [];
+        rockBuckets[variant].push(
+            rockPositions[i + 0], rockPositions[i + 1], rockPositions[i + 2],
+            rockPositions[i + 3], rockPositions[i + 4], rockPositions[i + 5],
+            rockPositions[i + 7] // seed
+        );
+    }
+
+    const rockDataBuckets: Record<number, Float32Array> = {};
+    const rockBuffers: ArrayBuffer[] = [];
+    for (const [rKey, points] of Object.entries(rockBuckets)) {
+        const f32 = new Float32Array(points);
+        rockDataBuckets[parseInt(rKey)] = f32;
+        rockBuffers.push(f32.buffer);
+    }
+
+    return {
+        rockHotspots: new Float32Array(packedHotspots),
+        rockDataBuckets,
+        rockBuffers
+    };
+};
+
 ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
 
@@ -57,20 +128,33 @@ ctx.onmessage = async (e: MessageEvent) => {
                 const hasWaterSurface = water.indices.length > 0;
                 const waterShoreMask = hasWaterSurface ? water.shoreMask : new Uint8Array(0);
 
+                // Keep ground item rendering/hotspots functional even for geometry-empty chunks.
+                const floraHotspots = buildFloraHotspotsPacked(floraPositions);
+                const stickData = buildStickData(stickPositions, cx, cz);
+                const rockData = buildRockData(rockPositions, cx, cz);
+
                 const emptyResponse = {
                     key: `${cx},${cz}`,
                     cx, cz,
                     density,
                     material,
+                    terrainVersion: 0,
+                    visualVersion: 0,
                     metadata,
                     // Preserve entities (they might exist even in empty chunks)
                     floraPositions,
                     treePositions,
                     stickPositions,
                     rockPositions,
+                    drySticks: stickData.drySticks,
+                    jungleSticks: stickData.jungleSticks,
+                    rockDataBuckets: rockData.rockDataBuckets,
                     largeRockPositions,
                     rootHollowPositions,
                     fireflyPositions,
+                    floraHotspots,
+                    stickHotspots: stickData.stickHotspots,
+                    rockHotspots: rockData.rockHotspots,
 
                     // Stubbed data for empty chunk
                     vegetationData: {},
@@ -91,6 +175,12 @@ ctx.onmessage = async (e: MessageEvent) => {
                 };
 
                 ctx.postMessage({ type: 'GENERATED', payload: emptyResponse }, [
+                    floraHotspots.buffer,
+                    stickData.stickHotspots.buffer,
+                    stickData.drySticks.buffer,
+                    stickData.jungleSticks.buffer,
+                    rockData.rockHotspots.buffer,
+                    ...rockData.rockBuffers,
                     density.buffer,
                     material.buffer,
                     metadata.wetness.buffer,
@@ -116,12 +206,6 @@ ctx.onmessage = async (e: MessageEvent) => {
             // --- AMBIENT VEGETATION GENERATION ---
             const vegetationBuckets: Record<number, number[]> = {};
 
-            // We iterate strictly within the CHUNK bounds (excluding padding)
-            // But we access the padded density array.
-            // Padded size is TOTAL_SIZE_XZ (XZ + 2*PAD).
-            // TerrainService generates [TOTAL_SIZE_XZ, TOTAL_SIZE_Y, TOTAL_SIZE_XZ].
-            // We want world coordinates to map biomes.
-
             for (let z = 0; z < CHUNK_SIZE_XZ; z++) {
                 for (let x = 0; x < CHUNK_SIZE_XZ; x++) {
                     const worldX = cx * CHUNK_SIZE_XZ + x;
@@ -129,24 +213,15 @@ ctx.onmessage = async (e: MessageEvent) => {
 
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
                     let biomeDensity = BiomeManager.getVegetationDensity(worldX, worldZ);
-                    // Beaches should read as clean shoreline; reduce ambient ground clutter and avoid
-                    // paying for unnecessary surface scans in the worker.
                     if (biome === 'BEACH') biomeDensity *= 0.1;
 
-                    // 1. Density Noise (Smaller, more frequent patches)
-                    // Scale 0.15 = ~6-7 blocks per cycle (much smaller patches)
                     const densityNoise = noise(worldX * 0.15, 0, worldZ * 0.15);
                     const normalizedDensity = (densityNoise + 1) * 0.5;
-
-                    // Jitter to break edges
                     const jitter = noise(worldX * 0.8, 0, worldZ * 0.8) * 0.3;
-
                     const finalDensity = normalizedDensity + jitter;
                     const threshold = 1.0 - biomeDensity;
 
                     if (finalDensity > threshold) {
-
-                        // Simple Raycast from top down to find surface
                         let surfaceY = -1;
                         const pad = 2;
                         const dx = x + pad;
@@ -155,11 +230,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                         const sizeY = TOTAL_SIZE_Y;
                         const sizeZ = TOTAL_SIZE_XZ;
 
-                        // Scan down
                         for (let y = sizeY - 2; y >= 0; y--) {
                             const idx = dx + y * sizeX + dz * sizeX * sizeY;
                             const d = density[idx];
-
                             if (d > ISO_LEVEL) {
                                 surfaceY = y;
                                 const idxAbove = idx + sizeX;
@@ -173,17 +246,10 @@ ctx.onmessage = async (e: MessageEvent) => {
                         const meshYOffset = -35;
                         const worldY = (surfaceY - pad) + meshYOffset;
 
-                        // Skip if underwater or too low
                         if (surfaceY > 0 && worldY > 11) {
-
-                            // --- CALCULATE NORMAL ---
-                            // Central differences on the density field
-                            // We need to clamp indices to be safe
                             const cX = Math.floor(dx);
                             const cY = Math.floor(surfaceY);
                             const cZ = Math.floor(dz);
-
-                            // Helper to safely get density
                             const getD = (ox: number, oy: number, oz: number) => {
                                 const ix = Math.max(0, Math.min(sizeX - 1, cX + ox));
                                 const iy = Math.max(0, Math.min(sizeY - 1, cY + oy));
@@ -191,90 +257,45 @@ ctx.onmessage = async (e: MessageEvent) => {
                                 return density[ix + iy * sizeX + iz * sizeX * sizeY];
                             };
 
-                            // Gradient vector pointing out of the wall (towards lower density)
-                            // Normal = -Gradient
                             const nx = -(getD(1, 0, 0) - getD(-1, 0, 0));
                             const ny = -(getD(0, 1, 0) - getD(0, -1, 0));
                             const nz = -(getD(0, 0, 1) - getD(0, 0, -1));
-
-                            // Normalize
                             const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-                            // Fallback to UP if degenerate
                             const invLen = len > 0.0001 ? 1.0 / len : 0;
-                            const finalNx = len > 0.0001 ? nx * invLen : 0;
-                            const finalNy = len > 0.0001 ? ny * invLen : 1;
-                            const finalNz = len > 0.0001 ? nz * invLen : 0;
+                            const nx_val = len > 0.0001 ? nx * invLen : 0;
+                            const ny_val = len > 0.0001 ? ny * invLen : 1;
+                            const nz_val = len > 0.0001 ? nz * invLen : 0;
 
-                            // Re-assign to simple vars for usage below
-                            const nx_val = finalNx;
-                            const ny_val = finalNy;
-                            const nz_val = finalNz;
-
-                            // 2. Clumping Logic
-                            // If density is very high, place multiple plants
-                            // ... inside the loop ...
-
-                            // 2. Clumping Logic
-                            // If density is very high, place multiple plants
                             let numPlants = 1;
-
-                            // HIGH DENSITY BIOMES (The Ghibli Look)
                             if (biome === 'JUNGLE' || biome === 'THE_GROVE') {
-                                // We push the count much higher. 
-                                // Since we spherized the normals in the shader, 
-                                // these extra instances won't look "noisy", they will look like soft volume.
-                                if (finalDensity > threshold + 0.30) numPlants = 7; // Extremely dense core
+                                if (finalDensity > threshold + 0.30) numPlants = 7;
                                 else if (finalDensity > threshold + 0.15) numPlants = 5;
                                 else if (finalDensity > threshold + 0.05) numPlants = 3;
                             } else {
-                                // Standard Biomes (Plains, etc) - Keep optimized
                                 if (finalDensity > threshold + 0.4) numPlants = 3;
                                 else if (finalDensity > threshold + 0.2) numPlants = 2;
                             }
 
-                            // 3. Type Noise
                             const typeNoise = noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100);
                             const normalizedType = (typeNoise + 1) * 0.5;
                             const vegType = getVegetationForBiome(biome, normalizedType);
 
                             if (vegType !== null) {
                                 if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
-
                                 for (let i = 0; i < numPlants; i++) {
-                                    // Unique hash for each sub-plant
                                     const seed = (worldX * 31 + worldZ * 17 + i * 13);
                                     const r1 = Math.sin(seed) * 43758.5453;
                                     const r2 = Math.cos(seed) * 43758.5453;
-
-                                    // Spread Logic Update:
-                                    // Increased multiplier from 1.2 to 1.4
-                                    // This allows grass to step further off the grid center, 
-                                    // blending chunks together so you don't see "rows" of grass.
                                     const offX = (r1 - Math.floor(r1) - 0.5) * 1.4;
                                     const offZ = (r2 - Math.floor(r2) - 0.5) * 1.4;
-
-                                    // Tiny Y Jitter
-                                    // Randomly sink the grass slightly (-0.15 to 0.0) 
-                                    // This prevents the "flat bottom" look on hills.
                                     const offY = ((r1 + r2) % 1) * -0.15;
 
-                                    // --- SLOPE CORRECTION ---
-                                    // Since we moved X/Z, we must adjust Y based on the slope (normal).
-                                    // Plane eq: nx*x + ny*y + nz*z = 0
-                                    // dy = -(nx*dx + nz*dz) / ny
-                                    // We clamp ny to avoid division by zero (though ny should be > 0 for ground)
                                     let slopeY = 0;
-                                    if (ny_val > 0.1) {
-                                        slopeY = -(nx_val * offX + nz_val * offZ) / ny_val;
-                                    }
-                                    // Clamp slope correction to avoid wild spikes on steep terrain
+                                    if (ny_val > 0.1) slopeY = -(nx_val * offX + nz_val * offZ) / ny_val;
                                     slopeY = Math.max(-1.0, Math.min(1.0, slopeY));
 
                                     vegetationBuckets[vegType].push(
-                                        x + offX,
-                                        worldY - 0.1 + offY + slopeY, // Apply sink + slope correction
-                                        z + offZ,
-                                        // Normal (nx, ny, nz)
+                                        x + offX, worldY - 0.1 + offY + slopeY, z + offZ,
                                         nx_val, ny_val, nz_val
                                     );
                                 }
@@ -284,38 +305,40 @@ ctx.onmessage = async (e: MessageEvent) => {
                 }
             }
 
-            // Flatten to Float32Arrays and prepare transfer list
-            const vegetationData: Record<number, Float32Array> = {};
-            const vegetationBuffers: ArrayBuffer[] = [];
-
-            for (const [key, positions] of Object.entries(vegetationBuckets)) {
-                const f32 = new Float32Array(positions);
-                vegetationData[parseInt(key)] = f32;
-                vegetationBuffers.push(f32.buffer);
-            }
+            // --- OPTIMIZATION: BATCH ENTITIES & HOTSPOTS IN WORKER ---
+            const floraHotspots = buildFloraHotspotsPacked(floraPositions);
+            const stickData = buildStickData(stickPositions, cx, cz);
+            const rockData = buildRockData(rockPositions, cx, cz);
 
             const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as MeshData;
 
-            // console.log('[terrain.worker] GENERATE done', cx, cz, {
-            //     positions: mesh.positions.length,
-            //     ms: Math.round(performance.now() - t0),
-            //     mods: modifications.length
-            // });
+            // Flatten buckets to Float32Arrays
+            const vegetationData: Record<number, Float32Array> = {};
+            const vegetationBuffers: ArrayBuffer[] = [];
+            for (const [vKey, points] of Object.entries(vegetationBuckets)) {
+                const f32 = new Float32Array(points);
+                vegetationData[parseInt(vKey)] = f32;
+                vegetationBuffers.push(f32.buffer);
+            }
 
             const response = {
                 key: `${cx},${cz}`,
                 cx, cz,
-                density,
-                material,
-                metadata,
+                density, material, metadata,
+                terrainVersion: 0,
+                visualVersion: 0,
                 vegetationData,
-                floraPositions,
-                treePositions,
-                stickPositions,
-                rockPositions,
-                largeRockPositions,
+                floraPositions, treePositions,
                 rootHollowPositions,
+                stickPositions, rockPositions,
+                drySticks: stickData.drySticks,
+                jungleSticks: stickData.jungleSticks,
+                rockDataBuckets: rockData.rockDataBuckets,
+                largeRockPositions,
                 fireflyPositions,
+                floraHotspots,
+                stickHotspots: stickData.stickHotspots,
+                rockHotspots: rockData.rockHotspots,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,
                 meshMatWeightsA: mesh.matWeightsA,
@@ -326,27 +349,30 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
                 meshCavity: mesh.cavity,
-                // Water is a distinct surface mesh (separate from terrain Surface-Nets geometry).
-                // Chunk state expects `meshWater*` keys so ChunkMesh can render it.
                 meshWaterPositions: mesh.waterPositions,
                 meshWaterIndices: mesh.waterIndices,
                 meshWaterNormals: mesh.waterNormals,
-                // Pre-computed shoreline SDF mask (avoids main-thread BFS).
                 meshWaterShoreMask: mesh.waterShoreMask
             };
 
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
                 ...vegetationBuffers,
+                ...rockData.rockBuffers,
+                floraHotspots.buffer,
+                stickData.stickHotspots.buffer,
+                stickData.drySticks.buffer,
+                stickData.jungleSticks.buffer,
+                rockData.rockHotspots.buffer,
                 density.buffer,
                 material.buffer,
                 metadata.wetness.buffer,
                 metadata.mossiness.buffer,
                 floraPositions.buffer,
                 treePositions.buffer,
+                rootHollowPositions.buffer,
                 stickPositions.buffer,
                 rockPositions.buffer,
                 largeRockPositions.buffer,
-                rootHollowPositions.buffer,
                 fireflyPositions.buffer,
                 mesh.positions.buffer,
                 mesh.indices.buffer,
@@ -374,7 +400,6 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             const response = {
                 key, cx, cz,
-                density,
                 version,
                 meshPositions: mesh.positions,
                 meshIndices: mesh.indices,

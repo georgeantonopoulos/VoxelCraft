@@ -226,19 +226,27 @@ export const ChunkMesh: React.FC<{
       )}
 
       {chunk.treePositions && chunk.treePositions.length > 0 && (
-        <TreeLayer data={chunk.treePositions} />
+        <TreeLayer data={chunk.treePositions} collidersEnabled={colliderEnabled} />
       )}
 
-      {(chunk.stickPositions?.length || chunk.rockPositions?.length || chunk.largeRockPositions?.length) ? (
+      {(chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (
         <GroundItemsLayer
-          stickData={chunk.stickPositions}
-          rockData={chunk.rockPositions}
+          drySticks={chunk.drySticks}
+          jungleSticks={chunk.jungleSticks}
+          rockDataBuckets={chunk.rockDataBuckets}
           largeRockData={chunk.largeRockPositions}
+          collidersEnabled={colliderEnabled}
         />
       ) : null}
 
       {chunk.floraPositions && chunk.floraPositions.length > 0 && (
-        <LuminaLayer data={chunk.floraPositions} lightPositions={chunk.lightPositions} cx={chunk.cx} cz={chunk.cz} />
+        <LuminaLayer
+          data={chunk.floraPositions}
+          lightPositions={chunk.lightPositions}
+          cx={chunk.cx}
+          cz={chunk.cz}
+          collidersEnabled={colliderEnabled}
+        />
       )}
 
       {/* REMOVED: RootHollow Loop - This was the cause of the duplication/offset bug */}

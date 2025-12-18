@@ -18,6 +18,7 @@ export const StoneTool: React.FC = () => {
           baseMaterial={THREE.MeshStandardMaterial}
           vertexShader={ROCK_SHADER.vertex}
           uniforms={{
+            uInstancing: { value: false },
             uNoiseTexture: { value: noiseTexture },
             uSeed: { value: 67.89 }
           }}

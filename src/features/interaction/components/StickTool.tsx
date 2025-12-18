@@ -16,7 +16,11 @@ export const StickTool: React.FC = () => {
         <CustomShaderMaterial
           baseMaterial={THREE.MeshStandardMaterial}
           vertexShader={STICK_SHADER.vertex}
-          uniforms={{ uSeed: { value: 123.45 }, uHeight: { value: 0.95 } }}
+          uniforms={{
+            uInstancing: { value: false },
+            uSeed: { value: 123.45 },
+            uHeight: { value: 0.95 }
+          }}
           color={getItemColor(ItemType.STICK)}
           roughness={0.92}
           metalness={0.0}

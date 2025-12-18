@@ -1,13 +1,17 @@
-import React, { useMemo, useLayoutEffect, useRef } from 'react';
+import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { noiseTexture } from '@core/memory/sharedResources';
+import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
 
 // The "Life" Shader: Wind sway and subtle color variation
 const VEGETATION_SHADER = {
   vertex: `
+  attribute vec3 aInstancePos;
+  attribute vec3 aInstanceNormal;
+
   uniform float uTime;
   uniform float uSway;
   uniform vec2 uWindDir;
@@ -19,42 +23,52 @@ const VEGETATION_SHADER = {
     vUv = uv;
     vec3 pos = position;
 
-    // Get world position from instance matrix
-    vec4 worldInstancePos = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-    float worldX = worldInstancePos.x;
-    float worldZ = worldInstancePos.z;
+    // --- Deterministic Instance Placement (GPU Side) ---
+    // Extract seed from position for stable per-instance variations
+    float seed = (aInstancePos.x * 12.9898 + aInstancePos.z * 78.233);
+    float randRot = fract(sin(seed) * 43758.5453) * 6.28318;
+    float randScale = 0.85 + fract(sin(seed + 1.0) * 43758.5453) * 0.3;
+
+    // 1. Build Alignment Matrix (Look-At Up)
+    vec3 up = aInstanceNormal;
+    vec3 helper = abs(up.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 tangent = normalize(cross(helper, up));
+    vec3 bitangent = cross(up, tangent);
+    mat3 alignMat = mat3(tangent, up, bitangent);
+
+    // 2. Build Random Y Rotation Matrix
+    float cRot = cos(randRot);
+    float sRot = sin(randRot);
+    mat3 rotY = mat3(cRot, 0.0, sRot, 0.0, 1.0, 0.0, -sRot, 0.0, cRot);
+
+    // 3. Apply Transform Chain
+    pos *= randScale;
+    pos = alignMat * (rotY * pos);
+    
+    // Final World-ish Position (local to chunk group)
+    vec3 finalPos = aInstancePos + pos;
 
     // --- Wind Simulation ---
-    // Multi-frequency wind for more organic movement
     float t = uTime * 0.8;
-    // Layer 1: Macro sway
-    float wind1 = sin(t * 1.5 + worldX * 0.4 + worldZ * 0.2);
-    // Layer 2: Micro jitter
-    float wind2 = sin(t * 4.0 + worldX * 2.0 + worldZ * 1.5) * 0.3;
-    // Layer 3: Gust (traveling)
-    float gust = sin(t * 2.0 - (worldX * uWindDir.x + worldZ * uWindDir.y) * 0.3);
-    
+    float wind1 = sin(t * 1.5 + aInstancePos.x * 0.4 + aInstancePos.z * 0.2);
+    float wind2 = sin(t * 4.0 + aInstancePos.x * 2.0 + aInstancePos.z * 1.5) * 0.3;
+    float gust = sin(t * 2.0 - (aInstancePos.x * uWindDir.x + aInstancePos.z * uWindDir.y) * 0.3);
     float wind = wind1 + wind2 + (gust * 0.5);
     
-    // Apply sway primarily to the top of the vegetation
     float swayStrength = uSway * pow(uv.y, 1.5) * 0.12; 
     
-    pos.x += wind * swayStrength * uWindDir.x;
-    pos.z += wind * swayStrength * uWindDir.y;
+    finalPos.x += wind * swayStrength * uWindDir.x;
+    finalPos.z += wind * swayStrength * uWindDir.y;
 
-    // Normal Hack: Blend with up vector for softer illumination
-    vec3 originalNormal = normalize(mat3(instanceMatrix) * normal);
-    vec3 upNormal = vec3(0.0, 1.0, 0.0);
-    vec3 newNormal = normalize(mix(originalNormal, upNormal, 0.7));
+    csm_Position = finalPos; 
+    vWorldPos = aInstancePos;
     
-    csm_Normal = newNormal; 
-    
-    csm_Position = pos;
-    vWorldPos = worldInstancePos.xyz;
-    
-    // Calculate view direction in world space
-    vec4 worldPos = modelMatrix * instanceMatrix * vec4(pos, 1.0);
+    // View dir for SSS
+    vec4 worldPos = modelMatrix * vec4(finalPos, 1.0);
     vViewDir = normalize(cameraPosition - worldPos.xyz);
+    
+    // Transform normal for lighting
+    csm_Normal = normalize(mix(alignMat * normal, up, 0.7));
   }
 `,
   fragment: `
@@ -66,41 +80,27 @@ const VEGETATION_SHADER = {
     varying vec3 vViewDir;
     
     void main() {
-       // --- Color Variation ---
-       // Use 3D noise for large-scale biome-consistent variation
        vec3 noiseCoord = vWorldPos * 0.08;
        float noise = texture(uNoiseTexture, noiseCoord).r;
        float noise2 = texture(uNoiseTexture, noiseCoord * 2.5).g;
        
        vec3 col = csm_DiffuseColor.rgb;
-       
-       // Break uniformity with noise (Hue & Value variation)
-       // Range: 0.9 to 1.1
        col *= (0.9 + noise * 0.2); 
        
-       // Added hue variation as requested: Shift color toward slightly warmer or cooler tones
-       vec3 warmShift = vec3(1.05, 1.0, 0.9); // More yellowish
-       vec3 coolShift = vec3(0.9, 1.0, 1.05); // More bluish
+       vec3 warmShift = vec3(1.05, 1.0, 0.9);
+       vec3 coolShift = vec3(0.9, 1.0, 1.05);
        col = mix(col * coolShift, col * warmShift, noise2);
        
-       // --- Lush Gradient ---
        float gradient = smoothstep(0.0, 1.0, vUv.y);
-       
-       // Fake Ambient Occlusion (darken base)
-       // Softened to 0.7 to blend better with terrain (was 0.45)
        float ao = smoothstep(0.0, 0.7, vUv.y);
        col *= mix(0.7, 1.0, ao);
        
-       // Tips are slightly brighter and more saturated
        vec3 tipCol = col * 1.25;
        col = mix(col, tipCol, gradient);
 
-       // --- Fake Subsurface Scattering (SSS) ---
-       // Light coming from behind the blade
        float sss = pow(clamp(dot(vViewDir, -uSunDir), 0.0, 1.0), 3.0) * gradient;
        col += csm_DiffuseColor.rgb * sss * 0.6;
 
-       // Translucency overlay
        float translucency = pow(gradient, 2.0) * 0.15;
        col += vec3(0.8, 1.0, 0.6) * translucency;
 
@@ -117,220 +117,15 @@ interface VegetationLayerProps {
 export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, sunDirection }) => {
   const materials = useRef<THREE.ShaderMaterial[]>([]);
 
-  // Update uniforms every frame
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
     materials.current.forEach(mat => {
       if (!mat) return;
-      if (mat.uniforms.uTime) mat.uniforms.uTime.value = t;
-      if (sunDirection && mat.uniforms.uSunDir) mat.uniforms.uSunDir.value.copy(sunDirection);
-      // uWindDir is currently static in the config but could be dynamic
+      mat.uniforms.uTime.value = t;
+      if (sunDirection) mat.uniforms.uSunDir.value.copy(sunDirection);
     });
   });
 
-  // Construct standard geometries once
-  const geometries = useMemo(() => {
-    const geoMap = new Map();
-
-    // --- GEOMETRY GENERATORS ---
-
-    // 1. Grass Clump (Blade clusters)
-    // Generates 3-5 blades radiating from center with curvature
-    const createGrassGeo = (bladeCount: number, height: number, width: number) => {
-      const positions: number[] = [];
-      const indices: number[] = [];
-      const normals: number[] = [];
-      const uvs: number[] = [];
-
-      let idx = 0;
-      const SEGMENTS = 2; // Reduced segments for cleaner look
-
-      for (let i = 0; i < bladeCount; i++) {
-        const angle = (i / bladeCount) * Math.PI * 2 + (Math.random() * 0.5);
-        const lean = (Math.random() * 0.3) + 0.1; // Reduced lean (was 0.5 + 0.2)
-        const curve = (Math.random() * 0.2) + 0.05; // Reduced curve (was 0.3 + 0.1)
-
-        // Blade properties - Wider base
-        const w = width * (1.2 + Math.random() * 0.5); // Wider (was 0.8)
-        const h = height * (0.7 + Math.random() * 0.6); // Randomized height (0.7 to 1.3x)
-
-        // Base center
-        const bx = 0;
-        const bz = 0;
-
-        // Generate segments
-        for (let j = 0; j <= SEGMENTS; j++) {
-          const t = j / SEGMENTS; // 0 to 1
-
-          // Width tapers to point
-          const currentW = w * (1.0 - t);
-
-          // Height grows linearly
-          const y = h * t;
-
-          // X/Z offset (Lean + Curve)
-          // Curve is quadratic (t^2)
-          const offset = (lean * t) + (curve * t * t);
-
-          const cx = bx + Math.sin(angle) * offset;
-          const cz = bz + Math.cos(angle) * offset;
-
-          // Left and Right vertices at this height
-          // Perpendicular to angle
-          const px = Math.cos(angle) * currentW * 0.5;
-          const pz = -Math.sin(angle) * currentW * 0.5;
-
-          // Vertex 1 (Left)
-          positions.push(cx + px, y, cz + pz);
-          // Vertex 2 (Right)
-          positions.push(cx - px, y, cz - pz);
-
-          // Normals (approximate up/out)
-          // Tilted slightly out
-          const ny = 1.0;
-          const nx = Math.sin(angle) * 0.5;
-          const nz = Math.cos(angle) * 0.5;
-          // Normalize roughly
-          const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-
-          normals.push(nx / len, ny / len, nz / len);
-          normals.push(nx / len, ny / len, nz / len);
-
-          uvs.push(0, t);
-          uvs.push(1, t);
-        }
-
-        // Indices for quads between segments
-        for (let j = 0; j < SEGMENTS; j++) {
-          const base = idx + j * 2;
-          // Quad: base, base+1, base+3, base+2
-          indices.push(
-            base, base + 1, base + 2,
-            base + 2, base + 1, base + 3,
-            // Back face
-            base + 1, base, base + 2,
-            base + 1, base + 2, base + 3
-          );
-        }
-
-        idx += (SEGMENTS + 1) * 2;
-      }
-
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
-      geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2));
-      geo.setIndex(indices);
-      return geo;
-    };
-
-
-    // 2. Flower (Stem + Head)
-    const createFlowerGeo = () => {
-      // Stem (thin box) - Half height/width
-      const stemHeight = 0.35;
-      const stemGeo = new THREE.BoxGeometry(0.025, stemHeight, 0.025);
-      stemGeo.translate(0, stemHeight / 2, 0);
-
-      // Flower Head (Cone or Box)
-      const headGeo = new THREE.CylinderGeometry(0.1, 0.0, 0.1, 5);
-      headGeo.translate(0, stemHeight + 0.05, 0);
-      headGeo.rotateX(Math.PI * 0.1); // Tilt slightly
-
-      const pos: number[] = [];
-      const ind: number[] = [];
-      const norm: number[] = [];
-
-      // Helper to add box
-      const addBox = (w: number, h: number, d: number, x: number, y: number, z: number) => {
-        const g = new THREE.BoxGeometry(w, h, d);
-        g.translate(x, y, z);
-        const p = g.attributes.position.array;
-        const n = g.attributes.normal.array;
-        const i = g.index!.array;
-        const offset = pos.length / 3;
-
-        for (let k = 0; k < p.length; k++) pos.push(p[k]);
-        for (let k = 0; k < n.length; k++) norm.push(n[k]);
-        for (let k = 0; k < i.length; k++) ind.push(i[k] + offset);
-      };
-
-      addBox(0.02, 0.3, 0.02, 0, 0.15, 0); // Stem
-      addBox(0.1, 0.1, 0.1, 0, 0.35, 0);   // Head
-
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(norm), 3));
-      geo.setIndex(ind);
-      return geo;
-    };
-
-    // 3. Fern (Curved Fronds)
-    const createFernGeo = () => {
-      // Similar to grass but wider, more curved, and more horizontal
-      // We can reuse grass logic with different params
-      // 5 blades, shorter, wider, more lean
-      return createGrassGeo(6, 0.25, 0.2);
-    };
-
-    // 3b. Broadleaf (Chunky Jungle Leaves)
-    // A short, wide clump to break up carpet uniformity.
-    const createBroadleafGeo = () => {
-      // Fewer blades, wider profile, a bit taller than fern.
-      return createGrassGeo(3, 0.45, 0.24);
-    };
-
-    // 4. Shrub (Cluster of boxes)
-    const createShrubGeo = () => {
-      const pos: number[] = [];
-      const ind: number[] = [];
-      const norm: number[] = [];
-
-      const addBox = (w: number, h: number, d: number, x: number, y: number, z: number) => {
-        const g = new THREE.BoxGeometry(w, h, d);
-        g.translate(x, y, z);
-        const p = g.attributes.position.array;
-        const n = g.attributes.normal.array;
-        const i = g.index!.array;
-        const offset = pos.length / 3;
-        for (let k = 0; k < p.length; k++) pos.push(p[k]);
-        for (let k = 0; k < n.length; k++) norm.push(n[k]);
-        for (let k = 0; k < i.length; k++) ind.push(i[k] + offset);
-      };
-
-      // Main bush - Half size
-      addBox(0.25, 0.25, 0.25, 0, 0.125, 0);
-      // Random smaller boxes
-      addBox(0.15, 0.15, 0.15, 0.15, 0.15, 0);
-      addBox(0.15, 0.15, 0.15, -0.1, 0.2, 0.1);
-      addBox(0.15, 0.15, 0.15, 0, 0.15, -0.15);
-
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-      geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(norm), 3));
-      geo.setIndex(ind);
-      return geo;
-    };
-
-
-    // Assign Geometries
-    // Half size and thinner as requested
-    geoMap.set('grass_low', createGrassGeo(3, 0.3, 0.08));
-    geoMap.set('grass_tall', createGrassGeo(4, 0.6, 0.1));
-    // New Carpet Grass: 12 blades, much thinner (0.05 width), slightly shorter (0.4)
-    geoMap.set('grass_carpet', createGrassGeo(12, 0.4, 0.05));
-    geoMap.set('flower', createFlowerGeo()); // Updated internally below
-    geoMap.set('fern', createFernGeo());
-    geoMap.set('broadleaf', createBroadleafGeo());
-    geoMap.set('shrub', createShrubGeo());
-
-    // Fallback
-    geoMap.set('box', new THREE.BoxGeometry(0.2, 0.5, 0.2));
-
-    return geoMap;
-  }, []);
-
-  // Process batches
   const batches = useMemo(() => {
     if (!data) return [];
     return Object.entries(data).map(([typeStr, positions]) => {
@@ -338,111 +133,117 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
       const asset = VEGETATION_ASSETS[typeId];
       if (!asset) return null;
 
-      let geoName = 'box';
-      // Map config types to our new geo generators
-      // Note: VegetationConfig types are numbers, we map them here manually or via config
-      // For now, hardcode mapping based on known types:
-      // GRASS_LOW=0, GRASS_TALL=1, FLOWER_BLUE=2, DESERT_SHRUB=3, SNOW_GRASS=4, JUNGLE_FERN=5, JUNGLE_GRASS=6, GROVE_GRASS=7
-      // JUNGLE_BROADLEAF=8, JUNGLE_FLOWER=9, JUNGLE_VINE=10
+      let geoName: keyof typeof VEGETATION_GEOMETRIES = 'box';
       switch (typeId) {
         case 0: geoName = 'grass_low'; break;
         case 1: geoName = 'grass_tall'; break;
         case 2: geoName = 'flower'; break;
         case 3: geoName = 'shrub'; break;
-        case 4: geoName = 'grass_low'; break; // Snow grass uses low grass geo
+        case 4: geoName = 'grass_low'; break;
         case 5: geoName = 'fern'; break;
-        case 6: geoName = 'grass_low'; break; // Jungle grass
-        case 7: geoName = 'grass_carpet'; break; // Grove grass - CARPET MODE
-        case 8: geoName = 'broadleaf'; break; // Jungle broadleaf clumps
-        case 9: geoName = 'flower'; break; // Rare jungle flowers
-        case 10: geoName = 'grass_tall'; break; // Jungle vines (vertical accents)
+        case 6: geoName = 'grass_low'; break;
+        case 7: geoName = 'grass_carpet'; break;
+        case 8: geoName = 'broadleaf'; break;
+        case 9: geoName = 'flower'; break;
+        case 10: geoName = 'grass_tall'; break;
       }
+
+      const count = positions.length / 6;
+      const geometry = VEGETATION_GEOMETRIES[geoName];
 
       return {
         id: typeId,
         asset,
-        positions, // Float32Array
-        count: positions.length / 6, // Stride is now 6 (x, y, z, nx, ny, nz)
-        geometry: geometries.get(geoName) || geometries.get('box')
+        positions,
+        count,
+        geometry
       };
     }).filter(Boolean);
-  }, [data, geometries]);
+  }, [data]);
 
   return (
     <group>
       {batches.map((batch, i) => (
-        <instancedMesh
+        <VegetationBatch
           key={batch!.id}
-          args={[batch!.geometry, undefined, batch!.count]}
-          castShadow={false}
-          receiveShadow
-        >
-          <CustomShaderMaterial
-            ref={(ref: any) => (materials.current[i] = ref)}
-            baseMaterial={THREE.MeshStandardMaterial}
-            vertexShader={VEGETATION_SHADER.vertex}
-            fragmentShader={VEGETATION_SHADER.fragment}
-            uniforms={{
-              uTime: { value: 0 },
-              uSway: { value: batch!.asset.sway },
-              uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
-              uSunDir: { value: sunDirection || new THREE.Vector3(0, 1, 0) },
-              uNoiseTexture: { value: noiseTexture },
-              uOpacity: { value: 1.0 },
-            }}
-            color={batch!.asset.color}
-            roughness={batch!.asset.roughness}
-            toneMapped={false}
-            side={THREE.DoubleSide}
-          />
-          <InstanceMatrixSetter positions={batch!.positions} scale={batch!.asset.scale} />
-        </instancedMesh>
+          batch={batch!}
+          sunDirection={sunDirection}
+          registerMaterial={(ref) => (materials.current[i] = ref)}
+        />
       ))}
     </group>
   );
 });
 
-// Helper component to set matrices layout-effect style
-const InstanceMatrixSetter = ({ positions, scale }: { positions: Float32Array, scale: number[] }) => {
-  const anchorRef = useRef<THREE.Object3D>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const anchorObject = useMemo(() => new THREE.Object3D(), []);
+const VegetationBatch: React.FC<{
+  batch: any;
+  sunDirection?: THREE.Vector3;
+  registerMaterial: (ref: THREE.ShaderMaterial) => void;
+}> = ({ batch, sunDirection, registerMaterial }) => {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  // Use InstancedBufferGeometry to share buffers without cloning the massive attribute arrays.
+  const geometry = useMemo(() => {
+    const instGeo = new THREE.InstancedBufferGeometry();
+    instGeo.index = batch.geometry.index;
+    instGeo.attributes.position = batch.geometry.attributes.position;
+    instGeo.attributes.normal = batch.geometry.attributes.normal;
+    instGeo.attributes.uv = batch.geometry.attributes.uv;
+
+    // Set a manual bounding box for the entire batch so frustum culling works.
+    // Chunks are roughly 32x32 in XZ. Y range is roughly -35 to +25.
+    // Overestimating slightly is fine and cheaper than precise compute.
+    instGeo.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-2, -40, -2),
+      new THREE.Vector3(34, 40, 34)
+    );
+    instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
+
+    return instGeo;
+  }, [batch.geometry]);
 
   useLayoutEffect(() => {
-    const parent = anchorRef.current?.parent as THREE.InstancedMesh | undefined;
-    if (!parent) return;
+    if (!meshRef.current) return;
 
-    const count = positions.length / 6; // Stride 6
-    const up = new THREE.Vector3(0, 1, 0);
-    const normal = new THREE.Vector3();
-    const q = new THREE.Quaternion();
-    const qY = new THREE.Quaternion();
+    // Stride 6 (x,y,z, nx,ny,nz)
+    const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
+    geometry.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
+    geometry.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
+  }, [batch.positions, geometry]);
 
-    for (let i = 0; i < count; i++) {
-      const idx = i * 6;
-      dummy.position.set(positions[idx], positions[idx + 1], positions[idx + 2]);
+  React.useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
 
-      // Read Normal
-      normal.set(positions[idx + 3], positions[idx + 4], positions[idx + 5]);
-
-      // Align to normal
-      q.setFromUnitVectors(up, normal);
-
-      // Random rotation around Y (local up)
-      qY.setFromAxisAngle(up, Math.random() * Math.PI * 2);
-
-      // Combine: Align to normal, then rotate around local up
-      // Note: q * qY means apply qY first (local rotation), then q (alignment)
-      dummy.quaternion.copy(q).multiply(qY);
-
-      const s = Math.random() * 0.3 + 0.85; // Slight size variance
-      dummy.scale.set(scale[0] * s, scale[1] * s, scale[2] * s);
-      dummy.updateMatrix();
-      parent.setMatrixAt(i, dummy.matrix);
-    }
-    parent.instanceMatrix.needsUpdate = true;
-  }, [positions, scale, dummy]);
-
-  // Attach a tiny helper object so we can grab the InstancedMesh parent reliably
-  return <primitive ref={anchorRef} object={anchorObject} />;
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, undefined, batch.count]}
+      castShadow={false}
+      receiveShadow
+      frustumCulled={true}
+    >
+      <CustomShaderMaterial
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ref={(ref: any) => registerMaterial(ref)}
+        baseMaterial={THREE.MeshStandardMaterial}
+        vertexShader={VEGETATION_SHADER.vertex}
+        fragmentShader={VEGETATION_SHADER.fragment}
+        uniforms={{
+          uTime: { value: 0 },
+          uSway: { value: batch.asset.sway },
+          uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
+          uSunDir: { value: sunDirection || new THREE.Vector3(0, 1, 0) },
+          uNoiseTexture: { value: noiseTexture },
+          uOpacity: { value: 1.0 },
+        }}
+        color={batch.asset.color}
+        roughness={batch.asset.roughness}
+        toneMapped={false}
+        side={THREE.DoubleSide}
+      />
+    </instancedMesh>
+  );
 };

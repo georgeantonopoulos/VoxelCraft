@@ -9,10 +9,23 @@ export interface SimUpdate {
 }
 
 export class SimulationManager {
-    private worker: Worker;
+    private worker: Worker | null = null;
+    private enabled: boolean;
     private onChunksUpdated?: (updates: SimUpdate[]) => void;
 
     constructor() {
+        // Simulation is currently opt-in because the worker loop is intentionally disabled
+        // (see `src/features/flora/workers/simulation.worker.ts` keyword: "Loop paused").
+        // Importantly, posting per-chunk voxel arrays to a worker triggers structured cloning
+        // and can cause noticeable hitches during terrain streaming.
+        this.enabled = (() => {
+            if (typeof window === 'undefined') return false;
+            const params = new URLSearchParams(window.location.search);
+            return params.has('vcSim');
+        })();
+
+        if (!this.enabled) return;
+
         this.worker = new Worker(new URL('../workers/simulation.worker.ts', import.meta.url), { type: 'module' });
 
         this.worker.onmessage = (e) => {
@@ -38,6 +51,7 @@ export class SimulationManager {
     }
 
     start() {
+        if (!this.worker) return;
         this.worker.postMessage({ type: 'START_LOOP' });
     }
 
@@ -46,6 +60,7 @@ export class SimulationManager {
     }
 
     addChunk(key: string, cx: number, cz: number, material: Uint8Array, wetness: Uint8Array, mossiness: Uint8Array) {
+        if (!this.worker) return;
         this.worker.postMessage({
             type: 'ADD_CHUNK',
             payload: { key, cx, cz, material, wetness, mossiness }
@@ -53,10 +68,12 @@ export class SimulationManager {
     }
 
     removeChunk(key: string) {
+        if (!this.worker) return;
         this.worker.postMessage({ type: 'REMOVE_CHUNK', payload: { key } });
     }
 
     updatePlayerPosition(cx: number, cz: number) {
+        if (!this.worker) return;
         this.worker.postMessage({ type: 'PLAYER_POSITION', payload: { cx, cz } });
     }
 }

@@ -8,6 +8,7 @@ interface LuminaLayerProps {
   lightPositions?: Float32Array; // stride 3: x, y, z
   cx: number;
   cz: number;
+  collidersEnabled: boolean;
 }
 
 /**
@@ -15,7 +16,7 @@ interface LuminaLayerProps {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, collidersEnabled }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   // const { camera } = useThree(); // Unused
@@ -102,7 +103,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
       </instancedMesh>
 
       {/* Clustered Lights - Distance Culled */}
-      {lights.map((pos, i) => (
+      {collidersEnabled && lights.map((pos, i) => (
         <DistanceCulledLight key={i} position={pos} intensityMul={1.0} />
       ))}
     </group>

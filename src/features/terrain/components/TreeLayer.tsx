@@ -9,9 +9,10 @@ import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type
+    collidersEnabled: boolean;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, collidersEnabled }) => {
     // Group data by type (+ jungle variant)
     const batches = useMemo(() => {
         const map = new Map<string, { type: number, variant: number, positions: number[], count: number }>();
@@ -52,13 +53,20 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data }) => {
                     variant={batch.variant}
                     positions={batch.positions}
                     count={batch.count}
+                    collidersEnabled={collidersEnabled}
                 />
             ))}
         </group>
     );
 });
 
-const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: number[], count: number }> = ({ type, variant, positions, count }) => {
+const InstancedTreeBatch: React.FC<{
+    type: number,
+    variant: number,
+    positions: number[],
+    count: number,
+    collidersEnabled: boolean
+}> = ({ type, variant, positions, count, collidersEnabled }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
     const woodMaterialRef = useRef<any>(null);
@@ -407,7 +415,7 @@ const InstancedTreeBatch: React.FC<{ type: number, variant: number, positions: n
             )}
 
             {/* Physics Colliders */}
-            {rigidBodyGroups.map((instances, i) => (
+            {collidersEnabled && rigidBodyGroups.map((instances, i) => (
                 <InstancedRigidBodies
                     key={i}
                     instances={instances}

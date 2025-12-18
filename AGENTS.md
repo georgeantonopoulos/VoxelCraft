@@ -102,6 +102,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
 - **CustomShaderMaterial redefinition errors**: When using `three-custom-shader-material` (CSM) with `MeshStandardMaterial`, do NOT declare `varying vec3 vNormal` or `varying vec3 vViewDir`. These are already defined by Three.js and will cause a `redefinition` error during merging. Use `csm_Normal` to set normals in the vertex shader; Three.js handles the fragment-side varying internally.
 - **Responsive Item Offsets**: In portrait mode (aspect < 1), held items (torches, tools) must have their X-offsets scaled dynamically using `aspect` to prevent them from disappearing off the sides of the screen (see `FirstPersonTools.tsx` keywords: `responsiveX`).
+- **Interaction Data vs Optimized Visuals**: Ground items (sticks, rocks) use optimized bucketted buffers for rendering (`drySticks`, `rockDataBuckets`), but the interaction logic (`rayHitsGeneratedGroundPickup`) still requires the original stride-8 data (`stickPositions`, `rockPositions`). If these are missing from the worker's `GENERATED` payload, items will be visible but impossible to pick up (see `VoxelTerrain.tsx`).
+- **Instanced Geometry Disposal**: Do not call `geometry.dispose()` in an effect cleanup that depends on the *data* (e.g. `batch.positions`). This will destroy the geometry every time an item is picked up. Only dispose when the geometry object itself changes or on unmount (see `GroundItemsLayer.tsx`).
 
 ---
 
@@ -206,3 +208,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - Throttled streaming logic to only execute when player crosses chunk boundaries.
     - Implemented prioritized job queues for chunk generation and collider enabling.
   - Fixed Rapier Context Error: Moved `InteractionHandler` inside the `<Physics>` provider in `App.tsx`.
+- 2025-12-18: Fixed Item Pickup & Optimized Rendering Stability.
+  - Restored `stickPositions` and `rockPositions` (stride-8 interaction data) to the worker's `GENERATED` payload. This allows `rayHitsGeneratedGroundPickup` to function even when rendering has been shifted to optimized bucketed buffers.
+  - Fixed a critical crash/instability bug in `GroundItemsLayer.tsx` and `VegetationLayer.tsx` where instanced geometry was being disposed every time an item was picked up.
+  - Synchronized `removeGround` logic in `VoxelTerrain.tsx` to instantly hide items from both original raw arrays and optimized visual buffers (`drySticks`, `rockDataBuckets`).
+  - Verified held/thrown item visibility by setting `uInstancing: false` in `StickTool`, `StoneTool`, and `PhysicsItem`.
+  - Resolved TypeScript error for `RockVariant` in `VoxelTerrain.tsx` by importing it correctly.
