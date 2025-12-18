@@ -95,6 +95,14 @@ export const DynamicEnvironmentIBL: React.FC<{
       cubeRT.dispose();
       pmrem.dispose();
       rt.dispose();
+
+      // Reset scene state if we were the ones who modified it.
+      if (scene.environment === lastPMREMRT.current?.texture || scene.environment === roomPMREM.current) {
+        scene.environment = null;
+      }
+      applyEnvIntensity(0);
+      scene.userData.vcLastAppliedEnvIntensity = 0;
+      scene.userData.vcEnvIntensity = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -126,8 +134,16 @@ export const DynamicEnvironmentIBL: React.FC<{
     const baseIntensity = THREE.MathUtils.lerp(0.012, 0.045, day01) * intensity;
     const caveIntensity = 0.01 * intensity;
     const envIntensity = caveKey === 'cave' ? caveIntensity : baseIntensity;
-    scene.userData.vcEnvIntensity = envIntensity;
-    applyEnvIntensity(envIntensity);
+
+    // Throttled update: only traverse and apply if the intensity has changed meaningfully (>1%).
+    // This avoids O(N) scene traversal every single frame.
+    const lastApplied = (scene.userData.vcLastAppliedEnvIntensity as number) || 0;
+    const delta = Math.abs(envIntensity - lastApplied);
+    if (delta > 0.0005 || (envIntensity === 0 && lastApplied !== 0)) {
+      scene.userData.vcEnvIntensity = envIntensity;
+      scene.userData.vcLastAppliedEnvIntensity = envIntensity;
+      applyEnvIntensity(envIntensity);
+    }
 
     const key = `${caveKey}:${sunKey}`;
     const now = clock.getElapsedTime();

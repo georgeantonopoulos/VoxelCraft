@@ -14,6 +14,7 @@ export enum VegetationType {
   JUNGLE_BROADLEAF = 8,
   JUNGLE_FLOWER = 9,
   JUNGLE_VINE = 10,
+  JUNGLE_GIANT_FERN = 11,
 }
 
 export enum TreeType {
@@ -38,16 +39,17 @@ export const VEGETATION_ASSETS: Record<number, {
   [VegetationType.FLOWER_BLUE]: { color: '#4444ff', scale: [0.8, 0.8, 0.8], geometry: 'cross', sway: 0.3, roughness: 0.8 },
   [VegetationType.DESERT_SHRUB]: { color: '#8b6c42', scale: [1.2, 0.8, 1.2], geometry: 'box', sway: 0.1, roughness: 1.0 },
   [VegetationType.SNOW_GRASS]: { color: '#ddeedd', scale: [1, 0.5, 1], geometry: 'cross', sway: 0.4, roughness: 0.6 },
-  [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2, 1.5, 2], geometry: 'cross', sway: 0.8, roughness: 0.6 },
+  [VegetationType.JUNGLE_FERN]: { color: '#2E7D32', scale: [2.5, 1.8, 2.5], geometry: 'cross', sway: 0.8, roughness: 0.6 },
   [VegetationType.JUNGLE_GRASS]: { color: '#2e8b1d', scale: [1, 0.8, 1], geometry: 'cross', sway: 0.6, roughness: 0.5 }, // Matches JUNGLE_GRASS material
   [VegetationType.GROVE_GRASS]: { color: '#41a024', scale: [1.4, 0.7, 1.4], geometry: 'cross', sway: 0.5, roughness: 0.3 }, // Matches GRASS material
   // Jungle palette + silhouette variety:
   // - Broadleaf plants add chunky, low canopy shapes.
   // - Flowers are rare bright accents.
   // - Vines add vertical texture between grass and trunks.
-  [VegetationType.JUNGLE_BROADLEAF]: { color: '#1f8f3a', scale: [2.2, 1.1, 2.2], geometry: 'cross', sway: 0.4, roughness: 0.45 },
+  [VegetationType.JUNGLE_BROADLEAF]: { color: '#1f8f3a', scale: [3.2, 1.4, 3.2], geometry: 'cross', sway: 0.4, roughness: 0.45 },
   [VegetationType.JUNGLE_FLOWER]: { color: '#f97316', scale: [0.9, 0.9, 0.9], geometry: 'cross', sway: 0.2, roughness: 0.7 },
-  [VegetationType.JUNGLE_VINE]: { color: '#0f6b2f', scale: [0.6, 1.8, 0.6], geometry: 'cross', sway: 1.1, roughness: 0.5 },
+  [VegetationType.JUNGLE_VINE]: { color: '#0f6b2f', scale: [0.6, 2.8, 0.6], geometry: 'cross', sway: 1.1, roughness: 0.5 },
+  [VegetationType.JUNGLE_GIANT_FERN]: { color: '#1B5E20', scale: [3.5, 2.2, 3.5], geometry: 'cross', sway: 0.6, roughness: 0.55 },
 };
 
 // Deterministic placement logic
@@ -86,10 +88,11 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
       // 0.92-0.98  -> vines (vertical accents)
       // 0.98-1.00  -> rare jungle flowers
       if (noiseVal > 0.98) return VegetationType.JUNGLE_FLOWER;
-      if (noiseVal > 0.92) return VegetationType.JUNGLE_VINE;
-      if (noiseVal > 0.75) return VegetationType.JUNGLE_BROADLEAF;
-      if (noiseVal > 0.45) return VegetationType.JUNGLE_FERN;
-      return VegetationType.JUNGLE_GRASS; // Jungle is full of stuff
+      if (noiseVal > 0.93) return VegetationType.JUNGLE_VINE;
+      if (noiseVal > 0.85) return VegetationType.JUNGLE_GIANT_FERN;
+      if (noiseVal > 0.70) return VegetationType.JUNGLE_BROADLEAF;
+      if (noiseVal > 0.40) return VegetationType.JUNGLE_FERN;
+      return VegetationType.JUNGLE_GRASS;
     case 'SAVANNA':
       if (noiseVal > 0.80) return VegetationType.GRASS_TALL;
       if (noiseVal > 0.40) return VegetationType.GRASS_LOW;

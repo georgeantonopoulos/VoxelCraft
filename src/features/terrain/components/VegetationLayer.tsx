@@ -1,10 +1,10 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
 // The "Life" Shader: Wind sway and subtle color variation
 const VEGETATION_SHADER = {
@@ -114,17 +114,7 @@ interface VegetationLayerProps {
   sunDirection?: THREE.Vector3;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, sunDirection }) => {
-  const materials = useRef<THREE.ShaderMaterial[]>([]);
-
-  useFrame(({ clock }) => {
-    const t = clock.getElapsedTime();
-    materials.current.forEach(mat => {
-      if (!mat) return;
-      mat.uniforms.uTime.value = t;
-      if (sunDirection) mat.uniforms.uSunDir.value.copy(sunDirection);
-    });
-  });
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data }) => {
 
   const batches = useMemo(() => {
     if (!data) return [];
@@ -146,6 +136,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 8: geoName = 'broadleaf'; break;
         case 9: geoName = 'flower'; break;
         case 10: geoName = 'grass_tall'; break;
+        case 11: geoName = 'giant_fern'; break;
       }
 
       const count = positions.length / 6;
@@ -163,12 +154,10 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
 
   return (
     <group>
-      {batches.map((batch, i) => (
+      {batches.map((batch) => (
         <VegetationBatch
           key={batch!.id}
           batch={batch!}
-          sunDirection={sunDirection}
-          registerMaterial={(ref) => (materials.current[i] = ref)}
         />
       ))}
     </group>
@@ -177,9 +166,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
 
 const VegetationBatch: React.FC<{
   batch: any;
-  sunDirection?: THREE.Vector3;
-  registerMaterial: (ref: THREE.ShaderMaterial) => void;
-}> = ({ batch, sunDirection, registerMaterial }) => {
+}> = ({ batch }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   // Use InstancedBufferGeometry to share buffers without cloning the massive attribute arrays.
@@ -226,16 +213,13 @@ const VegetationBatch: React.FC<{
       frustumCulled={true}
     >
       <CustomShaderMaterial
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ref={(ref: any) => registerMaterial(ref)}
         baseMaterial={THREE.MeshStandardMaterial}
         vertexShader={VEGETATION_SHADER.vertex}
         fragmentShader={VEGETATION_SHADER.fragment}
         uniforms={{
-          uTime: { value: 0 },
+          ...sharedUniforms,
           uSway: { value: batch.asset.sway },
           uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
-          uSunDir: { value: sunDirection || new THREE.Vector3(0, 1, 0) },
           uNoiseTexture: { value: noiseTexture },
           uOpacity: { value: 1.0 },
         }}

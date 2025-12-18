@@ -20,6 +20,7 @@ import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
+import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 
 
 // Sounds
@@ -570,6 +571,7 @@ interface VoxelTerrainProps {
   action: 'DIG' | 'BUILD' | null;
   isInteracting: boolean;
   sunDirection?: THREE.Vector3;
+  initialSpawnPos?: [number, number, number] | null;
   // Debug: 0..1 slider to reduce high-frequency triplanar noise contribution in the shader.
   triplanarDetail?: number;
   // Debug: independently toggle the terrain's fog paths.
@@ -633,10 +635,11 @@ class AudioPool {
   }
 }
 
-export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
+export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   action,
   isInteracting,
   sunDirection,
+  initialSpawnPos,
   triplanarDetail = 1.0,
   terrainShaderFogEnabled = true,
   terrainShaderFogStrength = 0.9,
@@ -654,6 +657,38 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   onInitialLoad,
   worldType
 }) => {
+  const prevProps = useRef<any>({});
+  useEffect(() => {
+    const changed = Object.entries({
+      action, isInteracting, sunDirection, triplanarDetail,
+      terrainShaderFogEnabled, terrainShaderFogStrength, terrainThreeFogEnabled,
+      terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
+      terrainRoughnessMin, terrainPolygonOffsetEnabled, terrainPolygonOffsetFactor,
+      terrainPolygonOffsetUnits, terrainChunkTintEnabled, terrainWireframeEnabled,
+      terrainWeightsView, worldType
+    }).filter(([k, v]) => prevProps.current[k] !== v);
+
+    if (changed.length > 0 && typeof window !== 'undefined') {
+      const diag = (window as any).__vcDiagnostics;
+      if (diag) {
+        diag.lastPropChange = changed.map(([k]) => k).join(', ');
+        // console.log('[VoxelTerrain] Props changed:', diag.lastPropChange);
+      }
+    }
+    prevProps.current = {
+      action, isInteracting, sunDirection, triplanarDetail,
+      terrainShaderFogEnabled, terrainShaderFogStrength, terrainThreeFogEnabled,
+      terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
+      terrainRoughnessMin, terrainPolygonOffsetEnabled, terrainPolygonOffsetFactor,
+      terrainPolygonOffsetUnits, terrainChunkTintEnabled, terrainWireframeEnabled,
+      terrainWeightsView, worldType
+    };
+  });
+
+  if (typeof window !== 'undefined') {
+    const diag = (window as any).__vcDiagnostics;
+    if (diag) diag.terrainRenders = (diag.terrainRenders || 0) + 1;
+  }
   const { camera } = useThree();
   const { world, rapier } = useRapier();
 
@@ -777,14 +812,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
 
     // Check if central chunks are ready (3x3 grid around 0,0)
     // 3x3 is enough to cover the immediate view so player doesn't see void
-    const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
-    const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
+    // Check if spawn or central chunks are ready
+    const targetX = initialSpawnPos ? initialSpawnPos[0] : camera.position.x;
+    const targetZ = initialSpawnPos ? initialSpawnPos[2] : camera.position.z;
+
+    const px = Math.floor(targetX / CHUNK_SIZE_XZ);
+    const pz = Math.floor(targetZ / CHUNK_SIZE_XZ);
     const essentialKeys = [
       `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
       `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
     ];
 
-    const allLoaded = essentialKeys.every(key => chunksRef.current[key]);
+    const allLoaded = essentialKeys.every(key => chunks[key]);
 
     if (allLoaded) {
       initialLoadTriggered.current = true;
@@ -792,11 +831,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
     }
   }, [chunks, onInitialLoad]);
 
-  useFrame(() => {
+  const mountQueue = useRef<any[]>([]);
+  const lastTimeRef = useRef(0);
+
+  // 3. Process Queues (Throttled)
+  useFrame((state) => {
+    const frameStart = performance.now();
     if (!camera || !workerRef.current) return;
 
-    const px = Math.floor(camera.position.x / CHUNK_SIZE_XZ);
-    const pz = Math.floor(camera.position.z / CHUNK_SIZE_XZ);
+    lastTimeRef.current = state.clock.getElapsedTime();
+
+    // One chunk addition per frame to avoid hitches
+    if (mountQueue.current.length > 0) {
+      const newChunk = mountQueue.current.shift()!;
+      setChunks((prev) => {
+        if (prev[newChunk.key]) return prev;
+        return { ...prev, [newChunk.key]: newChunk };
+      });
+    }
+
+    // Use spawnPos for initial load to ensure we have a floor, otherwise use camera
+    const streamX = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[0] : camera.position.x;
+    const streamZ = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[2] : camera.position.z;
+
+    const px = Math.floor(streamX / CHUNK_SIZE_XZ);
+    const pz = Math.floor(streamZ / CHUNK_SIZE_XZ);
 
     // 1. STREAMING WINDOW & QUEUE UPDATES (Only on chunk crossing)
     const moved = px !== lastProcessedPlayerChunk.current.px || pz !== lastProcessedPlayerChunk.current.pz;
@@ -817,7 +876,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         const dx = camera.position.x - prevCamPos.current.x;
         const dz = camera.position.z - prevCamPos.current.z;
         const speedSq = dx * dx + dz * dz;
-        if (speedSq > 0.0004) {
+        // Only update forward vector if we are actually moving (e.g. not in cinematic orbit)
+        if (speedSq > 0.0004 && initialLoadTriggered.current) {
           tmpMoveDir.current.set(dx, 0, dz).normalize();
           streamForward.current.lerp(tmpMoveDir.current, 0.25).normalize();
         }
@@ -955,19 +1015,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
             colliderEnabled,
             terrainVersion: payload.terrainVersion ?? 0,
             visualVersion: payload.visualVersion ?? 0,
-            spawnedAt: performance.now() / 1000
+            spawnedAt: initialLoadTriggered.current ? (lastTimeRef.current || 0.01) : 0
           };
 
           setChunkFireflies(key, fireflyPositions);
           terrainRuntime.registerChunk(key, cx, cz, density, material);
 
           chunksRef.current[key] = newChunk;
-          if (initialLoadTriggered.current) {
-            startTransition(() => {
-              setChunks(prev => ({ ...prev, [key]: newChunk }));
-            });
-          } else {
+
+          if (!initialLoadTriggered.current) {
+            // During initial load, mount immediately so player has a floor
             setChunks(prev => ({ ...prev, [key]: newChunk }));
+          } else {
+            mountQueue.current.push(newChunk);
           }
 
           // If collider was NOT enabled immediately, add to queue
@@ -1083,6 +1143,25 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
         }
       }
     }
+
+    // --- Performance Diagnostics ---
+    if (typeof window !== 'undefined') {
+      const diag = (window as any).__vcDiagnostics || {};
+      (window as any).__vcDiagnostics = {
+        ...diag,
+        chunksLoaded: Object.keys(chunksRef.current).length,
+        pendingChunks: pendingChunks.current.size,
+        generateQueue: generateQueue.current.length,
+        workerMessages: workerMessageQueue.current.length - workerMessageHead.current,
+        removeQueue: removeQueue.current.length,
+        remeshQueue: remeshQueue.current.size,
+        colliderQueue: colliderEnableQueue.current.length,
+        terrainFrameTime: Math.max(diag.terrainFrameTime || 0, performance.now() - frameStart),
+      };
+    }
+
+    // Update central uniforms for instanced layers
+    updateSharedUniforms(state, sunDirection);
   });
 
   useEffect(() => {
@@ -1776,4 +1855,4 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       ))}
     </group>
   );
-};
+});

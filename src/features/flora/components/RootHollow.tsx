@@ -187,8 +187,13 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         };
     }, [status]);
 
+    const frameCount = useRef(0);
     useFrame(() => {
         if (status !== 'IDLE') return;
+
+        // Optimization: Only scan for entities once every 20 frames
+        frameCount.current++;
+        if (frameCount.current % 20 !== 0) return;
 
         const nearbyEntities = getEntitiesNearby(posVec, 2.0);
 

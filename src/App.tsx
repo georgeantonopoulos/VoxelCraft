@@ -194,34 +194,59 @@ const DebugControls: React.FC<{
   return null;
 };
 
-const DebugGL: React.FC<{ skipPost: boolean }> = ({ skipPost }) => {
-  const { gl } = useThree();
-  const lastLog = useRef(0);
+/**
+ * Performance Monitor: Measures frame time and logs diagnostics when FPS < 20.
+ * Logs scene state, draw calls, and terrain internal queues to identify lag spikes.
+ */
+const PerformanceMonitor: React.FC = () => {
+  const { gl, camera, scene } = useThree();
+  const lastTime = useRef(performance.now());
+  const frameTimes = useRef<number[]>([]);
+  const lastLogTime = useRef(0);
 
-  useFrame(({ clock }) => {
-    const now = clock.getElapsedTime();
-    if (now - lastLog.current < 2.0) return; // Log every 2s
-    lastLog.current = now;
+  useFrame(() => {
+    const now = performance.now();
+    const dt = now - lastTime.current;
+    lastTime.current = now;
 
-    // info
-    // console.log('[DebugGL] Stats:', {
-    //   calls: info.render.calls,
-    //   triangles: info.render.triangles,
-    //   textures: info.memory.textures,
-    //   geometries: info.memory.geometries,
-    //   camPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
-    //   camRot: camera.rotation.toArray().slice(0, 3).map(v => typeof v === 'number' ? Math.round(v * 100) / 100 : v),
-    //   skipPost
-    // });
+    // Sliding window of frame times
+    frameTimes.current.push(dt);
+    if (frameTimes.current.length > 30) frameTimes.current.shift();
+
+    const avgFrameTime = frameTimes.current.reduce((a, b) => a + b, 0) / frameTimes.current.length;
+    const fps = 1000 / avgFrameTime;
+
+    // If FPS drops below 20 for the window (and not flooded), log diagnostics
+    if (fps < 20 && now - lastLogTime.current > 3000) {
+      lastLogTime.current = now;
+
+      const diagnostics = (window as any).__vcDiagnostics || {};
+
+      console.warn(`[PerformanceMonitor] FPS dropped to ${Math.round(fps)}! Diagnostics:`, {
+        time: new Date().toLocaleTimeString(),
+        fps: Math.round(fps),
+        avgFrameTime: Math.round(avgFrameTime * 10) / 10,
+        playerPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
+        terrainState: { ...diagnostics },
+        lastPropChange: diagnostics.lastPropChange,
+        glInfo: {
+          drawCalls: gl.info.render.calls,
+          triangles: gl.info.render.triangles,
+          geometries: gl.info.memory.geometries,
+          textures: gl.info.memory.textures,
+          programs: gl.info.programs?.length
+        },
+        sceneObjects: scene.children.length
+      });
+
+      // Reset counters so the next log shows delta since last log
+      diagnostics.totalChunkRenders = 0;
+      diagnostics.geomCount = 0;
+      diagnostics.terrainRenders = 0;
+      diagnostics.terrainFrameTime = 0; // Reset max frame time
+      diagnostics.minimapDrawTime = 0;
+    }
   });
-
-  useEffect(() => {
-    console.log('[DebugGL] skipPostProcessing', skipPost);
-    console.log('[DebugGL] GL Capabilities', {
-      maxTextureSize: gl.capabilities.maxTextureSize,
-      isWebGL2: gl.capabilities.isWebGL2
-    });
-  }, [skipPost, gl]);
 
   return null;
 };
@@ -1294,7 +1319,14 @@ const App: React.FC = () => {
 
     const h = TerrainService.getHeightAt(x, z);
     setSpawnPos([x, h + 5, z]);
-  }, [findSpawnForBiome]);
+  }, [findSpawnForBiome, worldType]);
+
+  // Sync main-thread BiomeManager for height calculations
+  useEffect(() => {
+    if (worldType) {
+      BiomeManager.setWorldType(worldType);
+    }
+  }, [worldType]);
 
   // Debug flow: allow bypassing the world selection + enter click for automated checks.
   useEffect(() => {
@@ -1458,7 +1490,7 @@ const App: React.FC = () => {
           // Keep far plane large enough to include the Sun/Moon (r=300) + buffer
           camera={{ fov: 75, near: 0.1, far: 600 }}
         >
-          <DebugGL skipPost={skipPost} />
+          <PerformanceMonitor />
 
           {/* --- 1. ATMOSPHERE & LIGHTING (Aetherial & Immersive) --- */}
 
@@ -1510,7 +1542,9 @@ const App: React.FC = () => {
           />
 
           {/* Dynamic IBL: time-of-day aware environment reflections for PBR materials. */}
-          <DynamicEnvironmentIBL sunDirection={sunDirection} enabled={iblEnabled} intensity={iblIntensity} />
+          {iblEnabled && (
+            <DynamicEnvironmentIBL sunDirection={sunDirection} enabled={iblEnabled} intensity={iblIntensity} />
+          )}
 
           {/* --- 2. GAME WORLD --- */}
 
@@ -1541,6 +1575,7 @@ const App: React.FC = () => {
                   terrainChunkTintEnabled={terrainChunkTintEnabled}
                   terrainWireframeEnabled={terrainWireframeEnabled}
                   terrainWeightsView={terrainWeightsView}
+                  initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}
                 />

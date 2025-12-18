@@ -9,7 +9,8 @@ import { useSettingsStore } from '@/state/SettingsStore';
 // --- Minimap Configuration ---
 const MAP_SIZE = 128; // Pixel width/height of the map
 const MAP_SCALE = 2; // World units per pixel (Higher = zoomed out)
-const REFRESH_RATE = 5; // Skip frames to save CPU (Draw every Nth frame)
+const REFRESH_RATE = 10; // Throttled to every 10 frames (was 5)
+const SAMPLING_STEP = 4; // Sample every 4th pixel for biomes (BIG perf gain)
 
 const BIOME_COLORS: Record<BiomeType, string> = {
   'PLAINS': '#4ade80',      // green-400
@@ -53,40 +54,26 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
     frameCount.current++;
     if (frameCount.current % REFRESH_RATE !== 0) return;
 
+    const drawStart = performance.now();
+
     // Center of the map
     const cx = MAP_SIZE / 2;
     const cy = MAP_SIZE / 2;
 
-    // Create ImageData buffer for direct pixel manipulation (Fastest method)
-    const imgData = ctx.createImageData(MAP_SIZE, MAP_SIZE);
-    const data = imgData.data;
-
-    for (let py = 0; py < MAP_SIZE; py++) {
-      for (let pxLocal = 0; pxLocal < MAP_SIZE; pxLocal++) {
-        // Calculate World Position for this pixel
-        // We flip Z because screen Y is down, but world Z is usually "forward/back"
+    // Optimization 2: Low-resolution biome sampling
+    // We sample every SAMPLING_STEP pixels to avoid 16,000+ noise calls.
+    for (let py = 0; py < MAP_SIZE; py += SAMPLING_STEP) {
+      for (let pxLocal = 0; pxLocal < MAP_SIZE; pxLocal += SAMPLING_STEP) {
         const worldX = px + (pxLocal - cx) * MAP_SCALE;
         const worldZ = pz + (py - cy) * MAP_SCALE;
 
-        // "Predict" the biome at this location using logic, not geometry
         const biome = BiomeManager.getBiomeAt(worldX, worldZ);
-
-        // Parse hex color to RGB
         const hex = BIOME_COLORS[biome] || '#000000';
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-
-        // Fill buffer (RGBA)
-        const index = (py * MAP_SIZE + pxLocal) * 4;
-        data[index] = r;
-        data[index + 1] = g;
-        data[index + 2] = b;
-        data[index + 3] = 255; // Full opacity
+        ctx.fillStyle = hex;
+        // Draw a block of pixels instead of manipulating imagedata for the low-res look
+        ctx.fillRect(pxLocal, py, SAMPLING_STEP, SAMPLING_STEP);
       }
     }
-
-    ctx.putImageData(imgData, 0, 0);
 
     // Draw Ground Pickup Hotspots (sticks + stones)
     const time = Date.now() / 1000;
@@ -118,6 +105,12 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
     ctx.globalAlpha = 1.0;
 
+    if (typeof window !== 'undefined') {
+      const diag = (window as any).__vcDiagnostics;
+      if (diag) {
+        diag.minimapDrawTime = Math.max(diag.minimapDrawTime || 0, performance.now() - drawStart);
+      }
+    }
   }, [px, pz, visibleStickHotspots, visibleRockHotspots]); // Re-run when player moves or pickup hotspots change
 
   return (
@@ -158,7 +151,28 @@ export const HUD: React.FC = () => {
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
 
   // Use store for player coordinates instead of event listener
-  const coords = useWorldStore((state) => state.playerParams);
+  // Use local state to avoid full HUD re-renders every frame.
+  // We'll update this state at a slower cadence or only on significant movement.
+  const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
+  const lastStateUpdatePos = useRef({ x: 0, z: 0 });
+
+  useEffect(() => {
+    // Subscribe to store for coordinates but with a throttled local state update.
+    // This keeps the UI Snappy (60FPS for crosshair/inventory) without 
+    // the heavy Minimap/Text updates every single frame.
+    const unsub = useWorldStore.subscribe((state) => {
+      const p = state.playerParams;
+      const dx = p.x - lastStateUpdatePos.current.x;
+      const dz = p.z - lastStateUpdatePos.current.z;
+
+      // Update local state if we moved > 0.1m or rotation changed significantly
+      if (dx * dx + dz * dz > 0.01) {
+        setCoords({ ...p });
+        lastStateUpdatePos.current = { x: p.x, z: p.z };
+      }
+    });
+    return unsub;
+  }, []);
 
   const [crosshairHit, setCrosshairHit] = useState(false);
   const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');

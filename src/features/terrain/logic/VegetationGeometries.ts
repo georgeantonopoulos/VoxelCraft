@@ -150,6 +150,7 @@ export const VEGETATION_GEOMETRIES = {
     grass_carpet: createGrassGeo(12, 0.4, 0.05),
     flower: createFlowerGeo(),
     fern: createGrassGeo(6, 0.25, 0.2),
+    giant_fern: createGrassGeo(8, 0.6, 0.3),
     broadleaf: createGrassGeo(3, 0.45, 0.24),
     shrub: createShrubGeo(),
     box: new THREE.BoxGeometry(0.2, 0.5, 0.2)

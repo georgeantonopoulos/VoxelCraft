@@ -178,6 +178,7 @@ const fragmentShader = `
     
     // Caustics Uniforms
     uniform float uTime;
+    uniform float uSpawnTime;
     uniform vec3 uSunDirection;
     uniform float uWaterLevel;
 
@@ -395,6 +396,7 @@ const fragmentShader = `
   }
 
 	  void main() {
+
 	    vec3 N = safeNormalize(vWorldNormal);
 	    vec4 nMid = getTriplanarNoise(N, 0.15);
 	    float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
@@ -637,6 +639,7 @@ export const TriplanarMaterial: React.FC<{
   weightsView?: string;
   wireframe?: boolean;
   waterLevel?: number; // Pass constant if needed
+  spawnTime?: number;
 }> = ({
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
@@ -651,7 +654,8 @@ export const TriplanarMaterial: React.FC<{
   weightsView = 'off',
   wireframe = false,
   waterLevel = 4.5,
-  sunDirection
+  sunDirection,
+  spawnTime = 0
 }) => {
     const materialRef = useRef<any>(null);
     const { scene, clock } = useThree(); // Added clock for uTime
@@ -692,6 +696,7 @@ export const TriplanarMaterial: React.FC<{
         // Updates for Caustics
         if (sunDirection) mat.uniforms.uSunDirection.value.copy(sunDirection);
         mat.uniforms.uTime.value = clock.getElapsedTime();
+        mat.uniforms.uSpawnTime.value = spawnTime;
         mat.uniforms.uWaterLevel.value = waterLevel;
 
         // Always keep terrain opaque; fog hides chunk streaming at distance.
@@ -746,6 +751,7 @@ export const TriplanarMaterial: React.FC<{
       uOpacity: { value: 1 },
       uTime: { value: 0 },
       uSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      uSpawnTime: { value: 0 },
       uWaterLevel: { value: 4.5 },
       uTriplanarDetail: { value: 1.0 },
       uShaderFogEnabled: { value: 1.0 },

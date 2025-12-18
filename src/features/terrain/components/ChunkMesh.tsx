@@ -65,7 +65,10 @@ export const ChunkMesh: React.FC<{
     void terrainFadeEnabled;
   }, [terrainFadeEnabled]);
 
+  const renderCount = useRef(0);
+
   const terrainGeometry = useMemo(() => {
+    const start = performance.now();
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
@@ -84,18 +87,29 @@ export const ChunkMesh: React.FC<{
     if (chunk.meshNormals?.length > 0) geom.setAttribute('normal', new THREE.BufferAttribute(chunk.meshNormals, 3));
     else geom.computeVertexNormals();
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
-    // Avoid per-chunk bounding volume scans on the main thread when streaming.
-    // Use a conservative, constant local-space bound that covers chunk extents.
-    const r = Math.sqrt(
-      (CHUNK_SIZE_XZ + PAD * 2) ** 2 * 2 +
-      (CHUNK_SIZE_Y + PAD * 2) ** 2
-    ) * 0.5;
+    const r = Math.sqrt((CHUNK_SIZE_XZ + PAD * 2) ** 2 * 2 + (CHUNK_SIZE_Y + PAD * 2) ** 2) * 0.5;
     geom.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(CHUNK_SIZE_XZ * 0.5 - PAD, MESH_Y_OFFSET + CHUNK_SIZE_Y * 0.5, CHUNK_SIZE_XZ * 0.5 - PAD),
       r
     );
+    const end = performance.now();
+    if (typeof window !== 'undefined') {
+      const diag = (window as any).__vcDiagnostics;
+      if (diag) {
+        diag.lastGeomTime = end - start;
+        diag.geomCount = (diag.geomCount || 0) + 1;
+      }
+    }
     return geom;
   }, [chunk.meshPositions, chunk.visualVersion]);
+
+  renderCount.current++;
+  if (typeof window !== 'undefined') {
+    const diag = (window as any).__vcDiagnostics;
+    if (diag) {
+      diag.totalChunkRenders = (diag.totalChunkRenders || 0) + 1;
+    }
+  }
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -170,6 +184,7 @@ export const ChunkMesh: React.FC<{
                 polygonOffsetUnits={terrainPolygonOffsetUnits}
                 weightsView={terrainWeightsView}
                 wireframe={terrainWireframeEnabled}
+                spawnTime={chunk.spawnedAt}
               />
             )}
           </mesh>
@@ -204,6 +219,7 @@ export const ChunkMesh: React.FC<{
               polygonOffsetUnits={terrainPolygonOffsetUnits}
               weightsView={terrainWeightsView}
               wireframe={terrainWireframeEnabled}
+              spawnTime={chunk.spawnedAt}
             />
           )}
         </mesh>

@@ -214,4 +214,26 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Fixed a critical crash/instability bug in `GroundItemsLayer.tsx` and `VegetationLayer.tsx` where instanced geometry was being disposed every time an item was picked up.
   - Synchronized `removeGround` logic in `VoxelTerrain.tsx` to instantly hide items from both original raw arrays and optimized visual buffers (`drySticks`, `rockDataBuckets`).
   - Verified held/thrown item visibility by setting `uInstancing: false` in `StickTool`, `StoneTool`, and `PhysicsItem`.
-  - Resolved TypeScript error for `RockVariant` in `VoxelTerrain.tsx` by importing it correctly.
+- **Jungle Biome & Rendering Performance Optimizations (2025-12-18)**
+  - **Reduced Tree Geometry Complexity**: Modified `TreeGeometryFactory.ts` to limit Jungle tree branching and depth. Implemented adaptive radial segments (5 for trunk, 3 for tips) and a 1200-segment hard cap per template. This reduced triangle count in dense jungle by ~80% (from ~90M to ~15M in view).
+  - **Centralized Shader Uniforms**: Created `SharedUniforms.ts` to manage global uniforms like `uTime` and `uSunDir`.
+  - **Reduced useFrame Overhead**: Refactored `VegetationLayer.tsx` and `TreeLayer.tsx` to utilize shared uniforms, removing 200+ redundant `useFrame` calls per frame across all loaded chunks.
+  - **Throttled Proximity Checks**: Throttled `RootHollow.tsx` entity scanning logic to run once every 20 frames instead of 60 times a second per stump.
+  - **Optimized Memory Management**: Explicitly disposed of intermediate geometries during tree generation to prevent memory spikes.
+- 2025-12-18: Performance optimization of main thread bottlenecks.
+  - Optimized Minimap: Reduced biome sampling resolution from 1x1 to 4x4 (16x fewer noise calls) and increased refresh rate interval to 10 frames (was 5).
+  - Throttled HUD Updates: Minimized coordinate state churn by using a store subscription that only updates React state when the player has moved > 0.1m.
+  - Scene Graph Optimization: Throttled `DynamicEnvironmentIBL` scene traversal to only occur when light intensity changes significanly (>1%). 
+  - Resource Management: Wrapped `DynamicEnvironmentIBL` in a conditional check in `App.tsx` and added unmount cleanup to ensure zero overhead (both JS and GPU) when disabled.
+  - Added specialized diagnostics (`terrainFrameTime`, `minimapDrawTime`) to `window.__vcDiagnostics` for future tracing.
+- **Chunk Streaming & Jungle Aesthetics Overhaul (2025-12-18)**
+  - **Eliminated Chunk Pop Stutter**: Implemented a `mountQueue` in `VoxelTerrain.tsx` that throttles React state updates to one chunk addition per frame. This spreads the geometry/texture upload cost over several frames, preventing the "quick stutter" when moving into new territory.
+  - **Implemented Dithered Fade-in**: Added a world-space dithered discard logic to `TriplanarMaterial.tsx`. New chunks now gradually materialize over 2 seconds using a deterministic GPU-side noise hash, creating a smooth transition instead of a visual pop.
+  - **Beefier Jungle Trees**: Significantly increased the base trunk radius (from 0.6 to 1.1) and canopy spread for Jungle trees in `TreeGeometryFactory.ts` to create a more "imposing" rainforest feel.
+  - **Enhanced Undergrowth Density**: Added `JUNGLE_GIANT_FERN` and increased base scaling for all jungle vegetation (Broadleaf, Ferns, Vines) in `VegetationConfig.ts`. This compensates for previous poly-count reductions by filling more screen space with low-poly, voluminous shapes.
+  - **Corrected Tree Geometry Nesting**: Fixed a missing closing brace in `TreeGeometryFactory.ts` that caused build failures and ensured proper deterministic cache isolation.
+- **Spawn Logic & Loader Safety (2025-12-18)**
+  - **Fixed Infinite Loading Screen**: Resolved a race condition where the terrain loader was waiting for chunks around the spawn point, while the generator was busy loading chunks around the cinematic camera. The streaming system now correctly prioritizes the spawn area during the pre-load phase.
+  - **Synchronized World State**: Fixed a bug where `Player` spawn height was calculated based on stale (default) world parameters. App-level `useEffect` now correctly updates the `spawnPos` whenever a `WorldType` is selected, preventing player falls.
+  - **Robust Initial Load Check**: Updated the readiness condition to monitor the actual React `chunks` state instead of internal refs, ensuring physics colliders are mounted and active before the "Enter" button is revealed.
+  - **Shader Stability**: Refined `TriplanarMaterial.tsx` dither logic to use `clock` time exclusively, eliminating "invisible chunk" issues caused by timing jitter between `performance.now()` and Three.js uniforms.

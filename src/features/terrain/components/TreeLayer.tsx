@@ -1,11 +1,11 @@
 import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type
@@ -69,8 +69,6 @@ const InstancedTreeBatch: React.FC<{
 }> = ({ type, variant, positions, count, collidersEnabled }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
-    const woodMaterialRef = useRef<any>(null);
-    const leafMaterialRef = useRef<any>(null);
 
     const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
@@ -172,17 +170,13 @@ const InstancedTreeBatch: React.FC<{
         uColorBase: { value: new THREE.Color(colors.base) },
         uColorTip: { value: new THREE.Color(colors.tip) },
         uNoiseTexture: { value: noiseTexture },
-        uTime: { value: 0 },
+        ...sharedUniforms,
         // Distinguish main world trees from others if needed
         uIsInstanced: { value: 1.0 },
         // Per-tree hue shift for visible color variety (0.30 ≈ 17 degrees).
         uLeafHueVariation: { value: 0.30 }
     }), [colors]);
 
-    useFrame((state) => {
-        if (woodMaterialRef.current) woodMaterialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-        if (leafMaterialRef.current) leafMaterialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-    });
 
     // Collider Geometries
     const colliderGeometries = useMemo(() => {
@@ -199,7 +193,6 @@ const InstancedTreeBatch: React.FC<{
         <group>
             <instancedMesh ref={woodMesh} args={[wood, undefined, count]} castShadow receiveShadow>
                 <CustomShaderMaterial
-                    ref={woodMaterialRef}
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={`
                         attribute float aBranchDepth;
@@ -304,7 +297,6 @@ const InstancedTreeBatch: React.FC<{
             {leaves.getAttribute('position') && (
                 <instancedMesh ref={leafMesh} args={[leaves, undefined, count]} castShadow receiveShadow>
                     <CustomShaderMaterial
-                        ref={leafMaterialRef}
                         baseMaterial={THREE.MeshStandardMaterial}
                         vertexShader={`
                         uniform float uTime;
