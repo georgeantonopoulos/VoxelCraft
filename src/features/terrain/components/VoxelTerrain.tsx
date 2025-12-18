@@ -699,6 +699,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
   const workerMessageQueue = useRef<Array<{ type: string; payload: any }>>([]);
   const workerMessageHead = useRef(0);
 
+  // Queue for throttled chunk removal to prevent frame spikes when crossing boundaries.
+  const removeQueue = useRef<string[]>([]);
+
   const neededKeysRef = useRef<Set<string>>(new Set());
 
   // Streaming window: shift the active chunk window slightly in the movement direction so we
@@ -846,29 +849,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       }
       neededKeysRef.current = neededKeys;
 
-      // Cleanup unneeded chunks
-      const newChunks = { ...chunksRef.current };
-      let cleanupChanged = false;
-      Object.keys(newChunks).forEach(key => {
+      // Identify unneeded chunks and move to removeQueue
+      let removalPushed = false;
+      Object.keys(chunksRef.current).forEach(key => {
         if (!neededKeys.has(key)) {
-          simulationManager.removeChunk(key);
-          useWorldStore.getState().clearChunkHotspots(key);
-          deleteChunkFireflies(key);
-          terrainRuntime.unregisterChunk(key);
-          delete newChunks[key];
-          cleanupChanged = true;
+          // Check if already in queue to avoid duplicates
+          if (!removeQueue.current.includes(key)) {
+            removeQueue.current.push(key);
+            removalPushed = true;
+          }
         }
       });
 
-      if (cleanupChanged) {
-        chunksRef.current = newChunks;
-        if (initialLoadTriggered.current) {
-          startTransition(() => {
-            setChunks(newChunks);
-          });
-        } else {
-          setChunks(newChunks);
-        }
+      if (removalPushed && streamDebug) {
+        console.log(`[VoxelTerrain] Pushed ${removeQueue.current.length} chunks to removal queue.`);
       }
 
       // Rebuild collider enable queue candidates
@@ -1030,7 +1024,39 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = ({
       }
     }
 
-    // 5. REMESH REQUESTS
+    // 5. THROTTLED CHUNK REMOVAL (Process up to 2 per frame if not already busy)
+    if (!appliedWorkerMessageThisFrame && removeQueue.current.length > 0) {
+      const MAX_REMOVALS = 2; // Increased slightly to clear backlog faster
+      let removedCount = 0;
+      const newChunks = { ...chunksRef.current };
+      let changed = false;
+
+      while (removedCount < MAX_REMOVALS && removeQueue.current.length > 0) {
+        const key = removeQueue.current.shift();
+        if (key && newChunks[key]) {
+          simulationManager.removeChunk(key);
+          useWorldStore.getState().clearChunkHotspots(key);
+          deleteChunkFireflies(key);
+          terrainRuntime.unregisterChunk(key);
+          delete newChunks[key];
+          changed = true;
+          removedCount++;
+        }
+      }
+
+      if (changed) {
+        chunksRef.current = newChunks;
+        if (initialLoadTriggered.current) {
+          startTransition(() => {
+            setChunks(newChunks);
+          });
+        } else {
+          setChunks(newChunks);
+        }
+      }
+    }
+
+    // 6. REMESH REQUESTS
     if (remeshQueue.current.size > 0) {
       const maxPerFrame = 8;
       const iterator = remeshQueue.current.values();

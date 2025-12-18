@@ -208,6 +208,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - Throttled streaming logic to only execute when player crosses chunk boundaries.
     - Implemented prioritized job queues for chunk generation and collider enabling.
   - Fixed Rapier Context Error: Moved `InteractionHandler` inside the `<Physics>` provider in `App.tsx`.
+- 2025-12-18: Fixed movement lag by implementing throttled chunk removal in `VoxelTerrain.tsx`. Added a `removeQueue` that processes a maximum of 2 removals per frame, preventing synchronous frame spikes when crossing chunk boundaries.
 - 2025-12-18: Fixed Item Pickup & Optimized Rendering Stability.
   - Restored `stickPositions` and `rockPositions` (stride-8 interaction data) to the worker's `GENERATED` payload. This allows `rayHitsGeneratedGroundPickup` to function even when rendering has been shifted to optimized bucketed buffers.
   - Fixed a critical crash/instability bug in `GroundItemsLayer.tsx` and `VegetationLayer.tsx` where instanced geometry was being disposed every time an item was picked up.
