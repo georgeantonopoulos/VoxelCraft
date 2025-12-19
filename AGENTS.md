@@ -28,7 +28,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Do not force GLSL versions** (avoid adding `#version ...` unless you fully understand the shader pipeline impact).
 - Always run **both** `npm run build` and a quick `npm run dev` smoke-start before finishing work.
 - Always run vite tests, check Testing Strategy section
-
+- **Comments**: DO NOT remove code comments. Add clarifying comments when missing.
 ---
 
 ## Quick Project Facts (verified)
@@ -37,6 +37,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **CSS**: Tailwind is wired via PostCSS import in `src/index.css` (`@import "tailwindcss";`). `index.html` does not load Tailwind via CDN.
 - **Entry**: `src/index.tsx` mounts `src/App.tsx`.
 - **Dev server**: `vite.config.ts` sets `server.port = 3000` and adds COOP/COEP headers for `SharedArrayBuffer`.
+
 
 ## Repo Map (high-signal)
 
@@ -155,6 +156,12 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-19: Unified Item Mesh System across the entire game.
+  - Created `UniversalTool.tsx` as the single source of truth for 3D meshes (Stick, Stone, Shard, Flora, Torch, Pickaxe, Axe, and Custom Tools).
+  - Implemented `ItemThumbnail.tsx` to provide high-quality 3D inventory icons using the unified meshes.
+  - Integrated `UniversalTool` into `PhysicsItem.tsx` (dropped items), `FirstPersonTools.tsx` (held items), and `CraftingInterface.tsx` (previews).
+  - Deleted redundant components: `StickTool`, `StoneTool`, `ShardTool`, `FloraTool`, `ToolMeshes` (Pickaxe/Axe meshes), and `CustomToolIcon`.
+  - Replaced GLB-based Pickaxe with procedural mesh to ensure perfect consistency with crafting.
 - 2025-12-19: Implemented immersive Crafting Mode and drag-and-drop inventory.
   - Added `CraftingStore` support for `draggedItem`.
   - Upgraded `CraftingInterface` with 3D hotspots that respond to drag-and-drop (green/red-orange feedback).

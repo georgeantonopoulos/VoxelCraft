@@ -1,68 +1,18 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
 import { useControls, button } from 'leva';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
 import { TorchTool } from './TorchTool';
-import { FloraTool } from './FloraTool';
-import { StickTool } from './StickTool';
-import { StoneTool } from './StoneTool';
-import { ShardTool } from './ShardTool';
 import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/interaction/logic/HeldItemPoses';
-import { ItemType, CustomTool } from '@/types';
-import { STICK_SLOTS } from '../../crafting/CraftingData';
-// Import the GLB URL explicitly
-import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
-
-// Preload the model
-useGLTF.preload(pickaxeUrl);
-
-// Assuming CustomTool type and STICK_SLOTS are defined elsewhere or imported
-// type CustomTool = {
-//     id: string;
-//     baseType: ItemType;
-//     attachments: { [slotId: string]: ItemType };
-// };
-// const STICK_SLOTS = [
-//     { id: 'slot1', position: [0, 0.1, 0], rotation: [0, 0, 0] },
-//     { id: 'slot2', position: [0, -0.1, 0], rotation: [0, 0, 0] },
-// ];
-
-const CustomToolRenderer = ({ tool }: { tool: CustomTool }) => {
-    return (
-        <group>
-            {/* Base Item */}
-            {tool.baseType === ItemType.STICK && <StickTool />}
-
-            {/* Attachments */}
-            {Object.entries(tool.attachments).map(([slotId, itemType]) => {
-                const slot = STICK_SLOTS.find((s) => s.id === slotId);
-                if (!slot) return null;
-                return (
-                    <group key={slotId} position={slot.position} rotation={slot.rotation}>
-                        {itemType === ItemType.SHARD && <ShardTool />}
-                        {itemType === ItemType.STONE && <StoneTool />}
-                        {itemType === ItemType.STICK && (
-                            <group scale={0.4}>
-                                <StickTool />
-                            </group>
-                        )}
-                    </group>
-                );
-            })}
-        </group>
-    );
-};
+import { ItemType } from '@/types';
+import { UniversalTool } from './UniversalTool';
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
     const groupRef = useRef<THREE.Group>(null);
-    const axeRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch)
-    const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
-
-    const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
+    const rightItemRef = useRef<THREE.Group>(null); // right hand
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -72,7 +22,7 @@ export const FirstPersonTools: React.FC = () => {
     const selectedItem = inventorySlots[selectedSlotIndex];
     const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
 
-    // Debug UI for torch pose. Enabled with ?debug (same as Leva panel in App).
+    // Debug UI for torch pose.
     const debugMode = useMemo(() => {
         const params = new URLSearchParams(window.location.search);
         return params.has('debug');
@@ -81,11 +31,9 @@ export const FirstPersonTools: React.FC = () => {
     const torchPoseDebug = useControls(
         'Torch Pose',
         {
-            // Defaults based on latest tuning screenshot.
             posX: { value: TORCH_POSE.x, min: -1.5, max: 0.0, step: 0.01 },
             posY: { value: TORCH_POSE.y, min: -1.0, max: 0.5, step: 0.01 },
             posZ: { value: TORCH_POSE.z, min: -2.0, max: -0.2, step: 0.01 },
-            // Rotations in degrees for easier tuning.
             rotXDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.x)), min: -180, max: 180, step: 1 },
             rotYDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.y)), min: -180, max: 180, step: 1 },
             rotZDeg: { value: Math.round(THREE.MathUtils.radToDeg(TORCH_POSE.rot.z)), min: -180, max: 180, step: 1 },
@@ -107,8 +55,6 @@ export const FirstPersonTools: React.FC = () => {
             rotZDeg: { value: THREE.MathUtils.radToDeg(RIGHT_HAND_HELD_ITEM_POSES.stick.rot?.z ?? 0), min: -180, max: 180, step: 1 },
             'Save To Code': button((get) => (async () => {
                 try {
-                    // Leva buttons run outside React's render lifecycle; read the latest values
-                    // from the Leva store instead of relying on closures from initial mount.
                     const xOffset = (typeof get === 'function' ? (get('Right Hand / Stick.xOffset') as number) : undefined) ?? rightHandStickPoseDebug.xOffset;
                     const y = (typeof get === 'function' ? (get('Right Hand / Stick.y') as number) : undefined) ?? rightHandStickPoseDebug.y;
                     const z = (typeof get === 'function' ? (get('Right Hand / Stick.z') as number) : undefined) ?? rightHandStickPoseDebug.z;
@@ -135,13 +81,10 @@ export const FirstPersonTools: React.FC = () => {
                             }
                         })
                     });
-                    const json = await res.json().catch(() => ({}));
-                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status} `);
-                    // Let HMR pick up the updated file; keep this explicit for clarity during tuning.
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     console.log('[Right Hand / Stick] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stick] Save failed:', err);
-                    alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)} `);
                 }
             })()),
         }),
@@ -186,20 +129,16 @@ export const FirstPersonTools: React.FC = () => {
                             }
                         })
                     });
-                    const json = await res.json().catch(() => ({}));
-                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status} `);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     console.log('[Right Hand / Stone] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stone] Save failed:', err);
-                    alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)} `);
                 }
             })()),
         }),
         ({ hidden: !debugMode } as any)
     );
 
-    // Leva keeps values around across HMR; in debug mode we want the sliders to start
-    // from the current in-game pose constants (unless the user tweaks them afterwards).
     useEffect(() => {
         if (!debugMode) return;
         setRightHandStickPoseDebug({
@@ -222,35 +161,28 @@ export const FirstPersonTools: React.FC = () => {
         });
     }, [debugMode, setRightHandStickPoseDebug, setRightHandStonePoseDebug]);
 
-    // Load the GLB model using the imported URL
-    const { scene: modelScene } = useGLTF(pickaxeUrl);
-
     // Animation state
     const isDigging = useRef(false);
     const digProgress = useRef(0);
-    const digSpeed = 10.0; // Slower, heavier feel
-    // Impact kick (synced to actual terrain hits, not just mouse input).
+    const digSpeed = 10.0;
     const impactKick = useRef(0);
     const impactKickTarget = useRef(0);
 
-    // Torch slide animation state (0 hidden -> 1 fully shown)
+    // Torch animation state
     const torchProgress = useRef(0);
-    // Non-debug defaults should match the tuned Torch Pose defaults.
     const torchTargetPos = useRef(new THREE.Vector3(-0.5, -0.3, -0.4));
     const torchHiddenPos = useRef(new THREE.Vector3(-0.5, -1.10, -0.4));
     const torchPosTemp = useRef(new THREE.Vector3());
-    const torchRotDefault = useRef(
-        new THREE.Euler(TORCH_POSE.rot.x, TORCH_POSE.rot.y, TORCH_POSE.rot.z)
-    );
+    const torchRotDefault = useRef(new THREE.Euler(TORCH_POSE.rot.x, TORCH_POSE.rot.y, TORCH_POSE.rot.z));
     const torchScaleDefault = useRef(TORCH_POSE.scale);
 
-    // Right-hand item slide animation state (0 hidden -> 1 fully shown)
+    // Right-hand item animation state
     const rightItemProgress = useRef(0);
     const rightItemTargetPos = useRef(new THREE.Vector3(PICKAXE_POSE.x, 0, 0));
     const rightItemHiddenPos = useRef(new THREE.Vector3(PICKAXE_POSE.x, -1.10, 0));
     const rightItemPosTemp = useRef(new THREE.Vector3());
 
-    // Debug controls ENABLED
+    // Debug controls
     const { debugPos, debugRot } = usePickaxeDebug();
 
     useEffect(() => {
@@ -258,22 +190,14 @@ export const FirstPersonTools: React.FC = () => {
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-
-            const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
-            const isStandard = selectedItem === ItemType.PICKAXE || selectedItem === ItemType.STICK || selectedItem === ItemType.STONE || selectedItem === ItemType.SHARD;
-
-            if (!isCustom && !isStandard) return;
-
+            if (!selectedItem) return;
             if (e.button === 0 && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
             }
         };
-
         window.addEventListener('mousedown', handleMouseDown);
-        return () => {
-            window.removeEventListener('mousedown', handleMouseDown);
-        };
+        return () => window.removeEventListener('mousedown', handleMouseDown);
     }, []);
 
     useEffect(() => {
@@ -281,15 +205,6 @@ export const FirstPersonTools: React.FC = () => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
-
-            const state = useInventoryStore.getState();
-            const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-
-            const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
-            const isStandard = selectedItem === ItemType.PICKAXE || selectedItem === ItemType.STICK || selectedItem === ItemType.STONE || selectedItem === ItemType.SHARD;
-
-            if (!isCustom && !isStandard) return;
-
             if (detail.action === 'DIG') {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -302,13 +217,9 @@ export const FirstPersonTools: React.FC = () => {
         return () => window.removeEventListener('tool-impact', handleImpact as EventListener);
     }, []);
 
-    // Hard Camera Attachment - The only way to get ZERO jitter
-    // We attach the group to the camera object so it moves 1:1 with the camera matrix.
-    // To avoid clipping, we must position it far enough forward (Z negative).
-    // CRITICAL: We must also add the camera to the scene, otherwise its children (the tool) won't render.
     useEffect(() => {
         if (groupRef.current && camera && scene) {
-            scene.add(camera); // Ensure camera is part of the graph
+            scene.add(camera);
             camera.add(groupRef.current);
             return () => {
                 camera.remove(groupRef.current);
@@ -317,141 +228,69 @@ export const FirstPersonTools: React.FC = () => {
         }
     }, [camera, scene]);
 
-    // Sync to camera every frame instead of parenting
-    // This ensures it resides in the Main Scene and receives environment lighting/shadows correctly
-    // while still following the camera.
-
-    // Priority 1 ensures this runs AFTER the camera controller updates
-    // This eliminates the jitter/lag between camera and tool
     useFrame((state, delta) => {
-        if (!axeRef.current && !torchRef.current && !rightItemRef.current) return;
-
-        // Responsive adjustment: pull items closer to center in portrait mode
+        if (!torchRef.current && !rightItemRef.current) return;
         const aspect = size.width / size.height;
-        // Threshold: at 1.2 aspect we are full width. In portrait, we scale X inward.
         const responsiveX = THREE.MathUtils.clamp(aspect / 1.1, 0.5, 1.0);
-
-        // Calculate sway/animations relative to the camera-locked group
-
         const time = state.clock.getElapsedTime();
-
-        // Base sway
         const swayX = Math.sin(time * 2) * 0.005;
         const swayY = Math.cos(time * 4) * 0.005;
 
-        // Use debug values directly so user can fix rotation
         let positionX = (debugPos.current.x * responsiveX) + swayX;
         let positionY = debugPos.current.y + swayY;
         let positionZ = debugPos.current.z;
-
         let rotationX = debugRot.current.x;
         let rotationY = debugRot.current.y;
         let rotationZ = debugRot.current.z;
 
-        // Dig Animation Logic
         if (isDigging.current) {
             digProgress.current += delta * digSpeed;
-
-            // Animation phase: 0 -> PI (down), PI -> 2PI (reset)
             if (digProgress.current < Math.PI) {
-                // Chop down
-                const t = digProgress.current;
-                const swing = Math.sin(t);
-
-                // Enhance the arc: Combine rotation with significant forward thrust
-                rotationX += -swing * 1.2;  // Stronger chop rotation
-                rotationZ += -swing * 0.35; // Add roll for natural wrist movement
-
-                // Translation Arc
-                positionY -= swing * 0.2;   // Slight dip
-                positionZ -= swing * 0.5;   // Push forward significantly for "reach"
+                const swing = Math.sin(digProgress.current);
+                rotationX += -swing * 1.2;
+                rotationZ += -swing * 0.35;
+                positionY -= swing * 0.2;
+                positionZ -= swing * 0.5;
             } else {
-                // Reset
                 isDigging.current = false;
                 digProgress.current = 0;
             }
         } else {
-            // Idle rotation
             rotationZ += Math.sin(time * 2) * 0.02;
         }
 
-        // Impact kick is a small positional/rotational impulse on contact.
-        // It’s intentionally separate from the swing animation so it works for both hits and clunks.
         impactKick.current = THREE.MathUtils.lerp(impactKick.current, impactKickTarget.current, 1 - Math.pow(0.10, delta * 60));
         impactKickTarget.current = THREE.MathUtils.lerp(impactKickTarget.current, 0.0, 1 - Math.pow(0.02, delta * 60));
-        const kick = impactKick.current;
-        positionZ += kick * 0.06;  // Tiny pull-back
-        rotationX += kick * 0.10;  // Tiny upward recoil
+        positionZ += impactKick.current * 0.06;
+        rotationX += impactKick.current * 0.10;
 
-        const selectedItem = inventorySlots[selectedSlotIndex];
-        const rightHandOverride = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard' || selectedItem === 'flora';
         const leftHandShown = selectedItem === 'torch';
-
-        // Apply transforms to the inner Axe group (local offsets)
-        // Pickaxe only shows when explicitly selected.
-        if (axeRef.current) {
-            axeRef.current.visible = !rightHandOverride && selectedItem === 'pickaxe';
-            axeRef.current.position.set(positionX, positionY, positionZ);
-            axeRef.current.rotation.set(rotationX, rotationY, rotationZ);
-        }
-
-        // Left-hand held item logic: torch.
-        const targetShown = leftHandShown;
-        const speedIn = 2.2;  // ~0.45s in
-        const speedOut = 2.8; // slightly faster out
-        const targetProg = targetShown ? 1 : 0;
-        torchProgress.current = THREE.MathUtils.lerp(
-            torchProgress.current,
-            targetProg,
-            (targetShown ? speedIn : speedOut) * delta
-        );
-        const p = torchProgress.current;
-        const ease = p * p * (3 - 2 * p); // smoothstep
-
-        // Keep torch on left and slide from below camera.
+        torchProgress.current = THREE.MathUtils.lerp(torchProgress.current, leftHandShown ? 1 : 0, (leftHandShown ? 2.2 : 2.8) * delta);
         if (torchRef.current) {
-            // Re-declare ‘now’ for animation usage using state.clock
-            const now = state.clock.getElapsedTime();
-
-            // Update target/hidden pose from debug sliders if enabled.
+            const ease = torchProgress.current * torchProgress.current * (3 - 2 * torchProgress.current);
             if (debugMode) {
                 torchTargetPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY, torchPoseDebug.posZ);
                 torchHiddenPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
             } else {
-                // Not in debug: update based on responsiveX but keep the centralized defaults.
                 torchTargetPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y, TORCH_POSE.z);
                 torchHiddenPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
             }
-
-            // Target pose (left-hand comfort pose).
             torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
             torchRef.current.position.copy(torchPosTemp.current);
             torchRef.current.rotation.set(
-                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotXDeg) : torchRotDefault.current.x) + Math.sin(now * 1.4) * 0.012,
-                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotYDeg) : torchRotDefault.current.y) + Math.cos(now * 1.1) * 0.012,
+                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotXDeg) : torchRotDefault.current.x) + Math.sin(time * 1.4) * 0.012,
+                (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotYDeg) : torchRotDefault.current.y) + Math.cos(time * 1.1) * 0.012,
                 (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotZDeg) : torchRotDefault.current.z)
             );
-            // Slight bob only when visible.
-            if (ease > 0.01) {
-                torchRef.current.position.y += Math.sin(now * 2.0) * 0.01;
-            }
             torchRef.current.scale.setScalar(debugMode ? torchPoseDebug.scale : torchScaleDefault.current);
             torchRef.current.visible = ease > 0.01;
         }
 
-        const rightHandShown = rightHandOverride || !!activeCustomTool;
-        const rTargetProg = rightHandShown ? 1 : 0;
-        rightItemProgress.current = THREE.MathUtils.lerp(
-            rightItemProgress.current,
-            rTargetProg,
-            (rightHandShown ? 2.4 : 3.0) * delta
-        );
-        const rp = rightItemProgress.current;
-        const rease = rp * rp * (3 - 2 * rp);
-
+        const rightHandShown = !!selectedItem || !!activeCustomTool;
+        rightItemProgress.current = THREE.MathUtils.lerp(rightItemProgress.current, rightHandShown ? 1 : 0, (rightHandShown ? 2.4 : 3.0) * delta);
         if (rightItemRef.current) {
-            const now = state.clock.getElapsedTime();
-            const pose = (rightHandOverride || !!activeCustomTool)
+            const rease = rightItemProgress.current * rightItemProgress.current * (3 - 2 * rightItemProgress.current);
+            const pose = (selectedItem || activeCustomTool)
                 ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
                     ? (selectedItem === 'stick'
                         ? {
@@ -479,21 +318,17 @@ export const FirstPersonTools: React.FC = () => {
                     : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.stick : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
                 : null;
             if (pose) {
-                // Apply animation offsets (delta from base/debug pos)
                 const animOffsetY = positionY - (debugPos.current.y + swayY);
                 const animOffsetZ = positionZ - debugPos.current.z;
-
                 const x = (positionX + (pose.xOffset ?? 0) * responsiveX);
-                // Combine pose position with animation offset
                 rightItemTargetPos.current.set(x, pose.y + animOffsetY, pose.z + animOffsetZ);
                 rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
                 rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
                 rightItemRef.current.position.copy(rightItemPosTemp.current);
-
                 const rot = pose.rot;
                 rightItemRef.current.rotation.set(
-                    rotationX + (rot?.x ?? 0) + Math.sin(now * 1.4) * 0.012,
-                    rotationY + (rot?.y ?? 0) + Math.cos(now * 1.1) * 0.012,
+                    rotationX + (rot?.x ?? 0) + Math.sin(time * 1.4) * 0.012,
+                    rotationY + (rot?.y ?? 0) + Math.cos(time * 1.1) * 0.012,
                     rotationZ + (rot?.z ?? 0)
                 );
                 rightItemRef.current.scale.setScalar(pose.scale);
@@ -504,137 +339,52 @@ export const FirstPersonTools: React.FC = () => {
         }
     });
 
-    // Ensure model catches light and shadows
-    useEffect(() => {
-        if (modelScene) {
-            modelScene.traverse((child) => {
-                if ((child as THREE.Mesh).isMesh) {
-                    const m = child as THREE.Mesh;
-                    m.castShadow = true;
-                    m.receiveShadow = true;
-                    m.frustumCulled = false;
-                }
-            });
-        }
-    }, [modelScene]);
-
     return (
         <group ref={groupRef}>
-            {/* Ambient light for the tool itself to ensure it's never pitch black */}
             <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
-
-            {/* Left-hand torch. Positioned/rotated in useFrame above. */}
             <group ref={torchRef}>
-                <group visible={inventorySlots[selectedSlotIndex] === 'torch'}>
+                <group visible={selectedItem === 'torch'}>
                     <TorchTool />
                 </group>
             </group>
-
-            {/* Right-hand stick/stone/custom (replaces pickaxe). Positioned/rotated in useFrame above. */}
             <group ref={rightItemRef}>
-                {activeCustomTool ? (
-                    <CustomToolRenderer tool={activeCustomTool} />
-                ) : (
-                    <>
-                        <group visible={inventorySlots[selectedSlotIndex] === 'stick'}>
-                            <StickTool />
-                        </group>
-                        <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
-                            <StoneTool />
-                        </group>
-                        <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
-                            <FloraTool />
-                        </group>
-                        <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
-                            <ShardTool />
-                        </group>
-                    </>
-                )}
+                <UniversalTool item={activeCustomTool || selectedItem} />
             </group>
-
-            {hasPickaxe && (
-                <group ref={axeRef}>
-                    <group>
-                        {/* Move model down/center if it was high up? We will check logs. 
-	                             For now, just render it as is, we have the Red Box as reference. */}
-                        <primitive
-                            object={modelScene}
-                            scale={0.5}
-                        // Removed HUD hacks to ensure proper lighting integration
-                        // If clipping occurs, we can tune the Z-position or near plane, 
-                        // but keeping it in the scene graph is best for lighting.
-                        // renderOrder={999} 
-                        // material-depthTest={false} 
-                        />
-                    </group>
-                </group>
-            )}
         </group>
     );
 };
 
-// --- Debug Helper ---
 function usePickaxeDebug() {
-    // Initial values set to what the user last reported, but they can now adjust them
-    // UPDATED: Defaults for Upright + Forward (to avoid clipping)
-    // FINAL VALUES: Pos: [0.715, -0.220, -0.800] | Rot: [1.150, -3.062, -1.450]
     const debugPos = useRef({ x: PICKAXE_POSE.x, y: PICKAXE_POSE.y, z: PICKAXE_POSE.z });
     const debugRot = useRef({ x: PICKAXE_POSE.rot.x, y: PICKAXE_POSE.rot.y, z: PICKAXE_POSE.rot.z });
     const keysPressed = useRef<Set<string>>(new Set());
-
-    // Set to true to re-enable interactive positioning
     const DEBUG_ENABLED = false;
 
     useEffect(() => {
         if (!DEBUG_ENABLED) return;
-
         const handleKeyDown = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
-            if (['x', 'y', 'z', 't'].includes(key)) {
-                keysPressed.current.add(key);
-            }
+            if (['x', 'y', 'z', 't'].includes(key)) keysPressed.current.add(key);
         };
         const handleKeyUp = (e: KeyboardEvent) => {
             const key = e.key.toLowerCase();
-            if (['x', 'y', 'z', 't'].includes(key)) {
-                keysPressed.current.delete(key);
-            }
+            if (['x', 'y', 'z', 't'].includes(key)) keysPressed.current.delete(key);
         };
-
         const handleMouseMove = (e: MouseEvent) => {
             if (keysPressed.current.size === 0) return;
-
             const sensitivity = 0.005;
             const rotSensitivity = 0.01;
-            let changed = false;
-
             if (keysPressed.current.has('t')) {
                 debugPos.current.x += e.movementX * sensitivity;
                 debugPos.current.y -= e.movementY * sensitivity;
-                changed = true;
             }
-            if (keysPressed.current.has('x')) {
-                debugRot.current.x += e.movementY * rotSensitivity; // Y movement for X rotation (pitch)
-                changed = true;
-            }
-            if (keysPressed.current.has('y')) {
-                debugRot.current.y += e.movementX * rotSensitivity; // X movement for Y rotation (yaw)
-                changed = true;
-            }
-            if (keysPressed.current.has('z')) {
-                debugRot.current.z += e.movementX * rotSensitivity; // X movement for Z rotation (roll)
-                changed = true;
-            }
-
-            if (changed) {
-                console.log(`[Pickaxe Debug]Pos: [${debugPos.current.x.toFixed(3)}, ${debugPos.current.y.toFixed(3)}, ${debugPos.current.z.toFixed(3)}] | Rot: [${debugRot.current.x.toFixed(3)}, ${debugRot.current.y.toFixed(3)}, ${debugRot.current.z.toFixed(3)}]`);
-            }
+            if (keysPressed.current.has('x')) debugRot.current.x += e.movementY * rotSensitivity;
+            if (keysPressed.current.has('y')) debugRot.current.y += e.movementX * rotSensitivity;
+            if (keysPressed.current.has('z')) debugRot.current.z += e.movementX * rotSensitivity;
         };
-
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', handleKeyUp);
         window.addEventListener('mousemove', handleMouseMove);
-
         return () => {
             window.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('keyup', handleKeyUp);

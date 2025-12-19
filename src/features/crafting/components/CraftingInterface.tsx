@@ -8,34 +8,7 @@ import { useInventoryStore } from '@/state/InventoryStore';
 import { STICK_SLOTS } from '../CraftingData';
 import { ItemType } from '@/types';
 
-// Placeholder meshes
-const ShardMesh = () => (
-  <mesh castShadow receiveShadow>
-    <coneGeometry args={[0.06, 0.25, 4]} />
-    <meshStandardMaterial color="#00ffff" emissive="#008888" emissiveIntensity={0.5} roughness={0.2} />
-  </mesh>
-);
-
-const StickMesh = () => (
-  <mesh castShadow receiveShadow>
-    <cylinderGeometry args={[0.03, 0.03, 1, 8]} />
-    <meshStandardMaterial color="#5c4033" roughness={0.9} />
-  </mesh>
-);
-
-const StoneMesh = () => (
-  <mesh castShadow receiveShadow>
-    <icosahedronGeometry args={[0.08, 1]} />
-    <meshStandardMaterial color="#888888" roughness={0.8} />
-  </mesh>
-);
-
-const SmallStickMesh = () => (
-  <mesh castShadow receiveShadow>
-    <cylinderGeometry args={[0.02, 0.02, 0.4, 8]} />
-    <meshStandardMaterial color="#5c4033" roughness={0.9} />
-  </mesh>
-);
+import { StickMesh, StoneMesh, ShardMesh } from '@/features/interaction/components/UniversalTool';
 
 
 // The "Ghost" Slot
@@ -192,9 +165,9 @@ export const CraftingInterface: React.FC = () => {
                 {/* Render Item if attached */}
                 {attachedItems[slot.id] && (
                   <group position={slot.position} rotation={slot.rotation}>
-                    {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh />}
-                    {attachedItems[slot.id] === ItemType.STONE && <StoneMesh />}
-                    {attachedItems[slot.id] === ItemType.STICK && <SmallStickMesh />}
+                    {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh scale={0.6} />}
+                    {attachedItems[slot.id] === ItemType.STONE && <StoneMesh scale={0.5} />}
+                    {attachedItems[slot.id] === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
                   </group>
                 )}
 

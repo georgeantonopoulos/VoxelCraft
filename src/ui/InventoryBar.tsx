@@ -3,7 +3,7 @@ import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
 import { ItemType } from '@/types';
-import { CustomToolIcon } from './CustomToolIcon';
+import { ItemThumbnail } from '@/features/interaction/components/ItemThumbnail';
 
 export const InventoryBar: React.FC = React.memo(() => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -68,26 +68,12 @@ export const InventoryBar: React.FC = React.memo(() => {
                             {index + 1}
                         </span>
 
-                        {/* Item Icon */}
-                        {isCustom ? (
-                            <CustomToolIcon toolId={item as string} />
-                        ) : metadata?.icon ? (
-                            <img
-                                src={metadata.icon}
-                                alt={metadata.name}
-                                className={`w-8 h-8 object-contain drop-shadow-md ${count > 0 || !showCount ? '' : 'opacity-30'}`}
-                            />
-                        ) : item === ItemType.SHARD ? (
-                            <div className={`relative w-8 h-8 flex items-center justify-center ${count > 0 ? '' : 'opacity-30'}`}>
-                                <div className="w-0 h-0 border-l-[6px] border-l-transparent border-b-[16px] border-b-slate-300 border-r-[6px] border-r-transparent transform rotate-45 drop-shadow-md"></div>
-                            </div>
-                        ) : item == null ? (
+                        {/* 3D Item Thumbnail */}
+                        {item ? (
+                            <ItemThumbnail item={item} />
+                        ) : (
                             <div className="w-8 h-8 flex items-center justify-center rounded bg-black/20 border border-white/5 text-[10px] font-mono text-white/40">
                                 --
-                            </div>
-                        ) : (
-                            <div className="w-8 h-8 flex items-center justify-center rounded bg-slate-700/50 border border-white/10 text-[10px] font-mono text-white/90">
-                                {metadata?.name?.substring(0, 2).toUpperCase() || '??'}
                             </div>
                         )}
 

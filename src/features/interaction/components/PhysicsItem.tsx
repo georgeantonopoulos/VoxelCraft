@@ -5,11 +5,9 @@ import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { getItemMetadata } from '../logic/ItemRegistry';
+import { UniversalTool } from './UniversalTool';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { noiseTexture } from '@core/memory/sharedResources';
-import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
-import { getItemColor, getItemMetadata } from '../logic/ItemRegistry';
-import { PickaxeMesh, AxeMesh } from './ToolMeshes';
 
 // Sounds
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
@@ -27,7 +25,6 @@ const IMPACT_THRESHOLD_STONE = 12.0;
 const IMPACT_THRESHOLD_STICK = 5.0; // Lowered to make planting more reliable
 
 const isHardImpactSurface = (mat: MaterialType | null): boolean => {
-  // Only shatter stones when hitting hard/cavern-like materials.
   return mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE;
 };
 
@@ -143,7 +140,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       position={item.position}
       rotation={item.isPlanted ? [0, 0, 0] : undefined}
       linearVelocity={item.velocity as any}
-      colliders={false} // Custom colliders
+      colliders={false}
       type={(item.isPlanted || item.isAnchored) ? "fixed" : "dynamic"}
       ccd={!(item.isPlanted || item.isAnchored)}
       userData={{ type: item.type, id: item.id }}
@@ -154,72 +151,48 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       {item.type === ItemType.STONE && (
         <>
           <CuboidCollider args={[0.15, 0.15, 0.15]} />
-          <mesh castShadow receiveShadow>
-            <dodecahedronGeometry args={[0.15, 1]} />
-            <CustomShaderMaterial
-              baseMaterial={THREE.MeshStandardMaterial}
-              vertexShader={ROCK_SHADER.vertex}
-              uniforms={{
-                uInstancing: { value: false },
-                uNoiseTexture: { value: noiseTexture },
-                uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 }
-              }}
-              color={getItemColor(ItemType.STONE)}
-              roughness={0.9}
-            />
-          </mesh>
+          <UniversalTool item={item.type} />
         </>
       )}
 
       {item.type === ItemType.STICK && (
         <>
           <CapsuleCollider args={[0.25, 0.04]} />
-          <mesh castShadow receiveShadow>
-            <cylinderGeometry args={[0.045, 0.04, 0.5, 8, 4]} />
-            <CustomShaderMaterial
-              baseMaterial={THREE.MeshStandardMaterial}
-              vertexShader={STICK_SHADER.vertex}
-              uniforms={{
-                uInstancing: { value: false },
-                uSeed: { value: item.id.split('-').reduce((acc, char) => acc + char.charCodeAt(0), 0) % 100 },
-                uHeight: { value: 0.5 }
-              }}
-              color={getItemColor(ItemType.STICK)}
-              roughness={1.0}
-            />
-          </mesh>
+          <UniversalTool item={item.type} />
         </>
       )}
 
       {item.type === ItemType.SHARD && (
         <>
-          {/* Small sharp collider */}
           <CuboidCollider args={[0.08, 0.08, 0.08]} />
-          <mesh castShadow receiveShadow>
-            <tetrahedronGeometry args={[0.12, 0]} />
-            <meshStandardMaterial color={getItemColor(ItemType.SHARD)} roughness={0.5} />
-          </mesh>
+          <UniversalTool item={item.type} />
+        </>
+      )}
+
+      {item.type === ItemType.FLORA && (
+        <>
+          <CuboidCollider args={[0.2, 0.2, 0.2]} />
+          <UniversalTool item={item.type} />
         </>
       )}
 
       {item.type === ItemType.PICKAXE && (
         <>
           <CuboidCollider args={[0.3, 0.3, 0.3]} />
-          <PickaxeMesh />
+          <UniversalTool item={item.type} />
         </>
       )}
 
       {item.type === ItemType.AXE && (
         <>
           <CuboidCollider args={[0.3, 0.3, 0.3]} />
-          <AxeMesh />
+          <UniversalTool item={item.type} />
         </>
       )}
 
       {item.type === ItemType.FIRE && (
         <>
           <CuboidCollider args={[0.4, 0.2, 0.4]} />
-          {/* Logs */}
           <group position={[0, 0.1, 0]}>
             <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 4, Math.PI / 2]}>
               <cylinderGeometry args={[0.05, 0.05, 0.6]} />
@@ -234,8 +207,6 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
               <meshStandardMaterial color="#5d4037" />
             </mesh>
           </group>
-
-          {/* Fire Light */}
           <pointLight
             position={[0, 0.5, 0]}
             intensity={getItemMetadata(ItemType.FIRE)?.emissiveIntensity || 2.5}
@@ -244,12 +215,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
             decay={2}
             castShadow
           />
-
-          {/* Fire Visuals */}
           <FireParticles />
         </>
       )}
-
     </RigidBody>
   );
 };
@@ -259,33 +227,24 @@ const FireParticles: React.FC = () => {
   const glowRef = useRef<THREE.Mesh>(null);
   const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
   const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-
   const COUNT = 30;
 
   const FIRE_VSHADER = `
     attribute vec3 aOffset;
-    attribute vec4 aParams; // [startTime, life, speed, scale]
+    attribute vec4 aParams; 
     uniform float uTime;
-
     void main() {
         float startTime = aParams.x;
         float life = aParams.y;
         float speed = aParams.z;
         float baseScale = aParams.w;
-        
         float t = mod(uTime + startTime, life);
         float progress = t / life;
-        
         vec3 pos = aOffset;
         pos.y += t * speed;
-        
-        // Turbulent Wiggle
         pos.x += sin(uTime * 5.0 + float(gl_InstanceID) * 0.5) * 0.008;
         pos.z += cos(uTime * 3.0 + float(gl_InstanceID) * 0.3) * 0.008;
-        
-        float lifeFactor = 1.0 - progress;
-        float size = lifeFactor * 0.25 * baseScale;
-        
+        float size = (1.0 - progress) * 0.25 * baseScale;
         csm_Position = pos + csm_Position * size;
     }
   `;
@@ -293,36 +252,18 @@ const FireParticles: React.FC = () => {
   useEffect(() => {
     if (!paramsAttr.current || !offsetsAttr.current) return;
     for (let i = 0; i < COUNT; i++) {
-      // Initial Offset
-      offsetsAttr.current.setXYZ(i,
-        (Math.random() - 0.5) * 0.3,
-        Math.random() * 0.2,
-        (Math.random() - 0.5) * 0.3
-      );
-
-      // Params: [startTime, life, speed, scale]
-      paramsAttr.current.setXYZW(i,
-        Math.random() * 2.0,
-        1.0 + Math.random() * 0.5,
-        0.4 + Math.random() * 0.8,
-        0.5 + Math.random() * 0.5
-      );
+      offsetsAttr.current.setXYZ(i, (Math.random() - 0.5) * 0.3, Math.random() * 0.2, (Math.random() - 0.5) * 0.3);
+      paramsAttr.current.setXYZW(i, Math.random() * 2.0, 1.0 + Math.random() * 0.5, 0.4 + Math.random() * 0.8, 0.5 + Math.random() * 0.5);
     }
     paramsAttr.current.needsUpdate = true;
     offsetsAttr.current.needsUpdate = true;
   }, []);
 
   useFrame((state) => {
-    if (glowRef.current) {
-      const pulse = 1.0 + Math.sin(state.clock.elapsedTime * 8) * 0.1;
-      glowRef.current.scale.setScalar(pulse);
-    }
-
+    if (glowRef.current) glowRef.current.scale.setScalar(1.0 + Math.sin(state.clock.elapsedTime * 8) * 0.1);
     if (meshRef.current) {
       const mat = meshRef.current.material as any;
-      if (mat.uniforms) {
-        mat.uniforms.uTime.value = state.clock.elapsedTime;
-      }
+      if (mat.uniforms) mat.uniforms.uTime.value = state.clock.elapsedTime;
     }
   });
 
@@ -332,7 +273,6 @@ const FireParticles: React.FC = () => {
         <sphereGeometry args={[0.3, 16, 16]} />
         <meshBasicMaterial color="#ff5500" transparent opacity={0.3} depthWrite={false} />
       </mesh>
-
       <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
         <boxGeometry args={[1, 1, 1]}>
           <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(COUNT * 3), 3]} />
