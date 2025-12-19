@@ -11,15 +11,14 @@ import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 
 interface InteractionHandlerProps {
-  setInteracting: (v: boolean) => void;
-  setAction: (a: 'DIG' | 'BUILD' | null) => void;
 }
 
-export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInteracting, setAction }) => {
+export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
   const inputMode = useSettingsStore(s => s.inputMode);
   const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
+  const { setInteractionAction } = useInputStore();
   const isDigging = useInputStore(s => s.isDigging);
 
   // Stores
@@ -66,13 +65,11 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
     // Only DIG when the crafted pickaxe is unlocked + explicitly selected.
     // BUILD is intentionally disabled for now.
     if (isDigging && pickaxeSelected) {
-      setAction('DIG');
-      setInteracting(true);
+      setInteractionAction('DIG');
     } else {
-      setAction(null);
-      setInteracting(false);
+      setInteractionAction(null);
     }
-  }, [hasPickaxe, inventorySlots, selectedSlotIndex, isDigging, inputMode, setAction, setInteracting]);
+  }, [hasPickaxe, inventorySlots, selectedSlotIndex, isDigging, inputMode, setInteractionAction]);
 
   // Mouse Input Logic
   useEffect(() => {
@@ -118,8 +115,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       if (e.button === 0) {
         // 1. Pickaxe Digging
         if (pickaxeSelected) {
-          setAction('DIG');
-          setInteracting(true);
+          setInteractionAction('DIG');
           return;
         }
 
@@ -144,10 +140,6 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
             if (rigidBody && (rigidBody.userData as any)?.type === ItemType.STONE) {
               // Hit a stone with a stone!
               emitSpark(hitPoint);
-
-              // Trigger "Hit" Animation
-              setAction('DIG');
-              setTimeout(() => setAction(null), 100);
 
               // Logic: Check for 4 sticks nearby
               const state = usePhysicsItemStore.getState();
@@ -184,10 +176,6 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
 
                   if (currentHeat >= 10) {
                     // IGNITE!
-                    // REMOVED: Remove Stone (User request: rock stays)
-                    // const removeItem = usePhysicsItemStore.getState().removeItem;
-                    // removeItem(targetItem.id);
-
                     const removeItem = usePhysicsItemStore.getState().removeItem;
 
                     // Remove 4 sticks
@@ -212,9 +200,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
             }
           }
 
-          // Even if we miss, trigger animation
-          setAction('DIG');
-          setTimeout(() => setAction(null), 100);
+          // Trigger animation (if needed by HUD or logic other than terrain)
+          // Removed setAction('DIG') lag-inducing re-renders. Animation is now handled in FirstPersonTools.
           return;
         }
 
@@ -237,17 +224,11 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
               const inv = useInventoryStore.getState();
               inv.removeItem(ItemType.STICK, 1);
               inv.addItem(ItemType.TORCH, 1);
-
-              // Animation
-              setAction('DIG');
-              setTimeout(() => setAction(null), 100);
               return;
             }
           }
 
-          // Trigger animation even on miss
-          setAction('DIG');
-          setTimeout(() => setAction(null), 100);
+          // Removed redundant setAction('DIG')
           return;
         }
 
@@ -262,8 +243,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
     };
 
     const handleMouseUp = () => {
-      setInteracting(false);
-      setAction(null);
+      setInteractionAction(null);
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
@@ -277,7 +257,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [setInteracting, setAction, camera, hasPickaxe, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem]);
+  }, [setInteractionAction, camera, hasPickaxe, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem]);
 
   return null;
 };

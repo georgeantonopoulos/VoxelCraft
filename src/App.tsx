@@ -57,8 +57,6 @@ const keyboardMap = [
 const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
   const [terrainLoaded, setTerrainLoaded] = useState(false);
-  const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
-  const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
 
@@ -298,8 +296,6 @@ const App: React.FC = () => {
               <AmbientLife enabled={gameStarted} />
               {worldType && (
                 <VoxelTerrain
-                  action={action}
-                  isInteracting={isInteracting}
                   sunDirection={sunDirection}
                   triplanarDetail={triplanarDetail}
                   terrainShaderFogEnabled={terrainShaderFogEnabled}
@@ -323,7 +319,7 @@ const App: React.FC = () => {
               <FloraPlacer />
               {bedrockPlaneEnabled && <BedrockPlane />}
               <PhysicsItemRenderer />
-              <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
+              <InteractionHandler />
             </Physics>
             <FirstPersonTools />
           </Suspense>

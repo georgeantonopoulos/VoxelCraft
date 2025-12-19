@@ -8,6 +8,7 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
+import { useInputStore } from '@/state/InputStore';
 import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
@@ -568,29 +569,19 @@ const Particles = ({
 };
 
 interface VoxelTerrainProps {
-  action: 'DIG' | 'BUILD' | null;
-  isInteracting: boolean;
   sunDirection?: THREE.Vector3;
   initialSpawnPos?: [number, number, number] | null;
-  // Debug: 0..1 slider to reduce high-frequency triplanar noise contribution in the shader.
   triplanarDetail?: number;
-  // Debug: independently toggle the terrain's fog paths.
-  // - "Shader fog" is the custom fog mix inside TriplanarMaterial.
-  // - "Three fog" is the base MeshStandardMaterial fog (can stack with shader fog).
   terrainShaderFogEnabled?: boolean;
   terrainShaderFogStrength?: number;
   terrainThreeFogEnabled?: boolean;
-  // Debug: disable chunk fade-in to isolate transparency/depth sorting seam artifacts.
   terrainFadeEnabled?: boolean;
-  // Debug: isolate shading overlays and specular shimmer sources.
   terrainWetnessEnabled?: boolean;
   terrainMossEnabled?: boolean;
   terrainRoughnessMin?: number;
-  // Debug: Z-fighting probe.
   terrainPolygonOffsetEnabled?: boolean;
   terrainPolygonOffsetFactor?: number;
   terrainPolygonOffsetUnits?: number;
-  // Debug: visualize chunk overlap/material weights.
   terrainChunkTintEnabled?: boolean;
   terrainWireframeEnabled?: boolean;
   terrainWeightsView?: string;
@@ -636,8 +627,6 @@ class AudioPool {
 }
 
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
-  action,
-  isInteracting,
   sunDirection,
   initialSpawnPos,
   triplanarDetail = 1.0,
@@ -657,6 +646,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   onInitialLoad,
   worldType
 }) => {
+  const action = useInputStore(s => s.interactionAction);
+  const isInteracting = action !== null;
   const prevProps = useRef<any>({});
   useEffect(() => {
     const changed = Object.entries({

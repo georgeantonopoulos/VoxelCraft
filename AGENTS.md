@@ -155,6 +155,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-19: Fixed massive lag during stick/stone interaction.
+  - Removed redundant `setAction('DIG')` calls for non-digging items in `InteractionHandler.tsx`.
+  - Migrated interaction state to `useInputStore` to prevent `App` and `VoxelTerrain` from re-rendering on every mouse click.
+  - This eliminates hundreds of React reconciliation checks and wasted `useEffect` cycles during fast clicking.
 - 2025-12-19: Fixed major performance regression in tree generation.
   - Restored `TREE_GRID_SIZE` to 4 to reduce loop iterations by 75%.
   - Implemented `MAX_TREES_PER_CHUNK = 32` hard cap to prevent Rapier physics stalls.

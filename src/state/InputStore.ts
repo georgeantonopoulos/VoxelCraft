@@ -11,6 +11,7 @@ interface InputState {
   isJumping: boolean;
   isDigging: boolean;
   isBuilding: boolean;
+  interactionAction: 'DIG' | 'BUILD' | null;
 
   // Actions
   setMoveVector: (x: number, y: number) => void;
@@ -18,6 +19,7 @@ interface InputState {
   setJumping: (v: boolean) => void;
   setDigging: (v: boolean) => void;
   setBuilding: (v: boolean) => void;
+  setInteractionAction: (v: 'DIG' | 'BUILD' | null) => void;
   resetInput: () => void;
 }
 
@@ -27,12 +29,14 @@ export const useInputStore = create<InputState>((set) => ({
   isJumping: false,
   isDigging: false,
   isBuilding: false,
+  interactionAction: null,
 
   setMoveVector: (x, y) => set({ moveVector: { x, y } }),
   setLookDelta: (x, y) => set({ lookDelta: { x, y } }),
   setJumping: (v) => set({ isJumping: v }),
   setDigging: (v) => set({ isDigging: v }),
   setBuilding: (v) => set({ isBuilding: v }),
+  setInteractionAction: (v) => set({ interactionAction: v }),
 
   resetInput: () => set({
     moveVector: { x: 0, y: 0 },
@@ -40,5 +44,6 @@ export const useInputStore = create<InputState>((set) => ({
     isJumping: false,
     isDigging: false,
     isBuilding: false,
+    interactionAction: null,
   })
 }));
