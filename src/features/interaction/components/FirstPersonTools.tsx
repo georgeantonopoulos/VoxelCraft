@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
@@ -11,12 +10,50 @@ import { StickTool } from './StickTool';
 import { StoneTool } from './StoneTool';
 import { ShardTool } from './ShardTool';
 import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/interaction/logic/HeldItemPoses';
-import { ItemType } from '@/types';
+import { ItemType, CustomTool } from '@/types';
+import { STICK_SLOTS } from '../../crafting/CraftingData';
 // Import the GLB URL explicitly
 import pickaxeUrl from '@/assets/models/pickaxe_clean.glb?url';
 
 // Preload the model
 useGLTF.preload(pickaxeUrl);
+
+// Assuming CustomTool type and STICK_SLOTS are defined elsewhere or imported
+// type CustomTool = {
+//     id: string;
+//     baseType: ItemType;
+//     attachments: { [slotId: string]: ItemType };
+// };
+// const STICK_SLOTS = [
+//     { id: 'slot1', position: [0, 0.1, 0], rotation: [0, 0, 0] },
+//     { id: 'slot2', position: [0, -0.1, 0], rotation: [0, 0, 0] },
+// ];
+
+const CustomToolRenderer = ({ tool }: { tool: CustomTool }) => {
+    return (
+        <group>
+            {/* Base Item */}
+            {tool.baseType === ItemType.STICK && <StickTool />}
+
+            {/* Attachments */}
+            {Object.entries(tool.attachments).map(([slotId, itemType]) => {
+                const slot = STICK_SLOTS.find((s) => s.id === slotId);
+                if (!slot) return null;
+                return (
+                    <group key={slotId} position={slot.position} rotation={slot.rotation}>
+                        {itemType === ItemType.SHARD && <ShardTool />}
+                        {itemType === ItemType.STONE && <StoneTool />}
+                        {itemType === ItemType.STICK && (
+                            <group scale={0.4}>
+                                <StickTool />
+                            </group>
+                        )}
+                    </group>
+                );
+            })}
+        </group>
+    );
+};
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -24,11 +61,16 @@ export const FirstPersonTools: React.FC = () => {
     const axeRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch)
     const rightItemRef = useRef<THREE.Group>(null); // right hand (stick/stone)
+
     const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
     const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
+    const customTools = useInventoryStore(state => state.customTools);
+
+    const selectedItem = inventorySlots[selectedSlotIndex];
+    const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
 
     // Debug UI for torch pose. Enabled with ?debug (same as Leva panel in App).
     const debugMode = useMemo(() => {
@@ -94,12 +136,12 @@ export const FirstPersonTools: React.FC = () => {
                         })
                     });
                     const json = await res.json().catch(() => ({}));
-                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status} `);
                     // Let HMR pick up the updated file; keep this explicit for clarity during tuning.
                     console.log('[Right Hand / Stick] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stick] Save failed:', err);
-                    alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)}`);
+                    alert(`Failed to save stick pose to code: ${err instanceof Error ? err.message : String(err)} `);
                 }
             })()),
         }),
@@ -145,11 +187,11 @@ export const FirstPersonTools: React.FC = () => {
                         })
                     });
                     const json = await res.json().catch(() => ({}));
-                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status}`);
+                    if (!res.ok || json?.ok === false) throw new Error(json?.error || `HTTP ${res.status} `);
                     console.log('[Right Hand / Stone] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stone] Save failed:', err);
-                    alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)}`);
+                    alert(`Failed to save stone pose to code: ${err instanceof Error ? err.message : String(err)} `);
                 }
             })()),
         }),
@@ -213,12 +255,15 @@ export const FirstPersonTools: React.FC = () => {
 
     useEffect(() => {
         const handleMouseDown = (e: MouseEvent) => {
-            // Only swing when pointer is locked (gameplay) and when using the pickaxe tool.
             if (!document.pointerLockElement) return;
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            // Only animate when pickaxe is explicitly selected.
-            if (selectedItem !== ItemType.PICKAXE && selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return;
+
+            const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
+            const isStandard = selectedItem === ItemType.PICKAXE || selectedItem === ItemType.STICK || selectedItem === ItemType.STONE || selectedItem === ItemType.SHARD;
+
+            if (!isCustom && !isStandard) return;
+
             if (e.button === 0 && !isDigging.current) {
                 isDigging.current = true;
                 digProgress.current = 0;
@@ -231,22 +276,23 @@ export const FirstPersonTools: React.FC = () => {
         };
     }, []);
 
-    // Sync tool motion to actual terrain impacts (hit/clunk/build).
-    // This makes the pickaxe feel connected to the world, even if interaction rate changes.
     useEffect(() => {
         const handleImpact = (e: Event) => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
+
             const state = useInventoryStore.getState();
             const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            // Allow animation for pickaxe, stone, and stick
-            if (selectedItem !== ItemType.PICKAXE && selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return;
-            // Only animate the pickaxe on DIG; keep BUILD subtle to avoid spam.
+
+            const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
+            const isStandard = selectedItem === ItemType.PICKAXE || selectedItem === ItemType.STICK || selectedItem === ItemType.STONE || selectedItem === ItemType.SHARD;
+
+            if (!isCustom && !isStandard) return;
+
             if (detail.action === 'DIG') {
                 isDigging.current = true;
                 digProgress.current = 0;
-                // Kick stronger on failures (e.g. bedrock/clunk) to make it readable.
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
             } else if (detail.action === 'BUILD') {
                 impactKickTarget.current = 0.25;
@@ -393,21 +439,19 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        // Right-hand item logic: stick/stone/shard/flora replaces pickaxe.
-        const rightShown = rightHandOverride;
-        const rTargetProg = rightShown ? 1 : 0;
+        const rightHandShown = rightHandOverride || !!activeCustomTool;
+        const rTargetProg = rightHandShown ? 1 : 0;
         rightItemProgress.current = THREE.MathUtils.lerp(
             rightItemProgress.current,
             rTargetProg,
-            (rightShown ? 2.4 : 3.0) * delta
+            (rightHandShown ? 2.4 : 3.0) * delta
         );
         const rp = rightItemProgress.current;
         const rease = rp * rp * (3 - 2 * rp);
 
         if (rightItemRef.current) {
             const now = state.clock.getElapsedTime();
-            const isRightHandItem = selectedItem === 'stick' || selectedItem === 'stone' || selectedItem === 'shard' || selectedItem === 'flora';
-            const pose = isRightHandItem
+            const pose = (rightHandOverride || !!activeCustomTool)
                 ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
                     ? (selectedItem === 'stick'
                         ? {
@@ -432,7 +476,7 @@ export const FirstPersonTools: React.FC = () => {
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
                             }
                         })
-                    : RIGHT_HAND_HELD_ITEM_POSES[selectedItem])
+                    : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.stick : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
                 : null;
             if (pose) {
                 // Apply animation offsets (delta from base/debug pos)
@@ -463,41 +507,16 @@ export const FirstPersonTools: React.FC = () => {
     // Ensure model catches light and shadows
     useEffect(() => {
         if (modelScene) {
-            const box = new THREE.Box3().setFromObject(modelScene);
-            const size = new THREE.Vector3();
-            const center = new THREE.Vector3();
-            box.getSize(size);
-            box.getCenter(center);
-
-            console.log('[FirstPersonTools] Model Bounds:', {
-                size: [size.x, size.y, size.z],
-                center: [center.x, center.y, center.z]
-            });
-
-            // Center the model contents
-            // We can't move 'scene' if it's a primitive root sometimes, but we can move children 
-            // OR just apply an inverse position to the primitive Group if we wrap it.
-            // Easiest is to move the primitive's position to -center
-            // But we can't easily ref that from here without state.
-            // Let's traverse and shift geometry? No, destructive.
-
-            // Better: Just log for now, and rely on the Debug Box to know where "0,0,0" is.
-            // If the center is wild like [0, 50, 0], we know the issue.
-
             modelScene.traverse((child) => {
                 if ((child as THREE.Mesh).isMesh) {
                     const m = child as THREE.Mesh;
                     m.castShadow = true;
                     m.receiveShadow = true;
-                    m.frustumCulled = false; // Important: Prevents culling when close to camera
+                    m.frustumCulled = false;
                 }
             });
         }
     }, [modelScene]);
-
-    // if (!hasPickaxe) return null; // DEBUG: Force visible
-
-    // Compute offset to center the model if needed (based on logs, but we'll try a visual offset adjustment wrapper)
 
     return (
         <group ref={groupRef}>
@@ -506,26 +525,31 @@ export const FirstPersonTools: React.FC = () => {
 
             {/* Left-hand torch. Positioned/rotated in useFrame above. */}
             <group ref={torchRef}>
-                {/* Swap held left-hand item based on inventory selection (same pose/animation). */}
                 <group visible={inventorySlots[selectedSlotIndex] === 'torch'}>
                     <TorchTool />
                 </group>
             </group>
 
-            {/* Right-hand stick/stone (replaces pickaxe). Positioned/rotated in useFrame above. */}
+            {/* Right-hand stick/stone/custom (replaces pickaxe). Positioned/rotated in useFrame above. */}
             <group ref={rightItemRef}>
-                <group visible={inventorySlots[selectedSlotIndex] === 'stick'}>
-                    <StickTool />
-                </group>
-                <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
-                    <StoneTool />
-                </group>
-                <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
-                    <FloraTool />
-                </group>
-                <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
-                    <ShardTool />
-                </group>
+                {activeCustomTool ? (
+                    <CustomToolRenderer tool={activeCustomTool} />
+                ) : (
+                    <>
+                        <group visible={inventorySlots[selectedSlotIndex] === 'stick'}>
+                            <StickTool />
+                        </group>
+                        <group visible={inventorySlots[selectedSlotIndex] === 'stone'}>
+                            <StoneTool />
+                        </group>
+                        <group visible={inventorySlots[selectedSlotIndex] === 'flora'}>
+                            <FloraTool />
+                        </group>
+                        <group visible={inventorySlots[selectedSlotIndex] === 'shard'}>
+                            <ShardTool />
+                        </group>
+                    </>
+                )}
             </group>
 
             {hasPickaxe && (

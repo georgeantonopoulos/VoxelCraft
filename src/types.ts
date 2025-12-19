@@ -141,6 +141,12 @@ export interface ChunkState {
   lightPositions?: Float32Array;
 }
 
+export interface CustomTool {
+  id: string;
+  baseType: ItemType;
+  attachments: Record<string, ItemType>; // slotId -> itemType
+}
+
 export enum ItemType {
   STONE = 'stone',
   STICK = 'stick',

@@ -579,8 +579,8 @@ export class TerrainService {
                     treeThreshold = -0.4;
                     patchThreshold = -0.8;
                 } else if (biome === 'THE_GROVE') {
-                    treeThreshold = 0.0;
-                    patchThreshold = -0.4;
+                    treeThreshold = 0.2; // Slightly higher to reduce density (performance)
+                    patchThreshold = -0.3; // Slightly higher to reduce forest patch size
                 } else if (biome === 'SAVANNA') {
                     treeThreshold = 0.7;
                     patchThreshold = 0.2;

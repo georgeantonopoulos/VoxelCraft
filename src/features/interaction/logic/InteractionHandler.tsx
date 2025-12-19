@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType } from '@/types';
-import { useSettingsStore } from '@state/SettingsStore';
 import { useInputStore } from '@/state/InputStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
@@ -13,41 +12,37 @@ import { emitSpark } from '../components/SparkSystem';
 interface InteractionHandlerProps {
 }
 
+import { getToolCapabilities } from './ToolCapabilities';
+
 export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
-  const inputMode = useSettingsStore(s => s.inputMode);
-  const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
   const { setInteractionAction } = useInputStore();
-  const isDigging = useInputStore(s => s.isDigging);
 
   // Stores
   const inventorySlots = useInventoryStore(state => state.inventorySlots);
   const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
+  const customTools = useInventoryStore(state => state.customTools);
+  const hasPickaxe = useInventoryStore(state => state.hasPickaxe);
   const removeItem = useInventoryStore(state => state.removeItem);
   const spawnPhysicsItem = usePhysicsItemStore(state => state.spawnItem);
 
-  // Crafting Input Logic (Keyboard 'C')
+
+  // Keyboard Input Logic
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Crafting Toggle (C)
       if (e.key.toLowerCase() === 'c') {
         const invState = useInventoryStore.getState();
         const currentItem = invState.inventorySlots[invState.selectedSlotIndex];
         const craftingState = useCraftingStore.getState();
 
-        // If closed, check for Stick and open
         if (!craftingState.isOpen) {
           if (currentItem === ItemType.STICK) {
-            document.exitPointerLock(); // Vital: Release mouse for UI interaction
+            document.exitPointerLock();
             craftingState.openCrafting(ItemType.STICK);
-          } else {
-            console.log("Must hold Stick to craft");
           }
         } else {
-          // If open, close it
           craftingState.closeCrafting();
-          // Optionally re-lock pointer? Better to let user click to lock.
         }
       }
     };
@@ -56,79 +51,70 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Touch Input Logic (Restored from InteractionLayer)
-  useEffect(() => {
-    if (inputMode !== 'touch') return;
-    const selectedItem = inventorySlots[selectedSlotIndex];
-    const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
-
-    // Only DIG when the crafted pickaxe is unlocked + explicitly selected.
-    // BUILD is intentionally disabled for now.
-    if (isDigging && pickaxeSelected) {
-      setInteractionAction('DIG');
-    } else {
-      setInteractionAction(null);
-    }
-  }, [hasPickaxe, inventorySlots, selectedSlotIndex, isDigging, inputMode, setInteractionAction]);
-
   // Mouse Input Logic
   useEffect(() => {
     const tryThrowSelected = (): boolean => {
       const selectedItem = inventorySlots[selectedSlotIndex];
-      // Note: "fire" is not throwable.
-      if (selectedItem !== ItemType.STICK && selectedItem !== ItemType.STONE && selectedItem !== ItemType.SHARD) return false;
+      if (!selectedItem) return false;
+
+      const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
+      const isStandard = selectedItem === ItemType.STICK || selectedItem === ItemType.STONE || selectedItem === ItemType.SHARD;
+
+      if (!isCustom && !isStandard) return false;
 
       // Calculate Throw Vector
       const origin = camera.position.clone();
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-
-      // Spawn Position: Slightly in front of camera
       const spawnPos = origin.add(direction.clone().multiplyScalar(0.5));
-
-      // Velocity: Direction * Force + Upward Arc
-      // Stone needs > 12 rel velocity to shatter.
-      // Stick needs > 8 to plant.
       const force = 24.0;
       const velocity = direction.multiplyScalar(force);
-      velocity.y += 2.0; // slight arc up
+      velocity.y += 2.0;
 
-      // Spawn Item
-      const type = selectedItem === ItemType.STICK ? ItemType.STICK : selectedItem === ItemType.STONE ? ItemType.STONE : ItemType.SHARD;
-      spawnPhysicsItem(type, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
+      // For custom tools, we just spawn a stick for now (placeholder for drop logic)
+      const type = isCustom ? ItemType.STICK : (selectedItem === ItemType.STICK ? ItemType.STICK : selectedItem === ItemType.STONE ? ItemType.STONE : ItemType.SHARD);
+      spawnPhysicsItem(type as ItemType, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
+
+      const removeCustomTool = useInventoryStore.getState().removeCustomTool;
 
       // Remove from Inventory
-      removeItem(selectedItem, 1);
+      if (isCustom) {
+        removeCustomTool(selectedItem as string);
+      } else {
+        removeItem(selectedItem as ItemType, 1);
+      }
 
       return true;
     };
 
     const handleMouseDown = (e: MouseEvent) => {
-      // Only allow interaction if we are locked (gameplay)
-      // Note: Touch users won't be pointer locked usually, but they use the effect above.
-      // Desktop users click the canvas which locks the pointer.
       if (!document.pointerLockElement) return;
 
       const selectedItem = inventorySlots[selectedSlotIndex];
+      const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
+
       const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
+      const capabilities = activeCustomTool ? getToolCapabilities(activeCustomTool) : null;
 
       // Left Click
       if (e.button === 0) {
-        // 1. Pickaxe Digging
-        if (pickaxeSelected) {
+        // 1. Tool Interaction (Pickaxe or Custom Tool)
+        if (capabilities && capabilities.canChop) {
+          setInteractionAction('CHOP');
+          return;
+        }
+
+        if (pickaxeSelected || (capabilities && capabilities.canDig)) {
           setInteractionAction('DIG');
           return;
         }
 
         // 2. Fire Creation (Holding Stone)
-        // 2. Fire Creation (Holding Stone)
         if (selectedItem === ItemType.STONE) {
-          // OPTIMIZATION: Use Rapier Raycast instead of Three.js Scene Traversal
           const origin = camera.position;
           const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
 
           const ray = new rapier.Ray(origin, direction);
           const hit = world.castRay(ray, 3.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
-            // Filter for Stones
             return collider.parent()?.userData?.type === ItemType.STONE;
           });
 
@@ -138,15 +124,11 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
             const hitPoint = origin.clone().add(direction.clone().multiplyScalar(hit.timeOfImpact));
 
             if (rigidBody && (rigidBody.userData as any)?.type === ItemType.STONE) {
-              // Hit a stone with a stone!
               emitSpark(hitPoint);
-
-              // Logic: Check for 4 sticks nearby
               const state = usePhysicsItemStore.getState();
               const targetItem = state.items.find(i => i.id === (rigidBody.userData as any).id);
 
               if (targetItem) {
-                // OPTIMIZATION: Use Rapier's sphere intersection query instead of O(N) Array.filter
                 const nearbySticks: any[] = [];
                 const spherePos = { x: targetItem.position[0], y: targetItem.position[1], z: targetItem.position[2] };
                 const sphereRadius = 1.5;
@@ -161,37 +143,26 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                       const id = (rigidBody.userData as any).id;
                       if (id) nearbySticks.push({ id });
                     }
-                    return true; // continue search
+                    return true;
                   }
                 );
 
                 if (nearbySticks.length >= 4) {
-                  // Anchor the stone so it can't be pushed around during fire-starting
                   if (!targetItem.isAnchored) {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { isAnchored: true });
                   }
-
-                  // Correct Ingredients Found!
                   const currentHeat = targetItem.heat || 0;
-
                   if (currentHeat >= 10) {
-                    // IGNITE!
                     const removeItem = usePhysicsItemStore.getState().removeItem;
-
-                    // Remove 4 sticks
                     for (let i = 0; i < 4; i++) {
                       removeItem(nearbySticks[i].id);
                     }
-
-                    // Spawn Fire
-                    // Place fire slightly above rock so it doesn't clip perfectly
                     spawnPhysicsItem(
                       ItemType.FIRE,
                       [targetItem.position[0], targetItem.position[1] + 0.3, targetItem.position[2]],
                       [0, 0, 0]
                     );
                   } else {
-                    // Heat up
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { heat: currentHeat + 1 });
                   }
                 }
@@ -199,9 +170,6 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
               return;
             }
           }
-
-          // Trigger animation (if needed by HUD or logic other than terrain)
-          // Removed setAction('DIG') lag-inducing re-renders. Animation is now handled in FirstPersonTools.
           return;
         }
 
@@ -220,24 +188,20 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
             const rigidBody = collider.parent();
 
             if (rigidBody && (rigidBody.userData as any)?.type === ItemType.FIRE) {
-              // Hit Fire with Stick!
               const inv = useInventoryStore.getState();
               inv.removeItem(ItemType.STICK, 1);
               inv.addItem(ItemType.TORCH, 1);
               return;
             }
           }
-
-          // Removed redundant setAction('DIG')
           return;
         }
 
         return;
       }
 
-      // Right Click: allow throwing held physics items; BUILD is intentionally disabled for now.
+      // Right Click: Throw
       if (e.button === 2) {
-        // Throw Logic for Physics Items
         if (tryThrowSelected()) return;
       }
     };
@@ -257,7 +221,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [setInteractionAction, camera, hasPickaxe, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem]);
+  }, [setInteractionAction, camera, hasPickaxe, inventorySlots, selectedSlotIndex, removeItem, spawnPhysicsItem, customTools, world, rapier]);
 
   return null;
 };

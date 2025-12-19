@@ -23,6 +23,7 @@ import { InventoryInput } from '@features/interaction/components/InventoryInput'
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
 import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
+import { useCraftingStore } from '@state/CraftingStore';
 
 // Environment Features (Refactored)
 import { AtmosphereManager } from '@features/environment/components/AtmosphereManager';
@@ -70,6 +71,9 @@ const App: React.FC = () => {
   const bloomEnabled = useSettingsStore(s => s.bloom);
   const setBloomEnabled = useSettingsStore(s => s.setBloom);
   const viewDistance = useSettingsStore(s => s.viewDistance);
+
+  // Crafting State
+  const isCraftingOpen = useCraftingStore(s => s.isOpen);
 
   // Debug Local State (Leva managed)
   const [triplanarDetail, setTriplanarDetail] = useState(1.0);
@@ -338,7 +342,7 @@ const App: React.FC = () => {
             skipPost={skipPost || !postProcessingEnabled}
           />
 
-          {gameStarted && inputMode === 'mouse' && <PointerLockControls onUnlock={handleUnlock} />}
+          {gameStarted && inputMode === 'mouse' && !isCraftingOpen && <PointerLockControls onUnlock={handleUnlock} />}
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
           <SparkSystem />

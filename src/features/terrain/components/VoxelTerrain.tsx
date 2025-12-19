@@ -23,6 +23,7 @@ import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/f
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
+import { getToolCapabilities } from '../../interaction/logic/ToolCapabilities';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -1393,7 +1394,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
     // 0.5 CHECK FOR FLORA TREE INTERACTION (GET AXE)
-    if (action === 'DIG') {
+    if (action === 'DIG' || action === 'CHOP') {
       const physicsHit = world.castRay(ray, maxRayDistance, true);
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
@@ -1424,7 +1425,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       let isNearTree = false;
 
       // Check for Tree/Vegetation Interaction BEFORE modifying terrain
-      if (action === 'DIG') {
+      if (action === 'DIG' || action === 'CHOP') {
         const hitX = impactPoint.x;
         const hitZ = impactPoint.z;
         const cx = Math.floor(hitX / CHUNK_SIZE_XZ);
@@ -1491,10 +1492,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
                 // AAA FIX: Tree Cutting Logic
                 const treeId = `${key}-${i}`;
-                const { hasAxe, currentTool } = useInventoryStore.getState();
+                const { hasAxe, inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+                const selectedItem = inventorySlots[selectedSlotIndex];
 
-                // Only cut if we have an axe AND it is the current tool
-                const canCut = hasAxe && currentTool === 'axe';
+                // Check custom tool capabilities
+                const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
+                const customTool = isCustom ? customTools[selectedItem as string] : null;
+                const capabilities = customTool ? getToolCapabilities(customTool) : null;
+
+                // Only cut if we have an axe OR a custom tool with chop capability
+                const canCut = (hasAxe && selectedItem === ItemType.AXE) || (capabilities && capabilities.canChop);
 
                 if (!canCut) {
                   // Play "clunk" sound via pool

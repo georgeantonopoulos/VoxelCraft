@@ -9,6 +9,7 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { noiseTexture } from '@core/memory/sharedResources';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
 import { getItemColor, getItemMetadata } from '../logic/ItemRegistry';
+import { PickaxeMesh, AxeMesh } from './ToolMeshes';
 
 // Sounds
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
@@ -53,35 +54,6 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   });
 
   const onCollisionEnter = (e: any) => {
-    if (item.isPlanted) {
-      // Shard colliding with Planted Stick
-      if (item.type === ItemType.STICK) {
-        // I am a planted stick. Did a shard hit me?
-        // "other" might be the terrain or a shard.
-        // Check userData of other.
-        const other = e.other.rigidBodyObject;
-        if (other && other.userData?.type === ItemType.SHARD) {
-          // CRAFTING EVENT!
-          // Spawn Pickaxe
-          const t = rigidBody.current!.translation();
-          spawnItem(ItemType.PICKAXE, [t.x, t.y + 0.5, t.z], [0, 2, 0]);
-
-          // Play Sound using shared pool
-          CLUNK_AUDIO.currentTime = 0;
-          CLUNK_AUDIO.play().catch(() => { });
-
-          // Remove Stick (me)
-          removeItem(item.id);
-          // Remove Shard (other) - Need its ID.
-          // We can't easily get the ID from here unless we store it in userData.
-          if (other.userData.id) {
-            removeItem(other.userData.id);
-          }
-        }
-      }
-      return;
-    }
-
     const impactSpeed = lastVel.current.length();
     const other = e.other.rigidBodyObject;
     const isTerrain = other?.userData?.type === 'terrain';
@@ -233,19 +205,14 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       {item.type === ItemType.PICKAXE && (
         <>
           <CuboidCollider args={[0.3, 0.3, 0.3]} />
-          <group rotation={[0, 0, -Math.PI / 4]}>
-            {/* Handle */}
-            <mesh position={[0, -0.2, 0]}>
-              <cylinderGeometry args={[0.04, 0.04, 0.6]} />
-              <meshStandardMaterial color={getItemColor(ItemType.STICK)} />
-            </mesh>
-            {/* Head */}
-            <mesh position={[0, 0.1, 0]} rotation={[0, 0, Math.PI / 2]}>
-              <boxGeometry args={[0.1, 0.5, 0.1]} />
-              {/* Or Tetrahedron for sharp look */}
-              <meshStandardMaterial color={getItemColor(ItemType.PICKAXE)} />
-            </mesh>
-          </group>
+          <PickaxeMesh />
+        </>
+      )}
+
+      {item.type === ItemType.AXE && (
+        <>
+          <CuboidCollider args={[0.3, 0.3, 0.3]} />
+          <AxeMesh />
         </>
       )}
 

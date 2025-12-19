@@ -155,6 +155,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-19: Implemented immersive Crafting Mode and drag-and-drop inventory.
+  - Added `CraftingStore` support for `draggedItem`.
+  - Upgraded `CraftingInterface` with 3D hotspots that respond to drag-and-drop (green/red-orange feedback).
+  - Added close button (X) and 'C' key toggle for Crafting Mode; disabled pointer lock during crafting.
+  - Created high-quality 3D meshes for Pickaxe and Axe in `ToolMeshes.tsx`.
+  - Generated and integrated custom inventory icons for Pickaxe and Axe.
+  - Disabled old shard-on-stick collision crafting in `PhysicsItem.tsx`.
 - 2025-12-19: Fixed massive lag during stick/stone interaction.
   - Removed redundant `setAction('DIG')` calls for non-digging items in `InteractionHandler.tsx`.
   - Migrated interaction state to `useInputStore` to prevent `App` and `VoxelTerrain` from re-rendering on every mouse click.
@@ -305,3 +312,17 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 2025-12-19: Fixed "Uncaught TypeError: Cannot read properties of undefined (reading 'postMessage')" in `WorkerPool.ts`.
   - **Identified root cause**: Negative chunk coordinates (e.g., `(-1, -1)`) passed to `postToOne` resulted in a negative array index (`-2 % 4 === -2`), causing an out-of-bounds access.
   - **Fix**: Added `Math.abs(index)` in `WorkerPool.postToOne` to ensure target indices are always positive and within the valid range of the worker pool.
+
+- 2025-12-19: Implemented Procedural Custom Tool Interaction System.
+  - Enabled custom-crafted tools (IDs starting with `tool_`) to be used for digging, chopping, and throwing.
+  - Implemented `getToolCapabilities` in `ToolCapabilities.ts` to derive power and abilities (e.g., `canChop`) from tool attachments.
+  - Integrated `CustomToolRenderer` into `FirstPersonTools.tsx` with full support for animations, poses, and multi-component rendering.
+  - Updated `InteractionHandler.tsx` and `VoxelTerrain.tsx` to utilize procedural capabilities, including a new `CHOP` action for trees.
+  - Resolved multiple linting and import issues across the interaction and crafting systems.
+  - **Hard Invariant**: Custom tools MUST have IDs prefixed with `tool_` for the interaction and rendering systems to identify them.
+
+- 2025-12-19: Fixed Custom Tool Inventory & Throwing issues.
+  - Implemented `CustomToolIcon.tsx` for procedural 2D previews of crafted tools.
+  - Updated `InventoryStore.ts` to fill gaps in standard slots with custom tools and auto-select new creations.
+  - Fixed "infinite throwing" bug by correctly calling `removeCustomTool` in `InteractionHandler.tsx`.
+  - Optimized `computeSlots` layout for better player feedback when materials are consumed for crafting.

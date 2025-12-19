@@ -360,9 +360,9 @@ ctx.onmessage = async (e: MessageEvent) => {
 
                             let numPlants = 1;
                             if (biome === 'JUNGLE' || biome === 'THE_GROVE') {
-                                if (finalDensity > threshold + 0.30) numPlants = 7;
-                                else if (finalDensity > threshold + 0.15) numPlants = 5;
-                                else if (finalDensity > threshold + 0.05) numPlants = 3;
+                                if (finalDensity > threshold + 0.30) numPlants = 5; // Reduced from 7
+                                else if (finalDensity > threshold + 0.15) numPlants = 3; // Reduced from 5
+                                else if (finalDensity > threshold + 0.05) numPlants = 2; // Reduced from 3
                             } else {
                                 if (finalDensity > threshold + 0.4) numPlants = 3;
                                 else if (finalDensity > threshold + 0.2) numPlants = 2;
