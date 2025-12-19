@@ -137,7 +137,9 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
     body.current.setLinvel({ x: direction.x, y: yVelocity, z: direction.z }, true);
     const translation = body.current.translation();
-    camera.position.set(translation.x, translation.y + 0.6, translation.z);
+    // Normal human eye level is ~1.6-1.7m. 
+    // Capsule center is at 0.8m, so +0.75m offset gives 1.55m eye level.
+    camera.position.set(translation.x, translation.y + 0.75, translation.z);
   });
 
   return (

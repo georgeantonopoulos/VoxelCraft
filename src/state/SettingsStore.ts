@@ -35,9 +35,13 @@ interface SettingsState {
 // Detect initial input mode
 const getInitialInputMode = (): InputMode => {
   if (typeof window === 'undefined') return 'mouse';
-  // Simple heuristic: if touch points exist, default to touch.
-  // User can switch back in settings.
-  return (navigator.maxTouchPoints > 0) ? 'touch' : 'mouse';
+  // Check for common mobile UA strings in addition to touch points
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const hasTouch = navigator.maxTouchPoints > 0;
+
+  // Only default to touch if it's a mobile device and has touch points.
+  // This prevents touchscreens on desktops from forcing touch mode.
+  return (isMobile && hasTouch) ? 'touch' : 'mouse';
 };
 
 export const useSettingsStore = create<SettingsState>()(

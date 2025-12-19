@@ -40,12 +40,14 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Repo Map (high-signal)
 
-- `src/core/`: Engine-ish utilities and materials (e.g. `src/core/graphics/TriplanarMaterial.tsx`).
-- `src/features/terrain/`: Chunk streaming, meshing, workers (e.g. `src/features/terrain/components/VoxelTerrain.tsx`).
-- `src/features/flora/`: RootHollow / FractalTree / LumaSwarm (e.g. `src/features/flora/components/RootHollow.tsx`).
-- `src/features/creatures/`: FogDeer and shader-based creatures (e.g. `src/features/creatures/FogDeer.tsx`).
-- `src/state/`: Zustand stores and debug toggles (e.g. `src/state/InventoryStore.ts`).
-- `src/ui/`: HUD and debug screens (e.g. `src/ui/MapDebug.tsx`).
+- `src/core/`: Common engine utilities, math, materials, and generic worker pools (e.g. `TriplanarMaterial.tsx`, `WorkerPool.ts`).
+- `src/features/terrain/`: Voxel generation, meshing, and chunk streaming logic (`VoxelTerrain.tsx`, `mesher.ts`).
+- `src/features/environment/`: Dynamic atmosphere, sky, cinematic post-processing, and performance monitoring.
+- `src/features/player/`: Player movement, input handling, and first/third-person camera logic.
+- `src/features/interaction/`: First-person tools, inventory logic, and real-time voxel modification.
+- `src/features/flora/`: Generative vegetation, trees, and particle swarms.
+- `src/state/`: Global Zustand stores for settings, inventory, world state, and environment.
+- `src/ui/`: React-based HUD, settings menu, startup screens, and debug overlays.
 
 #### Terrain System
 - **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`src/core/math/noise.ts`) to create a density field.
@@ -54,8 +56,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Caverns**: Stateless "Noodle" Algorithm using domain-warped 3D ridged noise (`abs(noise) < threshold`) in `TerrainService.ts`. Configured per-biome via `BiomeManager.ts`.
 - **Meshing**: `src/features/terrain/logic/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
   - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
+  - **Physics**: Uses the full-resolution visual mesh for `trimesh` collision in Rapier. Throttled mounting (`mountQueue`) and worker-based generation are used to prevent main-thread spikes instead of mesh simplification.
 - **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
   - **Shader Stability**: Implements `safeNormalize` to prevent NaNs on degenerate geometry (e.g., sharp concave features from digging) which prevents flashing artifacts.
+  - **Modular Shaders**: Shader code is extracted into `src/core/graphics/TriplanarShader.ts` for better maintainability.
 
 ## Testing Strategy
 - **Headless Tests**: Run via `npm test` (Vitest).
@@ -77,8 +81,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Workers & Messages (verified)
 
-- Terrain generation/remesh runs via `src/features/terrain/workers/terrain.worker.ts`, spawned in `src/features/terrain/components/VoxelTerrain.tsx`.
+- Terrain generation/remesh runs via `src/features/terrain/workers/terrain.worker.ts`, managed by a **WorkerPool** (`src/core/utils/WorkerPool.ts`) in `src/features/terrain/components/VoxelTerrain.tsx`.
 - Worker message convention is `{ type, payload }` (see `terrain.worker.ts`, `simulation.worker.ts`).
+- Performance: Transfers large Float32Arrays to avoid main-thread serialization overhead.
 - Simulation runs via `src/features/flora/workers/simulation.worker.ts` managed by `src/features/flora/logic/SimulationManager.ts` and posts `type: 'CHUNKS_UPDATED'`.
 
 ## Interaction & State (verified)
@@ -96,8 +101,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **InstancedMesh scaling can “shrink your shader space”**: If instance matrices scale, shader-driven offsets may also scale; size particles via geometry radius when offsets must stay in world units (see `src/features/flora/components/LumaSwarm.tsx`).
 - **Three.js fog uniform crash**: If a `ShaderMaterial` has `fog=true` but lacks `fogColor/fogNear/fogFar`, Three may throw during `refreshFogUniforms()` (see `src/features/creatures/FogDeer.tsx`).
 - **Never edit held-item pose constants**: Do not touch `src/features/interaction/logic/HeldItemPoses.ts` (`RIGHT_HAND_HELD_ITEM_POSES`); these are hand-tuned and must only change via the in-game pose tooling (`src/features/interaction/components/FirstPersonTools.tsx` keyword: `/__vc/held-item-poses`). If a merge conflict hits this file, resolve by taking `main`.
-- **Main-thread chunk arrival spikes**: Avoid expensive `useMemo` computation when chunks stream in; prefer precomputing in workers (shoreline mask note in `src/features/terrain/components/ChunkMesh.tsx`).
+- **Main-thread chunk arrival spikes**: Avoid expensive `useMemo` computation when chunks stream in; prefer precomputing in workers (shoreline mask / **simplified colliders**).
 - **Terrain streaming “loaded” state can stall**: If chunk updates are wrapped in `startTransition`, UI state may lag; gate initial-load readiness off `chunksRef.current` in `src/features/terrain/components/VoxelTerrain.tsx` (keyword: `initialLoadTriggered`).
+- **Input Mode Misidentification**: Laptops with touchscreens can default to `touch` mode, disabling `PointerLockControls`. Default is now `mouse` unless mobile UA is detected (`src/state/SettingsStore.ts`).
+- **Pointer Lock Quitting**: Unlocking the pointer (ESC) should not quit the game; `handleUnlock` in `App.tsx` is now non-destructive.
 - **Terrain backface Z-fighting**: Terrain uses `side={THREE.FrontSide}` in `src/core/graphics/TriplanarMaterial.tsx` (validate artifacts before changing).
 - **Celestial orbit desync**: Use shared helpers in `src/core/graphics/celestial.ts` (`calculateOrbitAngle`, `getOrbitOffset`) for Sun/Moon/Sky/IBL; do not duplicate orbit math inside components (previously caused mismatched sky/fog vs lighting).
 - **CustomShaderMaterial Imports**: In version 6.x+, the default import `import CSM from 'three-custom-shader-material'` is the **React component**. If you need to use it as a class/constructor (e.g. for material pooling or singleton materials), you MUST use `import CSM from 'three-custom-shader-material/vanilla'`. Mixing these up causes `CustomShaderMaterial is not a constructor` runtime errors.
@@ -143,6 +150,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-19: Performed final visual audit for Senior Dev report.
+  - Verified "The Grove" biome renders with dense, high-quality vegetation and multi-layered lighting.
+  - Performance: Observed ~18 FPS after streaming settles, with initial dips during chunk generation.
+  - Confirmed Leva debug controls (Scene Lighting, Sun Shadow Params, Orbit) are fully functional and correctly updating the world state.
+  - Checked inventory slot 5 (Flora) icon and count; confirmed 10/10 items present in initial "The Grove" spawn.
 - 2025-12-18: Implemented responsive held-item positioning for portrait mode.
   - Added `responsiveX` scaling to `FirstPersonTools.tsx` that dynamically adjusts tool X-offsets based on the window aspect ratio.
   - This ensures torches and held items (sticks, stones, etc.) remain visible when the screen is in portrait orientation.
@@ -276,3 +288,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Identified root cause**: The default import from `three-custom-shader-material` v6 is a React component, while material pooling/singleton logic requires the vanilla class constructor.
   - **Fix**: Updated `TriplanarMaterial.tsx`, `TreeLayer.tsx`, `VegetationLayer.tsx`, and `GroundItemsLayer.tsx` to use the `/vanilla` import path.
   - **Build Verification**: Confirmed `npm run build` completes successfully.
+- 2025-12-19: Fixed "Uncaught TypeError: Cannot read properties of undefined (reading 'postMessage')" in `WorkerPool.ts`.
+  - **Identified root cause**: Negative chunk coordinates (e.g., `(-1, -1)`) passed to `postToOne` resulted in a negative array index (`-2 % 4 === -2`), causing an out-of-bounds access.
+  - **Fix**: Added `Math.abs(index)` in `WorkerPool.postToOne` to ensure target indices are always positive and within the valid range of the worker pool.

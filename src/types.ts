@@ -72,6 +72,10 @@ export interface MeshData {
   // Pre-computed shoreline SDF mask (CHUNK_SIZE_XZ x CHUNK_SIZE_XZ Uint8).
   // Computed in worker so main thread doesn't run the BFS.
   waterShoreMask: Uint8Array;
+
+  // Simplified Physics Collider (Optional, used if trimesh is too heavy)
+  colliderPositions?: Float32Array;
+  colliderIndices?: Uint32Array;
 }
 
 export enum ToolMode {
@@ -130,6 +134,9 @@ export interface ChunkState {
   meshWaterNormals: Float32Array;
   // Pre-computed shoreline SDF mask (32x32 Uint8Array) — computed in worker to avoid main-thread BFS.
   meshWaterShoreMask?: Uint8Array;
+
+  colliderPositions?: Float32Array;
+  colliderIndices?: Uint32Array;
 
   lightPositions?: Float32Array;
 }

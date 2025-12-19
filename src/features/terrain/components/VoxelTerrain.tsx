@@ -21,7 +21,7 @@ import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
-
+import { WorkerPool } from '@core/workers/WorkerPool';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -725,7 +725,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
   const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
   const chunksRef = useRef<Record<string, ChunkState>>({});
-  const workerRef = useRef<Worker | null>(null);
+  const poolRef = useRef<WorkerPool | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
   // Queue chunk generation requests so we can throttle how many we send per frame.
   // This spreads out the worker responses and main-thread geometry/collider work.
@@ -790,21 +790,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       });
     });
 
-    // Restore the simpler worker model (as of 8d1ef30): a single `terrain.worker.ts`
-    // generates voxel fields + meshes. This avoids chunk-boundary React rerenders introduced by
-    // collider-gating and reduces pipeline complexity while we chase streaming hitches.
-    const worker = new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' });
-    workerRef.current = worker;
+    // Initialize a WorkerPool for terrain generation.
+    // By distributing meshing and voxel generation across multiple threads (up to 4),
+    // we significantly reduce the time a single hot chunk blocks the entire pipeline.
+    const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), 4);
+    poolRef.current = pool;
 
-    // Send configuration immediately
-    worker.postMessage({ type: 'CONFIGURE', payload: { worldType } });
+    // Send configuration to all workers
+    pool.postToAll({ type: 'CONFIGURE', payload: { worldType } });
 
-    worker.onmessage = (e) => {
-      // Buffer all messages; we apply them in `useFrame` to control cadence and reduce hitches.
+    // Handle messages from any worker in the pool
+    pool.addMessageListener((e) => {
       workerMessageQueue.current.push(e.data);
-    };
+    });
 
-    return () => worker.terminate();
+    return () => pool.terminate();
   }, [worldType]);
 
   // Determine a stable target for initial loading (don't chase moving camera)
@@ -840,7 +840,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // 3. Process Queues (Throttled)
   useFrame((state) => {
     const frameStart = performance.now();
-    if (!camera || !workerRef.current) return;
+    if (!camera || !poolRef.current) return;
 
     lastTimeRef.current = state.clock.getElapsedTime();
 
@@ -974,7 +974,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       }
       const job = generateQueue.current.splice(bestIndex, 1)[0];
-      workerRef.current.postMessage({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
+      // Distribute generation requests round-robin across the pool
+      poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
     // 3. THROTTLED WORKER MESSAGES (1 per frame)
@@ -1158,8 +1159,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         remeshQueue.current.delete(key);
         const chunk = chunksRef.current[key];
         const metadata = metadataDB.getChunk(key);
-        if (chunk && metadata) {
-          workerRef.current.postMessage({
+        if (chunk && metadata && poolRef.current) {
+          poolRef.current.postToOne(chunk.cx + chunk.cz, {
             type: 'REMESH',
             payload: {
               key,
@@ -1748,7 +1749,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       }
 
-      if (anyModified && workerRef.current) {
+      if (anyModified && poolRef.current) {
         // Play Dig Sound
         if (action === 'DIG') {
           const sounds = [dig1Url, dig2Url, dig3Url];
