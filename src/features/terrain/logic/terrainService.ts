@@ -552,93 +552,132 @@ export class TerrainService {
 
         // --- 3.6 Tree Generation (Surface Pass) ---
         // Restores original surface tree placement (separate from lumina flora).
-        // AAA FIX: Use Jittered Grid Sampling to prevent clumping
-        const GRID_SIZE = 4; // 4x4 voxel cells
+        // AAA FIX: Use Jittered Grid Sampling (4x4) to keep physics count sane.
+        const TREE_GRID_SIZE = 4;
+        const MAX_TREES_PER_CHUNK = 32; // Hard cap to prevent Rapier collider explosion
+        let treesPlaced = 0;
 
-        for (let z = 0; z < sizeZ; z += GRID_SIZE) {
-            for (let x = 0; x < sizeX; x += GRID_SIZE) {
-                // Calculate grid cell origin in world space
+        for (let z = 0; z < sizeZ - TREE_GRID_SIZE && treesPlaced < MAX_TREES_PER_CHUNK; z += TREE_GRID_SIZE) {
+            for (let x = 0; x < sizeX - TREE_GRID_SIZE && treesPlaced < MAX_TREES_PER_CHUNK; x += TREE_GRID_SIZE) {
+                // Determine world position for noise/biome lookups
                 const cellWx = (x - PAD) + worldOffsetX;
                 const cellWz = (z - PAD) + worldOffsetZ;
 
-                // Hash for this cell to pick a random spot within it
-                const cellHash = Math.abs(noise3D(cellWx * 0.13, 0, cellWz * 0.13));
+                // 1. Biome & Distribution Logic
+                const biome = BiomeManager.getBiomeAt(cellWx, cellWz);
 
-                // Pick a random offset within the cell (0..GRID_SIZE)
-                const offX = (cellHash * 12.9898) % GRID_SIZE;
-                const offZ = (cellHash * 78.233) % GRID_SIZE;
+                // Combined Density Noise: Large-scale patches + local jitter
+                // Sampling at slightly different frequencies to avoid alignment artifacts
+                const forestPatch = noise3D(cellWx * 0.04, 0, cellWz * 0.04);
+                const localDistribution = noise3D(cellWx * 0.18, 5.5, cellWz * 0.18);
+                const cellHash = Math.abs(noise3D(cellWx * 0.17 + 10, 0, cellWz * 0.17 + 10));
+
+                let treeThreshold = 0.6; // Default
+                let patchThreshold = -0.2; // Default clearing size (noise is -1 to 1)
+
+                if (biome === 'JUNGLE') {
+                    treeThreshold = -0.4;
+                    patchThreshold = -0.8;
+                } else if (biome === 'THE_GROVE') {
+                    treeThreshold = 0.0;
+                    patchThreshold = -0.4;
+                } else if (biome === 'SAVANNA') {
+                    treeThreshold = 0.7;
+                    patchThreshold = 0.2;
+                } else if (biome === 'MOUNTAINS') {
+                    treeThreshold = 0.8;
+                    patchThreshold = 0.4;
+                } else if (biome === 'BEACH' || biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
+                    treeThreshold = 0.95;
+                    patchThreshold = 0.8;
+                }
+
+                // Distribution Check
+                if (forestPatch < patchThreshold || localDistribution < treeThreshold) continue;
+
+                // 2. Jittered Position within the grid cell
+                const offX = (cellHash * 13.3) % TREE_GRID_SIZE;
+                const offZ = (cellHash * 77.7) % TREE_GRID_SIZE;
 
                 const localX = x + offX;
                 const localZ = z + offZ;
-
-                if (localX >= sizeX || localZ >= sizeZ) continue;
-
                 const wx = (localX - PAD) + worldOffsetX;
                 const wz = (localZ - PAD) + worldOffsetZ;
 
-                // Check biome for tree density/chance first to avoid unnecessary scans
-                const biome = BiomeManager.getBiomeAt(wx, wz);
+                // 3. Find Surface and Check Constraints (Slope, Material, Water)
+                let surfaceY = -1;
+                let normalY = 1.0;
+                let groundMaterial = MaterialType.AIR;
 
-                // Optimization: Quick noise check before scanning height
-                const nFlora = noise3D(wx * 0.12, 0, wz * 0.12); // 2D noise for distribution
+                // Scan from top down at the integer grid point
+                const ix = Math.floor(localX);
+                const iz = Math.floor(localZ);
 
-                let treeThreshold = 0.6; // Default increased density (was 0.7)
-                if (biome === 'JUNGLE') {
-                    treeThreshold = 0.3; // Much higher density for Jungle
-                } else if (biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
-                    treeThreshold = 0.98; // Very sparse
-                } else if (biome === 'BEACH') {
-                    // Beaches should have sparse trees (palms) and no dense forest at the shoreline.
-                    treeThreshold = 0.95;
-                } else if (biome === 'SAVANNA') {
-                    treeThreshold = 0.8;
+                for (let y = sizeY - 2; y >= 2; y--) {
+                    const idx = ix + y * sizeX + iz * sizeX * sizeY;
+                    if (density[idx] > ISO_LEVEL) {
+                        const wy = (y - PAD) + MESH_Y_OFFSET;
+                        if (wy < MESH_Y_OFFSET + 5) break; // Too deep
+
+                        // Slope Check: Only do this once per candidate
+                        const dL = density[idx - 1] || 0;
+                        const dR = density[idx + 1] || 0;
+                        const dU = density[idx + sizeX] || 0;
+                        const dD = density[idx - sizeX] || 0;
+                        const dF = density[idx + sizeX * sizeY] || 0;
+                        const dB = density[idx - sizeX * sizeY] || 0;
+
+                        const nx = -(dR - dL);
+                        const ny = -(dU - dD);
+                        const nz = -(dF - dB);
+                        const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                        normalY = len > 0.0001 ? ny / len : 1.0;
+
+                        // Surface Interpolation
+                        const dAbove = density[idx + sizeX];
+                        const t = (ISO_LEVEL - density[idx]) / (dAbove - density[idx]);
+                        surfaceY = y + t;
+                        groundMaterial = material[idx];
+                        break;
+                    }
                 }
 
-                if (nFlora > treeThreshold) {
-                    // Potential tree spot. Now find the surface.
-                    let surfaceY = -1;
+                if (surfaceY > 0) {
+                    const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
 
-                    // Scan from top down
-                    for (let y = sizeY - 2; y >= 0; y--) {
-                        const idx = Math.floor(localX) + y * sizeX + Math.floor(localZ) * sizeX * sizeY;
-                        const d = density[idx];
-                        if (d > ISO_LEVEL) {
-                            // Found surface
-                            // Check if it's not bedrock/too low
-                            const wy = (y - PAD) + MESH_Y_OFFSET;
-                            if (wy > MESH_Y_OFFSET + 5) {
-                                surfaceY = y;
+                    // Constraints
+                    if (wy <= WATER_LEVEL + 0.5) continue; // Further from water
+                    if (normalY < 0.75) continue; // Stricter slope (> ~40 deg)
 
-                                // Interpolate
-                                const idxAbove = Math.floor(localX) + (y + 1) * sizeX + Math.floor(localZ) * sizeX * sizeY;
-                                const dAbove = density[idxAbove];
-                                const t = (ISO_LEVEL - d) / (dAbove - d);
-                                surfaceY += t;
-                            }
-                            break; // Stop at first surface (highest)
-                        }
+                    if (groundMaterial === MaterialType.BEDROCK || groundMaterial === MaterialType.WATER) continue;
+                    if (biome !== 'MOUNTAINS' && groundMaterial === MaterialType.STONE && cellHash < 0.8) continue;
+
+                    // 4. Variety & Placement
+                    const hash = Math.abs(noise3D(wx * 15.7, wy * 15.7, wz * 15.7));
+                    const treeType = getTreeForBiome(biome, hash);
+                    if (treeType === null) continue;
+
+                    // Biome-driven scaling
+                    let baseScale = 0.8 + (hash % 0.4);
+                    if (biome === 'JUNGLE') {
+                        baseScale = 1.0 + (hash % 1.5);
+                    } else if (biome === 'THE_GROVE') {
+                        baseScale = 0.7 + (hash % 0.6);
+                    } else if (biome === 'MOUNTAINS') {
+                        baseScale = 0.6 + (hash % 0.4);
                     }
 
-                    if (surfaceY !== -1) {
-                        const wy = (surfaceY - PAD) + MESH_Y_OFFSET;
+                    // Anchoring sink: on slopes, we sink more
+                    const sink = 0.15 + (1.0 - normalY) * 0.5;
 
-                        // Don't spawn trees in/near sea-level water.
-                        // Water fill is a post-pass, so we use the waterline heuristic here (fast + stable).
-                        // This prevents trees from appearing inside oceans/lakes.
-                        if (wy <= WATER_LEVEL + 0.25) continue;
-
-                        const hash = Math.abs(noise3D(wx * 12.3, wy * 12.3, wz * 12.3));
-                        // getTreeForBiome can return null to indicate "no tree for this biome/noise".
-                        const treeType = getTreeForBiome(biome, hash);
-                        if (treeType === null) continue;
-
-                        treeCandidates.push(
-                            (localX - PAD) + (hash * 0.4 - 0.2),
-                            wy - 0.2, // Slight sink
-                            (localZ - PAD) + (hash * 0.4 - 0.2),
-                            treeType
-                        );
-                    }
+                    treeCandidates.push(
+                        (localX - PAD),
+                        wy - sink,
+                        (localZ - PAD),
+                        treeType,
+                        baseScale
+                    );
+                    treesPlaced++;
                 }
             }
         }

@@ -93,13 +93,15 @@ const JUNGLE_VARIANTS = 4;
 
 const buildTreeInstanceData = (treePositions: Float32Array) => {
     // Group trees by type:variant
-    const batches = new Map<string, { type: number; variant: number; positions: number[] }>();
+    const batches = new Map<string, { type: number; variant: number; positions: number[]; scales: number[] }>();
+    const STRIDE = 5; // x, y, z, type, scale
 
-    for (let i = 0; i < treePositions.length; i += 4) {
+    for (let i = 0; i < treePositions.length; i += STRIDE) {
         const x = treePositions[i];
         const y = treePositions[i + 1];
         const z = treePositions[i + 2];
         const type = treePositions[i + 3];
+        const scaleFactor = treePositions[i + 4];
 
         // Deterministic variant selection for jungle trees
         let variant = 0;
@@ -111,9 +113,10 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
 
         const key = `${type}:${variant}`;
         if (!batches.has(key)) {
-            batches.set(key, { type, variant, positions: [] });
+            batches.set(key, { type, variant, positions: [], scales: [] });
         }
         batches.get(key)!.positions.push(x, y, z);
+        batches.get(key)!.scales.push(scaleFactor);
     }
 
     // Now compute matrices for each batch
@@ -129,35 +132,30 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
             const x = batch.positions[i * 3];
             const y = batch.positions[i * 3 + 1];
             const z = batch.positions[i * 3 + 2];
+            const scale = batch.scales[i];
 
-            // Compute rotation and scale (same logic as was in TreeLayer.tsx)
+            // Compute rotation (same logic as before)
             const seed = x * 12.9898 + z * 78.233;
             const rotY = (seed % 1) * Math.PI * 2;
-            const scale = 0.8 + (seed % 0.4);
 
             // Build the 4x4 matrix directly (TRS composition)
-            // This is equivalent to: translate(x,y,z) * rotateY(rotY) * scale(scale)
             const c = Math.cos(rotY);
             const s = Math.sin(rotY);
 
             const offset = i * 16;
             // Column-major order for Three.js Matrix4
-            // Column 0
             matrices[offset + 0] = c * scale;
             matrices[offset + 1] = 0;
             matrices[offset + 2] = -s * scale;
             matrices[offset + 3] = 0;
-            // Column 1
             matrices[offset + 4] = 0;
             matrices[offset + 5] = scale;
             matrices[offset + 6] = 0;
             matrices[offset + 7] = 0;
-            // Column 2
             matrices[offset + 8] = s * scale;
             matrices[offset + 9] = 0;
             matrices[offset + 10] = c * scale;
             matrices[offset + 11] = 0;
-            // Column 3 (translation)
             matrices[offset + 12] = x;
             matrices[offset + 13] = y;
             matrices[offset + 14] = z;

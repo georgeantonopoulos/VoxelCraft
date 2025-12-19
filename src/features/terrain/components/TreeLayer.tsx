@@ -33,12 +33,15 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
         const map: Record<string, TreeInstanceBatch> = {};
         const JUNGLE_VARIANTS = 4;
         const positionsByKey: Record<string, number[]> = {};
+        const scalesByKey: Record<string, number[]> = {};
+        const STRIDE = 5;
 
-        for (let i = 0; i < data.length; i += 4) {
+        for (let i = 0; i < data.length; i += STRIDE) {
             const x = data[i];
             const y = data[i + 1];
             const z = data[i + 2];
             const type = data[i + 3];
+            const scaleFactor = data[i + 4];
 
             let variant = 0;
             if (type === TreeType.JUNGLE) {
@@ -50,15 +53,18 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
             const key = `${type}:${variant}`;
             if (!positionsByKey[key]) {
                 positionsByKey[key] = [];
+                scalesByKey[key] = [];
             }
             positionsByKey[key].push(x, y, z);
+            scalesByKey[key].push(scaleFactor);
         }
 
-        // Build matrices (this is the expensive part we're trying to avoid)
+        // Build matrices
         for (const [key, positions] of Object.entries(positionsByKey)) {
             const [typeStr, variantStr] = key.split(':');
             const type = parseInt(typeStr);
             const variant = parseInt(variantStr);
+            const scales = scalesByKey[key];
             const count = positions.length / 3;
             const matrices = new Float32Array(count * 16);
 
@@ -66,10 +72,10 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                 const x = positions[i * 3];
                 const y = positions[i * 3 + 1];
                 const z = positions[i * 3 + 2];
+                const scale = scales[i];
 
                 const seed = x * 12.9898 + z * 78.233;
                 const rotY = (seed % 1) * Math.PI * 2;
-                const scale = 0.8 + (seed % 0.4);
 
                 const c = Math.cos(rotY);
                 const s = Math.sin(rotY);

@@ -140,6 +140,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - Placement tracing can also be enabled via `localStorage.vcDebugPlacement = "1"` or `window.__vcDebugPlacement = true` (`src/features/flora/components/FloraPlacer.tsx`).
 - Streaming logs (opt-in): `?debug&vcStreamDebug` prints chunk drop/apply notes while tuning streaming (`src/features/terrain/components/VoxelTerrain.tsx` keyword: `vcStreamDebug`).
 
+- **Physics Object Budget**: Avoid exceeding ~1000-2000 active/mounted rigid bodies in the scene. Rapier's performance (especially for `fixed` hulls/trimeshes) degrades significantly beyond this.
+- **Per-Chunk caps**: Always implement `MAX_X_PER_CHUNK` caps for procedurally generated entities that have colliders (Trees, Rocks, etc.). Default for trees: 32.
+- **Grid Resolution**: Keep procedural generation grids at reasonable resolutions (e.g. 4x4 or higher). A 2x2 grid is 4x as expensive as 4x4 and can easily overwhelm the worker and main thread.
+- **Noise Sampling**: Minimize `noise3D` calls in high-frequency loops. Cache biome/climate lookups and use fast hashes for local jitter.
+
 ---
 
 ## Verification Checklist (required)
@@ -150,6 +155,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-19: Fixed major performance regression in tree generation.
+  - Restored `TREE_GRID_SIZE` to 4 to reduce loop iterations by 75%.
+  - Implemented `MAX_TREES_PER_CHUNK = 32` hard cap to prevent Rapier physics stalls.
+  - Optimized noise logic to reduce expensive coordinate-based calls.
+  - Documented "Physics Proliferation" as a critical performance pitfall in `AGENTS.md`.
 - 2025-12-19: Performed final visual audit for Senior Dev report.
   - Verified "The Grove" biome renders with dense, high-quality vegetation and multi-layered lighting.
   - Performance: Observed ~18 FPS after streaming settles, with initial dips during chunk generation.
