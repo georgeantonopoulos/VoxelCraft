@@ -22,6 +22,7 @@ import { InteractionHandler } from '@features/interaction/logic/InteractionHandl
 import { InventoryInput } from '@features/interaction/components/InventoryInput';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
+import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
 
 // Environment Features (Refactored)
 import { AtmosphereManager } from '@features/environment/components/AtmosphereManager';
@@ -355,6 +356,9 @@ const App: React.FC = () => {
           </>
         )}
       </KeyboardControls>
+
+      {gameStarted && <CraftingInterface />}
+
       <TouchControls />
       <SettingsMenu />
     </div>

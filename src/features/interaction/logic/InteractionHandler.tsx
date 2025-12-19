@@ -6,6 +6,7 @@ import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType } from '@/types';
 import { useSettingsStore } from '@state/SettingsStore';
 import { useInputStore } from '@/state/InputStore';
+import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 
@@ -26,6 +27,35 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = ({ setInter
   const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
   const removeItem = useInventoryStore(state => state.removeItem);
   const spawnPhysicsItem = usePhysicsItemStore(state => state.spawnItem);
+
+  // Crafting Input Logic (Keyboard 'C')
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Crafting Toggle (C)
+      if (e.key.toLowerCase() === 'c') {
+        const invState = useInventoryStore.getState();
+        const currentItem = invState.inventorySlots[invState.selectedSlotIndex];
+        const craftingState = useCraftingStore.getState();
+
+        // If closed, check for Stick and open
+        if (!craftingState.isOpen) {
+          if (currentItem === ItemType.STICK) {
+            document.exitPointerLock(); // Vital: Release mouse for UI interaction
+            craftingState.openCrafting(ItemType.STICK);
+          } else {
+            console.log("Must hold Stick to craft");
+          }
+        } else {
+          // If open, close it
+          craftingState.closeCrafting();
+          // Optionally re-lock pointer? Better to let user click to lock.
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Touch Input Logic (Restored from InteractionLayer)
   useEffect(() => {
