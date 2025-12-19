@@ -208,6 +208,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Rotating Sky**: Added a rotation matrix to the star field shader so stars rotate in sync with the moon's orbit (simulating Earth's rotation).
   - **Visual Tweaks**: Slowed down default day/night speed by 50% for realism. Replaced linear nebula band with organic FBM clouds. Made stars sharper and smaller to fix "pixelated" look.
 
+- 2025-12-18: Refined Star Animation.
+  - **Scintillation**: Replaced sine-wave twinkle with a rotating "atmosphere noise mask" (freq 20.0) that drifts over the starfield. This creates realistic, independent twinkling as stars pass through "air masses" while ensuring they never fade below 40% brightness.
+  - **Rotation**: Reduced skybox rotation speed by 5x (`0.05` -> `0.01`) for a more realistic, subtle night sky movement.
+
 - 2025-12-18: VoxelCraft Performance Enhancements (Physics & Particles).
   - Optimized \`PhysicsItem.tsx\`: Removed per-frame store syncing of item positions; implemented a global shared Audio pool for \`clunk\` and \`dig\` sounds (reducing 100+ Audio object creates during mass spawning).
   - Optimized `InteractionHandler.tsx`: 

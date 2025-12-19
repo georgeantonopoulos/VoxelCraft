@@ -1273,7 +1273,7 @@ const SkyDomeRefLink: React.FC<{
             
             // rotate sky with time so stars move with the moon
             // We use negative time to match the standard sun/moon orbit direction
-            vec3 skyPos = rotateY(-uTime * 0.05) * skyDir;
+            vec3 skyPos = rotateY(-uTime * 0.01) * skyDir;
 
             float h = skyDir.y;
             float p = max(0.0, (h + 0.2) / 1.2);
@@ -1288,8 +1288,14 @@ const SkyDomeRefLink: React.FC<{
               float s = hash(floor(starCoord));
               
               if (s > 0.9985) { // sparse stars
-                // Twinkle: high frequency time + star ID offset
-                float twinkle = 0.5 + 0.5 * sin(uTime * 3.0 + s * 123.45);
+                // Twinkle: Atmosphere Scintillation
+                // User requested "rotating a low rez mask" over the stars to control intensity.
+                // We rotate the mask slowly (0.02) against the star rotation (-0.01) to create drift.
+                vec3 maskDir = rotateY(uTime * 0.02) * skyDir; 
+                float atmosphere = noise(maskDir * 20.0); // Frequency 20.0 = larger "air masses"
+                
+                // Map to brightness [0.4, 1.0] so they don't disappear
+                float twinkle = 0.4 + 0.6 * atmosphere;
                 
                 // Sharpness
                 vec3 f = fract(starCoord) - 0.5;
