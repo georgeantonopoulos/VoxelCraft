@@ -10,7 +10,7 @@ In this phase, we will focus on the player's ability to move through and explore
 
 - [x] Task: Implement basic player movement (WASD) and mouse-look camera controls. [pre-existing]
 - [x] Task: Ensure the world generates new chunks as the player moves into new areas. [pre-existing]
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Player Exploration' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Player Exploration' (Protocol in workflow.md)
 
 ---
 
@@ -40,5 +40,6 @@ In this phase, we will integrate and enhance the environmental simulation featur
 This phase will focus on refining the gameplay experience and ensuring performance.
 
 - [ ] Task: Profile and optimize the game's performance to ensure a smooth framerate.
+- [ ] Task: Reduce the polygons in the grove trees by 75% to improve performance.
 - [ ] Task: Refine the player controls and interaction feedback based on playtesting.
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: Refinement and Performance' (Protocol in workflow.md)
