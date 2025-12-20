@@ -35,7 +35,7 @@ In this phase, we will integrate and enhance the environmental simulation featur
 
 ---
 
-## Phase 4: Refinement and Performance
+## Phase 4: Refinement and Performance [checkpoint: 14a3dbf]
 
 This phase will focus on refining the gameplay experience and ensuring performance.
 
