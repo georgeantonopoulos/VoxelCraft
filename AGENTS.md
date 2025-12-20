@@ -113,6 +113,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Responsive Item Offsets**: In portrait mode (aspect < 1), held items (torches, tools) must have their X-offsets scaled dynamically using `aspect` to prevent them from disappearing off the sides of the screen (see `FirstPersonTools.tsx` keywords: `responsiveX`).
 - **Interaction Data vs Optimized Visuals**: Ground items (sticks, rocks) use optimized bucketted buffers for rendering (`drySticks`, `rockDataBuckets`), but the interaction logic (`rayHitsGeneratedGroundPickup`) still requires the original stride-8 data (`stickPositions`, `rockPositions`). If these are missing from the worker's `GENERATED` payload, items will be visible but impossible to pick up (see `VoxelTerrain.tsx`).
 - **Instanced Geometry Disposal**: Do not call `geometry.dispose()` in an effect cleanup that depends on the *data* (e.g. `batch.positions`). This will destroy the geometry every time an item is picked up. Only dispose when the geometry object itself changes or on unmount (see `GroundItemsLayer.tsx`).
+- **Interaction Logic Invariant**: All interaction must have logic. Every hit on an entity (stone, tree, etc.) MUST calculate damage based on tool properties (shards for sharpness, stones for smashiness) and entity properties (radius, material). Entities have explicit "life" (health) tracked in `EntityHistoryStore.ts`.
 - **Trimesh Collider Creation is Expensive**: Rapier's `trimesh` colliders require building a BVH acceleration structure on the main thread. When `colliderEnabled` flips to `true`, the `<RigidBody colliders="trimesh">` creation can cause a 10-30ms stall depending on mesh complexity. The current throttled queue (`colliderEnableQueue` in `VoxelTerrain.tsx`) spreads this out, but doesn't eliminate the synchronous creation. Future optimization: use `requestIdleCallback` or pre-build colliders in a worker (if Rapier supports it).
 - **Instance Matrix Calculations in Render Effects**: `TreeLayer.tsx` and `VegetationLayer.tsx` compute instance matrices in `useLayoutEffect` loops. For dense chunks (jungle trees, 100+ instances), this can block the main thread for 2-5ms. Consider pre-computing matrices in the terrain worker and passing them in the `GENERATED` payload.
 
@@ -156,6 +157,20 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-20: Enabled Custom Tool interaction with trees and building, and added tool modification in Crafting editor.
+  - Fixed tree interaction for custom tools by supporting physics collider hits in `VoxelTerrain.tsx` via `chunkKey` and `treeIndex` metadata in `userData`.
+  - Updated building logic to factor in tool's `digPower` (multiplied by `DIG_STRENGTH`), ensuring custom tools are more/less effective based on shards/stones.
+  - Implemented the ability to open saved custom tools in the Crafting editor by pressing 'C' while holding them.
+  - Added support for detaching items from tools in the Crafting editor; items are returned to the inventory.
+  - Enabled updating existing custom tools instead of always creating new ones.
+  - Refactored `TreeLayer` and terrain worker to include original instance indices in metadata for precise entity identification.
+- 2025-12-19: Unified Held and Thrown Items across all game modes.
+  - Snapshot Custom Tool data into `ActivePhysicsItem` to ensure consistent rendering when thrown.
+  - Implemented `customToolData` support in `usePhysicsItemStore` and `VoxelTerrain.tsx` pickup logic.
+  - Fixed custom tools disappearing on throw by ensuring they are correctly removed from inventory but persisted in the world state.
+  - Enabled "sticking" behavior for all custom tools based on a STICK base.
+  - Improved Torch visuals in `UniversalTool` to match the high-quality `TorchTool` (handle, collar, ember core).
+  - Resolved "double torch" visual bug where holding a torch showed it in both hands.
 - 2025-12-19: Unified Item Mesh System across the entire game.
   - Created `UniversalTool.tsx` as the single source of truth for 3D meshes (Stick, Stone, Shard, Flora, Torch, Pickaxe, Axe, and Custom Tools).
   - Implemented `ItemThumbnail.tsx` to provide high-quality 3D inventory icons using the unified meshes.
@@ -283,7 +298,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Throttled HUD Updates: Minimized coordinate state churn by using a store subscription that only updates React state when the player has moved > 0.1m.
   - Scene Graph Optimization: Throttled `DynamicEnvironmentIBL` scene traversal to only occur when light intensity changes significanly (>1%). 
   - Resource Management: Wrapped `DynamicEnvironmentIBL` in a conditional check in `App.tsx` and added unmount cleanup to ensure zero overhead (both JS and GPU) when disabled.
-  - Added specialized diagnostics (`terrainFrameTime`, `minimapDrawTime`) to `window.__vcDiagnostics` for future tracing.
+  - Added specialized diagnostics (`terrainFrameTime`, `activeColliders`, `minimapDrawTime`) to `window.__vcDiagnostics` for future tracing.
 - **Chunk Streaming & Jungle Aesthetics Overhaul (2025-12-18)**
   - **Eliminated Chunk Pop Stutter**: Implemented a `mountQueue` in `VoxelTerrain.tsx` that throttles React state updates to one chunk addition per frame. This spreads the geometry/texture upload cost over several frames, preventing the "quick stutter" when moving into new territory.
   - **Implemented Dithered Fade-in**: Added a world-space dithered discard logic to `TriplanarMaterial.tsx`. New chunks now gradually materialize over 2 seconds using a deterministic GPU-side noise hash, creating a smooth transition instead of a visual pop.

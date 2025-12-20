@@ -37,9 +37,15 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         const craftingState = useCraftingStore.getState();
 
         if (!craftingState.isOpen) {
-          if (currentItem === ItemType.STICK) {
+          const isCustom = typeof currentItem === 'string' && currentItem.startsWith('tool_');
+          if (currentItem === ItemType.STICK || isCustom) {
             document.exitPointerLock();
-            craftingState.openCrafting(ItemType.STICK);
+            if (isCustom) {
+              const tool = invState.customTools[currentItem as string];
+              craftingState.openCrafting(tool.baseType, tool.id, { ...tool.attachments });
+            } else {
+              craftingState.openCrafting(ItemType.STICK);
+            }
           }
         } else {
           craftingState.closeCrafting();
@@ -70,16 +76,18 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       const velocity = direction.multiplyScalar(force);
       velocity.y += 2.0;
 
-      // For custom tools, we just spawn a stick for now (placeholder for drop logic)
-      const type = isCustom ? ItemType.STICK : (selectedItem === ItemType.STICK ? ItemType.STICK : selectedItem === ItemType.STONE ? ItemType.STONE : ItemType.SHARD);
-      spawnPhysicsItem(type as ItemType, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
-
-      const removeCustomTool = useInventoryStore.getState().removeCustomTool;
-
-      // Remove from Inventory
+      // Spawn Physics Item
       if (isCustom) {
+        // Find base type if possible, or default to STICK for visualization base
+        const toolData = useInventoryStore.getState().customTools[selectedItem as string];
+        const baseType = toolData?.baseType || ItemType.STICK;
+        spawnPhysicsItem(baseType, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z], toolData);
+
+        // Remove from Inventory
+        const removeCustomTool = useInventoryStore.getState().removeCustomTool;
         removeCustomTool(selectedItem as string);
       } else {
+        spawnPhysicsItem(selectedItem as ItemType, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
         removeItem(selectedItem as ItemType, 1);
       }
 
@@ -98,12 +106,22 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       // Left Click
       if (e.button === 0) {
         // 1. Tool Interaction (Pickaxe or Custom Tool)
-        if (capabilities && capabilities.canChop) {
-          setInteractionAction('CHOP');
-          return;
+        if (capabilities) {
+          if (capabilities.canChop) {
+            setInteractionAction('CHOP');
+            return;
+          }
+          if (capabilities.canSmash) {
+            setInteractionAction('SMASH');
+            return;
+          }
+          if (capabilities.canDig) {
+            setInteractionAction('DIG');
+            return;
+          }
         }
 
-        if (pickaxeSelected || (capabilities && capabilities.canDig)) {
+        if (pickaxeSelected) {
           setInteractionAction('DIG');
           return;
         }

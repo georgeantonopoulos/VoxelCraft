@@ -1,21 +1,22 @@
 import { create } from 'zustand';
-import { ItemType, ActivePhysicsItem } from '@/types';
+import { ItemType, ActivePhysicsItem, CustomTool } from '@/types';
 
 interface PhysicsItemState {
   items: ActivePhysicsItem[];
-  spawnItem: (type: ItemType, pos: [number, number, number], velocity: [number, number, number]) => void;
+  spawnItem: (type: ItemType, pos: [number, number, number], velocity: [number, number, number], customToolData?: CustomTool) => void;
   removeItem: (id: string) => void;
   updateItem: (id: string, updates: Partial<ActivePhysicsItem>) => void;
 }
 
 export const usePhysicsItemStore = create<PhysicsItemState>((set) => ({
   items: [],
-  spawnItem: (type, pos, velocity) => set((state) => ({
+  spawnItem: (type, pos, velocity, customToolData) => set((state) => ({
     items: [
       ...state.items,
       {
         id: Math.random().toString(36).substr(2, 9),
         type,
+        customToolData,
         position: pos,
         velocity: velocity,
       }

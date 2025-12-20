@@ -5,6 +5,7 @@ import { useWorldStore } from '@/state/WorldStore';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
+import { TargetHealthBar } from '@/ui/TargetHealthBar';
 
 // --- Minimap Configuration ---
 const MAP_SIZE = 128; // Pixel width/height of the map
@@ -239,6 +240,8 @@ export const HUD: React.FC = () => {
         // Use CSS var so pseudo-elements can inherit the impact color.
         style={{ ['--crosshair-color' as any]: crosshairColor }}
       />
+
+      <TargetHealthBar />
 
       {/* Top Left: Controls Info */}
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">

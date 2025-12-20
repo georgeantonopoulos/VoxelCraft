@@ -132,3 +132,14 @@ export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | 
   }
   return TreeType.OAK;
 };
+export const getTreeName = (type: TreeType): string => {
+  switch (type) {
+    case TreeType.OAK: return 'Oak Tree';
+    case TreeType.PINE: return 'Pine Tree';
+    case TreeType.PALM: return 'Palm Tree';
+    case TreeType.JUNGLE: return 'Jungle Tree';
+    case TreeType.ACACIA: return 'Acacia Tree';
+    case TreeType.CACTUS: return 'Cactus';
+    default: return 'Tree';
+  }
+};

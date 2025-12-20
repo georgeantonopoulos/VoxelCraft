@@ -13,15 +13,17 @@ interface TreeInstanceBatch {
     variant: number;
     count: number;
     matrices: Float32Array;
+    originalIndices: Int32Array;
 }
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type (fallback if no pre-computed data)
     treeInstanceBatches?: Record<string, TreeInstanceBatch>; // Pre-computed from worker
     collidersEnabled: boolean;
+    chunkKey: string;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled }) => {
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled, chunkKey }) => {
     // Use pre-computed batches if available, otherwise fall back to client-side batching
     const batches = useMemo(() => {
         // If we have pre-computed batches from worker, use them directly
@@ -34,6 +36,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
         const JUNGLE_VARIANTS = 4;
         const positionsByKey: Record<string, number[]> = {};
         const scalesByKey: Record<string, number[]> = {};
+        const originalIndicesByKey: Record<string, number[]> = {};
         const STRIDE = 5;
 
         for (let i = 0; i < data.length; i += STRIDE) {
@@ -54,9 +57,11 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
             if (!positionsByKey[key]) {
                 positionsByKey[key] = [];
                 scalesByKey[key] = [];
+                originalIndicesByKey[key] = [];
             }
             positionsByKey[key].push(x, y, z);
             scalesByKey[key].push(scaleFactor);
+            originalIndicesByKey[key].push(i);
         }
 
         // Build matrices
@@ -65,8 +70,10 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
             const type = parseInt(typeStr);
             const variant = parseInt(variantStr);
             const scales = scalesByKey[key];
+            const originalIndices = originalIndicesByKey[key];
             const count = positions.length / 3;
             const matrices = new Float32Array(count * 16);
+            const indices = new Int32Array(originalIndices);
 
             for (let i = 0; i < count; i++) {
                 const x = positions[i * 3];
@@ -99,7 +106,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                 matrices[offset + 15] = 1;
             }
 
-            map[key] = { type, variant, count, matrices };
+            map[key] = { type, variant, count, matrices, originalIndices: indices };
         }
 
         return map;
@@ -113,8 +120,10 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                     type={batch.type}
                     variant={batch.variant}
                     matrices={batch.matrices}
+                    originalIndices={batch.originalIndices}
                     count={batch.count}
                     collidersEnabled={collidersEnabled}
+                    chunkKey={chunkKey}
                 />
             ))}
         </group>
@@ -323,9 +332,11 @@ const InstancedTreeBatch: React.FC<{
     type: number,
     variant: number,
     matrices: Float32Array,
+    originalIndices: Int32Array,
     count: number,
-    collidersEnabled: boolean
-}> = ({ type, variant, matrices, count, collidersEnabled }) => {
+    collidersEnabled: boolean;
+    chunkKey: string;
+}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
 
@@ -363,17 +374,18 @@ const InstancedTreeBatch: React.FC<{
                 tempMatrix.decompose(pos, quat, scl);
                 const euler = new THREE.Euler().setFromQuaternion(quat);
 
+                const originalIndex = originalIndices[i];
                 instances.push({
                     key: `tree-${type}-${i}-branch-${branchIndex}`,
                     position: [pos.x, pos.y, pos.z],
                     rotation: [euler.x, euler.y, euler.z],
                     scale: [scl.x, scl.y, scl.z],
-                    userData: { type: 'flora_tree' }
+                    userData: { type: 'flora_tree', chunkKey, treeIndex: originalIndex }
                 });
             }
             return instances;
         });
-    }, [collisionData, matrices, count, type]);
+    }, [collisionData, matrices, count, type, chunkKey, originalIndices]);
 
     const colors = useMemo(() => {
         let base = '#3e2723';

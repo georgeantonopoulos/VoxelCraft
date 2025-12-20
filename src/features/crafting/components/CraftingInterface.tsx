@@ -86,8 +86,8 @@ const DropManager = ({ onDrop }: { onDrop: (slotId: string, itemType: ItemType) 
 };
 
 export const CraftingInterface: React.FC = () => {
-  const { isOpen, closeCrafting, attachedItems, attach, draggedItem, baseItem } = useCraftingStore();
-  const { removeItem, addCustomTool } = useInventoryStore();
+  const { isOpen, closeCrafting, attachedItems, attach, detach, draggedItem, baseItem, editingToolId } = useCraftingStore();
+  const { removeItem, addItem, addCustomTool, updateCustomTool } = useInventoryStore();
 
   // Keyboard Exit (C)
   useEffect(() => {
@@ -106,8 +106,18 @@ export const CraftingInterface: React.FC = () => {
     const slot = STICK_SLOTS.find(s => s.id === slotId);
     if (!slot || !slot.allowedItems.includes(itemType)) return;
 
+    // If slot is already filled, return previous item to inventory
+    if (attachedItems[slotId]) {
+      addItem(attachedItems[slotId], 1);
+    }
+
     removeItem(itemType, 1);
     attach(slotId, itemType);
+  };
+
+  const handleDetach = (slotId: string, itemType: ItemType) => {
+    addItem(itemType, 1);
+    detach(slotId);
   };
 
   const handleFinish = () => {
@@ -116,11 +126,17 @@ export const CraftingInterface: React.FC = () => {
       return;
     }
 
-    addCustomTool({
-      id: `tool_${Date.now()}`,
-      baseType: baseItem || ItemType.STICK,
-      attachments: { ...attachedItems }
-    });
+    if (editingToolId) {
+      updateCustomTool(editingToolId, {
+        attachments: { ...attachedItems }
+      });
+    } else {
+      addCustomTool({
+        id: `tool_${Date.now()}`,
+        baseType: baseItem || ItemType.STICK,
+        attachments: { ...attachedItems }
+      });
+    }
     closeCrafting();
   };
 
@@ -164,10 +180,31 @@ export const CraftingInterface: React.FC = () => {
               <group key={slot.id}>
                 {/* Render Item if attached */}
                 {attachedItems[slot.id] && (
-                  <group position={slot.position} rotation={slot.rotation}>
+                  <group
+                    position={slot.position}
+                    rotation={slot.rotation}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDetach(slot.id, attachedItems[slot.id]);
+                    }}
+                    onPointerOver={(e) => {
+                      e.stopPropagation();
+                      document.body.style.cursor = 'pointer';
+                    }}
+                    onPointerOut={(e) => {
+                      e.stopPropagation();
+                      document.body.style.cursor = 'auto';
+                    }}
+                  >
                     {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh scale={0.6} />}
                     {attachedItems[slot.id] === ItemType.STONE && <StoneMesh scale={0.5} />}
                     {attachedItems[slot.id] === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
+
+                    {/* Subtle highlight ring for detachability */}
+                    <mesh rotation={[Math.PI / 2, 0, 0]}>
+                      <torusGeometry args={[0.15, 0.01, 8, 24]} />
+                      <meshBasicMaterial color="#ef4444" transparent opacity={0.3} />
+                    </mesh>
                   </group>
                 )}
 

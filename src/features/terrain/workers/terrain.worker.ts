@@ -93,7 +93,7 @@ const JUNGLE_VARIANTS = 4;
 
 const buildTreeInstanceData = (treePositions: Float32Array) => {
     // Group trees by type:variant
-    const batches = new Map<string, { type: number; variant: number; positions: number[]; scales: number[] }>();
+    const batches = new Map<string, { type: number; variant: number; positions: number[]; scales: number[]; originalIndices: number[] }>();
     const STRIDE = 5; // x, y, z, type, scale
 
     for (let i = 0; i < treePositions.length; i += STRIDE) {
@@ -113,20 +113,22 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
 
         const key = `${type}:${variant}`;
         if (!batches.has(key)) {
-            batches.set(key, { type, variant, positions: [], scales: [] });
+            batches.set(key, { type, variant, positions: [], scales: [], originalIndices: [] });
         }
         batches.get(key)!.positions.push(x, y, z);
         batches.get(key)!.scales.push(scaleFactor);
+        batches.get(key)!.originalIndices.push(i);
     }
 
     // Now compute matrices for each batch
-    const result: Record<string, { type: number; variant: number; count: number; matrices: Float32Array }> = {};
+    const result: Record<string, { type: number; variant: number; count: number; matrices: Float32Array; originalIndices: Int32Array }> = {};
     const buffers: ArrayBuffer[] = [];
 
     for (const [key, batch] of batches.entries()) {
         const count = batch.positions.length / 3;
         // 16 floats per 4x4 matrix
         const matrices = new Float32Array(count * 16);
+        const originalIndices = new Int32Array(batch.originalIndices);
 
         for (let i = 0; i < count; i++) {
             const x = batch.positions[i * 3];
@@ -166,9 +168,11 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
             type: batch.type,
             variant: batch.variant,
             count,
-            matrices
+            matrices,
+            originalIndices
         };
         buffers.push(matrices.buffer);
+        buffers.push(originalIndices.buffer);
     }
 
     return { treeInstanceBatches: result, treeMatrixBuffers: buffers };

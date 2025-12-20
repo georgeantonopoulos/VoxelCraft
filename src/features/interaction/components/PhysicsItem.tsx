@@ -7,6 +7,7 @@ import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
+import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import CustomShaderMaterial from 'three-custom-shader-material';
 
 // Sounds
@@ -21,7 +22,6 @@ interface PhysicsItemProps {
   item: ActivePhysicsItem;
 }
 
-const IMPACT_THRESHOLD_STONE = 12.0;
 const IMPACT_THRESHOLD_STICK = 5.0; // Lowered to make planting more reliable
 
 const isHardImpactSurface = (mat: MaterialType | null): boolean => {
@@ -55,9 +55,11 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
     const other = e.other.rigidBodyObject;
     const isTerrain = other?.userData?.type === 'terrain';
 
+    const isStickBased = item.type === ItemType.STICK || (item.customToolData?.baseType === ItemType.STICK);
+
     if (item.type === ItemType.STONE) {
-      if (isTerrain && impactSpeed > IMPACT_THRESHOLD_STONE) {
-        // Only shatter on hard terrain materials (avoid sand/soil shatter).
+      if (isTerrain && impactSpeed > 6.0) { // Lower threshold for damage
+        // Only damage on hard terrain materials (avoid sand/soil shatter).
         const tSelf = rigidBody.current?.translation();
         if (!tSelf) return;
         const sample = new THREE.Vector3(tSelf.x, tSelf.y, tSelf.z);
@@ -68,27 +70,41 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         const mat = terrainRuntime.getMaterialAtWorld(sample.x, sample.y, sample.z);
         if (!isHardImpactSurface(mat)) return;
 
-        // Shatter!
-        const t = rigidBody.current!.translation();
+        // Damage calculation: more speed = more damage
+        // Max speed around 24, so 24/8 = 3 damage per throw.
+        const dmg = impactSpeed / 8.0;
+        const damageStore = useEntityHistoryStore.getState();
+        const h = damageStore.damageEntity(item.id, dmg, 10, 'Hard Stone');
 
-        // Spawn 3 Shards
-        for (let i = 0; i < 3; i++) {
-          const vx = (Math.random() - 0.5) * 4;
-          const vy = (Math.random() * 3) + 2;
-          const vz = (Math.random() - 0.5) * 4;
-          spawnItem(ItemType.SHARD, [t.x, t.y + 0.2, t.z], [vx, vy, vz]);
+        if (h <= 0) {
+          // Shatter!
+          const t = rigidBody.current!.translation();
+
+          // Spawn 3 Shards
+          for (let i = 0; i < 3; i++) {
+            const vx = (Math.random() - 0.5) * 4;
+            const vy = (Math.random() * 3) + 2;
+            const vz = (Math.random() - 0.5) * 4;
+            spawnItem(ItemType.SHARD, [t.x, t.y + 0.2, t.z], [vx, vy, vz]);
+          }
+
+          // Play Sound using shared pool
+          CLUNK_AUDIO.currentTime = 0;
+          CLUNK_AUDIO.volume = 0.5;
+          CLUNK_AUDIO.playbackRate = 1.2; // higher pitch for shatter
+          CLUNK_AUDIO.play().catch(() => { });
+
+          // Remove self
+          removeItem(item.id);
+        } else {
+          // Just a clunk
+          CLUNK_AUDIO.currentTime = 0;
+          CLUNK_AUDIO.volume = Math.min(1.0, impactSpeed / 20);
+          CLUNK_AUDIO.play().catch(() => { });
         }
-
-        // Play Sound using shared pool
-        CLUNK_AUDIO.currentTime = 0;
-        CLUNK_AUDIO.volume = 0.5;
-        CLUNK_AUDIO.playbackRate = 1.2; // higher pitch for shatter
-        CLUNK_AUDIO.play().catch(() => { });
-
-        // Remove self
-        removeItem(item.id);
       }
-    } else if (item.type === ItemType.STICK) {
+    }
+    else if (isStickBased) {
       if (isTerrain && impactSpeed > IMPACT_THRESHOLD_STICK) {
         if (rigidBody.current) {
           const t = rigidBody.current.translation();
@@ -148,45 +164,20 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       friction={0.8}
       restitution={0.2}
     >
-      {item.type === ItemType.STONE && (
+      {/* Dynamic Visual Rendering */}
+      {item.type !== ItemType.FIRE && (
         <>
-          <CuboidCollider args={[0.15, 0.15, 0.15]} />
-          <UniversalTool item={item.type} />
-        </>
-      )}
+          {item.type === ItemType.STONE && <CuboidCollider args={[0.15, 0.15, 0.15]} />}
+          {item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
+          {item.type === ItemType.SHARD && <CuboidCollider args={[0.08, 0.08, 0.08]} />}
+          {item.type === ItemType.FLORA && <CuboidCollider args={[0.2, 0.2, 0.2]} />}
+          {item.type === ItemType.PICKAXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
+          {item.type === ItemType.AXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
 
-      {item.type === ItemType.STICK && (
-        <>
-          <CapsuleCollider args={[0.25, 0.04]} />
-          <UniversalTool item={item.type} />
-        </>
-      )}
+          {/* Custom Tool (Stick-based) Collider Fallback */}
+          {item.customToolData && item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
 
-      {item.type === ItemType.SHARD && (
-        <>
-          <CuboidCollider args={[0.08, 0.08, 0.08]} />
-          <UniversalTool item={item.type} />
-        </>
-      )}
-
-      {item.type === ItemType.FLORA && (
-        <>
-          <CuboidCollider args={[0.2, 0.2, 0.2]} />
-          <UniversalTool item={item.type} />
-        </>
-      )}
-
-      {item.type === ItemType.PICKAXE && (
-        <>
-          <CuboidCollider args={[0.3, 0.3, 0.3]} />
-          <UniversalTool item={item.type} />
-        </>
-      )}
-
-      {item.type === ItemType.AXE && (
-        <>
-          <CuboidCollider args={[0.3, 0.3, 0.3]} />
-          <UniversalTool item={item.type} />
+          <UniversalTool item={item.customToolData || item.type} />
         </>
       )}
 

@@ -131,16 +131,29 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
             case ItemType.TORCH:
                 return (
                     <group scale={thumbScale}>
-                        <StickMesh height={0.6} />
-                        <mesh position={[0, 0.35, 0]}>
-                            <boxGeometry args={[0.08, 0.2, 0.08]} />
-                            <meshStandardMaterial color="#444444" />
+                        {/* Handle */}
+                        <mesh position={[0, -0.1, 0]}>
+                            <cylinderGeometry args={[0.035, 0.045, 0.7, 8]} />
+                            <meshStandardMaterial color="#6b4a2f" roughness={0.9} />
                         </mesh>
-                        <pointLight position={[0, 0.5, 0]} intensity={isThumbnail ? 2 : 1} color="#ffaa00" />
-                        <mesh position={[0, 0.5, 0]}>
-                            <sphereGeometry args={[0.1, 8, 8]} />
-                            <meshStandardMaterial emissive="#ff5500" emissiveIntensity={2} color="#ffaa00" transparent opacity={0.6} />
+                        {/* Collar */}
+                        <mesh position={[0, 0.3, 0]}>
+                            <cylinderGeometry args={[0.055, 0.055, 0.06, 10]} />
+                            <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
                         </mesh>
+                        {/* Ember */}
+                        <mesh position={[0, 0.42, 0]}>
+                            <sphereGeometry args={[0.06, 12, 10]} />
+                            <meshStandardMaterial color="#ff9b47" emissive="#ff6b1a" emissiveIntensity={2.2} toneMapped={false} />
+                        </mesh>
+                        {/* Glow shell */}
+                        {!isThumbnail && (
+                            <mesh position={[0, 0.46, 0]}>
+                                <sphereGeometry args={[0.11, 12, 10]} />
+                                <meshStandardMaterial color="#ffd39a" emissive="#ffb36b" emissiveIntensity={1.8} transparent opacity={0.3} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
+                            </mesh>
+                        )}
+                        <pointLight position={[0, 0.5, 0]} intensity={isThumbnail ? 3 : 2} color="#ffaa00" distance={isThumbnail ? 2 : 10} />
                     </group>
                 );
             case ItemType.FLORA:

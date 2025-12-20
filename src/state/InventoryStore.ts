@@ -96,6 +96,7 @@ interface GameState {
   addItem: (item: ItemType, amount?: number) => void;
   removeItem: (item: ItemType, amount?: number) => void;
   addCustomTool: (tool: CustomTool) => void;
+  updateCustomTool: (id: string, updates: Partial<CustomTool>) => void;
   removeCustomTool: (id: string) => void;
   getItemCount: (item: InventoryItemId) => number;
 
@@ -207,6 +208,15 @@ export const useInventoryStore = create<GameState>((set, get) => ({
     });
     const selectedSlotIndex = inventorySlots.findIndex(s => s === tool.id);
     return { customTools, customToolIds, inventorySlots, selectedSlotIndex: selectedSlotIndex !== -1 ? selectedSlotIndex : state.selectedSlotIndex };
+  }),
+
+  updateCustomTool: (id: string, updates: Partial<CustomTool>) => set((state) => {
+    if (!state.customTools[id]) return state;
+    const customTools = {
+      ...state.customTools,
+      [id]: { ...state.customTools[id], ...updates }
+    };
+    return { customTools };
   }),
 
   removeCustomTool: (id: string) => set((state) => {

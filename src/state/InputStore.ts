@@ -11,7 +11,7 @@ interface InputState {
   isJumping: boolean;
   isDigging: boolean;
   isBuilding: boolean;
-  interactionAction: 'DIG' | 'BUILD' | 'CHOP' | null;
+  interactionAction: 'DIG' | 'BUILD' | 'CHOP' | 'SMASH' | null;
 
   // Actions
   setMoveVector: (x: number, y: number) => void;
@@ -19,7 +19,7 @@ interface InputState {
   setJumping: (v: boolean) => void;
   setDigging: (v: boolean) => void;
   setBuilding: (v: boolean) => void;
-  setInteractionAction: (v: 'DIG' | 'BUILD' | 'CHOP' | null) => void;
+  setInteractionAction: (v: 'DIG' | 'BUILD' | 'CHOP' | 'SMASH' | null) => void;
   resetInput: () => void;
 }
 

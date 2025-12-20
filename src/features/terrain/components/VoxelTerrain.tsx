@@ -24,6 +24,9 @@ import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegis
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
 import { getToolCapabilities } from '../../interaction/logic/ToolCapabilities';
+import { emitSpark } from '../../interaction/components/SparkSystem';
+import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
+import { getTreeName, TreeType } from '@features/terrain/logic/VegetationConfig';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -694,7 +697,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const manualBuildMatUntilMs = useRef(0);
   const remeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
-  const treeDamageRef = useRef<Map<string, number>>(new Map());
 
   const streamDebug = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -1181,6 +1183,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         removeQueue: removeQueue.current.length,
         remeshQueue: remeshQueue.current.size,
         colliderQueue: colliderEnableQueue.current.length,
+        activeColliders: Object.values(chunksRef.current).filter(c => c.colliderEnabled).length,
         terrainFrameTime: Math.max(diag.terrainFrameTime || 0, performance.now() - frameStart),
       };
     }
@@ -1313,21 +1316,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       if (tPhysics <= tTorch && tPhysics <= tPlaced && tPhysics <= tLumina && tPhysics <= tGround && physicsItemHit) {
         // Physics Item Pickup
         pickedStart = physicsItemHit.position;
-        usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
+        const physicsStore = usePhysicsItemStore.getState();
+        const itemData = physicsStore.items.find(i => i.id === physicsItemHit!.id);
 
-        if (physicsItemHit.type === ItemType.PICKAXE) {
+        physicsStore.removeItem(physicsItemHit.id);
+
+        if (itemData?.customToolData) {
+          useGameStore.getState().addCustomTool(itemData.customToolData);
+          const effectId = `${Date.now()}-${Math.random()}`;
+          setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: getItemColor(itemData.customToolData!.baseType) }]);
+          return;
+        } else if (physicsItemHit.type === ItemType.PICKAXE) {
           useGameStore.getState().setHasPickaxe(true);
-          // Pickaxe doesn't go into inventory count, it just unlocks the tool
-          // But we can show a pickup effect
           const effectId = `${Date.now()}-${Math.random()}`;
           setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
-          return; // Special case, return early or handle below?
-          // Logic below expects 'pickedItem' to add to inventory count.
-          // Let's just handle it here and return or set null.
+          return;
         } else {
           pickedItem = physicsItemHit.type;
         }
-      } else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
+      }
+      else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
         pickedItem = ItemType.TORCH;
         pickedStart = torchHit.position;
         useWorldStore.getState().removeEntity(torchHit.id);
@@ -1393,24 +1401,146 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
-    // 0.5 CHECK FOR FLORA TREE INTERACTION (GET AXE)
-    if (action === 'DIG' || action === 'CHOP') {
+    // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
+    if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
       const physicsHit = world.castRay(ray, maxRayDistance, true);
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
-        // DEBUG LOGGING
-        // console.log("Ray Hit:", parent?.userData); 
+        const userData = parent?.userData as any;
 
-        if (parent && parent.userData && (parent.userData as any).type === 'flora_tree') {
-          // If we hit a leaf, spawn a pickup animation from the hit point toward the camera
-          if ((parent.userData as any).part === 'leaf') {
-            const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-            setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
+        if (parent && userData) {
+          // --- FLORA TREE ---
+          if (userData.type === 'flora_tree') {
+            if (userData.part === 'leaf') {
+              const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+              setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
+              return;
+            }
+
+            // Tree Damage Logic (from physics hit)
+            const { chunkKey, treeIndex } = userData;
+            const chunk = chunksRef.current[chunkKey];
+            if (chunk && chunk.treePositions) {
+              const posIdx = treeIndex;
+              const x = chunk.treePositions[posIdx] + chunk.cx * CHUNK_SIZE_XZ;
+              const y = chunk.treePositions[posIdx + 1];
+              const z = chunk.treePositions[posIdx + 2] + chunk.cz * CHUNK_SIZE_XZ;
+              const type = chunk.treePositions[posIdx + 3];
+
+              const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+              const selectedItem = inventorySlots[selectedSlotIndex];
+              const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+                ? customTools[selectedItem as string]
+                : (selectedItem as ItemType);
+              const capabilities = getToolCapabilities(currentTool);
+
+              // Seed/Scale Logic (same as terrain-hit path)
+              const seed = chunk.treePositions[posIdx] * 12.9898 + chunk.treePositions[posIdx + 2] * 78.233;
+              const scale = 0.8 + Math.abs(seed % 0.4);
+              const radius = scale * 0.35;
+              const maxHealth = Math.floor(radius * 60);
+              const woodDamage = capabilities.woodDamage;
+              const treeLabel = getTreeName(type as TreeType);
+
+              const treeId = `${chunkKey}-${posIdx}`;
+              const damageStore = useEntityHistoryStore.getState();
+              const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
+
+              // Visuals
+              const woodPos = new THREE.Vector3(x, y + 1.5, z);
+              const woodDir = origin.clone().sub(woodPos).normalize();
+              setParticleState(prev => ({
+                burstId: prev.burstId + 1,
+                active: true,
+                pos: woodPos,
+                dir: woodDir,
+                kind: 'debris',
+                color: '#8B4513'
+              }));
+              audioPool.play(clunkUrl, 0.4, 0.5);
+
+              if (currentHealth <= 0) {
+                // Remove tree
+                const positions = chunk.treePositions;
+                const newCount = (positions.length / 5) - 1;
+                const newPositions = new Float32Array(newCount * 5);
+                let destIdx = 0;
+                for (let j = 0; j < positions.length; j += 5) {
+                  if (j === posIdx) continue;
+                  newPositions[destIdx++] = positions[j];
+                  newPositions[destIdx++] = positions[j + 1];
+                  newPositions[destIdx++] = positions[j + 2];
+                  newPositions[destIdx++] = positions[j + 3];
+                  newPositions[destIdx++] = positions[j + 4];
+                }
+
+                const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+                chunksRef.current[chunkKey] = updatedChunk;
+                setChunks(prev => ({ ...prev, [chunkKey]: updatedChunk }));
+
+                // Spawn Falling Tree
+                setFallingTrees(prev => [...prev, {
+                  id: `${chunkKey}-${posIdx}-${Date.now()}`,
+                  position: new THREE.Vector3(x, y, z),
+                  type,
+                  seed
+                }]);
+              }
+            }
+            return;
           }
-          // Give Axe!
-          console.log("Interacted with Flora Tree! Granting Axe.");
-          useInventoryStore.getState().setHasAxe(true);
-          return;
+
+          // --- STONE PHYSICS ITEM ---
+          if (userData.type === ItemType.STONE) {
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const selectedItem = inventorySlots[selectedSlotIndex];
+            const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+              ? customTools[selectedItem as string]
+              : (selectedItem as ItemType);
+            const capabilities = getToolCapabilities(currentTool);
+
+            const hitPointRaw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
+
+            // Logic: All interaction has logic
+            // Sharp tools (shards) break stone into shards. 
+            // Blunt tools (stones) generate sparks.
+            if (capabilities.stoneDamage > 0) {
+              const damageStore = useEntityHistoryStore.getState();
+              const stoneId = userData.id;
+              const h = damageStore.damageEntity(stoneId, capabilities.stoneDamage, 10, 'Hard Stone');
+
+              // Visuals
+              if (capabilities.canSmash || selectedItem === ItemType.STONE) {
+                emitSpark(hitPoint);
+              }
+
+              setParticleState(prev => ({
+                burstId: prev.burstId + 1,
+                active: true,
+                pos: hitPoint,
+                dir: direction.clone().multiplyScalar(-1),
+                kind: 'debris',
+                color: '#888888'
+              }));
+              audioPool.play(clunkUrl, 0.5, 1.2);
+
+              if (h <= 0) {
+                // Break!
+                const physicsStore = usePhysicsItemStore.getState();
+                physicsStore.removeItem(stoneId);
+                const count = 2 + Math.floor(Math.random() * 2);
+                for (let i = 0; i < count; i++) {
+                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                    (Math.random() - 0.5) * 3,
+                    2 + Math.random() * 2,
+                    (Math.random() - 0.5) * 3
+                  ]);
+                }
+              }
+            }
+            return;
+          }
         }
       }
     }
@@ -1425,7 +1555,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       let isNearTree = false;
 
       // Check for Tree/Vegetation Interaction BEFORE modifying terrain
-      if (action === 'DIG' || action === 'CHOP') {
+      if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
         const hitX = impactPoint.x;
         const hitZ = impactPoint.z;
         const cx = Math.floor(hitX / CHUNK_SIZE_XZ);
@@ -1490,57 +1620,74 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                   isNearTree = true;
                 }
 
-                // AAA FIX: Tree Cutting Logic
+                // AAA FIX: Tree Cutting Logic (All interaction has logic)
                 const treeId = `${key}-${i}`;
                 const { hasAxe, inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
                 const selectedItem = inventorySlots[selectedSlotIndex];
 
-                // Check custom tool capabilities
-                const isCustom = typeof selectedItem === 'string' && selectedItem.startsWith('tool_');
-                const customTool = isCustom ? customTools[selectedItem as string] : null;
-                const capabilities = customTool ? getToolCapabilities(customTool) : null;
+                // Check capabilities
+                const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+                  ? customTools[selectedItem as string]
+                  : (selectedItem as ItemType);
+                const capabilities = getToolCapabilities(currentTool);
 
-                // Only cut if we have an axe OR a custom tool with chop capability
-                const canCut = (hasAxe && selectedItem === ItemType.AXE) || (capabilities && capabilities.canChop);
+                // Radius/Scale Logic to determine health
+                const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
+                const scale = 0.8 + Math.abs(seed % 0.4);
+                const radius = scale * 0.35;
+                const maxHealth = Math.floor(radius * 60); // e.g. 20-40 health
+                const woodDamage = capabilities.woodDamage;
+                const treeLabel = getTreeName(type as TreeType);
 
-                if (!canCut) {
-                  // Play "clunk" sound via pool
-                  audioPool.play(clunkUrl, 0.4, 0.4);
-                  continue;
-                }
+                const damageStore = useEntityHistoryStore.getState();
+                const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
 
-                // Track damage
-                // We use a static map on the component or ref? 
-                // Since this is inside the loop, we need access to the ref.
-                // Assuming treeDamageRef is defined in the component scope (I will add it).
-                const currentDamage = (treeDamageRef.current.get(treeId) || 0) + 1;
-                treeDamageRef.current.set(treeId, currentDamage);
-
-                // Particles for hit
-                const woodPos = new THREE.Vector3(x, y + 1, z);
-                const woodDir = origin.clone().sub(woodPos).normalize();
-                setParticleState(prev => ({
-                  burstId: prev.burstId + 1,
-                  active: true,
-                  pos: woodPos,
-                  dir: woodDir,
-                  kind: 'debris',
-                  color: '#8B4513' // Wood color
-                }));
-                setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
-
-                if (currentDamage >= 5) {
+                // Check if felled
+                if (currentHealth <= 0) {
                   hitIndices.push(i);
-                  treeDamageRef.current.delete(treeId);
 
                   // Spawn Falling Tree
-                  const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
                   setFallingTrees(prev => [...prev, {
-                    id: `${key}-${i}-${Date.now()}`, // Unique ID
+                    id: `${key}-${i}-${Date.now()}`,
                     position: new THREE.Vector3(x, y, z),
                     type,
                     seed
                   }]);
+                  continue;
+                }
+
+                // Not dead yet: Shake or Hit?
+                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop;
+
+                if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
+                  // SMASH/SHAKE Animation
+                  const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
+                  setLeafPickup(leafPos);
+                  setParticleState(prev => ({
+                    burstId: prev.burstId + 1,
+                    active: true,
+                    pos: leafPos,
+                    dir: new THREE.Vector3(0, -1, 0),
+                    kind: 'debris',
+                    color: '#4fa02a'
+                  }));
+                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  anyFloraHit = true;
+                } else {
+                  // CHOP Animation
+                  const woodPos = new THREE.Vector3(x, y + 1, z);
+                  const woodDir = origin.clone().sub(woodPos).normalize();
+                  setParticleState(prev => ({
+                    burstId: prev.burstId + 1,
+                    active: true,
+                    pos: woodPos,
+                    dir: woodDir,
+                    kind: 'debris',
+                    color: '#8B4513'
+                  }));
+                  setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
+                  audioPool.play(clunkUrl, 0.4, 0.5);
+                  anyFloraHit = true;
                 }
               }
             }
@@ -1678,7 +1825,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       // Particles should spawn on/just above the visible surface (not at the brush center which may be inside terrain).
       const particlePos = impactPoint.clone().addScaledVector(direction, -0.08);
       const particleDir = direction.clone().multiplyScalar(-1);
-      const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
+      const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+      const selectedItem = inventorySlots[selectedSlotIndex];
+      const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+        ? customTools[selectedItem as string]
+        : (selectedItem as ItemType);
+      const capabilities = getToolCapabilities(currentTool);
+
+      const delta = (action === 'DIG' || action === 'CHOP' || action === 'SMASH') ? -DIG_STRENGTH * capabilities.digPower : (action === 'BUILD' ? DIG_STRENGTH : 0);
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
       const minWx = hitPoint.x - (radius + 2);

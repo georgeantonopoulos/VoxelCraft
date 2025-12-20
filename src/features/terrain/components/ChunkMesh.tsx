@@ -263,6 +263,7 @@ export const ChunkMesh: React.FC<{
               data={chunk.treePositions}
               treeInstanceBatches={chunk.treeInstanceBatches}
               collidersEnabled={colliderEnabled}
+              chunkKey={chunk.key}
             />
           )}
 

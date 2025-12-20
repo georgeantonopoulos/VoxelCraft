@@ -205,7 +205,7 @@ export const FirstPersonTools: React.FC = () => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
-            if (detail.action === 'DIG') {
+            if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH') {
                 isDigging.current = true;
                 digProgress.current = 0;
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
@@ -286,7 +286,7 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        const rightHandShown = !!selectedItem || !!activeCustomTool;
+        const rightHandShown = (!!selectedItem || !!activeCustomTool) && selectedItem !== ItemType.TORCH;
         rightItemProgress.current = THREE.MathUtils.lerp(rightItemProgress.current, rightHandShown ? 1 : 0, (rightHandShown ? 2.4 : 3.0) * delta);
         if (rightItemRef.current) {
             const rease = rightItemProgress.current * rightItemProgress.current * (3 - 2 * rightItemProgress.current);
@@ -315,9 +315,9 @@ export const FirstPersonTools: React.FC = () => {
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
                             }
                         })
-                    : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.stick : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
+                    : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.pickaxe : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
                 : null;
-            if (pose) {
+            if (pose && rightHandShown) {
                 const animOffsetY = positionY - (debugPos.current.y + swayY);
                 const animOffsetZ = positionZ - debugPos.current.z;
                 const x = (positionX + (pose.xOffset ?? 0) * responsiveX);
