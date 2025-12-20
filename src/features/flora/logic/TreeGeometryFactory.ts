@@ -62,26 +62,27 @@ export class TreeGeometryFactory {
             branchGeoLow = branchGeo;
             leafGeo = new THREE.DodecahedronGeometry(0.15, 0);
         } else {
-            // Standard Branch: 5 segments for trunk
-            branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 5);
+            // Standard Branch: 4 segments for trunk (Square)
+            branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 4);
             branchGeo.translate(0, 0.5, 0);
 
-            // Low-poly Branch: 3 segments (triangular) for tips
+            // Low-poly Branch: 3 segments (Triangular) for tips
             branchGeoLow = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 3);
             branchGeoLow.translate(0, 0.5, 0);
 
             if (type === TreeType.PINE) {
-                leafGeo = new THREE.ConeGeometry(0.3, 0.8, 5);
+                leafGeo = new THREE.ConeGeometry(0.3, 0.8, 4);
             } else if (type === TreeType.JUNGLE) {
                 leafGeo = new THREE.DodecahedronGeometry(0.6, 0);
                 leafGeo.scale(1.5, 0.6, 1.5);
             } else {
-                leafGeo = new THREE.OctahedronGeometry(0.4, 0);
+                // Reduced from Octahedron (8 faces) to Tetrahedron (4 faces)
+                leafGeo = new THREE.TetrahedronGeometry(0.5, 0);
             }
         }
 
         // --- PARAMETERS ---
-        let MAX_DEPTH = 6;
+        let MAX_DEPTH = 4; // Reduced from 6
         let LENGTH_DECAY = 0.85;
         let RADIUS_DECAY = 0.6;
         let ANGLE_BASE = 25 * (Math.PI / 180);

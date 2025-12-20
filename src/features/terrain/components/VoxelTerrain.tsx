@@ -1505,10 +1505,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             // Logic: All interaction has logic
             // Sharp tools (shards) break stone into shards. 
             // Blunt tools (stones) generate sparks.
-            if (capabilities.stoneDamage > 0) {
+            const damage = capabilities.stoneDamage > 0 ? capabilities.stoneDamage : (selectedItem === ItemType.STONE ? 2.5 : 0);
+            
+            if (damage > 0) {
               const damageStore = useEntityHistoryStore.getState();
               const stoneId = userData.id;
-              const h = damageStore.damageEntity(stoneId, capabilities.stoneDamage, 10, 'Hard Stone');
+              const h = damageStore.damageEntity(stoneId, damage, 10, 'Hard Stone');
 
               // Visuals
               if (capabilities.canSmash || selectedItem === ItemType.STONE) {

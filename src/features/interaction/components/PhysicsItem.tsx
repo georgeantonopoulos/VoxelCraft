@@ -167,7 +167,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       {/* Dynamic Visual Rendering */}
       {item.type !== ItemType.FIRE && (
         <>
-          {item.type === ItemType.STONE && <CuboidCollider args={[0.15, 0.15, 0.15]} />}
+          {item.type === ItemType.STONE && <CuboidCollider args={[0.22, 0.22, 0.22]} />}
           {item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
           {item.type === ItemType.SHARD && <CuboidCollider args={[0.08, 0.08, 0.08]} />}
           {item.type === ItemType.FLORA && <CuboidCollider args={[0.2, 0.2, 0.2]} />}
