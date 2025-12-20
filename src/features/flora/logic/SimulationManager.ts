@@ -20,8 +20,8 @@ export class SimulationManager {
         // and can cause noticeable hitches during terrain streaming.
         this.enabled = (() => {
             if (typeof window === 'undefined') return false;
-            const params = new URLSearchParams(window.location.search);
-            return params.has('vcSim');
+            // Default to true for Phase 3 verification
+            return true; 
         })();
 
         if (!this.enabled) return;

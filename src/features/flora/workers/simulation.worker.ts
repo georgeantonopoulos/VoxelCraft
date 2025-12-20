@@ -244,36 +244,82 @@ self.onmessage = (e: MessageEvent) => {
         playerCz = cz;
     }
     else if (type === 'START_LOOP') {
-        console.log('[Simulation] Loop paused for performance optimization.');
-        // Loop disabled to prevent unnecessary remeshing
-        /*
+        console.log('[Simulation] Loop started (1fps).');
+        
         setInterval(() => {
             // @ts-ignore
             const start = performance.now();
             const waterUpdates = simulateWater();
+            const mossUpdates = growMoss();
 
-            // Only update wetness occasionally
-            // tickCount++;
-            // if (tickCount % 10 === 0) propagateWetness();
+            const allUpdates = new Set([...waterUpdates, ...mossUpdates]);
 
-            if (waterUpdates.length > 0) {
-                const updates = waterUpdates.map(key => {
+            if (allUpdates.size > 0) {
+                const updates = Array.from(allUpdates).map(key => {
                     const chunk = chunks.get(key);
                     return {
                         key: chunk!.key,
-                        material: chunk!.material, // Send material back!
+                        material: chunk!.material,
                         wetness: chunk!.wetness,
                         mossiness: chunk!.mossiness
                     };
                 });
                 self.postMessage({ type: 'CHUNKS_UPDATED', payload: updates });
             }
-
-            // Debug perf
-            // const dur = performance.now() - start;
-            // if (dur > 20) console.log('Sim took', dur);
-
-        }, 1000); // 1000ms = 1fps (Slowed down from 10fps to fix flashing)
-        */
+        }, 1000);
     }
 };
+
+function growMoss() {
+    const changedChunks = new Set<string>();
+    
+    // Only process active chunks near player
+    const simulationKeys: string[] = [];
+    for (const key of activeKeys) {
+        const chunk = chunks.get(key);
+        if (chunk) {
+            if (Math.abs(chunk.cx - playerCx) <= SIMULATION_DISTANCE &&
+                Math.abs(chunk.cz - playerCz) <= SIMULATION_DISTANCE) {
+                simulationKeys.push(key);
+            }
+        }
+    }
+
+    for (const key of simulationKeys) {
+        const chunk = chunks.get(key);
+        if (!chunk) continue;
+
+        let modified = false;
+        const start = PAD;
+        const endX = SIZE_X - PAD;
+        const endY = SIZE_Y - PAD;
+        const endZ = SIZE_Z - PAD;
+
+        // Random sampling for performance
+        for(let i=0; i<50; i++) {
+             const x = start + Math.floor(Math.random() * (endX - start));
+             const y = start + Math.floor(Math.random() * (endY - start));
+             const z = start + Math.floor(Math.random() * (endZ - start));
+             const idx = getIdx(x, y, z);
+             
+             if (chunk.material[idx] === MaterialType.STONE) {
+                 // Check neighbors for water/wetness
+                 // Simplification: if wetness > 100
+                 if (chunk.wetness[idx] > 100) {
+                     chunk.material[idx] = MaterialType.MOSSY_STONE;
+                     modified = true;
+                 } else {
+                     // Check direct neighbor water
+                     const up = getIdx(x, y+1, z);
+                     if (chunk.material[up] === MaterialType.WATER) {
+                         chunk.material[idx] = MaterialType.MOSSY_STONE;
+                         modified = true;
+                     }
+                 }
+             }
+        }
+        
+        if (modified) changedChunks.add(key);
+    }
+    return Array.from(changedChunks);
+}

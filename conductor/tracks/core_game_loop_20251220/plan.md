@@ -25,13 +25,13 @@ This phase will implement the core interaction mechanics of digging and building
 
 ---
 
-## Phase 3: Environmental Simulation
+## Phase 3: Environmental Simulation [checkpoint: pending]
 
 In this phase, we will integrate and enhance the environmental simulation features.
 
-- [ ] Task: Verify and ensure the existing wetness and moss growth system is functioning correctly.
+- [x] Task: Verify and ensure the existing wetness and moss growth system is functioning correctly.
 - [x] Task: Implement a basic day/night cycle. [pre-existing]
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Environmental Simulation' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Environmental Simulation' (Protocol in workflow.md)
 
 ---
 
