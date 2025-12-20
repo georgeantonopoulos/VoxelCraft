@@ -25,7 +25,7 @@ This phase will implement the core interaction mechanics of digging and building
 
 ---
 
-## Phase 3: Environmental Simulation [checkpoint: pending]
+## Phase 3: Environmental Simulation [checkpoint: 4252ae8]
 
 In this phase, we will integrate and enhance the environmental simulation features.
 
