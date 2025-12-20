@@ -76,13 +76,13 @@ export class TreeGeometryFactory {
                 leafGeo = new THREE.DodecahedronGeometry(0.6, 0);
                 leafGeo.scale(1.5, 0.6, 1.5);
             } else {
-                // Reduced from Octahedron (8 faces) to Tetrahedron (4 faces)
-                leafGeo = new THREE.TetrahedronGeometry(0.5, 0);
+                // Octahedron (8 faces) for better volume than Tetrahedron
+                leafGeo = new THREE.OctahedronGeometry(0.4, 0);
             }
         }
 
         // --- PARAMETERS ---
-        let MAX_DEPTH = 4; // Reduced from 6
+        let MAX_DEPTH = 5; // Balanced: 5 (32 tips) vs Original 6 (64 tips) vs Barren 4 (16 tips)
         let LENGTH_DECAY = 0.85;
         let RADIUS_DECAY = 0.6;
         let ANGLE_BASE = 25 * (Math.PI / 180);
