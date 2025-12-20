@@ -14,7 +14,7 @@ In this phase, we will focus on the player's ability to move through and explore
 
 ---
 
-## Phase 2: Basic Interaction [checkpoint: pending]
+## Phase 2: Basic Interaction [checkpoint: 0a76cec]
 
 This phase will implement the core interaction mechanics of digging and building.
 
