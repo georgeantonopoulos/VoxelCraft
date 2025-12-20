@@ -4,7 +4,7 @@ This plan outlines the steps to establish the fundamental gameplay loop of Voxel
 
 ---
 
-## Phase 1: Player Exploration
+## Phase 1: Player Exploration [checkpoint: ade5bf6]
 
 In this phase, we will focus on the player's ability to move through and explore the procedurally generated world.
 
