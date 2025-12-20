@@ -14,18 +14,18 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
         };
     }
 
-    if (typeof item !== 'string' || !item.startsWith('tool_')) {
+    if (typeof item === 'string' && !item.startsWith('tool_')) {
         // Standard item capabilities
         const type = item as ItemType;
         return {
             canDig: type === ItemType.PICKAXE,
-            digPower: type === ItemType.PICKAXE ? 1.0 : 0.2,
+            digPower: type === ItemType.PICKAXE ? 1.0 : 0.0,
             canChop: type === ItemType.AXE,
             canSmash: type === ItemType.STONE,
             isNormalDig: type === ItemType.PICKAXE,
 
             woodDamage: type === ItemType.AXE ? 5.0 : (type === ItemType.SHARD ? 1.0 : 0.2),
-            stoneDamage: type === ItemType.PICKAXE ? 3.0 : (type === ItemType.SHARD ? 0.5 : 0.8),
+            stoneDamage: type === ItemType.PICKAXE ? 3.0 : (type === ItemType.SHARD ? 0.5 : 2.5),
             shatterForce: type === ItemType.STONE ? 1.5 : 0.3
         };
     }
@@ -35,12 +35,20 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
     const shards = attachments.filter(t => t === ItemType.SHARD).length;
     const stones = attachments.filter(t => t === ItemType.STONE).length;
 
+    // Slot Analysis
+    const hasLeftShard = tool.attachments['side_left'] === ItemType.SHARD;
+    const hasRightShard = tool.attachments['side_right'] === ItemType.SHARD;
+    const hasTopShard = tool.attachments['tip_center'] === ItemType.SHARD;
+
+    const canDig = hasLeftShard && hasRightShard;
+    const canChop = hasTopShard && (hasLeftShard || hasRightShard);
+
     return {
-        canDig: shards > 0 || stones > 0,
-        digPower: (shards * 0.5 + stones * 0.4),
-        canChop: shards >= 1 && (shards + stones) >= 2, // Needs an edge to chop
+        canDig,
+        digPower: canDig ? (shards * 0.5 + stones * 0.4) : 0,
+        canChop,
         canSmash: stones >= 1 && shards === 0,          // Blunt only
-        isNormalDig: shards >= 2 || (shards >= 1 && stones >= 1),
+        isNormalDig: canDig,
 
         // Damage Logic (All interaction has logic)
         woodDamage: shards * 2.0 + stones * 0.5,

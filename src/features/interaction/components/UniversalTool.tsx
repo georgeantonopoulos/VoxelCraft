@@ -48,11 +48,11 @@ export const ShardMesh = ({ scale = 1 }: { scale?: number }) => (
     <mesh scale={scale} castShadow receiveShadow>
         <coneGeometry args={[0.1, 0.4, 4]} />
         <meshStandardMaterial
-            color="#00ffff"
-            emissive="#00ffff"
-            emissiveIntensity={0.5}
+            color="#aaaaaa"
+            emissive="#000000"
+            emissiveIntensity={0}
             roughness={0.2}
-            metalness={0.8}
+            metalness={1.0}
         />
     </mesh>
 );

@@ -624,7 +624,7 @@ class AudioPool {
     audio.currentTime = 0;
     audio.volume = volume;
     // Simple pitch shift (speed change)
-    audio.playbackRate = 1.0 + (Math.random() * pitchVar * 2 - pitchVar);
+    audio.playbackRate = Math.max(0.1, 1.0 + (Math.random() * pitchVar * 2 - pitchVar));
 
     audio.play().catch(e => console.warn("Audio play failed", e));
   }
@@ -1543,6 +1543,92 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           }
         }
       }
+
+      // 0.7 CHECK FOR NATURAL ROCK INTERACTION (GENERATED GROUND PICKUPS)
+      if (action === 'SMASH' || action === 'DIG') {
+        const groundHit = rayHitsGeneratedGroundPickup(chunksRef.current, origin, direction, maxRayDistance, 0.55);
+        if (groundHit && groundHit.array === 'rockPositions') {
+          const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+          const selectedItem = inventorySlots[selectedSlotIndex];
+          const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+            ? customTools[selectedItem as string]
+            : (selectedItem as ItemType);
+          const capabilities = getToolCapabilities(currentTool);
+
+          if (capabilities.stoneDamage > 0) {
+            const rockId = `natural-rock-${groundHit.key}-${groundHit.index}`;
+            const damageStore = useEntityHistoryStore.getState();
+            const h = damageStore.damageEntity(rockId, capabilities.stoneDamage, 10, 'Natural Rock');
+
+            const hitPoint = groundHit.position;
+            emitSpark(hitPoint);
+
+            setParticleState(prev => ({
+              burstId: prev.burstId + 1,
+              active: true,
+              pos: hitPoint,
+              dir: direction.clone().multiplyScalar(-1),
+              kind: 'debris',
+              color: '#888888'
+            }));
+            audioPool.play(clunkUrl, 0.5, 1.2);
+
+            if (h <= 0) {
+              // Break Natural Rock!
+              const removeGround = (hit: NonNullable<typeof groundHit>) => {
+                const chunk = chunksRef.current[hit.key];
+                const positions = chunk?.[hit.array];
+                if (!chunk || !positions || positions.length < 8) return;
+                const next = new Float32Array(positions);
+
+                // Synchronize visuals for optimized layers
+                let updatedVisuals: Partial<ChunkState> = {};
+                const variant = next[hit.index + 6];
+                const seed = next[hit.index + 7];
+
+                const updateBuffer = (buf: Float32Array | undefined) => {
+                  if (!buf) return undefined;
+                  const nb = new Float32Array(buf);
+                  for (let i = 0; i < nb.length; i += 7) {
+                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                      nb[i + 1] = -10000;
+                      break;
+                    }
+                  }
+                  return nb;
+                };
+
+                if (variant as RockVariant !== undefined && chunk.rockDataBuckets) {
+                  const v = variant as RockVariant;
+                  updatedVisuals.rockDataBuckets = {
+                    ...chunk.rockDataBuckets,
+                    [v]: updateBuffer(chunk.rockDataBuckets[v])!
+                  };
+                }
+
+                next[hit.index + 1] = -10000;
+                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+                chunksRef.current[hit.key] = updatedChunk;
+                setChunks((prev) => ({ ...prev, [hit.key]: updatedChunk }));
+                useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
+              };
+
+              removeGround(groundHit);
+
+              const physicsStore = usePhysicsItemStore.getState();
+              const count = 2 + Math.floor(Math.random() * 2);
+              for (let i = 0; i < count; i++) {
+                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                  (Math.random() - 0.5) * 3,
+                  2 + Math.random() * 2,
+                  (Math.random() - 0.5) * 3
+                ]);
+              }
+            }
+            return;
+          }
+        }
+      }
     }
 
     if (terrainHit) {
@@ -1590,7 +1676,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             const positions = chunk.treePositions;
             const hitIndices: number[] = [];
 
-            for (let i = 0; i < positions.length; i += 4) {
+            for (let i = 0; i < positions.length; i += 5) {
               const x = positions[i] + chunkOriginX;
               const y = positions[i + 1];
               const z = positions[i + 2] + chunkOriginZ;
@@ -1696,13 +1782,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               anyFloraHit = true;
               // Remove trees from chunk (filter out hit indices)
               // We need to reconstruct the array
-              const newCount = (positions.length / 4) - hitIndices.length;
-              const newPositions = new Float32Array(newCount * 4);
+              const newCount = (positions.length / 5) - hitIndices.length;
+              const newPositions = new Float32Array(newCount * 5);
               let destIdx = 0;
               let currentHitIdx = 0;
               hitIndices.sort((a, b) => a - b); // Ensure sorted
 
-              for (let i = 0; i < positions.length; i += 4) {
+              for (let i = 0; i < positions.length; i += 5) {
                 if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
                   currentHitIdx++;
                   continue;
@@ -1711,7 +1797,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 newPositions[destIdx + 1] = positions[i + 1];
                 newPositions[destIdx + 2] = positions[i + 2];
                 newPositions[destIdx + 3] = positions[i + 3];
-                destIdx += 4;
+                newPositions[destIdx + 4] = positions[i + 4];
+                destIdx += 5;
               }
 
               const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };

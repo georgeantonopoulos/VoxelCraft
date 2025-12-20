@@ -39,6 +39,7 @@ export const TORCH_POSE: HeldItemPose = {
 };
 
 export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>> = {
+  [ItemType.PICKAXE]: PICKAXE_POSE,
   [ItemType.STICK]: {
     x: PICKAXE_POSE.x, // base
     xOffset: 0.27,

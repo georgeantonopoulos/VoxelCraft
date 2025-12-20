@@ -98,32 +98,32 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       if (!document.pointerLockElement) return;
 
       const selectedItem = inventorySlots[selectedSlotIndex];
-      const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
+      // Resolve CustomTool object if the item is a tool ID string
+      const resolvedItem = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_')) 
+        ? customTools[selectedItem] 
+        : selectedItem;
+      
+      const capabilities = getToolCapabilities(resolvedItem);
 
       const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
-      const capabilities = activeCustomTool ? getToolCapabilities(activeCustomTool) : null;
 
       // Left Click
       if (e.button === 0) {
-        // 1. Tool Interaction (Pickaxe or Custom Tool)
-        if (capabilities) {
+        // 1. Tool Interaction (Standard or Custom Tool)
+        if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
           if (capabilities.canChop) {
             setInteractionAction('CHOP');
-            return;
-          }
-          if (capabilities.canSmash) {
+          } else if (capabilities.canSmash) {
             setInteractionAction('SMASH');
-            return;
-          }
-          if (capabilities.canDig) {
+          } else if (capabilities.canDig) {
             setInteractionAction('DIG');
-            return;
           }
+          // Do not return yet, allow fire/torch logic to fall through if needed
+          // or return if it's a primary action.
         }
 
         if (pickaxeSelected) {
           setInteractionAction('DIG');
-          return;
         }
 
         // 2. Fire Creation (Holding Stone)
