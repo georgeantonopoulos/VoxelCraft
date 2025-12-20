@@ -23,7 +23,7 @@ export function setSnapEpsilon(v: number): void {
 export const VOXEL_SCALE = 1.0;
 
 // World Generation
-export const RENDER_DISTANCE = 2;
+export const RENDER_DISTANCE = 4;
 export const WATER_LEVEL = 4.5;
 
 // Physics
