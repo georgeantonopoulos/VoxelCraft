@@ -8,8 +8,8 @@ This plan outlines the steps to establish the fundamental gameplay loop of Voxel
 
 In this phase, we will focus on the player's ability to move through and explore the procedurally generated world.
 
-- [ ] Task: Implement basic player movement (WASD) and mouse-look camera controls.
-- [ ] Task: Ensure the world generates new chunks as the player moves into new areas.
+- [x] Task: Implement basic player movement (WASD) and mouse-look camera controls. [pre-existing]
+- [x] Task: Ensure the world generates new chunks as the player moves into new areas. [pre-existing]
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Player Exploration' (Protocol in workflow.md)
 
 ---
@@ -18,9 +18,9 @@ In this phase, we will focus on the player's ability to move through and explore
 
 This phase will implement the core interaction mechanics of digging and building.
 
-- [ ] Task: Implement the ability for the player to remove voxel blocks from the world (digging).
-- [ ] Task: Implement the ability for the player to add voxel blocks to the world (building).
-- [ ] Task: Add visual and audio feedback for digging and building actions.
+- [x] Task: Implement the ability for the player to remove voxel blocks from the world (digging). [pre-existing]
+- [x] Task: Implement the ability for the player to add voxel blocks to the world (building). [pre-existing]
+- [x] Task: Add visual and audio feedback for digging and building actions. [pre-existing]
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Basic Interaction' (Protocol in workflow.md)
 
 ---
@@ -30,7 +30,7 @@ This phase will implement the core interaction mechanics of digging and building
 In this phase, we will integrate and enhance the environmental simulation features.
 
 - [ ] Task: Verify and ensure the existing wetness and moss growth system is functioning correctly.
-- [ ] Task: Implement a basic day/night cycle.
+- [x] Task: Implement a basic day/night cycle. [pre-existing]
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Environmental Simulation' (Protocol in workflow.md)
 
 ---
