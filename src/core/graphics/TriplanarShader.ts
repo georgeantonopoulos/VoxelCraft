@@ -207,14 +207,14 @@ export const triplanarFragmentShader = `
       vec2 uv = (pos.xz - lightDir.xz * (distToSurface / max(0.2, lightDir.y))) * 0.45;
       float tz1 = 0.5 + 0.5 * sin(ang);
       float tz2 = 0.5 + 0.5 * cos(ang);
-      float disp = 0.012; 
+      float disp = 0.006; // AAA FIX: Reduced from 0.012 to avoid rainbow noise
       float r = sampleCausticPattern(uv * (1.0 + disp), ang, tz1, tz2);
       float g = sampleCausticPattern(uv, ang, tz1, tz2);
       float b = sampleCausticPattern(uv * (1.0 - disp), ang, tz1, tz2);
       vec3 finalC = vec3(r, g, b);
       float overlap = min(r, min(g, b));
-      finalC += overlap * 1.5;
-      finalC *= 6.0; 
+      finalC += overlap * 0.8; // AAA FIX: Slightly reduced overlap boost
+      finalC *= 4.5; // AAA FIX: Reduced from 6.0 to prevent blowout
       float depthFade = exp(-distToSurface * 0.18); 
       return finalC * depthFade;
   }
@@ -231,11 +231,11 @@ export const triplanarFragmentShader = `
       float roughness = 0.8;
       float noiseFactor = 0.0;
       float emission = 0.0;
-      if (channel == 1) { baseCol = uColorBedrock; noiseFactor = nMid.r; }
-      else if (channel == 2) { baseCol = uColorStone; float cracks = nHigh.g; noiseFactor = mix(nMid.r, cracks, 0.5); }
+      if (channel == 1) { baseCol = uColorBedrock; noiseFactor = nMid.r * 0.7 + nHigh.r * 0.3; }
+      else if (channel == 2) { baseCol = uColorStone; float cracks = nHigh.g; noiseFactor = mix(nMid.r, cracks, 0.4); }
       else if (channel == 3) { baseCol = uColorDirt; noiseFactor = nMid.g; }
       else if (channel == 4) { baseCol = uColorGrass; float bladeNoise = nHigh.a; float patchNoise = nMid.r; noiseFactor = mix(bladeNoise, patchNoise, 0.3); baseCol *= vec3(1.0, 1.1, 1.0); }
-      else if (channel == 5) { baseCol = uColorSand; noiseFactor = nHigh.a; }
+      else if (channel == 5) { baseCol = uColorSand; noiseFactor = nMid.g * 0.6 + nHigh.b * 0.4; } // AAA FIX: Use lower freq channels for sand texture
       else if (channel == 6) { baseCol = uColorSnow; noiseFactor = nMid.r * 0.5 + 0.5; }
       else if (channel == 7) { baseCol = uColorClay; noiseFactor = nMid.g; }
       else if (channel == 8) { baseCol = uColorWater; roughness = 0.1; }

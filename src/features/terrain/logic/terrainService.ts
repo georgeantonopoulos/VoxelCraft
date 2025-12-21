@@ -1143,6 +1143,7 @@ export class TerrainService {
     static modifyChunk(
         density: Float32Array,
         materialData: Uint8Array,
+        wetness: Uint8Array | undefined,
         localPoint: { x: number, y: number, z: number },
         radius: number,
         delta: number,
@@ -1239,6 +1240,13 @@ export class TerrainService {
                     }
                     if (delta < 0 && density[idx] <= ISO_LEVEL) {
                         materialData[idx] = MaterialType.AIR;
+                    }
+
+                    // --- UNDERWATER WETNESS FIX ---
+                    // If we modify density or material below sea level, ensure wetness is updated.
+                    // This prevents the "texture disappearance" where caustics vanish in newly dug areas.
+                    if (wetness && ((y - PAD) + MESH_Y_OFFSET <= WATER_LEVEL + 0.5)) {
+                        wetness[idx] = 255;
                     }
 
                     if (density[idx] > 20.0) density[idx] = 20.0;

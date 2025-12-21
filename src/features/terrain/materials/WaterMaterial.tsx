@@ -184,6 +184,15 @@ export const getSharedWaterMaterial = () => {
   sharedWaterMaterial.side = THREE.DoubleSide;
   sharedWaterMaterial.depthWrite = false;
 
+  // CRITICAL: Apply per-chunk shore mask from userData
+  sharedWaterMaterial.onBeforeRender = (_renderer: any, _scene: any, _camera: any, _geometry: any, object: any, _group: any) => {
+    if (object.userData && object.userData.shoreMask) {
+      sharedWaterMaterial.uniforms.uShoreMask.value = object.userData.shoreMask;
+    } else {
+      sharedWaterMaterial.uniforms.uShoreMask.value = FALLBACK_SHORE_MASK;
+    }
+  };
+
   return sharedWaterMaterial;
 };
 

@@ -322,7 +322,10 @@ export const SunFollower: React.FC<{
                 else baseIntensity = 1.0;
 
                 const skyOpen = THREE.MathUtils.smoothstep(skyVisibility, 0.08, 0.45);
-                const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.35);
+                // AAA FIX: Don't turn off sun light completely underwater. 
+                // Terrain shader needs direct light for MeshStandardMaterial to work.
+                // We dim it significantly to simulate absorption, but keep it active for caustics and visibility.
+                const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.5) * 0.65; // Max 65% reduction
                 const directVis = skyOpen * (1.0 - waterBlock);
                 const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
                 const sunDimming = THREE.MathUtils.lerp(1.0, 0.55, depthFade);

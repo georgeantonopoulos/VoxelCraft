@@ -1191,6 +1191,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const { key } = payload;
         const current = chunksRef.current[key];
         if (current) {
+          // Increment versions to trigger re-memoization of geometry and physics
           const updatedChunk = {
             ...current,
             ...payload,
@@ -1198,13 +1199,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             visualVersion: (current.visualVersion ?? 0) + 1
           };
           chunksRef.current[key] = updatedChunk;
-          if (initialLoadTriggered.current) {
-            startTransition(() => {
-              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-            });
-          } else {
-            setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-          }
+
+          setChunks(prev => {
+            if (!prev[key]) return prev;
+            return {
+              ...prev,
+              [key]: updatedChunk
+            };
+          });
         }
       }
     }
@@ -2116,6 +2118,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               : TerrainService.modifyChunk(
                 chunk.density,
                 chunk.material,
+                metadata?.wetness,
                 { x: localX, y: localY, z: localZ },
                 radius,
                 delta,

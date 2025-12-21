@@ -49,8 +49,12 @@ export function createNoiseTexture(size = 64): THREE.Data3DTexture {
     const texture = new THREE.Data3DTexture(data, size, size, size);
     texture.format = THREE.RGBAFormat;
     texture.type = THREE.UnsignedByteType;
-    texture.minFilter = THREE.LinearFilter;
+
+    // AAA FIX: Enable Mipmaps to avoid Moire patterns (Crazy RGB) in distance/angled views.
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipMapLinearFilter;
     texture.magFilter = THREE.LinearFilter;
+
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.wrapR = THREE.RepeatWrapping;

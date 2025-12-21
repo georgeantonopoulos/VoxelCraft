@@ -429,6 +429,8 @@ export function generateMesh(
             // using the same neighbor sweep as material splatting (no extra memory access pattern).
             let occTotalW = 0;
             let occSolidW = 0;
+            let nearestSolidMat = MaterialType.AIR;
+            let minSolidDistSq = Infinity;
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
@@ -444,6 +446,17 @@ export function generateMesh(
                   if (val > ISO_LEVEL) occSolidW += w;
                   if (val > ISO_LEVEL) {
                     const mat = getMat(material, sx, sy, sz);
+
+                    // AAA FIX: Track nearest solid non-liquid material for robust fallback.
+                    // This ensures that even if all local voxels are technically "air" or "water"
+                    // (common at chunk boundaries or after digging), we pick a plausible surface color.
+                    if (mat !== MaterialType.AIR && !isLiquidMaterial(mat)) {
+                      if (distSq < minSolidDistSq) {
+                        minSolidDistSq = distSq;
+                        nearestSolidMat = mat;
+                      }
+                    }
+
                     const channel = resolveChannel(mat);
                     // AIR and WATER are handled separately (water is a distinct mesh)
                     if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
@@ -465,9 +478,17 @@ export function generateMesh(
               for (let i = 0; i < localWeights.length; i++) {
                 localWeights[i] /= totalWeight;
               }
+            } else if (nearestSolidMat !== MaterialType.AIR) {
+              // AAA FIX: Use the material of the nearest solid neighbor found in the loop
+              const channel = resolveChannel(nearestSolidMat);
+              if (channel > -1) localWeights[channel] = 1.0;
             } else {
+              // Absolute fallback: If no valid solid neighbors were found at all, use height-based bias.
               const dirtChannel = resolveChannel(MaterialType.DIRT);
-              if (dirtChannel > -1) localWeights[dirtChannel] = 1.0;
+              const sandChannel = resolveChannel(MaterialType.SAND);
+              const fallbackChannel = ((centerY - PAD) + MESH_Y_OFFSET <= WATER_LEVEL + 4.0) ? sandChannel : dirtChannel;
+              if (fallbackChannel > -1) localWeights[fallbackChannel] = 1.0;
+              else if (dirtChannel > -1) localWeights[dirtChannel] = 1.0;
             }
 
             tWa.push(localWeights[0], localWeights[1], localWeights[2], localWeights[3]);
