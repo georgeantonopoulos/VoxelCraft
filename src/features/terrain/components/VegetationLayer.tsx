@@ -186,7 +186,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         geometry
       };
     }).filter(Boolean);
-  }, [data]);
+  }, [data, lodLevel]);
 
   return (
     <group>

@@ -830,6 +830,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, [chunks, onInitialLoad, initialLoadTarget]);
 
   const mountQueue = useRef<any[]>([]);
+  const lodUpdateQueue = useRef<string[]>([]);
   const lastTimeRef = useRef(0);
 
   // 3. Process Queues (Throttled)
@@ -845,6 +846,23 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       setChunks((prev) => {
         if (prev[newChunk.key]) return prev;
         return { ...prev, [newChunk.key]: newChunk };
+      });
+    }
+
+    // Throttled LOD updates (process 4 per frame to avoid massive reconciliation hitches)
+    if (lodUpdateQueue.current.length > 0) {
+      const BATCH_SIZE = 4;
+      const keys = lodUpdateQueue.current.splice(0, BATCH_SIZE);
+      setChunks(prev => {
+        const next = { ...prev };
+        let changed = false;
+        keys.forEach(key => {
+          if (next[key] && chunksRef.current[key]) {
+            next[key] = chunksRef.current[key];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
       });
     }
 
@@ -908,26 +926,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       neededKeysRef.current = neededKeys;
 
       // BATCH UPDATE LOD LEVELS
-      const nextChunks = { ...chunksRef.current };
+      const nextRefChunks = { ...chunksRef.current };
       let lodChanged = false;
-      for (const key in nextChunks) {
-        const chunk = nextChunks[key];
+      const toUpdate: string[] = [];
+
+      for (const key in nextRefChunks) {
+        const chunk = nextRefChunks[key];
         const dist = Math.max(Math.abs(chunk.cx - px), Math.abs(chunk.cz - pz));
         if (chunk.lodLevel !== dist) {
-          nextChunks[key] = { ...chunk, lodLevel: dist };
+          nextRefChunks[key] = { ...chunk, lodLevel: dist };
+          toUpdate.push(key);
           lodChanged = true;
         }
       }
 
       if (lodChanged) {
-        chunksRef.current = nextChunks;
-        if (initialLoadTriggered.current) {
-          startTransition(() => {
-            setChunks(nextChunks);
-          });
-        } else {
-          setChunks(nextChunks);
-        }
+        chunksRef.current = nextRefChunks;
+        // Prioritize chunks closer to the player for LOD updates
+        toUpdate.sort((a, b) => {
+          const ca = nextRefChunks[a];
+          const cb = nextRefChunks[b];
+          const da = Math.max(Math.abs(ca.cx - px), Math.abs(ca.cz - pz));
+          const db = Math.max(Math.abs(cb.cx - px), Math.abs(cb.cz - pz));
+          return da - db;
+        });
+        lodUpdateQueue.current = toUpdate;
       }
 
       // Identify unneeded chunks and move to removeQueue

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
 import stumpUrl from '@assets/models/tree_stump.glb?url';
@@ -75,11 +75,10 @@ export const StumpLayer = React.memo(({ positions }: StumpLayerProps) => {
     useLayoutEffect(() => {
         if (!meshRef.current || !resources || !positions || positions.length === 0) return;
 
-        const { geometry, sourceHeight } = resources;
         const count = positions.length / 6;
         const dummy = new THREE.Object3D();
         const up = new THREE.Vector3(0, 1, 0);
-        const finalScale = (STUMP_CONFIG.height * STUMP_CONFIG.scale) / sourceHeight;
+        const finalScale = (STUMP_CONFIG.height * STUMP_CONFIG.scale) / resources.sourceHeight;
 
         for (let i = 0; i < count; i++) {
             const x = positions[i * 6];

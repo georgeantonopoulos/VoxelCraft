@@ -19,6 +19,17 @@ const FALLBACK_SHORE_MASK = (() => {
   return tex;
 })();
 
+// Placeholder 1x1x1 3D texture for module-load time to avoid memory allocation during import.
+// Real noise texture is assigned lazily in useFrame when the material is first used.
+const PLACEHOLDER_NOISE_3D = (() => {
+  const data = new Uint8Array([128, 128, 128, 128]); // 1x1x1 RGBA
+  const tex = new THREE.Data3DTexture(data, 1, 1, 1);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.needsUpdate = true;
+  return tex;
+})();
+
 const WaterMeshShader = shaderMaterial(
   {
     uTime: 0,
@@ -26,7 +37,7 @@ const WaterMeshShader = shaderMaterial(
     // Base water colors (tuned to avoid "milky white" surface washout).
     uColorShallow: new THREE.Color('#3ea7d6'),
     uColorDeep: new THREE.Color('#0b3e63'),
-    uNoiseTexture: getNoiseTexture(),
+    uNoiseTexture: PLACEHOLDER_NOISE_3D, // Lazy initialization - real texture set in useFrame
     uShoreMask: FALLBACK_SHORE_MASK,
     uShoreEdge: 0.06,
     uAlphaBase: 0.58,
@@ -213,6 +224,11 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
   const material = useMemo(() => getSharedWaterMaterial(), []);
 
   useFrame(({ clock }) => {
+    // Lazy initialization of noise texture (deferred from module load to avoid memory allocation failures)
+    if (material.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
+      material.uniforms.uNoiseTexture.value = getNoiseTexture();
+    }
+
     // These uniforms are shared across ALL water chunks
     material.uniforms.uTime.value = clock.getElapsedTime();
     material.uniforms.uCamPos.value.copy(camera.position);

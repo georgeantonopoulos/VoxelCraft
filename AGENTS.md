@@ -116,6 +116,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Interaction Logic Invariant**: All interaction must have logic. Every hit on an entity (stone, tree, etc.) MUST calculate damage based on tool properties (shards for sharpness, stones for smashiness) and entity properties (radius, material). Entities have explicit "life" (health) tracked in `EntityHistoryStore.ts`.
 - **Trimesh Collider Creation is Expensive**: Rapier's `trimesh` colliders require building a BVH acceleration structure on the main thread. When `colliderEnabled` flips to `true`, the `<RigidBody colliders="trimesh">` creation can cause a 10-30ms stall depending on mesh complexity. The current throttled queue (`colliderEnableQueue` in `VoxelTerrain.tsx`) spreads this out, but doesn't eliminate the synchronous creation. Future optimization: use `requestIdleCallback` or pre-build colliders in a worker (if Rapier supports it).
 - **Instance Matrix Calculations in Render Effects**: `TreeLayer.tsx` and `VegetationLayer.tsx` compute instance matrices in `useLayoutEffect` loops. For dense chunks (jungle trees, 100+ instances), this can block the main thread for 2-5ms. Consider pre-computing matrices in the terrain worker and passing them in the `GENERATED` payload.
+- **Lumina Stride Mismatch**: `floraPositions` has stride 4 (x,y,z,type). Using stride 3 for extraction (e.g. for light positions in `LuminaLayer.tsx`) causes coordinate shifting and invisible/misplaced lights.
+- **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. ALWAYS cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`).
+- **Chunk Cache Restoration**: For items/trees to persist on revisit, ALL entity data (flora, trees, sticks, rocks, hotspots, and processed buckets/batches) MUST be saved to and correctly restored from `CachedChunk` in `terrain.worker.ts`.
 
 ---
 
@@ -337,6 +340,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Staged mounting in `ChunkMesh.tsx`**: Deferred the rendering of heavy auxiliary layers (trees, flora) by one frame after the terrain mounts.
   - **Verified resource disposal**: Added explicit `.dispose()` for geometries and textures in `ChunkMesh.tsx` to prevent long-term GPU memory leaks.
   - **Improved Stutter**: Visual inspection confirms that chunk-loading stutters (FPS drops) are significantly reduced during movement.
+- 2025-12-21: Fixed Persistent Stuttering and Item Disappearance.
+  - **Throttled LOD Updates**: Implemented a `lodUpdateQueue` in `VoxelTerrain.tsx` to process LOD state changes in batches of 4 chunks per frame. This eliminates the massive React reconciliation hitch (affecting all 81 chunks) when crossing chunk boundaries.
+  - **Fixed Vegetation "Vanish" Bug**: Added `lodLevel` to the `useMemo` dependency array in `VegetationLayer.tsx`. This ensures vegetation density is recomputed correctly as the player approaches a chunk, preventing chunks that entered the streaming radius at distance 4 from remaining empty when close.
+  - **Fixed Tree "Vanish" Bug**: Added `wood` and `leaves` geometries to the matrix update `useLayoutEffect` in `TreeLayer.tsx`. This ensures instance matrices are re-applied when the tree LOD switches from simplified to high-poly.
+  - **Optimized Lumina Lights**: Consolidated point light distance culling into a single throttled `useFrame` check in `LuminaLayer.tsx`, significantly reducing the overhead of hundreds of individual component updates.
+  - **Chunk Cache Restoration**: Updated `terrain.worker.ts` to correctly restore ALL entity data (trees, stumps, sticks, stones) from the IndexedDB cache and ensured buffers are correctly added to the transfer list.
+  - **Stride Fix**: Corrected stride handling in `LuminaLayer` to match the 4-component `floraPositions` data.
 - 2025-12-21: Memory Stability & RangeError Fixes
   - **Lazy Noise Initialization**: Defered 3D noise texture allocation in `sharedResources.ts` until first use to prevent module-load memory spikes.
   - **Worker Buffer Safety**: Fixed race condition in `terrain.worker.ts` where buffers were transferred before cache saving.
@@ -375,3 +385,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Special Ability**: After three left-mouse clicks with a Lumina Tool, the player is "teleported" (fast-dashed) to the closest surface cave exit.
   - **Algorithm**: Implemented `LuminaExitFinder.ts` to search for the nearest non-cave coordinate using a spiral search on the surface height map.
   - **Integration**: Updated `InteractionHandler.tsx` for click tracking and `Player.tsx` for the teleport/dash execution.
+
+- 2025-12-21: Fixed Underwater Effects Not Triggering.
+  - **Root Cause**: The `Player.tsx` was calculating water submersion (`inWater`, `submersion`) but never calling `setUnderwaterBlend` or `setUnderwaterState` on `EnvironmentStore`. This meant the `BubbleSystem`, `CinematicComposer` exposure/vignette, and all other underwater effects remained inactive.
+  - **Fix**: Added calls to `useEnvironmentStore.getState().setUnderwaterBlend(submersion)` and `setUnderwaterState(headInWater, time)` in the Player's `useFrame` loop.
+  - **Effect**: Bubbles, exposure changes, and vignette now correctly activate when the player enters water.
+
+- 2025-12-21: Fixed "RangeError: Array buffer allocation failed" on Page Load.
+  - **Root Cause**: `WaterMaterial.tsx` was calling `getNoiseTexture()` at module import time (inside `shaderMaterial()` definition). This triggered a 1MB `Uint8Array` allocation before the app finished loading, causing memory pressure and allocation failures.
+  - **Fix**: Replaced the module-level `getNoiseTexture()` call with a tiny 1x1x1 placeholder 3D texture (`PLACEHOLDER_NOISE_3D`). The real noise texture is now lazily initialized in the `useFrame` hook on first render.
+  - **Invariant**: All shared texture allocations should be deferred via `getNoiseTexture()` pattern, never called at module import time.

@@ -112,7 +112,7 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
             variant = Math.floor((h % 1) * JUNGLE_VARIANTS);
         }
 
-        const key = `${type}:${variant}`;
+        const key = `${type}:${variant} `;
         if (!batches.has(key)) {
             batches.set(key, { type, variant, positions: [], scales: [], originalIndices: [] });
         }
@@ -217,24 +217,24 @@ ctx.onmessage = async (e: MessageEvent) => {
                         terrainVersion: 0,
                         visualVersion: 0,
                         metadata: {
-                            wetness: cached.meshWetness, // Approximate matches for metadata
+                            wetness: cached.meshWetness,
                             mossiness: cached.meshMossiness
                         },
-                        floraPositions: new Float32Array(0), // Cached chunks might need to store these too
-                        treePositions: new Float32Array(0),
+                        floraPositions: cached.floraPositions || new Float32Array(0),
+                        treePositions: cached.treePositions || new Float32Array(0),
                         treeInstanceBatches: cached.treeInstanceBatches || {},
-                        stickPositions: new Float32Array(0),
-                        rockPositions: new Float32Array(0),
-                        drySticks: new Float32Array(0),
-                        jungleSticks: new Float32Array(0),
-                        rockDataBuckets: {},
-                        largeRockPositions: new Float32Array(0),
-                        rootHollowPositions: new Float32Array(0),
+                        rootHollowPositions: cached.rootHollowPositions || new Float32Array(0),
+                        stickPositions: cached.stickPositions || new Float32Array(0),
+                        rockPositions: cached.rockPositions || new Float32Array(0),
+                        drySticks: cached.drySticks || new Float32Array(0),
+                        jungleSticks: cached.jungleSticks || new Float32Array(0),
+                        rockDataBuckets: cached.rockDataBuckets || {},
+                        largeRockPositions: cached.largeRockPositions || new Float32Array(0),
                         fireflyPositions: cached.fireflyPositions || new Float32Array(0),
                         floraHotspots: cached.floraHotspots || new Float32Array(0),
                         stickHotspots: cached.stickHotspots || new Float32Array(0),
                         rockHotspots: cached.rockHotspots || new Float32Array(0),
-                        vegetationData: {}, // Need to store this too for full restoration
+                        vegetationData: cached.vegetationData || {},
                         meshPositions: cached.meshPositions,
                         meshIndices: cached.meshIndices,
                         meshMatWeightsA: cached.meshMatWeightsA,
@@ -270,7 +270,36 @@ ctx.onmessage = async (e: MessageEvent) => {
                         cached.meshWaterNormals.buffer as ArrayBuffer,
                         cached.meshWaterShoreMask.buffer as ArrayBuffer
                     ];
+                    if (cached.floraPositions) buffers.push(cached.floraPositions.buffer as ArrayBuffer);
+                    if (cached.treePositions) buffers.push(cached.treePositions.buffer as ArrayBuffer);
+                    if (cached.rootHollowPositions) buffers.push(cached.rootHollowPositions.buffer as ArrayBuffer);
+                    if (cached.stickPositions) buffers.push(cached.stickPositions.buffer as ArrayBuffer);
+                    if (cached.rockPositions) buffers.push(cached.rockPositions.buffer as ArrayBuffer);
+                    if (cached.largeRockPositions) buffers.push(cached.largeRockPositions.buffer as ArrayBuffer);
+                    if (cached.drySticks) buffers.push(cached.drySticks.buffer as ArrayBuffer);
+                    if (cached.jungleSticks) buffers.push(cached.jungleSticks.buffer as ArrayBuffer);
                     if (cached.fireflyPositions) buffers.push(cached.fireflyPositions.buffer as ArrayBuffer);
+                    if (cached.floraHotspots) buffers.push(cached.floraHotspots.buffer as ArrayBuffer);
+                    if (cached.stickHotspots) buffers.push(cached.stickHotspots.buffer as ArrayBuffer);
+                    if (cached.rockHotspots) buffers.push(cached.rockHotspots.buffer as ArrayBuffer);
+
+                    if (cached.rockDataBuckets) {
+                        for (const b of Object.values(cached.rockDataBuckets as Record<number, Float32Array>)) {
+                            buffers.push(b.buffer as ArrayBuffer);
+                        }
+                    }
+                    if (cached.vegetationData) {
+                        for (const b of Object.values(cached.vegetationData as Record<number, Float32Array>)) {
+                            buffers.push(b.buffer as ArrayBuffer);
+                        }
+                    }
+
+                    if (cached.treeInstanceBatches) {
+                        for (const b of Object.values(cached.treeInstanceBatches as Record<string, any>)) {
+                            if (b.matrices) buffers.push(b.matrices.buffer as ArrayBuffer);
+                            if (b.originalIndices) buffers.push(b.originalIndices.buffer as ArrayBuffer);
+                        }
+                    }
 
                     ctx.postMessage({ type: 'GENERATED', payload: response }, buffers);
                     return;
@@ -531,32 +560,48 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             // 4. Save to Cache if Pristine (BEFORE sending so buffers aren't neutered)
             if (modifications.length === 0) {
-                saveToCache({
-                    id: `${cx},${cz},${worldType},${CACHE_VERSION}`,
-                    cx, cz, worldType, version: CACHE_VERSION,
-                    meshPositions: mesh.positions,
-                    meshIndices: mesh.indices,
-                    meshNormals: mesh.normals,
-                    meshMatWeightsA: mesh.matWeightsA,
-                    meshMatWeightsB: mesh.matWeightsB,
-                    meshMatWeightsC: mesh.matWeightsC,
-                    meshMatWeightsD: mesh.matWeightsD,
-                    meshWetness: mesh.wetness,
-                    meshMossiness: mesh.mossiness,
-                    meshCavity: mesh.cavity,
-                    meshWaterPositions: mesh.waterPositions,
-                    meshWaterIndices: mesh.waterIndices,
-                    meshWaterNormals: mesh.waterNormals,
-                    meshWaterShoreMask: mesh.waterShoreMask,
-                    density,
-                    material,
-                    fireflyPositions,
-                    floraHotspots,
-                    stickHotspots: stickData.stickHotspots,
-                    rockHotspots: rockData.rockHotspots,
-                    treeInstanceBatches: treeInstanceData.treeInstanceBatches,
-                    timestamp: Date.now()
-                }).catch(e => console.warn('[terrain.worker] Cache Save Failed:', e));
+                try {
+                    await saveToCache({
+                        id: `${cx},${cz},${worldType},${CACHE_VERSION}`,
+                        cx, cz, worldType, version: CACHE_VERSION,
+                        meshPositions: mesh.positions,
+                        meshIndices: mesh.indices,
+                        meshNormals: mesh.normals,
+                        meshMatWeightsA: mesh.matWeightsA,
+                        meshMatWeightsB: mesh.matWeightsB,
+                        meshMatWeightsC: mesh.matWeightsC,
+                        meshMatWeightsD: mesh.matWeightsD,
+                        meshWetness: mesh.wetness,
+                        meshMossiness: mesh.mossiness,
+                        meshCavity: mesh.cavity,
+                        meshWaterPositions: mesh.waterPositions,
+                        meshWaterIndices: mesh.waterIndices,
+                        meshWaterNormals: mesh.waterNormals,
+                        meshWaterShoreMask: mesh.waterShoreMask,
+                        density,
+                        material,
+                        fireflyPositions,
+                        floraHotspots,
+                        stickHotspots: stickData.stickHotspots,
+                        rockHotspots: rockData.rockHotspots,
+                        treeInstanceBatches: treeInstanceData.treeInstanceBatches,
+
+                        floraPositions,
+                        treePositions,
+                        rootHollowPositions,
+                        stickPositions,
+                        rockPositions,
+                        largeRockPositions,
+                        drySticks: stickData.drySticks,
+                        jungleSticks: stickData.jungleSticks,
+                        rockDataBuckets: rockData.rockDataBuckets,
+                        vegetationData,
+
+                        timestamp: Date.now()
+                    });
+                } catch (e) {
+                    console.warn('[terrain.worker] Cache Save Failed:', e);
+                }
             }
 
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
@@ -616,7 +661,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshWetness: mesh.wetness,
                 meshMossiness: mesh.mossiness,
                 meshCavity: mesh.cavity,
-                // Keep `meshWater*` naming consistent with ChunkState.
+                // Keep `meshWater * ` naming consistent with ChunkState.
                 meshWaterPositions: mesh.waterPositions,
                 meshWaterIndices: mesh.waterIndices,
                 meshWaterNormals: mesh.waterNormals,

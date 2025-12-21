@@ -34,12 +34,26 @@ export interface CachedChunk {
     density: Float32Array;
     material: Uint8Array;
 
-    // Flora/Items Hotspots (to avoid re-sampling)
-    floraHotspots?: any;
-    stickHotspots?: any;
-    rockHotspots?: any;
+    // Entities & Vegetation (Full restoration)
+    floraPositions?: Float32Array;
+    treePositions?: Float32Array;
+    rootHollowPositions?: Float32Array;
+    stickPositions?: Float32Array;
+    rockPositions?: Float32Array;
+    largeRockPositions?: Float32Array;
     fireflyPositions?: Float32Array;
+
+    // Processed layers
+    drySticks?: Float32Array;
+    jungleSticks?: Float32Array;
+    rockDataBuckets?: Record<number, Float32Array>;
+    vegetationData?: Record<number, Float32Array>;
     treeInstanceBatches?: any;
+
+    // Hotspots (for fast interaction lookups)
+    floraHotspots?: Float32Array;
+    stickHotspots?: Float32Array;
+    rockHotspots?: Float32Array;
 
     timestamp: number;
 }

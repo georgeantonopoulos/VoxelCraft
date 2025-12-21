@@ -6,6 +6,7 @@ import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { usePlayerInput } from './usePlayerInput';
 import { useWorldStore } from '@/state/WorldStore';
+import { useEnvironmentStore } from '@/state/EnvironmentStore';
 import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
 
 const FLY_SPEED = 8;
@@ -21,8 +22,6 @@ const scratchForward = new THREE.Vector3();
 const scratchSide = new THREE.Vector3();
 const scratchUp = new THREE.Vector3(0, 1, 0);
 const scratchVelocity = new THREE.Vector3();
-
-
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
   const [isLuminaDashing, setIsLuminaDashing] = useState(false);
@@ -103,6 +102,16 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const waterHits = (footInWater ? 1 : 0) + (midInWater ? 1 : 0) + (headInWater ? 1 : 0);
     const inWater = waterHits > 0;
     const submersion = waterHits / 3.0;
+
+    // Update EnvironmentStore for underwater effects (bubbles, exposure, vignette)
+    const setUnderwaterBlend = useEnvironmentStore.getState().setUnderwaterBlend;
+    const setUnderwaterState = useEnvironmentStore.getState().setUnderwaterState;
+    setUnderwaterBlend(submersion);
+    const isFullyUnderwater = headInWater;
+    const currentUnderwaterState = useEnvironmentStore.getState().isUnderwater;
+    if (isFullyUnderwater !== currentUnderwaterState) {
+      setUnderwaterState(isFullyUnderwater, state.clock.getElapsedTime());
+    }
 
     // Calculate rotation for minimap
     camera.getWorldDirection(scratchCamDir);

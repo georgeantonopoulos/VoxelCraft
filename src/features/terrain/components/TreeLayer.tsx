@@ -358,7 +358,7 @@ const InstancedTreeBatch: React.FC<{
             leafMesh.current.instanceMatrix.array.set(matrices);
             leafMesh.current.instanceMatrix.needsUpdate = true;
         }
-    }, [matrices]);
+    }, [matrices, wood, leaves]);
 
     // Prepare Physics Instances
     const rigidBodyGroups = useMemo(() => {
