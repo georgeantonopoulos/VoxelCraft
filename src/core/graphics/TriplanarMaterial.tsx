@@ -62,6 +62,11 @@ const getSharedTerrainMaterial = () => {
     uCavityStrength: { value: 1.0 },
     uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
     uNormalStrength: { value: 1.0 },
+    uFogDensity: { value: 0.01 },
+    uHeightFogEnabled: { value: 1.0 },
+    uHeightFogStrength: { value: 0.5 },
+    uHeightFogRange: { value: 20.0 },
+    uHeightFogOffset: { value: 10.0 },
   };
 
   sharedTerrainMaterial = new (CustomShaderMaterial as any)({
@@ -94,6 +99,12 @@ export const TriplanarMaterial: React.FC<{
   weightsView?: string;
   wireframe?: boolean;
   waterLevel?: number;
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
+  fogNear?: number;
+  fogFar?: number;
 }> = ({
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
@@ -108,6 +119,12 @@ export const TriplanarMaterial: React.FC<{
   weightsView = 'off',
   wireframe = false,
   waterLevel = 4.5,
+  heightFogEnabled = true,
+  heightFogStrength = 0.5,
+  heightFogRange = 20.0,
+  heightFogOffset = 10.0,
+  fogNear = 20,
+  fogFar = 250,
 }) => {
     const { scene } = useThree();
     const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
@@ -173,15 +190,35 @@ export const TriplanarMaterial: React.FC<{
         matAny.fog = threeFogEnabled;
         matAny.uniforms.uWaterLevel.value = waterLevel;
 
-        const fog = scene.fog as THREE.Fog | undefined;
+        const hFogEnabled = heightFogEnabled ? 1.0 : 0.0;
+        if (matAny.uniforms.uHeightFogEnabled.value !== hFogEnabled) {
+          matAny.uniforms.uHeightFogEnabled.value = hFogEnabled;
+        }
+        if (matAny.uniforms.uHeightFogStrength.value !== heightFogStrength) {
+          matAny.uniforms.uHeightFogStrength.value = heightFogStrength;
+        }
+        if (matAny.uniforms.uHeightFogRange.value !== heightFogRange) {
+          matAny.uniforms.uHeightFogRange.value = heightFogRange;
+        }
+        if (matAny.uniforms.uHeightFogOffset.value !== heightFogOffset) {
+          matAny.uniforms.uHeightFogOffset.value = heightFogOffset;
+        }
+
+        if (matAny.uniforms.uFogNear.value !== fogNear) {
+          matAny.uniforms.uFogNear.value = fogNear;
+        }
+        if (matAny.uniforms.uFogFar.value !== fogFar) {
+          matAny.uniforms.uFogFar.value = fogFar;
+        }
+
+        const fog = scene.fog as any;
         if (fog) {
           const colorHex = `#${fog.color.getHexString()}`;
           const lastFog = lastFogRef.current;
-          if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
+          // Scene fog color still drives the uFogColor uniform for atmosphere matching
+          if (!lastFog || lastFog.colorHex !== colorHex) {
             matAny.uniforms.uFogColor.value.copy(fog.color);
-            matAny.uniforms.uFogNear.value = fog.near;
-            matAny.uniforms.uFogFar.value = fog.far;
-            lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
+            lastFogRef.current = { near: fog.near ?? 20, far: fog.far ?? 160, colorHex };
           }
         }
       }

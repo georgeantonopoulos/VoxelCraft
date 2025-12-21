@@ -135,6 +135,11 @@ export const triplanarFragmentShader = `
   uniform vec3 uFogColor;
   uniform float uFogNear;
   uniform float uFogFar;
+  uniform float uFogDensity; // For Exp2
+  uniform float uHeightFogEnabled;
+  uniform float uHeightFogStrength;
+  uniform float uHeightFogRange;
+  uniform float uHeightFogOffset;
   uniform float uOpacity;
   uniform float uTriplanarDetail;
   uniform float uShaderFogEnabled;
@@ -369,8 +374,29 @@ export const triplanarFragmentShader = `
     } 
     if (uShaderFogEnabled > 0.5) {
       float fogDist = length(vWorldPosition - cameraPosition);
-      float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
-      fogAmt = pow(fogAmt, 1.1);
+      
+      // Exponential Squared Fog (Tip 1)
+      // d = 4.0 / fogRange ensures near-full opacity at the far distance
+      float fogRange = max(uFogFar - uFogNear, 1.0);
+      float density = 4.0 / fogRange; 
+      float distFactor = max(0.0, fogDist - uFogNear);
+      float baseFog = 1.0 - exp(-pow(distFactor * density, 2.0));
+      
+      float fogAmt = baseFog;
+
+      // Height Fog logic (Tip 3/4)
+      if (uHeightFogEnabled > 0.5) {
+          // Height factor: 1.0 at floor, 0.0 at ceiling
+          float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPosition.y);
+          
+          // Distance factor: Don't fog the player's feet. 
+          // Fade in height fog from 5m to 25m.
+          float hDistFactor = smoothstep(5.0, 25.0, fogDist);
+          
+          float heightFog = heightFactor * uHeightFogStrength * hDistFactor;
+          fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);
+      }
+
       col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));

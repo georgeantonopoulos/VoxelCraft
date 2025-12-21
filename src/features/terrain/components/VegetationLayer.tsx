@@ -1,5 +1,6 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { getNoiseTexture } from '@core/memory/sharedResources';
@@ -61,15 +62,16 @@ const VEGETATION_SHADER = {
     finalPos.x += wind * swayStrength * uWindDir.x;
     finalPos.z += wind * swayStrength * uWindDir.y;
 
-    csm_Position = finalPos; 
-    vWorldPos = aInstancePos;
+    // Final World Position
+    vec4 worldPos = modelMatrix * vec4(finalPos, 1.0);
+    vWorldPos = worldPos.xyz;
     
     // View dir for SSS
-    vec4 worldPos = modelMatrix * vec4(finalPos, 1.0);
-    vViewDir = normalize(cameraPosition - worldPos.xyz);
+    vViewDir = normalize(cameraPosition - vWorldPos);
     
     // Transform normal for lighting
     csm_Normal = normalize(mix(alignMat * normal, up, 0.7));
+    csm_Position = finalPos; 
   }
 `,
   fragment: `
@@ -79,6 +81,15 @@ const VEGETATION_SHADER = {
     varying vec3 vWorldPos;
     varying vec2 vUv;
     varying vec3 vViewDir;
+    
+    uniform vec3 uFogColor;
+    uniform float uFogNear;
+    uniform float uFogFar;
+    uniform float uHeightFogEnabled;
+    uniform float uHeightFogStrength;
+    uniform float uHeightFogRange;
+    uniform float uHeightFogOffset;
+    uniform float uShaderFogStrength;
     
     void main() {
        vec3 noiseCoord = vWorldPos * 0.08;
@@ -104,6 +115,22 @@ const VEGETATION_SHADER = {
 
        float translucency = pow(gradient, 2.0) * 0.15;
        col += vec3(0.8, 1.0, 0.6) * translucency;
+ 
+        // Sync with Terrain Fog
+        float fogDist = length(vWorldPos - cameraPosition);
+        float fogRange = max(uFogFar - uFogNear, 1.0);
+        float density = 4.0 / fogRange;
+        float distFactor = max(0.0, fogDist - uFogNear);
+        float fogAmt = 1.0 - exp(-pow(distFactor * density, 2.0));
+
+        if (uHeightFogEnabled > 0.5) {
+            float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPos.y);
+            float hDistFactor = smoothstep(5.0, 25.0, fogDist);
+            float heightFog = heightFactor * uHeightFogStrength * hDistFactor;
+            fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);
+        }
+
+        col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
 
        csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     }
@@ -170,6 +197,14 @@ const getVegetationMaterial = (asset: any) => {
       uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
       uNoiseTexture: { value: getNoiseTexture() },
       uOpacity: { value: 1.0 },
+      uFogColor: { value: new THREE.Color('#87CEEB') },
+      uFogNear: { value: 20 },
+      uFogFar: { value: 160 },
+      uShaderFogStrength: { value: 0.9 },
+      uHeightFogEnabled: { value: 1.0 },
+      uHeightFogStrength: { value: 0.5 },
+      uHeightFogRange: { value: 24.0 },
+      uHeightFogOffset: { value: 12.0 },
     },
     color: asset.color,
     roughness: asset.roughness,
@@ -181,12 +216,54 @@ const getVegetationMaterial = (asset: any) => {
 };
 
 interface VegetationLayerProps {
-  data: Record<string, Float32Array>; // vegetationData from worker
+  data: Record<number, Float32Array>;
   sunDirection?: THREE.Vector3;
   lodLevel?: number;
+  fogNear?: number;
+  fogFar?: number;
+  shaderFogStrength?: number;
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, lodLevel = 0 }) => {
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({
+  data,
+  sunDirection,
+  lodLevel = 0,
+  fogNear = 20,
+  fogFar = 160,
+  shaderFogStrength = 0.9,
+  heightFogEnabled = true,
+  heightFogStrength = 0.5,
+  heightFogRange = 24.0,
+  heightFogOffset = 12.0
+}) => {
+  const { scene } = useThree();
+
+  // Update shared materials when fog/sun props change.
+  // We do this in an effect to avoid redundant per-frame work in useFrame,
+  // sync'ing the global pool with the latest global settings.
+  useMemo(() => {
+    Object.values(vegetationMaterialPool).forEach((mat) => {
+      const matAny = (mat as any);
+      if (!matAny.uniforms) return;
+
+      if (sunDirection) matAny.uniforms.uSunDir.value.copy(sunDirection);
+      matAny.uniforms.uFogNear.value = fogNear;
+      matAny.uniforms.uFogFar.value = fogFar;
+      matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
+      matAny.uniforms.uHeightFogEnabled.value = heightFogEnabled ? 1.0 : 0.0;
+      matAny.uniforms.uHeightFogStrength.value = heightFogStrength;
+      matAny.uniforms.uHeightFogRange.value = heightFogRange;
+      matAny.uniforms.uHeightFogOffset.value = heightFogOffset;
+
+      if (scene.fog) {
+        matAny.uniforms.uFogColor.value.copy(scene.fog.color);
+      }
+    });
+  }, [scene.fog, sunDirection, fogNear, fogFar, shaderFogStrength, heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset]);
 
   const batches = useMemo(() => {
     if (!data) return [];
@@ -283,12 +360,6 @@ const VegetationBatch: React.FC<{
       instGeo.setAttribute('uv', new THREE.BufferAttribute(dummyUvs, 2));
     }
 
-    // Stride 6 (x,y,z, nx,ny,nz)
-    // Create and attach instance attributes
-    const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
-    instGeo.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
-    instGeo.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
-
     instGeo.boundingBox = new THREE.Box3(
       new THREE.Vector3(-2, -40, -2),
       new THREE.Vector3(34, 40, 34)
@@ -296,7 +367,21 @@ const VegetationBatch: React.FC<{
     instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
 
     return instGeo;
-  }, [batch.geometry, batch.positions]);
+  }, [batch.geometry]);
+
+  useLayoutEffect(() => {
+    if (!meshRef.current) return;
+    // Stride 6 (x,y,z, nx,ny,nz)
+    // Create and attach instance attributes
+    const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
+    geometry.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
+    geometry.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
+
+    // Ensure the mesh knows the count has changed if it's already mounted
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true;
+    }
+  }, [batch.positions, geometry]);
 
   // Clean up the cloned geometry when component unmounts
   React.useEffect(() => {
@@ -311,11 +396,12 @@ const VegetationBatch: React.FC<{
   return (
     <instancedMesh
       ref={meshRef}
-      args={[geometry, undefined, batch.count]}
+      args={[undefined as any, undefined as any, batch.count]}
+      geometry={geometry}
+      material={material}
       castShadow={false}
       receiveShadow
       frustumCulled={true}
-      material={material}
     />
   );
 };

@@ -30,14 +30,19 @@ export const ChunkMesh: React.FC<{
   terrainChunkTintEnabled?: boolean;
   terrainWireframeEnabled?: boolean;
   terrainWeightsView?: string;
-  lodLevel?: number; // Added lodLevel to props type
+  lodLevel?: number;
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
+  fogNear?: number;
+  fogFar?: number;
 }> = React.memo(({
   chunk,
   sunDirection,
   triplanarDetail = 1.0,
   terrainShaderFogEnabled = true,
   terrainShaderFogStrength = 0.9,
-  terrainThreeFogEnabled = true,
   terrainFadeEnabled = true,
   terrainWetnessEnabled = true,
   terrainMossEnabled = true,
@@ -48,7 +53,13 @@ export const ChunkMesh: React.FC<{
   terrainChunkTintEnabled = false,
   terrainWireframeEnabled = false,
   terrainWeightsView = 'off',
-  lodLevel = 0, // Added lodLevel to destructuring
+  lodLevel = 0,
+  heightFogEnabled = true,
+  heightFogStrength = 0.5,
+  heightFogRange = 24.0,
+  heightFogOffset = 12.0,
+  fogNear = 20,
+  fogFar = 160,
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   // NOTE:
@@ -195,7 +206,7 @@ export const ChunkMesh: React.FC<{
                 triplanarDetail={triplanarDetail}
                 shaderFogEnabled={terrainShaderFogEnabled}
                 shaderFogStrength={terrainShaderFogStrength}
-                threeFogEnabled={terrainThreeFogEnabled}
+                threeFogEnabled={false}
                 wetnessEnabled={terrainWetnessEnabled}
                 mossEnabled={terrainMossEnabled}
                 roughnessMin={terrainRoughnessMin}
@@ -204,6 +215,12 @@ export const ChunkMesh: React.FC<{
                 polygonOffsetUnits={terrainPolygonOffsetUnits}
                 weightsView={terrainWeightsView}
                 wireframe={terrainWireframeEnabled}
+                heightFogEnabled={heightFogEnabled}
+                heightFogStrength={heightFogStrength}
+                heightFogRange={heightFogRange}
+                heightFogOffset={heightFogOffset}
+                fogNear={fogNear}
+                fogFar={fogFar}
               />
             )}
           </mesh>
@@ -229,7 +246,7 @@ export const ChunkMesh: React.FC<{
               triplanarDetail={triplanarDetail}
               shaderFogEnabled={terrainShaderFogEnabled}
               shaderFogStrength={terrainShaderFogStrength}
-              threeFogEnabled={terrainThreeFogEnabled}
+              threeFogEnabled={false}
               wetnessEnabled={terrainWetnessEnabled}
               mossEnabled={terrainMossEnabled}
               roughnessMin={terrainRoughnessMin}
@@ -238,6 +255,12 @@ export const ChunkMesh: React.FC<{
               polygonOffsetUnits={terrainPolygonOffsetUnits}
               weightsView={terrainWeightsView}
               wireframe={terrainWireframeEnabled}
+              heightFogEnabled={heightFogEnabled}
+              heightFogStrength={heightFogStrength}
+              heightFogRange={heightFogRange}
+              heightFogOffset={heightFogOffset}
+              fogNear={fogNear}
+              fogFar={fogFar}
             />
           )}
         </mesh>
@@ -261,7 +284,18 @@ export const ChunkMesh: React.FC<{
       {showLayers && (
         <>
           {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && chunk.vegetationData && (
-            <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} lodLevel={lodLevel} />
+            <VegetationLayer
+              data={chunk.vegetationData}
+              sunDirection={sunDirection}
+              lodLevel={lodLevel}
+              fogNear={fogNear}
+              fogFar={fogFar}
+              shaderFogStrength={terrainShaderFogStrength}
+              heightFogEnabled={heightFogEnabled}
+              heightFogStrength={heightFogStrength}
+              heightFogRange={heightFogRange}
+              heightFogOffset={heightFogOffset}
+            />
           )}
 
           {lodLevel <= LOD_DISTANCE_TREES_ANY && chunk.treePositions && chunk.treePositions.length > 0 && (

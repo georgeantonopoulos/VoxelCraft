@@ -592,6 +592,12 @@ interface VoxelTerrainProps {
   terrainWeightsView?: string;
   onInitialLoad?: () => void;
   worldType: string;
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
+  fogNear?: number;
+  fogFar?: number;
 }
 
 // --- Audio Pool Helper ---
@@ -649,7 +655,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   terrainWireframeEnabled = false,
   terrainWeightsView = 'off',
   onInitialLoad,
-  worldType
+  worldType,
+  heightFogEnabled = true,
+  heightFogStrength = 0.5,
+  heightFogRange = 24.0,
+  heightFogOffset = 12.0,
+  fogNear = 20,
+  fogFar = 160
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;
@@ -2255,6 +2267,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             terrainChunkTintEnabled={terrainChunkTintEnabled}
             terrainWireframeEnabled={terrainWireframeEnabled}
             terrainWeightsView={terrainWeightsView}
+            heightFogEnabled={heightFogEnabled}
+            heightFogStrength={heightFogStrength}
+            heightFogRange={heightFogRange}
+            heightFogOffset={heightFogOffset}
+            fogNear={fogNear}
+            fogFar={fogFar}
           />
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
             <>

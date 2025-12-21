@@ -113,6 +113,11 @@ const App: React.FC = () => {
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
 
+  const [heightFogEnabled, setHeightFogEnabled] = useState(true);
+  const [heightFogStrength, setHeightFogStrength] = useState(0.5);
+  const [heightFogRange, setHeightFogRange] = useState(24.0);
+  const [heightFogOffset, setHeightFogOffset] = useState(12.0);
+
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
   const [sunShadowNormalBias, setSunShadowNormalBias] = useState(0.02);
@@ -249,8 +254,13 @@ const App: React.FC = () => {
             terrainPolygonOffsetFactor, terrainPolygonOffsetUnits, levaScale, levaWidth,
             terrainChunkTintEnabled, terrainWireframeEnabled, terrainWeightsView,
             caOffset, vignetteDarkness, sunShadowBias, sunShadowNormalBias,
-            sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset
+            sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset,
+            heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset
           }}
+          setHeightFogEnabled={setHeightFogEnabled}
+          setHeightFogStrength={setHeightFogStrength}
+          setHeightFogRange={setHeightFogRange}
+          setHeightFogOffset={setHeightFogOffset}
         />
       )}
 
@@ -321,6 +331,12 @@ const App: React.FC = () => {
                   terrainChunkTintEnabled={terrainChunkTintEnabled}
                   terrainWireframeEnabled={terrainWireframeEnabled}
                   terrainWeightsView={terrainWeightsView}
+                  fogNear={fogNear}
+                  fogFar={fogFar}
+                  heightFogEnabled={heightFogEnabled}
+                  heightFogStrength={heightFogStrength}
+                  heightFogRange={heightFogRange}
+                  heightFogOffset={heightFogOffset}
                   initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}

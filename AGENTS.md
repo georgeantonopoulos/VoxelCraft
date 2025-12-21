@@ -321,6 +321,19 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Beefier Jungle Trees**: Significantly increased the base trunk radius (from 0.6 to 1.1) and canopy spread for Jungle trees in `TreeGeometryFactory.ts` to create a more "imposing" rainforest feel.
   - **Enhanced Undergrowth Density**: Added `JUNGLE_GIANT_FERN` and increased base scaling for all jungle vegetation (Broadleaf, Ferns, Vines) in `VegetationConfig.ts`. This compensates for previous poly-count reductions by filling more screen space with low-poly, voluminous shapes.
   - **Corrected Tree Geometry Nesting**: Fixed a missing closing brace in `TreeGeometryFactory.ts` that caused build failures and ensured proper deterministic cache isolation.
+- **Realistic Horizon Fog**: Implemented advanced fog techniques based on user "Tips and Tricks".
+  - Switched from linear `THREE.Fog` to `THREE.FogExp2` for smoother landscape fading.
+  - Implemented **Height Fog** in `TriplanarShader.ts` to ground the terrain and add atmospheric depth at lower altitudes.
+  - Synchronized fog density calculations across scene and custom shaders (`4.0 / fogFar` logic).
+  - Added debug controls for height fog (strength, range, offset).
+  
+### Worklog
+- **Horizon Fog Implementation (2025-12-21)**:
+  - Replaced linear fog with `FogExp2` in `AtmosphereManager`.
+  - Added Height Fog injection into `TriplanarShader`.
+  - Refined density logic to ensure terrain is fully occluded before the draw distance limit.
+  - Added Leva controls for height fog tweaking.
+- **Cinematic Camera Alignment**: Fixed cinematic camera to follow player's initial spawn instead of target 0,0,0.
 - **Spawn Logic & Loader Safety (2025-12-18)**
   - **Fixed Infinite Loading Screen**: Resolved a race condition where the terrain loader was waiting for chunks around the spawn point, while the generator was busy loading chunks around the cinematic camera. The streaming system now correctly prioritizes the spawn area during the pre-load phase.
   - **Synchronized World State**: Fixed a bug where `Player` spawn height was calculated based on stale (default) world parameters. App-level `useEffect` now correctly updates the `spawnPos` whenever a `WorldType` is selected, preventing player falls.
