@@ -139,7 +139,7 @@ export interface ChunkState {
   colliderIndices?: Uint32Array;
 
   lightPositions?: Float32Array;
-  lodLevel?: number; // Distance in chunks from player (0-4)
+  lodLevel?: number; // Distance in chunks from player (continuous, quantized)
 }
 
 export interface CustomTool {

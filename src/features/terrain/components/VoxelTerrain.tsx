@@ -913,6 +913,22 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const mountQueue = useRef<any[]>([]);
   const lodUpdateQueue = useRef<string[]>([]);
   const lastTimeRef = useRef(0);
+  const lastLodUpdatePos = useRef(new THREE.Vector2());
+  const LOD_DISTANCE_STEP = 0.1; // Chunk-distance quantization for stable LOD updates
+  const LOD_UPDATE_DISTANCE = CHUNK_SIZE_XZ * 0.2;
+  const LOD_UPDATE_DISTANCE_SQ = LOD_UPDATE_DISTANCE * LOD_UPDATE_DISTANCE;
+
+  const getChunkLodDistanceRaw = (cx: number, cz: number, camCx: number, camCz: number) => {
+    const dx = Math.max(0, Math.abs(camCx - (cx + 0.5)) - 0.5);
+    const dz = Math.max(0, Math.abs(camCz - (cz + 0.5)) - 0.5);
+    return Math.max(dx, dz);
+  };
+
+  const quantizeLodDistance = (distance: number) =>
+    Math.round(distance / LOD_DISTANCE_STEP) * LOD_DISTANCE_STEP;
+
+  const getChunkLodDistance = (cx: number, cz: number, camCx: number, camCz: number) =>
+    quantizeLodDistance(getChunkLodDistanceRaw(cx, cz, camCx, camCz));
 
   // 3. Process Queues (Throttled)
   useFrame((state) => {
@@ -950,6 +966,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Use spawnPos for initial load to ensure we have a floor, otherwise use camera
     const streamX = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[0] : camera.position.x;
     const streamZ = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[2] : camera.position.z;
+    const camCx = streamX / CHUNK_SIZE_XZ;
+    const camCz = streamZ / CHUNK_SIZE_XZ;
 
     const px = Math.floor(streamX / CHUNK_SIZE_XZ);
     const pz = Math.floor(streamZ / CHUNK_SIZE_XZ);
@@ -1006,34 +1024,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
       neededKeysRef.current = neededKeys;
 
-      // BATCH UPDATE LOD LEVELS
-      const nextRefChunks = { ...chunksRef.current };
-      let lodChanged = false;
-      const toUpdate: string[] = [];
-
-      for (const key in nextRefChunks) {
-        const chunk = nextRefChunks[key];
-        const dist = Math.max(Math.abs(chunk.cx - px), Math.abs(chunk.cz - pz));
-        if (chunk.lodLevel !== dist) {
-          nextRefChunks[key] = { ...chunk, lodLevel: dist };
-          toUpdate.push(key);
-          lodChanged = true;
-        }
-      }
-
-      if (lodChanged) {
-        chunksRef.current = nextRefChunks;
-        // Prioritize chunks closer to the player for LOD updates
-        toUpdate.sort((a, b) => {
-          const ca = nextRefChunks[a];
-          const cb = nextRefChunks[b];
-          const da = Math.max(Math.abs(ca.cx - px), Math.abs(ca.cz - pz));
-          const db = Math.max(Math.abs(cb.cx - px), Math.abs(cb.cz - pz));
-          return da - db;
-        });
-        lodUpdateQueue.current = toUpdate;
-      }
-
       // Identify unneeded chunks and move to removeQueue
       let removalPushed = false;
       Object.keys(chunksRef.current).forEach(key => {
@@ -1075,6 +1065,46 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             colliderEnableQueue.current.push(key);
           }
         }
+      }
+    }
+
+    const lodDx = streamX - lastLodUpdatePos.current.x;
+    const lodDz = streamZ - lastLodUpdatePos.current.y;
+    const lodMovedFar = lodDx * lodDx + lodDz * lodDz >= LOD_UPDATE_DISTANCE_SQ;
+
+    if (moved || lodMovedFar) {
+      lastLodUpdatePos.current.set(streamX, streamZ);
+
+      // BATCH UPDATE LOD LEVELS
+      const nextRefChunks = { ...chunksRef.current };
+      let lodChanged = false;
+      const toUpdate: string[] = [];
+
+      for (const key in nextRefChunks) {
+        const chunk = nextRefChunks[key];
+        const dist = getChunkLodDistance(chunk.cx, chunk.cz, camCx, camCz);
+        if (chunk.lodLevel !== dist) {
+          nextRefChunks[key] = { ...chunk, lodLevel: dist };
+          toUpdate.push(key);
+          lodChanged = true;
+        }
+      }
+
+      if (lodChanged) {
+        chunksRef.current = nextRefChunks;
+        const merged = new Set([...lodUpdateQueue.current, ...toUpdate]);
+        const mergedKeys = Array.from(merged).filter(key => nextRefChunks[key]);
+
+        // Prioritize chunks closer to the player for LOD updates
+        mergedKeys.sort((a, b) => {
+          const ca = nextRefChunks[a];
+          const cb = nextRefChunks[b];
+          const da = getChunkLodDistanceRaw(ca.cx, ca.cz, camCx, camCz);
+          const db = getChunkLodDistanceRaw(cb.cx, cb.cz, camCx, camCz);
+          return da - db;
+        });
+
+        lodUpdateQueue.current = mergedKeys;
       }
     }
 
@@ -1151,7 +1181,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
-          const lodLevel = dChebyPlayer;
+          const lodLevel = getChunkLodDistance(cx, cz, camCx, camCz);
           const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {

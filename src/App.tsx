@@ -100,6 +100,8 @@ const App: React.FC = () => {
 
   const [fogNear, setFogNear] = useState(20);
   const [fogFar, setFogFar] = useState(160);
+  const [atmosphereHaze, setAtmosphereHaze] = useState(0.35);
+  const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
@@ -205,6 +207,8 @@ const App: React.FC = () => {
           setExposureUnderwater={setExposureUnderwater}
           setFogNear={setFogNear}
           setFogFar={setFogFar}
+          setAtmosphereHaze={setAtmosphereHaze}
+          setAtmosphereBrightness={setAtmosphereBrightness}
           setSunIntensityMul={setSunIntensityMul}
           setAmbientIntensityMul={setAmbientIntensityMul}
           setMoonIntensityMul={setMoonIntensityMul}
@@ -238,7 +242,7 @@ const App: React.FC = () => {
           values={{
             debugShadowsEnabled, triplanarDetail, postProcessingEnabled, aoEnabled, bloomEnabled, aoIntensity,
             bloomIntensity, bloomThreshold, exposureSurface, exposureCaveMax, exposureUnderwater,
-            fogNear, fogFar, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
+            fogNear, fogFar, atmosphereHaze, atmosphereBrightness, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
             iblEnabled, iblIntensity, terrainShaderFogEnabled, terrainShaderFogStrength,
             terrainThreeFogEnabled, terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
             terrainRoughnessMin, bedrockPlaneEnabled, terrainPolygonOffsetEnabled,
@@ -285,6 +289,8 @@ const App: React.FC = () => {
             moonIntensityMul={moonIntensityMul}
             fogNear={fogNear}
             fogFar={fogFar}
+            hazeAmount={atmosphereHaze}
+            brightness={atmosphereBrightness}
             viewDistance={viewDistance}
             orbitConfig={orbitConfig}
           />

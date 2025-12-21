@@ -16,6 +16,8 @@ export const DebugControls: React.FC<{
     setExposureUnderwater: (v: number) => void;
     setFogNear: (v: number) => void;
     setFogFar: (v: number) => void;
+    setAtmosphereHaze: (v: number) => void;
+    setAtmosphereBrightness: (v: number) => void;
     setSunIntensityMul: (v: number) => void;
     setAmbientIntensityMul: (v: number) => void;
     setMoonIntensityMul: (v: number) => void;
@@ -87,6 +89,10 @@ export const DebugControls: React.FC<{
                 Fog: folder({
                     fogNear: { value: 20, min: 0, max: 120, step: 1, onChange: props.setFogNear, label: 'Near' },
                     fogFar: { value: 160, min: 20, max: 600, step: 5, onChange: props.setFogFar, label: 'Far' },
+                }),
+                Atmosphere: folder({
+                    haze: { value: 0.35, min: 0.0, max: 1.0, step: 0.01, onChange: props.setAtmosphereHaze, label: 'Haze' },
+                    brightness: { value: 1.0, min: 0.6, max: 1.6, step: 0.01, onChange: props.setAtmosphereBrightness, label: 'Brightness' },
                 })
             }, { collapsed: false }),
 

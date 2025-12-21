@@ -48,7 +48,7 @@ export const ChunkMesh: React.FC<{
   terrainChunkTintEnabled = false,
   terrainWireframeEnabled = false,
   terrainWeightsView = 'off',
-  lodLevel, // Added lodLevel to destructuring
+  lodLevel = 0, // Added lodLevel to destructuring
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   // NOTE:

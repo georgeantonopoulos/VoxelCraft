@@ -569,9 +569,14 @@ export const MoonFollower: React.FC<{
 
 export const AtmosphereController: React.FC<{
     orbitConfig: { speed: number; offset: number };
-}> = ({ orbitConfig }) => {
+    hazeAmount: number;
+    brightness: number;
+}> = ({ orbitConfig, hazeAmount, brightness }) => {
     const { scene } = useThree();
     const gradientRef = useRef({ top: new THREE.Color(), bottom: new THREE.Color() });
+    const tunedTop = useRef(new THREE.Color());
+    const tunedBottom = useRef(new THREE.Color());
+    const hazeBlend = useRef(new THREE.Color());
 
     useFrame(({ clock }) => {
         const t = clock.getElapsedTime();
@@ -579,11 +584,25 @@ export const AtmosphereController: React.FC<{
         const radius = 300;
         const sunY = Math.cos(angle) * radius;
         const grads = getSkyGradient(sunY, radius);
-        gradientRef.current.top.copy(grads.top);
-        gradientRef.current.bottom.copy(grads.bottom);
+        const clampedBrightness = Math.max(0, brightness ?? 1.0);
+        const clampedHaze = THREE.MathUtils.clamp(hazeAmount ?? 0.0, 0.0, 1.0);
+
+        tunedTop.current.copy(grads.top).multiplyScalar(clampedBrightness);
+        tunedBottom.current.copy(grads.bottom).multiplyScalar(clampedBrightness);
+
+        if (clampedHaze > 0) {
+            hazeBlend.current.copy(tunedBottom.current).lerp(tunedTop.current, 0.25);
+            tunedBottom.current.lerp(hazeBlend.current, clampedHaze);
+        }
+
+        gradientRef.current.top.copy(tunedTop.current);
+        gradientRef.current.bottom.copy(tunedBottom.current);
 
         if (scene.fog) {
-            scene.fog.color.copy(grads.bottom);
+            scene.fog.color.copy(tunedBottom.current);
+        }
+        if (scene.background instanceof THREE.Color) {
+            scene.background.copy(tunedBottom.current);
         }
     });
 
@@ -605,6 +624,8 @@ export const AtmosphereManager: React.FC<{
     moonIntensityMul: number;
     fogNear: number;
     fogFar: number;
+    hazeAmount: number;
+    brightness: number;
     viewDistance: number;
     orbitConfig: { radius: number; speed: number; offset: number };
 }> = (props) => {
@@ -615,6 +636,8 @@ export const AtmosphereManager: React.FC<{
             <AmbientController intensityMul={props.ambientIntensityMul} />
             <AtmosphereController
                 orbitConfig={props.orbitConfig}
+                hazeAmount={props.hazeAmount}
+                brightness={props.brightness}
             />
             <SunFollower
                 sunDirection={props.sunDirection}

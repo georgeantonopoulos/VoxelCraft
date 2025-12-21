@@ -5,6 +5,7 @@ import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { LOD_DISTANCE_VEGETATION, LOD_DISTANCE_VEGETATION_ANY } from '@/constants';
 
 // The "Life" Shader: Wind sway and subtle color variation
 const VEGETATION_SHADER = {
@@ -109,6 +110,49 @@ const VEGETATION_SHADER = {
   `
 };
 
+const smoothstep = (edge0: number, edge1: number, x: number) => {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+};
+
+const hashPosition = (x: number, y: number, z: number) => {
+  const h = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return h - Math.floor(h);
+};
+
+// Deterministic sampling avoids spatial bias when thinning vegetation by LOD.
+const filterPositionsByDensity = (positions: Float32Array, density: number) => {
+  if (density >= 0.999) return positions;
+  if (density <= 0) return new Float32Array(0);
+
+  const stride = 6;
+  const count = positions.length / stride;
+  let keepCount = 0;
+
+  for (let i = 0; i < count; i++) {
+    const idx = i * stride;
+    const h = hashPosition(positions[idx], positions[idx + 1], positions[idx + 2]);
+    if (h < density) keepCount++;
+  }
+
+  if (keepCount === 0) return new Float32Array(0);
+  if (keepCount === count) return positions;
+
+  const filtered = new Float32Array(keepCount * stride);
+  let write = 0;
+
+  for (let i = 0; i < count; i++) {
+    const idx = i * stride;
+    const h = hashPosition(positions[idx], positions[idx + 1], positions[idx + 2]);
+    if (h < density) {
+      filtered.set(positions.subarray(idx, idx + stride), write);
+      write += stride;
+    }
+  }
+
+  return filtered;
+};
+
 // Pool for vegetation materials to avoid per-chunk material creation overhead.
 // Keyed by Asset ID.
 const vegetationMaterialPool: Record<number, THREE.Material> = {};
@@ -147,16 +191,16 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
   const batches = useMemo(() => {
     if (!data) return [];
 
-    let densityFactor = 1.0;
-    if (lodLevel === 2) densityFactor = 0.5;
-    else if (lodLevel === 3) densityFactor = 0.1;
-    else if (lodLevel >= 4) densityFactor = 0.0;
+    const lodDistance = lodLevel ?? 0;
+    let densityFactor = 1.0 - smoothstep(LOD_DISTANCE_VEGETATION, LOD_DISTANCE_VEGETATION_ANY, lodDistance);
+    densityFactor = Math.max(0, Math.min(1, densityFactor));
 
     return Object.entries(data).map(([typeStr, positions]) => {
       const posArray = positions as Float32Array;
       const typeId = parseInt(typeStr);
       const asset = VEGETATION_ASSETS[typeId];
       if (!asset) return null;
+      if (densityFactor <= 0.001) return null;
 
       let geoName: keyof typeof VEGETATION_GEOMETRIES = 'box';
       switch (typeId) {
@@ -174,14 +218,15 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 11: geoName = 'giant_fern'; break;
       }
 
-      const count = Math.floor((posArray.length / 6) * densityFactor);
+      const filteredPositions = densityFactor >= 0.999 ? posArray : filterPositionsByDensity(posArray, densityFactor);
+      const count = filteredPositions.length / 6;
       if (count === 0) return null;
       const geometry = VEGETATION_GEOMETRIES[geoName];
 
       return {
         id: typeId,
         asset: { ...asset, id: typeId }, // Ensure ID is present for pooling
-        positions: posArray,
+        positions: filteredPositions,
         count,
         geometry
       };
