@@ -2,6 +2,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
+import { getCachedChunk, saveToCache } from '@/state/ChunkCache';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
@@ -185,6 +186,7 @@ ctx.onmessage = async (e: MessageEvent) => {
         if (type === 'CONFIGURE') {
             const { worldType } = payload;
             BiomeManager.setWorldType(worldType);
+            (self as any).worldType = worldType; // Store locally for cache lookups
             console.log('[terrain.worker] Configured WorldType:', worldType);
         } else if (type === 'GENERATE') {
 
@@ -192,14 +194,87 @@ ctx.onmessage = async (e: MessageEvent) => {
             // const t0 = performance.now();
             // console.log('[terrain.worker] GENERATE start', cx, cz);
 
-            // 1. Fetch persistent modifications (Async)
-            // This happens BEFORE generation so we can pass them in
             let modifications: any[] = [];
             try {
                 modifications = await getChunkModifications(cx, cz);
             } catch (err) {
                 console.error('[terrain.worker] DB Read Error:', err);
-                // Continue generation even if DB fails, to avoid game crash
+            }
+
+            // 1b. Check Mesh Cache (Only for Pristine Chunks)
+            const worldType = (self as any).worldType || 'DEFAULT';
+            const CACHE_VERSION = 1; // Bump this to invalidate old cache data
+
+            if (modifications.length === 0) {
+                const cached = await getCachedChunk(cx, cz, worldType, CACHE_VERSION);
+                if (cached) {
+                    // console.log('[terrain.worker] Cache Hit:', cx, cz);
+                    const response = {
+                        key: `${cx},${cz}`,
+                        cx, cz,
+                        density: cached.density,
+                        material: cached.material,
+                        terrainVersion: 0,
+                        visualVersion: 0,
+                        metadata: {
+                            wetness: cached.meshWetness, // Approximate matches for metadata
+                            mossiness: cached.meshMossiness
+                        },
+                        floraPositions: new Float32Array(0), // Cached chunks might need to store these too
+                        treePositions: new Float32Array(0),
+                        treeInstanceBatches: cached.treeInstanceBatches || {},
+                        stickPositions: new Float32Array(0),
+                        rockPositions: new Float32Array(0),
+                        drySticks: new Float32Array(0),
+                        jungleSticks: new Float32Array(0),
+                        rockDataBuckets: {},
+                        largeRockPositions: new Float32Array(0),
+                        rootHollowPositions: new Float32Array(0),
+                        fireflyPositions: cached.fireflyPositions || new Float32Array(0),
+                        floraHotspots: cached.floraHotspots || new Float32Array(0),
+                        stickHotspots: cached.stickHotspots || new Float32Array(0),
+                        rockHotspots: cached.rockHotspots || new Float32Array(0),
+                        vegetationData: {}, // Need to store this too for full restoration
+                        meshPositions: cached.meshPositions,
+                        meshIndices: cached.meshIndices,
+                        meshMatWeightsA: cached.meshMatWeightsA,
+                        meshMatWeightsB: cached.meshMatWeightsB,
+                        meshMatWeightsC: cached.meshMatWeightsC,
+                        meshMatWeightsD: cached.meshMatWeightsD,
+                        meshNormals: cached.meshNormals,
+                        meshWetness: cached.meshWetness,
+                        meshMossiness: cached.meshMossiness,
+                        meshCavity: cached.meshCavity,
+                        meshWaterPositions: cached.meshWaterPositions,
+                        meshWaterIndices: cached.meshWaterIndices,
+                        meshWaterNormals: cached.meshWaterNormals,
+                        meshWaterShoreMask: cached.meshWaterShoreMask
+                    };
+
+                    // Transferable logic for cache hit
+                    const buffers: ArrayBuffer[] = [
+                        cached.density.buffer as ArrayBuffer,
+                        cached.material.buffer as ArrayBuffer,
+                        cached.meshPositions.buffer as ArrayBuffer,
+                        cached.meshIndices.buffer as ArrayBuffer,
+                        cached.meshNormals.buffer as ArrayBuffer,
+                        cached.meshMatWeightsA.buffer as ArrayBuffer,
+                        cached.meshMatWeightsB.buffer as ArrayBuffer,
+                        cached.meshMatWeightsC.buffer as ArrayBuffer,
+                        cached.meshMatWeightsD.buffer as ArrayBuffer,
+                        cached.meshWetness.buffer as ArrayBuffer,
+                        cached.meshMossiness.buffer as ArrayBuffer,
+                        cached.meshCavity.buffer as ArrayBuffer,
+                        cached.meshWaterPositions.buffer as ArrayBuffer,
+                        cached.meshWaterIndices.buffer as ArrayBuffer,
+                        cached.meshWaterNormals.buffer as ArrayBuffer,
+                        cached.meshWaterShoreMask.buffer as ArrayBuffer
+                    ];
+                    if (cached.fireflyPositions) buffers.push(cached.fireflyPositions.buffer as ArrayBuffer);
+
+                    ctx.postMessage({ type: 'GENERATED', payload: response }, buffers);
+                    return;
+                }
             }
 
             // 2. Generate with mods
@@ -453,6 +528,36 @@ ctx.onmessage = async (e: MessageEvent) => {
                 meshWaterNormals: mesh.waterNormals,
                 meshWaterShoreMask: mesh.waterShoreMask
             };
+
+            // 4. Save to Cache if Pristine (BEFORE sending so buffers aren't neutered)
+            if (modifications.length === 0) {
+                saveToCache({
+                    id: `${cx},${cz},${worldType},${CACHE_VERSION}`,
+                    cx, cz, worldType, version: CACHE_VERSION,
+                    meshPositions: mesh.positions,
+                    meshIndices: mesh.indices,
+                    meshNormals: mesh.normals,
+                    meshMatWeightsA: mesh.matWeightsA,
+                    meshMatWeightsB: mesh.matWeightsB,
+                    meshMatWeightsC: mesh.matWeightsC,
+                    meshMatWeightsD: mesh.matWeightsD,
+                    meshWetness: mesh.wetness,
+                    meshMossiness: mesh.mossiness,
+                    meshCavity: mesh.cavity,
+                    meshWaterPositions: mesh.waterPositions,
+                    meshWaterIndices: mesh.waterIndices,
+                    meshWaterNormals: mesh.waterNormals,
+                    meshWaterShoreMask: mesh.waterShoreMask,
+                    density,
+                    material,
+                    fireflyPositions,
+                    floraHotspots,
+                    stickHotspots: stickData.stickHotspots,
+                    rockHotspots: rockData.rockHotspots,
+                    treeInstanceBatches: treeInstanceData.treeInstanceBatches,
+                    timestamp: Date.now()
+                }).catch(e => console.warn('[terrain.worker] Cache Save Failed:', e));
+            }
 
             ctx.postMessage({ type: 'GENERATED', payload: response }, [
                 ...vegetationBuffers,

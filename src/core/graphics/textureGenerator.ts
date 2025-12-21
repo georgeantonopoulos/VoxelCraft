@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { noise } from '@core/math/noise';
 
 export function createNoiseTexture(size = 64): THREE.Data3DTexture {
+    // Safety check: prevent catastrophic allocation failures.
+    // 64^3 * 4 = 1MB. 128^3 * 4 = 8MB. 256^3 * 4 = 64MB.
+    if (size > 128) {
+        console.warn(`[textureGenerator] Requested large size (${size}), capping at 64 to prevent OOM.`);
+        size = 64;
+    }
     const data = new Uint8Array(size * size * size * 4);
 
     let i = 0;

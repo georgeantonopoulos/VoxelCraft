@@ -45,29 +45,20 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const dissipateStartTimerRef = useRef<NodeJS.Timeout | null>(null);
     const dissipateTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-    const { scene } = useGLTF(stumpUrl);
-
-    // Orientation Logic: Align the stump to the terrain normal
+    // Orientation Logic (used for the tree and swarm placement)
     const quaternion = useMemo(() => {
         const up = new THREE.Vector3(0, 1, 0);
-        // Use primitive values from the array to avoid re-running on new array references
         const nx = normal[0] || 0;
         const ny = normal[1] || 1;
         const nz = normal[2] || 0;
 
-        // GRAVITROPISM FIX:
-        // Trees grow mostly UP, not perpendicular to the slope.
-        // We blend the terrain normal with the world UP vector.
         const terrainNormal = new THREE.Vector3(nx, ny, nz).normalize();
         const targetDirection = new THREE.Vector3()
             .copy(terrainNormal)
-            .lerp(up, 0.7) // 70% Up, 30% Slope. This prevents extreme sideways tilting.
+            .lerp(up, 0.7)
             .normalize();
 
-        // Create quaternion that rotates UP to the Target Direction
         const q = new THREE.Quaternion().setFromUnitVectors(up, targetDirection);
-
-        // Deterministic random rotation based on position
         const hash = Math.abs(Math.sin(position[0] * 12.9898 + position[2] * 78.233) * 43758.5453);
         const randomAngle = (hash % 1) * Math.PI * 2;
 
@@ -77,74 +68,15 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         return q;
     }, [normal[0], normal[1], normal[2], position[0], position[2]]);
 
-    const { model: stumpModel, radius: stumpRadius, height: stumpHeight } = useMemo(() => {
-        const cloned = scene.clone(true);
-        const box = new THREE.Box3().setFromObject(cloned);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-
-        const targetHeight = STUMP_CONFIG.height * STUMP_CONFIG.scale;
-        const sourceHeight = size.y > 0.0001 ? size.y : 1;
-        const scale = targetHeight / sourceHeight;
-        cloned.scale.setScalar(scale);
-
-        // Ensure proper shadowing and single-sided rendering to avoid Z-fighting
-        cloned.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-                const mesh = child as THREE.Mesh;
-                mesh.castShadow = true;
-                mesh.receiveShadow = true;
-
-                const material = mesh.material as THREE.Material | THREE.Material[];
-                if (Array.isArray(material)) {
-                    material.forEach(mat => { if (mat) mat.side = THREE.FrontSide; });
-                } else if (material) {
-                    material.side = THREE.FrontSide;
-                }
-            }
-        });
-
-        const scaledBox = new THREE.Box3().setFromObject(cloned);
-        const center = new THREE.Vector3();
-        scaledBox.getCenter(center);
-
-        // Position so that the base of the stump sits at y=0 and centered on origin
-        cloned.position.set(-center.x, -scaledBox.min.y, -center.z);
-
-        const finalBox = new THREE.Box3().setFromObject(cloned);
-        const finalSize = new THREE.Vector3();
-        finalBox.getSize(finalSize);
-
-        const radius = Math.max(finalSize.x, finalSize.z) * 0.5;
-
-        return {
-            model: cloned,
-            radius: radius || 1.4 * STUMP_CONFIG.scale,
-            height: finalSize.y || targetHeight
-        };
-    }, [scene]);
-
     // Transition Logic
     useEffect(() => {
-        // Clear any existing timers when status changes
-        if (growTimerRef.current) {
-            clearTimeout(growTimerRef.current);
-            growTimerRef.current = null;
-        }
-        if (dissipateStartTimerRef.current) {
-            clearTimeout(dissipateStartTimerRef.current);
-            dissipateStartTimerRef.current = null;
-        }
-        if (dissipateTimerRef.current) {
-            clearTimeout(dissipateTimerRef.current);
-            dissipateTimerRef.current = null;
-        }
+        if (growTimerRef.current) { clearTimeout(growTimerRef.current); growTimerRef.current = null; }
+        if (dissipateStartTimerRef.current) { clearTimeout(dissipateStartTimerRef.current); dissipateStartTimerRef.current = null; }
+        if (dissipateTimerRef.current) { clearTimeout(dissipateTimerRef.current); dissipateTimerRef.current = null; }
 
         if (status === 'CHARGING') {
             console.log('[RootHollow] Starting 10 second particle formation timer');
-            // Ensure the next run starts "charged" (not dissipating).
             setSwarmDissipating(false);
-            // Wait 10 seconds for particle formation
             growTimerRef.current = setTimeout(() => {
                 console.log('[RootHollow] Timer complete, transitioning to GROWING');
                 setStatus('GROWING');
@@ -152,46 +84,31 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
 
         if (status === 'GROWING') {
-            // The fractal tree grows over time; fade the swarm near the end of growth (not instantly).
-            // `FractalTree` growth speed for type=0 is ~0.4 => ~2.5s to reach full growth.
-            const startDissipateMs = 2200;
-            const hideMs = 3800;
-
             dissipateStartTimerRef.current = setTimeout(() => {
-                console.log('[RootHollow] Starting swarm dissipation (near end of growth)');
+                console.log('[RootHollow] Starting swarm dissipation');
                 setSwarmDissipating(true);
-            }, startDissipateMs);
-
+            }, 2200);
             dissipateTimerRef.current = setTimeout(() => {
                 console.log('[RootHollow] Hiding swarm');
                 setSwarmVisible(false);
-            }, hideMs);
+            }, 3800);
         }
 
         return () => {
-            if (growTimerRef.current) {
-                console.log('[RootHollow] Cleaning up grow timer');
-                clearTimeout(growTimerRef.current);
-                growTimerRef.current = null;
-            }
-            if (dissipateStartTimerRef.current) {
-                console.log('[RootHollow] Cleaning up dissipate start timer');
-                clearTimeout(dissipateStartTimerRef.current);
-                dissipateStartTimerRef.current = null;
-            }
-            if (dissipateTimerRef.current) {
-                console.log('[RootHollow] Cleaning up dissipate timer');
-                clearTimeout(dissipateTimerRef.current);
-                dissipateTimerRef.current = null;
-            }
+            if (growTimerRef.current) clearTimeout(growTimerRef.current);
+            if (dissipateStartTimerRef.current) clearTimeout(dissipateStartTimerRef.current);
+            if (dissipateTimerRef.current) clearTimeout(dissipateTimerRef.current);
         };
     }, [status]);
 
     const frameCount = useRef(0);
-    useFrame(() => {
+    useFrame((state) => {
+        // OPTIMIZATION: Only run scanning if player is nearby (< 10 units)
+        const playerDistSq = state.camera.position.distanceToSquared(posVec);
+        if (playerDistSq > 100) return; // 10^2 = 100
+
         if (status !== 'IDLE') return;
 
-        // Optimization: Only scan for entities once every 20 frames
         frameCount.current++;
         if (frameCount.current % 20 !== 0) return;
 
@@ -208,7 +125,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             if (distSq < 2.25) {
                 const vel = body.linvel();
                 if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
-                    console.log('[RootHollow] Flora detected and stationary, triggering CHARGING');
                     removeEntity(entity.id);
                     setStatus('CHARGING');
                     setSwarmVisible(true);
@@ -218,44 +134,44 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
     });
 
-    const colliderHeight = stumpHeight || (STUMP_CONFIG.height * STUMP_CONFIG.scale);
-    const colliderRadius = stumpRadius ? stumpRadius * 0.6 : 1.4 * STUMP_CONFIG.scale * 0.6;
-
     const groupPosition = useMemo(
         () => new THREE.Vector3(position[0], position[1] - STUMP_CONFIG.embedOffset, position[2]),
         [position]
     );
 
-    // World-space spawn point for the tree (top of stump)
     const treeWorldPosition = useMemo(() => {
         return new THREE.Vector3(0, 0.5, 0).applyQuaternion(quaternion).add(groupPosition);
     }, [quaternion, groupPosition]);
 
+    const stumpHeight = STUMP_CONFIG.height * STUMP_CONFIG.scale;
+    const stumpRadius = 1.4 * STUMP_CONFIG.scale;
+
     return (
-        // Lower the group slightly (-0.3) so the flared roots embed into the terrain
         <group position={groupPosition} quaternion={quaternion}>
+            {/* 
+               The STUMP MESH itself is now rendered by StumpLayer.tsx 
+               using an instancedMesh. We only keep the logic and 
+               interactive layers here to save memory.
+            */}
             <RigidBody type="fixed" colliders={false}>
-                <group position={[0, colliderHeight / 2, 0]}>
-                    <CylinderCollider args={[colliderHeight / 2, colliderRadius]} />
+                <group position={[0, stumpHeight / 2, 0]}>
+                    <CylinderCollider args={[stumpHeight / 2, stumpRadius * 0.6]} />
                 </group>
-                <primitive object={stumpModel} />
+                {/* Visual mesh removed from here - rendered by VoxelTerrain->StumpLayer */}
             </RigidBody>
 
-            {/* Luma Swarm Animation (Charging Phase) */}
             {swarmVisible && (
-                <group position={[0, 1.5, 0]}> {/* Lift slightly above stump */}
+                <group position={[0, 1.5, 0]}>
                     <Suspense fallback={
-                        <>
-                            <mesh>
-                                <sphereGeometry args={[0.5, 16, 16]} />
-                                <meshStandardMaterial
-                                    emissive="#ff00ff"
-                                    emissiveIntensity={5.0}
-                                    toneMapped={false}
-                                    color="#ff00ff"
-                                />
-                            </mesh>
-                        </>
+                        <mesh>
+                            <sphereGeometry args={[0.5, 16, 16]} />
+                            <meshStandardMaterial
+                                emissive="#ff00ff"
+                                emissiveIntensity={5.0}
+                                toneMapped={false}
+                                color="#ff00ff"
+                            />
+                        </mesh>
                     }>
                         <LumaSwarm dissipating={swarmDissipating} />
                     </Suspense>

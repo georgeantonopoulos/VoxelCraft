@@ -2,7 +2,7 @@ import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
@@ -124,7 +124,7 @@ const getVegetationMaterial = (asset: any) => {
       ...sharedUniforms,
       uSway: { value: asset.sway },
       uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
-      uNoiseTexture: { value: noiseTexture },
+      uNoiseTexture: { value: getNoiseTexture() },
       uOpacity: { value: 1.0 },
     },
     color: asset.color,
@@ -139,12 +139,19 @@ const getVegetationMaterial = (asset: any) => {
 interface VegetationLayerProps {
   data: Record<string, Float32Array>; // vegetationData from worker
   sunDirection?: THREE.Vector3;
+  lodLevel?: number;
 }
 
-export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data }) => {
+export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ data, lodLevel = 0 }) => {
 
   const batches = useMemo(() => {
     if (!data) return [];
+
+    let densityFactor = 1.0;
+    if (lodLevel === 2) densityFactor = 0.5;
+    else if (lodLevel === 3) densityFactor = 0.1;
+    else if (lodLevel >= 4) densityFactor = 0.0;
+
     return Object.entries(data).map(([typeStr, positions]) => {
       const posArray = positions as Float32Array;
       const typeId = parseInt(typeStr);
@@ -167,7 +174,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({ dat
         case 11: geoName = 'giant_fern'; break;
       }
 
-      const count = posArray.length / 6;
+      const count = Math.floor((posArray.length / 6) * densityFactor);
+      if (count === 0) return null;
       const geometry = VEGETATION_GEOMETRIES[geoName];
 
       return {

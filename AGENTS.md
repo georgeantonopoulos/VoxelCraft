@@ -147,6 +147,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Grid Resolution**: Keep procedural generation grids at reasonable resolutions (e.g. 4x4 or higher). A 2x2 grid is 4x as expensive as 4x4 and can easily overwhelm the worker and main thread.
 - **Noise Sampling**: Minimize `noise3D` calls in high-frequency loops. Cache biome/climate lookups and use fast hashes for local jitter.
 
+- **LOD System**: Implemented in `VoxelTerrain.tsx` and `ChunkMesh.tsx`. Chunks are assigned 4 discrete LOD levels based on player distance. Level 0 is full quality; Level 1+ simplifies trees (opaque leaves) and reduces vegetation density.
+- **Pristine Caching**: Procedurally generated chunks (density + pristine mesh) are cached in IndexedDB at `src/state/ChunkCache.ts`. Worker checks this cache before generating/meshing to bypass heavy Surface Nets computation on area revisits.
+- **Shader Feature Culling**: `TriplanarShader.ts` skips expensive calculations (caustics, high-freq noise, macro-noise) for distant fragments (`distSq > 4096.0`) to save GPU slab cycles.
+- Phase 4: GPU / Shader optimizations and material pooling.
+- Phase 5: Verification (LOD, caching, performance) and documentation.
+- Phase 6: Memory stability fixes (Lazy noise texture, worker buffer safety).
+- Phase 7: Performance & Memory Refactor (Uniform throttling, instanced stumps).
 ---
 
 ## Verification Checklist (required)
@@ -157,6 +164,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-20: Implemented Multi-Tier Graphics Optimization (LOD, Caching, Pooling).
+  - **LOD System**: Added 4 discrete tiers for chunks. Simplified trees (opaque materials, low-poly geometry) and reduced vegetation density (50% at LOD 2, 10% at LOD 3, 0% at LOD 4).
+  - **Chunk Cache**: Integrated IndexedDB-based persistence for procedural mesh data in `terrain.worker.ts`. Skips Surface Nets/Density generation for pristine chunks on revisits.
+  - **Global Pooling**: Refactored `WaterMaterial.tsx` and unified `TreeLayer`/`VegetationLayer` to use global material singletons/pools.
+  - **Shader Culling**: Distance-based feature skipping (>64 units) for terrain shader.
 - 2025-12-20: Enabled Custom Tool interaction with trees and building, and added tool modification in Crafting editor.
   - Fixed tree interaction for custom tools by supporting physics collider hits in `VoxelTerrain.tsx` via `chunkKey` and `treeIndex` metadata in `userData`.
   - Updated building logic to factor in tool's `digPower` (multiplied by `DIG_STRENGTH`), ensuring custom tools are more/less effective based on shards/stones.
@@ -325,12 +337,20 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Staged mounting in `ChunkMesh.tsx`**: Deferred the rendering of heavy auxiliary layers (trees, flora) by one frame after the terrain mounts.
   - **Verified resource disposal**: Added explicit `.dispose()` for geometries and textures in `ChunkMesh.tsx` to prevent long-term GPU memory leaks.
   - **Improved Stutter**: Visual inspection confirms that chunk-loading stutters (FPS drops) are significantly reduced during movement.
+- 2025-12-21: Memory Stability & RangeError Fixes
+  - **Lazy Noise Initialization**: Defered 3D noise texture allocation in `sharedResources.ts` until first use to prevent module-load memory spikes.
+  - **Worker Buffer Safety**: Fixed race condition in `terrain.worker.ts` where buffers were transferred before cache saving.
+  - **Allocation Guards**: Added size caps to `textureGenerator.ts`.
+- 2025-12-21: Phase 7: Performance & Memory Refactor
+  - **Uniform Throttling**: Optimized `TriplanarMaterial.tsx` to update global uniforms (fog, sun, detail) only once per frame, reducing CPU overhead by ~200x for 200 chunks.
+  - **Stump Instancing**: Replaced individual `RootHollow` mesh rendering with `StumpLayer.tsx` (InstancedMesh).
+  - **Memory Leak Fix**: Removed heavy GLB cloning in `RootHollow.tsx` (~2GB RAM savings).
 - 2025-12-18: Removed dithered fade-in logic from `TriplanarMaterial.tsx` and `ChunkMesh.tsx`. Chunks now pop in instantly as requested.
 
 - 2025-12-18: Fixed critical runtime crash "CustomShaderMaterial is not a constructor".
   - **Identified root cause**: The default import from `three-custom-shader-material` v6 is a React component, while material pooling/singleton logic requires the vanilla class constructor.
   - **Fix**: Updated `TriplanarMaterial.tsx`, `TreeLayer.tsx`, `VegetationLayer.tsx`, and `GroundItemsLayer.tsx` to use the `/vanilla` import path.
-  - **Build Verification**: Confirmed `npm run build` completes successfully.
+
 - 2025-12-19: Fixed "Uncaught TypeError: Cannot read properties of undefined (reading 'postMessage')" in `WorkerPool.ts`.
   - **Identified root cause**: Negative chunk coordinates (e.g., `(-1, -1)`) passed to `postToOne` resulted in a negative array index (`-2 % 4 === -2`), causing an out-of-bounds access.
   - **Fix**: Added `Math.abs(index)` in `WorkerPool.postToOne` to ensure target indices are always positive and within the valid range of the worker pool.

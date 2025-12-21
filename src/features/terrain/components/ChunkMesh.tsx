@@ -3,14 +3,15 @@ import * as THREE from 'three';
 import { RigidBody } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
-import { VOXEL_SCALE, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, MESH_Y_OFFSET } from '@/constants';
+import {
+  VOXEL_SCALE, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, MESH_Y_OFFSET,
+  LOD_DISTANCE_VEGETATION_ANY, LOD_DISTANCE_PHYSICS, LOD_DISTANCE_SIMPLIFIED, LOD_DISTANCE_TREES_ANY
+} from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
-
-
 
 export const ChunkMesh: React.FC<{
   chunk: ChunkState;
@@ -29,6 +30,7 @@ export const ChunkMesh: React.FC<{
   terrainChunkTintEnabled?: boolean;
   terrainWireframeEnabled?: boolean;
   terrainWeightsView?: string;
+  lodLevel?: number; // Added lodLevel to props type
 }> = React.memo(({
   chunk,
   sunDirection,
@@ -45,7 +47,8 @@ export const ChunkMesh: React.FC<{
   terrainPolygonOffsetUnits = -1.0,
   terrainChunkTintEnabled = false,
   terrainWireframeEnabled = false,
-  terrainWeightsView = 'off'
+  terrainWeightsView = 'off',
+  lodLevel, // Added lodLevel to destructuring
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   // NOTE:
@@ -166,7 +169,7 @@ export const ChunkMesh: React.FC<{
 
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
-  const colliderEnabled = chunk.colliderEnabled ?? true;
+  const colliderEnabled = lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
@@ -240,10 +243,13 @@ export const ChunkMesh: React.FC<{
         </mesh>
       ))}
       {waterGeometry && (
-        <mesh geometry={waterGeometry} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}>
+        <mesh
+          geometry={waterGeometry}
+          scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
+          userData={{ shoreMask: waterShoreMask }}
+        >
           <WaterMaterial
             sunDirection={sunDirection}
-            shoreMask={waterShoreMask}
             shoreEdge={0.07}
             alphaBase={0.58}
             texStrength={0.12}
@@ -254,20 +260,21 @@ export const ChunkMesh: React.FC<{
 
       {showLayers && (
         <>
-          {chunk.vegetationData && (
-            <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} />
+          {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && chunk.vegetationData && (
+            <VegetationLayer data={chunk.vegetationData} sunDirection={sunDirection} lodLevel={lodLevel} />
           )}
 
-          {chunk.treePositions && chunk.treePositions.length > 0 && (
+          {lodLevel <= LOD_DISTANCE_TREES_ANY && chunk.treePositions && chunk.treePositions.length > 0 && (
             <TreeLayer
               data={chunk.treePositions}
               treeInstanceBatches={chunk.treeInstanceBatches}
               collidersEnabled={colliderEnabled}
               chunkKey={chunk.key}
+              simplified={lodLevel > LOD_DISTANCE_SIMPLIFIED}
             />
           )}
 
-          {(chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (
+          {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && (chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (
             <GroundItemsLayer
               drySticks={chunk.drySticks}
               jungleSticks={chunk.jungleSticks}
@@ -284,6 +291,7 @@ export const ChunkMesh: React.FC<{
               cx={chunk.cx}
               cz={chunk.cz}
               collidersEnabled={colliderEnabled}
+              simplified={lodLevel > LOD_DISTANCE_SIMPLIFIED}
             />
           )}
         </>

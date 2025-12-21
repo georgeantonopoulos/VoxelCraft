@@ -16,6 +16,7 @@ import { MaterialType, ChunkState, ItemType } from '@/types';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
+import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
@@ -906,6 +907,29 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
       neededKeysRef.current = neededKeys;
 
+      // BATCH UPDATE LOD LEVELS
+      const nextChunks = { ...chunksRef.current };
+      let lodChanged = false;
+      for (const key in nextChunks) {
+        const chunk = nextChunks[key];
+        const dist = Math.max(Math.abs(chunk.cx - px), Math.abs(chunk.cz - pz));
+        if (chunk.lodLevel !== dist) {
+          nextChunks[key] = { ...chunk, lodLevel: dist };
+          lodChanged = true;
+        }
+      }
+
+      if (lodChanged) {
+        chunksRef.current = nextChunks;
+        if (initialLoadTriggered.current) {
+          startTransition(() => {
+            setChunks(nextChunks);
+          });
+        } else {
+          setChunks(nextChunks);
+        }
+      }
+
       // Identify unneeded chunks and move to removeQueue
       let removalPushed = false;
       Object.keys(chunksRef.current).forEach(key => {
@@ -1006,10 +1030,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
+          const lodLevel = dChebyPlayer;
           const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {
             ...payload,
+            lodLevel,
             colliderEnabled,
             terrainVersion: payload.terrainVersion ?? 0,
             visualVersion: payload.visualVersion ?? 0,
@@ -1506,7 +1532,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             // Sharp tools (shards) break stone into shards. 
             // Blunt tools (stones) generate sparks.
             const damage = capabilities.stoneDamage > 0 ? capabilities.stoneDamage : (selectedItem === ItemType.STONE ? 2.5 : 0);
-            
+
             if (damage > 0) {
               const damageStore = useEntityHistoryStore.getState();
               const stoneId = userData.id;
@@ -2057,7 +2083,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       {Object.values(chunks).map(chunk => (
         <React.Fragment key={chunk.key}>
           <ChunkMesh
+            key={chunk.key}
             chunk={chunk}
+            lodLevel={chunk.lodLevel}
             sunDirection={sunDirection}
             triplanarDetail={triplanarDetail}
             terrainShaderFogEnabled={terrainShaderFogEnabled}
@@ -2075,9 +2103,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             terrainWeightsView={terrainWeightsView}
           />
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
-            // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
-            Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
-              (
+            <>
+              {/* Instanced rendering for the base meshes */}
+              <StumpLayer positions={chunk.rootHollowPositions} chunkKey={chunk.key} />
+
+              {/* Logic layer for interaction/growth (only active within physics distance) */}
+              {chunk.lodLevel <= COLLIDER_RADIUS && Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
                 <RootHollow
                   key={`${chunk.key}-root-${i}`}
                   position={[
@@ -2091,8 +2122,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                     chunk.rootHollowPositions![i * 6 + 5]
                   ]}
                 />
-              )
-            ))
+              ))}
+            </>
           )}
         </React.Fragment>
       ))}

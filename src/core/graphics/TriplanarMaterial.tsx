@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import React, { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { sharedUniforms } from './SharedUniforms';
 
 import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragmentShader } from './TriplanarShader';
@@ -16,7 +16,7 @@ const getSharedTerrainMaterial = () => {
 
   const uniforms = {
     ...sharedUniforms,
-    uNoiseTexture: { value: noiseTexture },
+    uNoiseTexture: { value: getNoiseTexture() },
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },
     uColorDirt: { value: new THREE.Color('#755339') },
@@ -101,45 +101,75 @@ export const TriplanarMaterial: React.FC<{
 
     const mat = useMemo(() => getSharedTerrainMaterial(), []);
 
-    useFrame(() => {
+    // Track the last frame we updated the shared material to avoid 
+    // redundant work across hundreds of chunks.
+    const lastUpdateFrameRef = useRef(-1);
+
+    useFrame((state) => {
       const matAny = mat as any;
       if (!matAny) return;
 
-      // Keep shared noise up to date
-      if (matAny.uniforms.uNoiseTexture.value !== noiseTexture) matAny.uniforms.uNoiseTexture.value = noiseTexture;
+      // Only update global/shared uniforms once per frame
+      if (lastUpdateFrameRef.current !== state.gl.info.render.frame) {
+        lastUpdateFrameRef.current = state.gl.info.render.frame;
 
-      // Avoid per-frame churn: only touch uniforms when values actually change
-      if (matAny.uniforms.uTriplanarDetail.value !== triplanarDetail) matAny.uniforms.uTriplanarDetail.value = triplanarDetail;
-      const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) matAny.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
-      if (matAny.uniforms.uShaderFogStrength.value !== shaderFogStrength) matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
-      const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uWetnessEnabled.value !== wetnessEnabledF) matAny.uniforms.uWetnessEnabled.value = wetnessEnabledF;
-      const mossEnabledF = mossEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uMossEnabled.value !== mossEnabledF) matAny.uniforms.uMossEnabled.value = mossEnabledF;
-      if (matAny.uniforms.uRoughnessMin.value !== roughnessMin) matAny.uniforms.uRoughnessMin.value = roughnessMin;
+        // Keep shared noise up to date
+        if (matAny.uniforms.uNoiseTexture.value !== getNoiseTexture()) {
+          matAny.uniforms.uNoiseTexture.value = getNoiseTexture();
+        }
 
-      matAny.polygonOffset = polygonOffsetEnabled;
-      matAny.polygonOffsetFactor = polygonOffsetFactor;
-      matAny.polygonOffsetUnits = polygonOffsetUnits;
-      matAny.wireframe = wireframe;
+        // Avoid per-frame churn: only touch uniforms when values actually change
+        if (matAny.uniforms.uTriplanarDetail.value !== triplanarDetail) {
+          matAny.uniforms.uTriplanarDetail.value = triplanarDetail;
+        }
 
-      const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-      const nextWeightsView = viewMap[weightsView] ?? 0;
-      if (matAny.uniforms.uWeightsView.value !== nextWeightsView) matAny.uniforms.uWeightsView.value = nextWeightsView;
-      matAny.fog = threeFogEnabled;
+        const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
+        if (matAny.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) {
+          matAny.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
+        }
 
-      matAny.uniforms.uWaterLevel.value = waterLevel;
+        if (matAny.uniforms.uShaderFogStrength.value !== shaderFogStrength) {
+          matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
+        }
 
-      const fog = scene.fog as THREE.Fog | undefined;
-      if (fog) {
-        const colorHex = `#${fog.color.getHexString()}`;
-        const lastFog = lastFogRef.current;
-        if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
-          matAny.uniforms.uFogColor.value.copy(fog.color);
-          matAny.uniforms.uFogNear.value = fog.near;
-          matAny.uniforms.uFogFar.value = fog.far;
-          lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
+        const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
+        if (matAny.uniforms.uWetnessEnabled.value !== wetnessEnabledF) {
+          matAny.uniforms.uWetnessEnabled.value = wetnessEnabledF;
+        }
+
+        const mossEnabledF = mossEnabled ? 1.0 : 0.0;
+        if (matAny.uniforms.uMossEnabled.value !== mossEnabledF) {
+          matAny.uniforms.uMossEnabled.value = mossEnabledF;
+        }
+
+        if (matAny.uniforms.uRoughnessMin.value !== roughnessMin) {
+          matAny.uniforms.uRoughnessMin.value = roughnessMin;
+        }
+
+        matAny.polygonOffset = polygonOffsetEnabled;
+        matAny.polygonOffsetFactor = polygonOffsetFactor;
+        matAny.polygonOffsetUnits = polygonOffsetUnits;
+        matAny.wireframe = wireframe;
+
+        const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+        const nextWeightsView = viewMap[weightsView] ?? 0;
+        if (matAny.uniforms.uWeightsView.value !== nextWeightsView) {
+          matAny.uniforms.uWeightsView.value = nextWeightsView;
+        }
+
+        matAny.fog = threeFogEnabled;
+        matAny.uniforms.uWaterLevel.value = waterLevel;
+
+        const fog = scene.fog as THREE.Fog | undefined;
+        if (fog) {
+          const colorHex = `#${fog.color.getHexString()}`;
+          const lastFog = lastFogRef.current;
+          if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
+            matAny.uniforms.uFogColor.value.copy(fog.color);
+            matAny.uniforms.uFogNear.value = fog.near;
+            matAny.uniforms.uFogFar.value = fog.far;
+            lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
+          }
         }
       }
     });

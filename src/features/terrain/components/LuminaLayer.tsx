@@ -9,6 +9,7 @@ interface LuminaLayerProps {
   cx: number;
   cz: number;
   collidersEnabled: boolean;
+  simplified?: boolean;
 }
 
 // Shared material pool for Lumina flora
@@ -32,7 +33,7 @@ const getSharedLuminaMaterial = () => {
  * - Disables frustum culling to fix visibility issues when chunk origin is off-screen.
  * - Adds clustered point lights that only activate when player is near.
  */
-export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, collidersEnabled }) => {
+export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, collidersEnabled, simplified }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
@@ -90,10 +91,10 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
         receiveShadow={false}
         frustumCulled={false}
       >
-        <sphereGeometry args={[0.25, 12, 12]} />
+        <sphereGeometry args={[0.25, simplified ? 6 : 12, simplified ? 6 : 12]} />
       </instancedMesh>
 
-      {collidersEnabled && lights.map((pos, i) => (
+      {!simplified && collidersEnabled && lights.map((pos, i) => (
         <DistanceCulledLight key={i} position={pos} intensityMul={1.0} />
       ))}
     </group>

@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
@@ -21,9 +21,10 @@ interface TreeLayerProps {
     treeInstanceBatches?: Record<string, TreeInstanceBatch>; // Pre-computed from worker
     collidersEnabled: boolean;
     chunkKey: string;
+    simplified?: boolean;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled, chunkKey }) => {
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled, chunkKey, simplified }) => {
     // Use pre-computed batches if available, otherwise fall back to client-side batching
     const batches = useMemo(() => {
         // If we have pre-computed batches from worker, use them directly
@@ -124,6 +125,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                     count={batch.count}
                     collidersEnabled={collidersEnabled}
                     chunkKey={chunkKey}
+                    simplified={simplified}
                 />
             ))}
         </group>
@@ -133,6 +135,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
 // Material pools for trees to avoid per-chunk creation.
 const treeWoodMaterialPool: Record<string, THREE.Material> = {};
 const treeLeafMaterialPool: Record<string, THREE.Material> = {};
+const treeLeafOpaqueMaterialPool: Record<string, THREE.Material> = {};
 
 const getTreeWoodMaterial = (type: number, colors: any) => {
     const key = `${type}`;
@@ -218,7 +221,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
         uniforms: {
             uColorBase: { value: new THREE.Color(colors.base) },
             uColorTip: { value: new THREE.Color(colors.tip) },
-            uNoiseTexture: { value: noiseTexture },
+            uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
             uIsInstanced: { value: 1.0 },
         },
@@ -229,12 +232,15 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
     return treeWoodMaterialPool[key];
 };
 
-const getTreeLeafMaterial = (type: number, colors: any) => {
-    const key = `${type}`;
-    if (treeLeafMaterialPool[key]) return treeLeafMaterialPool[key];
+const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
+    const key = `${type}${opaque ? ':opaque' : ''}`;
+    const pool = opaque ? treeLeafOpaqueMaterialPool : treeLeafMaterialPool;
+    if (pool[key]) return pool[key];
 
-    treeLeafMaterialPool[key] = new (CustomShaderMaterial as any)({
+    pool[key] = new (CustomShaderMaterial as any)({
         baseMaterial: THREE.MeshStandardMaterial,
+        transparent: !opaque,
+        alphaTest: opaque ? 0.5 : 0.0,
         vertexShader: `
             uniform float uTime;
             uniform float uLeafHueVariation;
@@ -318,7 +324,7 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
         `,
         uniforms: {
             uColorTip: { value: new THREE.Color(colors.tip) },
-            uNoiseTexture: { value: noiseTexture },
+            uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
             uLeafHueVariation: { value: 0.30 }
         },
@@ -336,11 +342,12 @@ const InstancedTreeBatch: React.FC<{
     count: number,
     collidersEnabled: boolean;
     chunkKey: string;
-}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey }) => {
+    simplified?: boolean;
+}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
 
-    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
+    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant, simplified), [type, variant, simplified]);
 
     useLayoutEffect(() => {
         if (!woodMesh.current || !matrices || matrices.length === 0) return;
@@ -402,7 +409,7 @@ const InstancedTreeBatch: React.FC<{
     }, [type]);
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
-    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors), [type, colors]);
+    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified), [type, colors, simplified]);
 
     const colliderGeometries = useMemo(() => {
         const cylinder = new THREE.CylinderGeometry(0.225, 0.225, 1.0, 6);

@@ -1,9 +1,9 @@
 
 import * as THREE from 'three';
-import React, { useRef } from 'react';
+import React, { useMemo } from 'react';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ } from '@/constants';
 
 // Fallback 1x1 shoreline mask so water can't disappear if a chunk has no computed mask.
@@ -26,7 +26,7 @@ const WaterMeshShader = shaderMaterial(
     // Base water colors (tuned to avoid "milky white" surface washout).
     uColorShallow: new THREE.Color('#3ea7d6'),
     uColorDeep: new THREE.Color('#0b3e63'),
-    uNoiseTexture: noiseTexture,
+    uNoiseTexture: getNoiseTexture(),
     uShoreMask: FALLBACK_SHORE_MASK,
     uShoreEdge: 0.06,
     uAlphaBase: 0.58,
@@ -162,9 +162,37 @@ const WaterMeshShader = shaderMaterial(
 
 extend({ WaterMeshShader });
 
+// --- SINGLETON OPTIMIZATION ---
+let sharedWaterMaterial: any = null;
+
+export const getSharedWaterMaterial = () => {
+  if (sharedWaterMaterial) return sharedWaterMaterial;
+
+  sharedWaterMaterial = new WaterMeshShader();
+  sharedWaterMaterial.transparent = true;
+  sharedWaterMaterial.side = THREE.DoubleSide;
+  sharedWaterMaterial.depthWrite = false;
+
+  // Use onBeforeRender to swap the unique per-chunk texture
+  sharedWaterMaterial.onBeforeRender = function (
+    _renderer: any,
+    _scene: any,
+    _camera: any,
+    _geometry: any,
+    mesh: THREE.Mesh
+  ) {
+    if (mesh.userData.shoreMask) {
+      this.uniforms.uShoreMask.value = mesh.userData.shoreMask;
+    } else {
+      this.uniforms.uShoreMask.value = FALLBACK_SHORE_MASK;
+    }
+  };
+
+  return sharedWaterMaterial;
+};
+
 export interface WaterMaterialProps {
   sunDirection?: THREE.Vector3;
-  shoreMask?: THREE.Texture | null;
   shoreEdge?: number;
   alphaBase?: number;
   texStrength?: number;
@@ -174,57 +202,43 @@ export interface WaterMaterialProps {
 /**
  * Water material component.
  */
-export const WaterMaterial: React.FC<WaterMaterialProps> = ({
+export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
   sunDirection,
-  shoreMask = null,
   shoreEdge = 0.06,
   alphaBase = 0.58,
   texStrength = 0.12,
   foamStrength = 0.22
 }) => {
-  const ref = useRef<any>(null);
   const { camera, scene } = useThree();
+  const material = useMemo(() => getSharedWaterMaterial(), []);
 
   useFrame(({ clock }) => {
-    if (ref.current) {
-      ref.current.uTime = clock.getElapsedTime();
-      ref.current.uCamPos = camera.position;
-      // Chunk opacity fade was removed; keep water fully active and let fog handle distance.
-      ref.current.uFade = 1.0;
-      ref.current.uShoreEdge = shoreEdge;
-      ref.current.uAlphaBase = alphaBase;
-      ref.current.uTexStrength = texStrength;
-      ref.current.uFoamStrength = foamStrength;
-      ref.current.uChunkSize = CHUNK_SIZE_XZ;
+    // These uniforms are shared across ALL water chunks
+    material.uniforms.uTime.value = clock.getElapsedTime();
+    material.uniforms.uCamPos.value.copy(camera.position);
+    material.uniforms.uFade.value = 1.0;
+    material.uniforms.uShoreEdge.value = shoreEdge;
+    material.uniforms.uAlphaBase.value = alphaBase;
+    material.uniforms.uTexStrength.value = texStrength;
+    material.uniforms.uFoamStrength.value = foamStrength;
+    material.uniforms.uChunkSize.value = CHUNK_SIZE_XZ;
 
-      const fog = scene.fog as THREE.Fog | undefined;
-      if (fog) {
-        ref.current.uFogColor.copy(fog.color);
-        ref.current.uFogNear = fog.near;
-        ref.current.uFogFar = fog.far;
-      } else {
-        ref.current.uFogColor.set('#87CEEB');
-        ref.current.uFogNear = 1e6;
-        ref.current.uFogFar = 1e6 + 1.0;
-      }
-
-      if (sunDirection) ref.current.uSunDir = sunDirection;
-      if (ref.current.uNoiseTexture !== noiseTexture) {
-        ref.current.uNoiseTexture = noiseTexture;
-      }
-      // Ensure a valid shore mask is always bound (shader discards when mask is 0).
-      const nextMask = shoreMask ?? FALLBACK_SHORE_MASK;
-      if (ref.current.uShoreMask !== nextMask) ref.current.uShoreMask = nextMask;
+    const fog = scene.fog as THREE.Fog | undefined;
+    if (fog) {
+      material.uniforms.uFogColor.value.copy(fog.color);
+      material.uniforms.uFogNear.value = fog.near;
+      material.uniforms.uFogFar.value = fog.far;
     }
+
+    if (sunDirection) material.uniforms.uSunDir.value.copy(sunDirection);
   });
 
   return (
-    // @ts-ignore
-    <waterMeshShader
-      ref={ref}
-      transparent
-      side={THREE.DoubleSide} // Render backfaces for volume feel
-      depthWrite={false} // Important for transparency sorting
+    <primitive
+      object={material}
+      attach="material"
+    // We still need a way to pass the shoreMask to the mesh.
+    // This will be handled in ChunkMesh.tsx by setting mesh.userData.shoreMask
     />
   );
-};
+});

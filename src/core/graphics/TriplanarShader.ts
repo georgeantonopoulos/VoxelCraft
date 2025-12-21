@@ -268,10 +268,13 @@ export const triplanarFragmentShader = `
 
   void main() {
     vec3 N = safeNormalize(vWorldNormal);
+    float distSq = dot(vWorldPosition - cameraPosition, vWorldPosition - cameraPosition);
+    bool lowDetail = distSq > 4096.0; // Beyond 64 units (2 chunks)
+
     vec4 nMid = getTriplanarNoise(N, 0.15);
     float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
-    vec4 nHigh = getTriplanarNoise(N, highScale);
-    vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
+    vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
+    vec4 nMacro = lowDetail ? vec4(0.5) : texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
@@ -350,7 +353,7 @@ export const triplanarFragmentShader = `
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
     col = clamp(col, 0.0, 5.0); col += accEmission * accColor; 
-    if (vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
+    if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
         float depthMask = smoothstep(60.0, 0.0, waterDepth);
         float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);

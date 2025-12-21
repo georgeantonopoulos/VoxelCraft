@@ -102,7 +102,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       // Resolve CustomTool object if the item is a tool ID string
       const resolvedItem = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
         ? customTools[selectedItem]
-        : selectedItem;
+        : selectedItem as ItemType;
 
       const capabilities = getToolCapabilities(resolvedItem);
       const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;

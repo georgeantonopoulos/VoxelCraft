@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
@@ -37,7 +37,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
     const uniforms = useMemo(() => ({
         uColorBase: { value: new THREE.Color(colors.base) },
         uColorTip: { value: new THREE.Color(colors.tip) },
-        uNoiseTexture: { value: noiseTexture },
+        uNoiseTexture: { value: getNoiseTexture() },
         // Stable per-tree seed so per-leaf variation doesn't repeat identically between trees.
         uTreeSeed: { value: seed },
         // Per-tree hue shift for visible color variety (0.30 ≈ 17 degrees).

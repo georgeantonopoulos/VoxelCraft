@@ -6,19 +6,23 @@ import { TreeType } from '@features/terrain/logic/VegetationConfig';
 export class TreeGeometryFactory {
     // Cache per (type, variant) so we can keep instancing efficient while allowing a few
     // deterministic jungle templates for variation.
-    private static cache: Record<number, Record<number, { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] }>> = {};
+    // Cache per (type, variant, simplified)
+    private static cache: Record<number, Record<number, Record<string, { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] }>>> = {};
 
-    static getTreeGeometry(type: TreeType, variant = 0): { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] } {
+    static getTreeGeometry(type: TreeType, variant = 0, simplified = false): { wood: THREE.BufferGeometry, leaves: THREE.BufferGeometry, collisionData: any[] } {
         if (!this.cache[type]) this.cache[type] = {};
-        if (this.cache[type][variant]) {
+        if (!this.cache[type][variant]) this.cache[type][variant] = {};
+
+        const key = simplified ? 'low' : 'high';
+        if (this.cache[type][variant][key]) {
             // Defensive: during hot reloads / stale caches, ensure new shader attributes exist.
-            this.ensureLeafRandAttribute(this.cache[type][variant].leaves, type, variant);
-            return this.cache[type][variant];
+            this.ensureLeafRandAttribute(this.cache[type][variant][key].leaves, type, variant);
+            return this.cache[type][variant][key];
         }
 
-        const { wood, leaves, collisionData } = this.generateTree(type, variant);
+        const { wood, leaves, collisionData } = this.generateTree(type, variant, simplified);
         this.ensureLeafRandAttribute(leaves, type, variant);
-        this.cache[type][variant] = { wood, leaves, collisionData };
+        this.cache[type][variant][key] = { wood, leaves, collisionData };
         return { wood, leaves, collisionData };
     }
 
@@ -38,7 +42,7 @@ export class TreeGeometryFactory {
         leaves.setAttribute('aLeafRand', new THREE.BufferAttribute(arr, 1));
     }
 
-    private static generateTree(type: TreeType, variant: number) {
+    private static generateTree(type: TreeType, variant: number, simplified = false) {
         const woodGeometries: THREE.BufferGeometry[] = [];
         const leafGeometries: THREE.BufferGeometry[] = [];
         const collisionData: { position: THREE.Vector3, quaternion: THREE.Quaternion, scale: THREE.Vector3 }[] = [];
@@ -56,14 +60,14 @@ export class TreeGeometryFactory {
         let leafGeo: THREE.BufferGeometry;
 
         if (type === TreeType.CACTUS) {
-            branchGeo = new THREE.CylinderGeometry(0.3, 0.2, 1.0, 6); // Reduced segments
+            branchGeo = new THREE.CylinderGeometry(0.3, 0.2, 1.0, simplified ? 4 : 6); // Reduced segments
             branchGeo.scale(1.0, 1.0, 0.25);
             branchGeo.translate(0, 0.5, 0);
             branchGeoLow = branchGeo;
             leafGeo = new THREE.DodecahedronGeometry(0.15, 0);
         } else {
             // Standard Branch: 4 segments for trunk (Square)
-            branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, 4);
+            branchGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.0, simplified ? 3 : 4);
             branchGeo.translate(0, 0.5, 0);
 
             // Low-poly Branch: 3 segments (Triangular) for tips
@@ -71,22 +75,23 @@ export class TreeGeometryFactory {
             branchGeoLow.translate(0, 0.5, 0);
 
             if (type === TreeType.PINE) {
-                leafGeo = new THREE.ConeGeometry(0.3, 0.8, 4);
+                leafGeo = new THREE.ConeGeometry(0.3, 0.8, simplified ? 3 : 4);
             } else if (type === TreeType.JUNGLE) {
-                leafGeo = new THREE.DodecahedronGeometry(0.6, 0);
-                leafGeo.scale(1.5, 0.6, 1.5);
+                leafGeo = simplified ? new THREE.TetrahedronGeometry(0.8) : new THREE.DodecahedronGeometry(0.6, 0);
+                if (!simplified) leafGeo.scale(1.5, 0.6, 1.5);
+                else leafGeo.scale(1.2, 0.8, 1.2);
             } else {
-                // Octahedron (8 faces) for better volume than Tetrahedron
-                leafGeo = new THREE.OctahedronGeometry(0.4, 0);
+                // Octahedron (8 faces) or Tetrahedron (4 faces)
+                leafGeo = simplified ? new THREE.TetrahedronGeometry(0.5) : new THREE.OctahedronGeometry(0.4, 0);
             }
         }
 
         // --- PARAMETERS ---
-        let MAX_DEPTH = 5; // Balanced: 5 (32 tips) vs Original 6 (64 tips) vs Barren 4 (16 tips)
+        let MAX_DEPTH = simplified ? 4 : 5;
         let LENGTH_DECAY = 0.85;
         let RADIUS_DECAY = 0.6;
         let ANGLE_BASE = 25 * (Math.PI / 180);
-        let BRANCH_PROB = 0.7;
+        let BRANCH_PROB = simplified ? 0.5 : 0.7;
         let BASE_LENGTH = 2.0;
         let JUNGLE_TRUNK_DEPTH = 3;
         let JUNGLE_CANOPY_WIDTH = 2.0;
@@ -156,6 +161,7 @@ export class TreeGeometryFactory {
         };
 
         const addLeafClump = (pos: THREE.Vector3, scaleMul: number) => {
+            if (simplified && rand() > 0.6) return; // Reduce leaf count
             if (type === TreeType.JUNGLE && rand() > 0.9) return;
 
             dummy.makeRotationFromEuler(new THREE.Euler(rand() * 3, rand() * 3, rand() * 3));

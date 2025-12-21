@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
@@ -22,7 +22,7 @@ const getGroundItemMaterial = (shader: any, color: string, roughness: number, is
       uInstancing: { value: isInstanced },
       uSeed: { value: 0 },
       uHeight: { value: 1.0 },
-      uNoiseTexture: { value: noiseTexture }
+      uNoiseTexture: { value: getNoiseTexture() }
     },
     color: color,
     roughness: roughness,

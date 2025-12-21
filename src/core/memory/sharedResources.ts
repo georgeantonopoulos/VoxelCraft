@@ -4,18 +4,17 @@ import { createNoiseTexture } from '@core/graphics/textureGenerator';
 /**
  * Singleton texture shared across materials to save VRAM.
  * This is a 3D noise texture used for terrain texturing.
+ * We use a proxy-like pattern to ensure it's created lazily upon first access,
+ * preventing allocation peaks during initial module load.
  */
-const noiseTextureInstance: THREE.Data3DTexture = createNoiseTexture(64);
+let noiseTextureInstance: THREE.Data3DTexture | null = null;
 
-/**
- * Getter function for the shared noise texture.
- * @returns The singleton 3D noise texture instance.
- */
-export function getNoiseTexture(): THREE.Data3DTexture {
+export const getNoiseTexture = (): THREE.Data3DTexture => {
+  if (!noiseTextureInstance) {
+    // console.log('[sharedResources] Initializing shared noise texture...');
+    noiseTextureInstance = createNoiseTexture(64);
+  }
   return noiseTextureInstance;
-}
+};
 
-/**
- * Direct export of the noise texture for backward compatibility.
- */
-export const noiseTexture = noiseTextureInstance;
+// export const noiseTexture = getNoiseTexture();

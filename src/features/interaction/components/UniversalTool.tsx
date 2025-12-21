@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { ItemType, CustomTool } from '@/types';
 import { getItemColor } from '../logic/ItemRegistry';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
@@ -53,7 +53,7 @@ export const StoneMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, 
                 vertexShader={ROCK_SHADER.vertex}
                 uniforms={{
                     uInstancing: { value: false },
-                    uNoiseTexture: { value: noiseTexture },
+                    uNoiseTexture: { value: getNoiseTexture() },
                     uSeed: { value: 67.89 }
                 }}
                 color={getItemColor(ItemType.STONE)}
