@@ -189,18 +189,12 @@ export const triplanarFragmentShader = `
 
   float sampleCausticPattern(vec2 uv, float ang, float tz1, float tz2) {
       vec2 flow1 = vec2(cos(ang), sin(ang)) * 0.5;
-      vec2 flow2 = vec2(cos(ang * 2.0 + 1.0), sin(ang * 2.0 + 1.0)) * 0.3;
       vec3 p1a = vec3(uv * 0.7 + flow1, tz1);
       vec3 p1b = vec3(uv * 0.7 - flow1, tz2);
       float n1a = texture(uNoiseTexture, p1a).r;
       float n1b = texture(uNoiseTexture, p1b).r;
       float r1 = pow(1.0 - abs(min(n1a, n1b) - 0.5) * 2.0, 10.0);
-      vec3 p2a = vec3(uv * 2.5 + flow2, tz2);
-      vec3 p2b = vec3(uv * 2.5 - flow2, tz1);
-      float n2a = texture(uNoiseTexture, p2a).r;
-      float n2b = texture(uNoiseTexture, p2b).r;
-      float r2 = pow(1.0 - abs(min(n2a, n2b) - 0.5) * 2.0, 12.0);
-      return r1 * 0.4 + r2 * 0.05;
+      return r1;
   }
 
   vec3 getRealisticCaustics(vec3 pos, vec3 sunDir, float t) {

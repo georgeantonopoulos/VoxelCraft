@@ -272,7 +272,7 @@ const App: React.FC = () => {
           }}
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
-          <PerformanceMonitor />
+          <PerformanceMonitor visible={debugMode} />
 
           <AtmosphereManager
             sunDirection={sunDirection}

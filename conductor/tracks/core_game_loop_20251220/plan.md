@@ -35,12 +35,21 @@ In this phase, we will integrate and enhance the environmental simulation featur
 
 ---
 
-## Phase 4: Refinement and Performance [checkpoint: 14a3dbf]
+## Phase 4: Performance Optimization
 
-This phase will focus on refining the gameplay experience and ensuring performance.
+This phase focuses exclusively on profiling and optimizing the game's performance.
 
-- [ ] Task: Profile and optimize the game's performance to ensure a smooth framerate.
-- [ ] Task: Reduce the polygons in the grove trees by 75% to improve performance.
+- [x] Task: Reduce the polygons in the grove trees by 75% to improve performance.
+- [x] Task: Implement comprehensive profiling tools (CPU, GPU, Memory, Draw Calls).
+- [x] Task: Apply optimizations based on profiling data (Mesh Simplification, Texture Compression, Shader Optimization, Culling Techniques).
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: Performance Optimization' (Protocol in workflow.md)
+
+---
+
+## Phase 5: Final Refinement
+
+This phase will focus on gameplay bug fixes and control refinement.
+
 - [ ] Task: Fix Bug: Hitting a thrown rock with another rock does not deplete its life.
 - [ ] Task: Refine the player controls and interaction feedback based on playtesting.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Refinement and Performance' (Protocol in workflow.md)
+- [ ] Task: Conductor - User Manual Verification 'Phase 5: Final Refinement' (Protocol in workflow.md)
