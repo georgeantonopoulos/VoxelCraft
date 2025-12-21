@@ -8,15 +8,28 @@ import { sharedUniforms } from './SharedUniforms';
 import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragmentShader } from './TriplanarShader';
 
 // Shared material instance to avoid redundant shader compilation/patching per chunk.
-// All chunks share this material; variety is provided by geometry attributes (wetness, spawnTime, etc.).
+// All chunks share this material; variety is provided by geometry attributes (wetness, spawnTime, etc.)
 let sharedTerrainMaterial: THREE.MeshStandardMaterial | null = null;
+
+// Placeholder 1x1x1 3D texture - only used until material creation completes.
+// The real noise texture is assigned synchronously in getSharedTerrainMaterial().
+const PLACEHOLDER_NOISE_3D = (() => {
+  const data = new Uint8Array([255, 255, 255, 255]); // 1x1x1 RGBA - White (Max Intensity)
+  // White avoids 'black/dark' terrain (0.6 intensity) by boosting it to 1.2
+  // AND avoids 'Crazy RGB' caustics (which trigger on 0.5 gray values).
+  const tex = new THREE.Data3DTexture(data, 1, 1, 1);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.needsUpdate = true;
+  return tex;
+})();
 
 const getSharedTerrainMaterial = () => {
   if (sharedTerrainMaterial) return sharedTerrainMaterial;
 
   const uniforms = {
     ...sharedUniforms,
-    uNoiseTexture: { value: getNoiseTexture() },
+    uNoiseTexture: { value: PLACEHOLDER_NOISE_3D }, // Will be replaced lazily
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },
     uColorDirt: { value: new THREE.Color('#755339') },
@@ -109,14 +122,14 @@ export const TriplanarMaterial: React.FC<{
       const matAny = mat as any;
       if (!matAny) return;
 
+      // Lazy initialization of noise texture (deferred from module load to avoid memory allocation failures)
+      if (matAny.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
+        matAny.uniforms.uNoiseTexture.value = getNoiseTexture();
+      }
+
       // Only update global/shared uniforms once per frame
       if (lastUpdateFrameRef.current !== state.gl.info.render.frame) {
         lastUpdateFrameRef.current = state.gl.info.render.frame;
-
-        // Keep shared noise up to date
-        if (matAny.uniforms.uNoiseTexture.value !== getNoiseTexture()) {
-          matAny.uniforms.uNoiseTexture.value = getNoiseTexture();
-        }
 
         // Avoid per-frame churn: only touch uniforms when values actually change
         if (matAny.uniforms.uTriplanarDetail.value !== triplanarDetail) {

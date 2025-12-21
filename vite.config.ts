@@ -83,6 +83,17 @@ const vcPoseWriterPlugin = (): Plugin => ({
     });
   }
 });
+const coopCoepPlugin = (): Plugin => ({
+  name: 'coop-coep-plugin',
+  configureServer(server) {
+    server.middlewares.use((_req, res, next) => {
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+      res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+      next();
+    });
+  }
+});
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
@@ -90,21 +101,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
-      // Enable cross-origin isolation so workers can use SharedArrayBuffer for chunk voxel fields.
-      // This avoids main-thread cloning/copying during frequent remeshes.
-      headers: {
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-      },
     },
     preview: {
-      // Keep preview consistent with dev for SharedArrayBuffer usage.
-      headers: {
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-      },
+      host: '0.0.0.0',
+      port: 3000,
     },
-    plugins: [react(), vcPoseWriterPlugin()],
+    plugins: [react(), vcPoseWriterPlugin(), coopCoepPlugin()],
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)

@@ -1,7 +1,8 @@
 import React, { useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
 import { useGLTF } from '@react-three/drei';
-import stumpUrl from '@assets/models/tree_stump.glb?url';
+
+const stumpUrl = "/models/tree_stump.glb";
 
 interface StumpLayerProps {
     positions: Float32Array; // Stride 6: x, y, z, nx, ny, nz

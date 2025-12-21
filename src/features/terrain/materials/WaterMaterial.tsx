@@ -22,7 +22,7 @@ const FALLBACK_SHORE_MASK = (() => {
 // Placeholder 1x1x1 3D texture for module-load time to avoid memory allocation during import.
 // Real noise texture is assigned lazily in useFrame when the material is first used.
 const PLACEHOLDER_NOISE_3D = (() => {
-  const data = new Uint8Array([128, 128, 128, 128]); // 1x1x1 RGBA
+  const data = new Uint8Array([255, 255, 255, 255]); // 1x1x1 RGBA - White
   const tex = new THREE.Data3DTexture(data, 1, 1, 1);
   tex.format = THREE.RGBAFormat;
   tex.type = THREE.UnsignedByteType;
@@ -183,21 +183,6 @@ export const getSharedWaterMaterial = () => {
   sharedWaterMaterial.transparent = true;
   sharedWaterMaterial.side = THREE.DoubleSide;
   sharedWaterMaterial.depthWrite = false;
-
-  // Use onBeforeRender to swap the unique per-chunk texture
-  sharedWaterMaterial.onBeforeRender = function (
-    _renderer: any,
-    _scene: any,
-    _camera: any,
-    _geometry: any,
-    mesh: THREE.Mesh
-  ) {
-    if (mesh.userData.shoreMask) {
-      this.uniforms.uShoreMask.value = mesh.userData.shoreMask;
-    } else {
-      this.uniforms.uShoreMask.value = FALLBACK_SHORE_MASK;
-    }
-  };
 
   return sharedWaterMaterial;
 };

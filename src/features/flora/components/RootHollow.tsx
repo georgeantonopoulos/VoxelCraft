@@ -7,7 +7,8 @@ import { useWorldStore } from '@state/WorldStore';
 import { ItemType } from '@/types';
 import { FractalTree } from '@features/flora/components/FractalTree';
 import { LumaSwarm } from '@features/flora/components/LumaSwarm';
-import stumpUrl from '@assets/models/tree_stump.glb?url';
+
+const stumpUrl = "/models/tree_stump.glb";
 
 // AAA Visual Config - Matching the reference image
 const STUMP_CONFIG = {

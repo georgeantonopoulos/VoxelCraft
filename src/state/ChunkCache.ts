@@ -58,7 +58,20 @@ export interface CachedChunk {
     timestamp: number;
 }
 
-export const CACHE_VERSION = 1;
+// BUMP THIS VERSION when chunk format/generation changes to invalidate old cache
+export const CACHE_VERSION = 2; // Bumped to force regeneration after material fix
+
+/**
+ * Clear all cached chunks (for debugging)
+ */
+export async function clearAllCache(): Promise<void> {
+    try {
+        await chunkCacheDB.chunks.clear();
+        console.log('[ChunkCache] All cached chunks cleared');
+    } catch (err) {
+        console.error('[ChunkCache] Clear failed:', err);
+    }
+}
 
 export class ChunkCacheDB extends Dexie {
     chunks!: Table<CachedChunk>;

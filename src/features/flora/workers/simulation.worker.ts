@@ -226,6 +226,8 @@ function propagateWetness() {
 }
 
 self.onmessage = (e: MessageEvent) => {
+    // Defensive check - main thread may send null when under memory pressure
+    if (!e.data) return;
     const { type, payload } = e.data;
 
     if (type === 'ADD_CHUNK') {
@@ -245,7 +247,7 @@ self.onmessage = (e: MessageEvent) => {
     }
     else if (type === 'START_LOOP') {
         console.log('[Simulation] Loop started (1fps).');
-        
+
         setInterval(() => {
             // @ts-ignore
             const start = performance.now();
@@ -272,7 +274,7 @@ self.onmessage = (e: MessageEvent) => {
 
 function growMoss() {
     const changedChunks = new Set<string>();
-    
+
     // Only process active chunks near player
     const simulationKeys: string[] = [];
     for (const key of activeKeys) {
@@ -296,29 +298,29 @@ function growMoss() {
         const endZ = SIZE_Z - PAD;
 
         // Random sampling for performance
-        for(let i=0; i<50; i++) {
-             const x = start + Math.floor(Math.random() * (endX - start));
-             const y = start + Math.floor(Math.random() * (endY - start));
-             const z = start + Math.floor(Math.random() * (endZ - start));
-             const idx = getIdx(x, y, z);
-             
-             if (chunk.material[idx] === MaterialType.STONE) {
-                 // Check neighbors for water/wetness
-                 // Simplification: if wetness > 100
-                 if (chunk.wetness[idx] > 100) {
-                     chunk.material[idx] = MaterialType.MOSSY_STONE;
-                     modified = true;
-                 } else {
-                     // Check direct neighbor water
-                     const up = getIdx(x, y+1, z);
-                     if (chunk.material[up] === MaterialType.WATER) {
-                         chunk.material[idx] = MaterialType.MOSSY_STONE;
-                         modified = true;
-                     }
-                 }
-             }
+        for (let i = 0; i < 50; i++) {
+            const x = start + Math.floor(Math.random() * (endX - start));
+            const y = start + Math.floor(Math.random() * (endY - start));
+            const z = start + Math.floor(Math.random() * (endZ - start));
+            const idx = getIdx(x, y, z);
+
+            if (chunk.material[idx] === MaterialType.STONE) {
+                // Check neighbors for water/wetness
+                // Simplification: if wetness > 100
+                if (chunk.wetness[idx] > 100) {
+                    chunk.material[idx] = MaterialType.MOSSY_STONE;
+                    modified = true;
+                } else {
+                    // Check direct neighbor water
+                    const up = getIdx(x, y + 1, z);
+                    if (chunk.material[up] === MaterialType.WATER) {
+                        chunk.material[idx] = MaterialType.MOSSY_STONE;
+                        modified = true;
+                    }
+                }
+            }
         }
-        
+
         if (modified) changedChunks.add(key);
     }
     return Array.from(changedChunks);
