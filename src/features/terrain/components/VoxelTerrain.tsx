@@ -2228,8 +2228,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           />
           {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
             <>
-              {/* Instanced rendering for the base meshes */}
-              <StumpLayer positions={chunk.rootHollowPositions} chunkKey={chunk.key} />
+              {/* Instanced rendering for the base meshes (chunk-local XZ, world Y). */}
+              <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
+                <StumpLayer positions={chunk.rootHollowPositions} chunkKey={chunk.key} />
+              </group>
 
               {/* Logic layer for interaction/growth (only active within physics distance) */}
               {chunk.lodLevel <= COLLIDER_RADIUS && Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (

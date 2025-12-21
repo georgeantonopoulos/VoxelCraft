@@ -2,7 +2,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
-import { getCachedChunk, saveToCache } from '@/state/ChunkCache';
+import { CACHE_VERSION, getCachedChunk, saveToCache } from '@/state/ChunkCache';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
@@ -203,8 +203,6 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             // 1b. Check Mesh Cache (Only for Pristine Chunks)
             const worldType = (self as any).worldType || 'DEFAULT';
-            const CACHE_VERSION = 1; // Bump this to invalidate old cache data
-
             if (modifications.length === 0) {
                 const cached = await getCachedChunk(cx, cz, worldType, CACHE_VERSION);
                 if (cached) {
