@@ -348,3 +348,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - Updated `InventoryStore.ts` to fill gaps in standard slots with custom tools and auto-select new creations.
   - Fixed "infinite throwing" bug by correctly calling `removeCustomTool` in `InteractionHandler.tsx`.
   - Optimized `computeSlots` layout for better player feedback when materials are consumed for crafting.
+- 2025-12-20: Implemented Flora Interaction Logic and Lumina Special Ability.
+  - **Crafting**: Added `ItemType.FLORA` as an allowed attachment for stick slots.
+  - **Lumina Tools**: Custom tools with attached flora now serve as "Lumina Tools".
+  - **Visual Effects**: Held Lumina Tools emit a blue point light that intensifies with the number of floras. Added a "glow boost" effect for special actions.
+  - **Special Ability**: After three left-mouse clicks with a Lumina Tool, the player is "teleported" (fast-dashed) to the closest surface cave exit.
+  - **Algorithm**: Implemented `LuminaExitFinder.ts` to search for the nearest non-cave coordinate using a spiral search on the surface height map.
+  - **Integration**: Updated `InteractionHandler.tsx` for click tracking and `Player.tsx` for the teleport/dash execution.

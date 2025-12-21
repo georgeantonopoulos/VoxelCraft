@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
@@ -8,11 +8,10 @@ import { useInputStore } from '@/state/InputStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
+import { getToolCapabilities } from './ToolCapabilities';
 
 interface InteractionHandlerProps {
 }
-
-import { getToolCapabilities } from './ToolCapabilities';
 
 export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
   const { camera } = useThree();
@@ -27,6 +26,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
   const removeItem = useInventoryStore(state => state.removeItem);
   const spawnPhysicsItem = usePhysicsItemStore(state => state.spawnItem);
 
+  const luminaClickCount = useRef(0);
+  const lastLuminaClickTime = useRef(0);
 
   // Keyboard Input Logic
   useEffect(() => {
@@ -99,16 +100,33 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
       const selectedItem = inventorySlots[selectedSlotIndex];
       // Resolve CustomTool object if the item is a tool ID string
-      const resolvedItem = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_')) 
-        ? customTools[selectedItem] 
+      const resolvedItem = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+        ? customTools[selectedItem]
         : selectedItem;
-      
-      const capabilities = getToolCapabilities(resolvedItem);
 
+      const capabilities = getToolCapabilities(resolvedItem);
       const pickaxeSelected = hasPickaxe && selectedItem === ItemType.PICKAXE;
 
       // Left Click
       if (e.button === 0) {
+        // Lumina Tool Logic
+        if (capabilities.isLuminaTool) {
+          const now = Date.now();
+          if (now - lastLuminaClickTime.current > 1000) {
+            luminaClickCount.current = 0;
+          }
+          luminaClickCount.current++;
+          lastLuminaClickTime.current = now;
+
+          if (luminaClickCount.current >= 3) {
+            luminaClickCount.current = 0;
+            // Trigger Special Action: Find Cave Exit
+            window.dispatchEvent(new CustomEvent('lumina-special-action', {
+              detail: { luminaCount: capabilities.luminaCount }
+            }));
+          }
+        }
+
         // 1. Tool Interaction (Standard or Custom Tool)
         if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
           if (capabilities.canChop) {
@@ -118,8 +136,6 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
           } else if (capabilities.canDig) {
             setInteractionAction('DIG');
           }
-          // Do not return yet, allow fire/torch logic to fall through if needed
-          // or return if it's a primary action.
         }
 
         if (pickaxeSelected) {

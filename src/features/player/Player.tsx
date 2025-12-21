@@ -6,14 +6,28 @@ import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { usePlayerInput } from './usePlayerInput';
 import { useWorldStore } from '@/state/WorldStore';
+import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
 const SWIM_SPEED = 4.0;
 const SWIM_VERTICAL_SPEED = 4.5;
 
+// Scratch objects to avoid per-frame allocations
+const scratchPos = new THREE.Vector3();
+const scratchMoveDir = new THREE.Vector3();
+const scratchCamDir = new THREE.Vector3();
+const scratchForward = new THREE.Vector3();
+const scratchSide = new THREE.Vector3();
+const scratchUp = new THREE.Vector3(0, 1, 0);
+const scratchVelocity = new THREE.Vector3();
+
+
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
+  const [isLuminaDashing, setIsLuminaDashing] = useState(false);
+  const luminaTarget = useRef<THREE.Vector3 | null>(null);
+
   const getInput = usePlayerInput();
   const { rapier, world } = useRapier();
   const [isFlying, setIsFlying] = useState(false);
@@ -21,8 +35,6 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const wasJumpPressed = useRef<boolean>(false);
   const spacePressHandled = useRef<boolean>(false);
 
-  // Use the transient update pattern if performance becomes an issue.
-  // For now, simple state setting is cleaner.
   const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
 
   useEffect(() => {
@@ -30,65 +42,96 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     body.current.setGravityScale(isFlying ? 0 : 1, true);
   }, [isFlying]);
 
-  useFrame((state) => {
+  useEffect(() => {
+    const handleLumina = () => {
+      if (!body.current) return;
+      const pos = body.current.translation();
+      const exit = LuminaExitFinder.findClosestExit(pos.x, pos.y, pos.z);
+
+      if (exit) {
+        luminaTarget.current = new THREE.Vector3(exit.x, exit.y, exit.z);
+        setIsLuminaDashing(true);
+        window.dispatchEvent(new CustomEvent('lumina-glow-start', { detail: { duration: 1000 } }));
+      }
+    };
+    window.addEventListener('lumina-special-action', handleLumina);
+    return () => window.removeEventListener('lumina-special-action', handleLumina);
+  }, []);
+
+  useFrame((state, delta) => {
     if (!body.current) return;
 
     const pos = body.current.translation();
-    const posV3 = new THREE.Vector3(pos.x, pos.y, pos.z);
+    scratchPos.set(pos.x, pos.y, pos.z);
 
-    // Water query samples along the capsule to estimate submersion.
-    // We don't rely on physics colliders for water.
-    const footY = posV3.y - 0.65;
-    const midY = posV3.y;
-    const headY = posV3.y + 0.65;
-    const footInWater = terrainRuntime.isLiquidAtWorld(posV3.x, footY, posV3.z);
-    const midInWater = terrainRuntime.isLiquidAtWorld(posV3.x, midY, posV3.z);
-    const headInWater = terrainRuntime.isLiquidAtWorld(posV3.x, headY, posV3.z);
+    if (isLuminaDashing && luminaTarget.current) {
+      const dist = scratchPos.distanceTo(luminaTarget.current);
+      if (dist < 0.5) {
+        setIsLuminaDashing(false);
+        luminaTarget.current = null;
+      } else {
+        scratchMoveDir.copy(luminaTarget.current).sub(scratchPos);
+        if (scratchMoveDir.lengthSq() > 0.001) {
+          scratchMoveDir.normalize();
+          scratchMoveDir.multiplyScalar(Math.min(dist, delta * 120));
+          body.current.setTranslation({
+            x: pos.x + scratchMoveDir.x,
+            y: pos.y + scratchMoveDir.y,
+            z: pos.z + scratchMoveDir.z
+          }, true);
+        } else {
+          setIsLuminaDashing(false);
+          luminaTarget.current = null;
+        }
+        return;
+      }
+    }
+
+    const { move, jump, shift } = getInput();
+    const vel = body.current.linvel();
+    scratchVelocity.set(vel.x, vel.y, vel.z);
+
+    const camera = state.camera;
+
+    // Water/Swimming logic
+    const footY = pos.y - 0.65;
+    const midY = pos.y;
+    const headY = pos.y + 0.65;
+    const footInWater = terrainRuntime.isLiquidAtWorld(pos.x, footY, pos.z);
+    const midInWater = terrainRuntime.isLiquidAtWorld(pos.x, midY, pos.z);
+    const headInWater = terrainRuntime.isLiquidAtWorld(pos.x, headY, pos.z);
     const waterHits = (footInWater ? 1 : 0) + (midInWater ? 1 : 0) + (headInWater ? 1 : 0);
     const inWater = waterHits > 0;
     const submersion = waterHits / 3.0;
 
-    // Calculate rotation from forward vector to avoid Euler order issues
-    const dir = new THREE.Vector3();
-    state.camera.getWorldDirection(dir);
-    // We want the angle of the "Backward" vector because Canvas +Y is Down (South-ish)
-    // and we want Forward to be Up.
-    // atan2(y, x) -> atan2(-dir.x, -dir.z)
-    // This gives us the rotation needed to align Forward with Up (-Y in CSS? No, CSS 0 is Right)
-    // Let's stick to the logic: 
-    // North (0,0,-1) -> atan2(0, 1) = 0. Map North is Up. Correct.
-    // East (1,0,0) -> atan2(-1, 0) = -PI/2. Map East (Right) rotates -90 to Top. Correct.
-    const rotation = Math.atan2(-dir.x, -dir.z);
+    // Calculate rotation for minimap
+    camera.getWorldDirection(scratchCamDir);
+    const rotation = Math.atan2(-scratchCamDir.x, -scratchCamDir.z);
 
-    setPlayerParams({
-      x: pos.x,
-      y: pos.y,
-      z: pos.z,
-      rotation: rotation
-    });
+    setPlayerParams({ x: pos.x, y: pos.y, z: pos.z, rotation });
 
-    const { move, jump, shift } = getInput();
-    // REMOVED: The Flora Placement logic that was conflicting
+    // Movement calculation: Use horizontal heading to avoid speed loss when looking down
+    scratchForward.copy(scratchCamDir);
+    scratchForward.y = 0;
+    scratchForward.normalize();
 
-    const velocity = body.current.linvel();
-    const camera = state.camera;
+    // Cross product with Up gives Side vector (Right)
+    scratchSide.crossVectors(scratchUp, scratchForward).normalize();
 
-    const direction = new THREE.Vector3(move.x, 0, move.z);
+    // move.z is forward/back (-1 is W), move.x is left/right
+    scratchMoveDir.set(0, 0, 0);
+    scratchMoveDir.addScaledVector(scratchForward, -move.z);
+    scratchMoveDir.addScaledVector(scratchSide, -move.x);
 
-    // Underwater movement: slower horizontal speed with drag based on submersion.
     const baseSpeed = (inWater && !isFlying) ? SWIM_SPEED : PLAYER_SPEED;
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
-    // Normalize only if length > 1 (to allow slow analog movement)
-    if (direction.lengthSq() > 1.0) direction.normalize();
+    if (scratchMoveDir.lengthSq() > 1.0) scratchMoveDir.normalize();
+    scratchMoveDir.multiplyScalar(baseSpeed * drag);
 
-    direction.multiplyScalar(baseSpeed * drag);
-    direction.applyEuler(camera.rotation);
+    let yVelocity = scratchVelocity.y;
 
-    let yVelocity = velocity.y;
-
-    // Double-tap fly logic
-    // Guard: swimming uses Space constantly; avoid accidental flight toggles while in water.
+    // Jump / Fly double tap
     const isDoubleTap = jump && !wasJumpPressed.current && !inWater;
     if (isDoubleTap) {
       const now = Date.now();
@@ -106,22 +149,18 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       else if (shift) yVelocity = -FLY_SPEED;
       else yVelocity = 0;
     } else if (inWater) {
-      // Swimming: Space to rise, Shift to sink, otherwise buoyancy toward sea surface.
       if (jump && !spacePressHandled.current) {
         yVelocity = SWIM_VERTICAL_SPEED;
       } else if (shift) {
         yVelocity = -SWIM_VERTICAL_SPEED;
       } else {
-        const surfaceY = terrainRuntime.getSeaSurfaceYAtWorld(posV3.x, posV3.z);
+        const surfaceY = terrainRuntime.getSeaSurfaceYAtWorld(pos.x, pos.z);
         if (surfaceY != null) {
-          // Target the capsule center slightly below the surface so the camera sits near the waterline.
           const targetCenterY = surfaceY - 0.55;
-          const error = targetCenterY - posV3.y;
-          // Simple PD-like control: proportional + mild damping using current y velocity.
-          yVelocity = THREE.MathUtils.clamp(error * 2.2 - velocity.y * 0.35, -3.0, 3.0);
+          const error = targetCenterY - pos.y;
+          yVelocity = THREE.MathUtils.clamp(error * 2.2 - scratchVelocity.y * 0.35, -3.0, 3.0);
         } else {
-          // If surface isn't available (chunk not loaded), damp vertical motion.
-          yVelocity = velocity.y * 0.7;
+          yVelocity = scratchVelocity.y * 0.7;
         }
       }
     } else {
@@ -135,11 +174,10 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     if (!jump && wasJumpPressed.current) spacePressHandled.current = false;
     wasJumpPressed.current = jump;
 
-    body.current.setLinvel({ x: direction.x, y: yVelocity, z: direction.z }, true);
-    const translation = body.current.translation();
-    // Normal human eye level is ~1.6-1.7m. 
-    // Capsule center is at 0.8m, so +0.75m offset gives 1.55m eye level.
-    camera.position.set(translation.x, translation.y + 0.75, translation.z);
+    body.current.setLinvel({ x: scratchMoveDir.x, y: yVelocity, z: scratchMoveDir.z }, true);
+
+    // Sync camera to body eye level
+    camera.position.set(pos.x, pos.y + 0.75, pos.z);
   });
 
   return (
@@ -148,3 +186,4 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     </RigidBody>
   );
 };
+

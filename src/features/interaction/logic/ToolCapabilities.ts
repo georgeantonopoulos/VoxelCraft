@@ -34,6 +34,7 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
     const attachments = Object.values(tool.attachments);
     const shards = attachments.filter(t => t === ItemType.SHARD).length;
     const stones = attachments.filter(t => t === ItemType.STONE).length;
+    const floras = attachments.filter(t => t === ItemType.FLORA).length;
 
     // Slot Analysis
     const hasLeftShard = tool.attachments['side_left'] === ItemType.SHARD;
@@ -49,6 +50,8 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
         canChop,
         canSmash: stones >= 1 && shards === 0,          // Blunt only
         isNormalDig: canDig,
+        isLuminaTool: floras > 0,
+        luminaCount: floras,
 
         // Damage Logic (All interaction has logic)
         woodDamage: shards * 2.0 + stones * 0.5,

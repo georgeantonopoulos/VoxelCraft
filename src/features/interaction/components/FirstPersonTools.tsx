@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useControls, button } from 'leva';
 import * as THREE from 'three';
@@ -7,12 +7,14 @@ import { TorchTool } from './TorchTool';
 import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/interaction/logic/HeldItemPoses';
 import { ItemType } from '@/types';
 import { UniversalTool } from './UniversalTool';
+import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
     const groupRef = useRef<THREE.Group>(null);
     const torchRef = useRef<THREE.Group>(null); // left hand (torch)
     const rightItemRef = useRef<THREE.Group>(null); // right hand
+    const luminaLightRef = useRef<THREE.PointLight>(null);
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -21,6 +23,20 @@ export const FirstPersonTools: React.FC = () => {
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
+
+    const luminaGlowStartTime = useRef(0);
+    const luminaGlowDuration = useRef(1000);
+    const glowBoost = useRef(0);
+
+    useEffect(() => {
+        const handleGlow = (e: any) => {
+            glowBoost.current = 5.0;
+            luminaGlowStartTime.current = Date.now();
+            luminaGlowDuration.current = e.detail.duration || 1000;
+        };
+        window.addEventListener('lumina-glow-start', handleGlow);
+        return () => window.removeEventListener('lumina-glow-start', handleGlow);
+    }, []);
 
     // Debug UI for torch pose.
     const debugMode = useMemo(() => {
@@ -81,7 +97,7 @@ export const FirstPersonTools: React.FC = () => {
                             }
                         })
                     });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status} `);
                     console.log('[Right Hand / Stick] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stick] Save failed:', err);
@@ -129,7 +145,7 @@ export const FirstPersonTools: React.FC = () => {
                             }
                         })
                     });
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    if (!res.ok) throw new Error(`HTTP ${res.status} `);
                     console.log('[Right Hand / Stone] Saved pose to code.');
                 } catch (err) {
                     console.error('[Right Hand / Stone] Save failed:', err);
@@ -227,6 +243,11 @@ export const FirstPersonTools: React.FC = () => {
             };
         }
     }, [camera, scene]);
+
+    const capabilities = useMemo(() => {
+        const item = activeCustomTool || selectedItem;
+        return getToolCapabilities(item as any);
+    }, [activeCustomTool, selectedItem]);
 
     useFrame((state, delta) => {
         if (!torchRef.current && !rightItemRef.current) return;
@@ -337,11 +358,48 @@ export const FirstPersonTools: React.FC = () => {
                 rightItemRef.current.visible = false;
             }
         }
+
+        // Update Glow Boost decay
+        if (glowBoost.current > 0) {
+            const elapsed = Date.now() - luminaGlowStartTime.current;
+            if (elapsed > luminaGlowDuration.current) {
+                glowBoost.current = 0;
+            } else {
+                // Smooth decay
+                const t = elapsed / luminaGlowDuration.current;
+                glowBoost.current = 5.0 * (1.0 - t * t); // slightly faster falloff
+            }
+        }
+
+        // Update Lumina Light
+        if (luminaLightRef.current) {
+            const isLumina = capabilities.isLuminaTool;
+            const count = capabilities.luminaCount ?? 0;
+            const intensity = isLumina ? (count * 1.5 + glowBoost.current) : 0;
+
+            if (intensity > 0) {
+                luminaLightRef.current.visible = true;
+                luminaLightRef.current.intensity = intensity;
+                luminaLightRef.current.distance = 8 + intensity * 2;
+            } else {
+                luminaLightRef.current.visible = false;
+            }
+        }
     });
+
 
     return (
         <group ref={groupRef}>
             <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
+            <pointLight
+                ref={luminaLightRef}
+                position={[0.5, 0.2, -0.5]}
+                intensity={0}
+                color="#00FFFF"
+                distance={8}
+                decay={2}
+                visible={false}
+            />
             <group ref={torchRef}>
                 <group visible={selectedItem === 'torch'}>
                     <TorchTool />

@@ -8,45 +8,65 @@ import { getItemColor } from '../logic/ItemRegistry';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
 
 // Reusable Meshes for individual components
-export const StickMesh = ({ scale = 1, height = 0.95 }: { scale?: number, height?: number }) => (
-    <mesh scale={scale} castShadow receiveShadow>
-        <cylinderGeometry args={[0.045, 0.04, height, 8, 8]} />
-        <CustomShaderMaterial
-            baseMaterial={THREE.MeshStandardMaterial}
-            vertexShader={STICK_SHADER.vertex}
-            uniforms={{
-                uInstancing: { value: false },
-                uSeed: { value: 123.45 },
-                uHeight: { value: height }
-            }}
-            color={getItemColor(ItemType.STICK)}
-            roughness={0.92}
-            metalness={0.0}
-        />
-    </mesh>
-);
+export const StickMesh = ({ scale = 1, height = 0.95, isThumbnail = false }: { scale?: number, height?: number, isThumbnail?: boolean }) => {
+    if (isThumbnail) {
+        return (
+            <mesh scale={scale}>
+                <cylinderGeometry args={[0.045, 0.04, height, 6, 4]} />
+                <meshStandardMaterial color={getItemColor(ItemType.STICK)} roughness={0.9} />
+            </mesh>
+        );
+    }
+    return (
+        <mesh scale={scale} castShadow receiveShadow>
+            <cylinderGeometry args={[0.045, 0.04, height, 8, 8]} />
+            <CustomShaderMaterial
+                baseMaterial={THREE.MeshStandardMaterial}
+                vertexShader={STICK_SHADER.vertex}
+                uniforms={{
+                    uInstancing: { value: false },
+                    uSeed: { value: 123.45 },
+                    uHeight: { value: height }
+                }}
+                color={getItemColor(ItemType.STICK)}
+                roughness={0.92}
+                metalness={0.0}
+            />
+        </mesh>
+    );
+};
 
-export const StoneMesh = ({ scale = 1 }: { scale?: number }) => (
-    <mesh scale={scale} castShadow receiveShadow>
-        <dodecahedronGeometry args={[0.22, 1]} />
-        <CustomShaderMaterial
-            baseMaterial={THREE.MeshStandardMaterial}
-            vertexShader={ROCK_SHADER.vertex}
-            uniforms={{
-                uInstancing: { value: false },
-                uNoiseTexture: { value: noiseTexture },
-                uSeed: { value: 67.89 }
-            }}
-            color={getItemColor(ItemType.STONE)}
-            roughness={0.92}
-            metalness={0.0}
-        />
-    </mesh>
-);
+export const StoneMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => {
+    if (isThumbnail) {
+        return (
+            <mesh scale={scale}>
+                <dodecahedronGeometry args={[0.22, 0]} />
+                <meshStandardMaterial color={getItemColor(ItemType.STONE)} roughness={0.9} />
+            </mesh>
+        );
+    }
+    return (
+        <mesh scale={scale} castShadow receiveShadow>
+            <dodecahedronGeometry args={[0.22, 1]} />
+            <CustomShaderMaterial
+                baseMaterial={THREE.MeshStandardMaterial}
+                vertexShader={ROCK_SHADER.vertex}
+                uniforms={{
+                    uInstancing: { value: false },
+                    uNoiseTexture: { value: noiseTexture },
+                    uSeed: { value: 67.89 }
+                }}
+                color={getItemColor(ItemType.STONE)}
+                roughness={0.92}
+                metalness={0.0}
+            />
+        </mesh>
+    );
+};
 
-export const ShardMesh = ({ scale = 1 }: { scale?: number }) => (
-    <mesh scale={scale} castShadow receiveShadow>
-        <coneGeometry args={[0.1, 0.4, 4]} />
+export const ShardMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => (
+    <mesh scale={scale} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+        <coneGeometry args={[0.1, 0.4, isThumbnail ? 3 : 4]} />
         <meshStandardMaterial
             color="#aaaaaa"
             emissive="#000000"
@@ -107,13 +127,13 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
         const type = typeof item === 'string' ? item as ItemType : item;
 
         switch (type) {
-            case ItemType.STICK: return <StickMesh />;
-            case ItemType.STONE: return <StoneMesh />;
-            case ItemType.SHARD: return <ShardMesh />;
+            case ItemType.STICK: return <StickMesh isThumbnail={isThumbnail} />;
+            case ItemType.STONE: return <StoneMesh isThumbnail={isThumbnail} />;
+            case ItemType.SHARD: return <ShardMesh isThumbnail={isThumbnail} />;
             case ItemType.PICKAXE:
                 return (
                     <group scale={thumbScale}>
-                        <StickMesh height={0.8} />
+                        <StickMesh height={0.8} isThumbnail={isThumbnail} />
                         <group position={[0, 0.35, 0]}>
                             <PickaxeHeadMesh />
                         </group>
@@ -122,7 +142,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
             case ItemType.AXE:
                 return (
                     <group scale={thumbScale}>
-                        <StickMesh height={0.8} />
+                        <StickMesh height={0.8} isThumbnail={isThumbnail} />
                         <group position={[0, 0.3, 0]}>
                             <AxeHeadMesh />
                         </group>
@@ -153,21 +173,21 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                                 <meshStandardMaterial color="#ffd39a" emissive="#ffb36b" emissiveIntensity={1.8} transparent opacity={0.3} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
                             </mesh>
                         )}
-                        <pointLight position={[0, 0.5, 0]} intensity={isThumbnail ? 3 : 2} color="#ffaa00" distance={isThumbnail ? 2 : 10} />
+                        {!isThumbnail && <pointLight position={[0, 0.5, 0]} intensity={2} color="#ffaa00" distance={10} />}
                     </group>
                 );
             case ItemType.FLORA:
                 return (
                     <group scale={thumbScale}>
-                        <mesh castShadow receiveShadow>
+                        <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
                             <sphereGeometry args={[0.2, 16, 16]} />
                             <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={1.3} toneMapped={false} />
                         </mesh>
-                        <mesh position={[0.12, -0.08, 0.08]} castShadow receiveShadow>
+                        <mesh position={[0.12, -0.08, 0.08]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
                             <sphereGeometry args={[0.12, 12, 12]} />
                             <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
                         </mesh>
-                        <mesh position={[-0.12, -0.12, -0.04]} castShadow receiveShadow>
+                        <mesh position={[-0.12, -0.12, -0.04]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
                             <sphereGeometry args={[0.1, 12, 12]} />
                             <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
                         </mesh>
@@ -181,7 +201,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
     return (
         <group scale={thumbScale}>
             {/* Base Item */}
-            {tool.baseType === ItemType.STICK && <StickMesh />}
+            {tool.baseType === ItemType.STICK && <StickMesh isThumbnail={isThumbnail} />}
 
             {/* Attachments */}
             {Object.entries(tool.attachments).map(([slotId, attachmentType]) => {
@@ -190,12 +210,26 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
 
                 return (
                     <group key={slotId} position={slot.position} rotation={slot.rotation}>
-                        {attachmentType === ItemType.SHARD && <ShardMesh scale={0.6} />}
-                        {attachmentType === ItemType.STONE && <StoneMesh scale={0.5} />}
-                        {attachmentType === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
+                        {attachmentType === ItemType.SHARD && <ShardMesh scale={0.6} isThumbnail={isThumbnail} />}
+                        {attachmentType === ItemType.STONE && <StoneMesh scale={0.5} isThumbnail={isThumbnail} />}
+                        {attachmentType === ItemType.STICK && <StickMesh scale={0.4} height={0.5} isThumbnail={isThumbnail} />}
+                        {attachmentType === ItemType.FLORA && (
+                            <group scale={0.4}>
+                                <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+                                    <sphereGeometry args={[0.2, isThumbnail ? 8 : 16, isThumbnail ? 8 : 16]} />
+                                    <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={1.3} toneMapped={false} />
+                                </mesh>
+                                {/* Only add individual attachment light if not a thumbnail and not first person? 
+                                    Actually, for now, strictly NO lights in thumbnails. */}
+                                {!isThumbnail && (
+                                    <pointLight intensity={0.5} color="#00FFFF" distance={1.0} />
+                                )}
+                            </group>
+                        )}
                     </group>
                 );
             })}
         </group>
     );
 };
+

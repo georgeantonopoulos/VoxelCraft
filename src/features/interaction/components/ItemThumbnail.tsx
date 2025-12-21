@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Environment, Center } from '@react-three/drei';
+import { Center } from '@react-three/drei';
 import { UniversalTool } from './UniversalTool';
 import { ItemType } from '@/types';
 import { useInventoryStore } from '@/state/InventoryStore';
@@ -25,20 +25,21 @@ export const ItemThumbnail: React.FC<ItemThumbnailProps> = ({ item, size = "100%
             <Canvas
                 shadows={false}
                 camera={{ position: [0, 0, 1.5], fov: 35 }}
-                gl={{ antialias: true, alpha: true }}
-                dpr={[1, 2]}
+                gl={{ antialias: false, alpha: true, stencil: false, depth: true }}
+                dpr={1}
+                frameloop="demand"
             >
-                <ambientLight intensity={0.7} />
-                <pointLight position={[5, 5, 5]} intensity={1.5} />
+                <ambientLight intensity={1.5} />
+                <pointLight position={[2, 2, 2]} intensity={2} />
                 <Suspense fallback={null}>
                     <Center>
                         <group rotation={[Math.PI / 8, -Math.PI / 4, 0]}>
                             <UniversalTool item={toolData} isThumbnail />
                         </group>
                     </Center>
-                    <Environment preset="studio" />
                 </Suspense>
             </Canvas>
         </div>
     );
 };
+
