@@ -939,21 +939,28 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const lodUpdateQueue = useRef<string[]>([]);
   const lastTimeRef = useRef(0);
   const lastLodUpdatePos = useRef(new THREE.Vector2());
-  const LOD_DISTANCE_STEP = 0.1; // Chunk-distance quantization for stable LOD updates
-  const LOD_UPDATE_DISTANCE = CHUNK_SIZE_XZ * 0.2;
+  // LOD updates should be infrequent - only when player crosses chunk boundaries
+  // Plus a hysteresis buffer to prevent rapid toggling at edges
+  const LOD_UPDATE_DISTANCE = CHUNK_SIZE_XZ * 0.5; // Half a chunk = ~16 units
   const LOD_UPDATE_DISTANCE_SQ = LOD_UPDATE_DISTANCE * LOD_UPDATE_DISTANCE;
 
+  // Calculate raw Chebyshev distance in chunk-space
   const getChunkLodDistanceRaw = (cx: number, cz: number, camCx: number, camCz: number) => {
     const dx = Math.max(0, Math.abs(camCx - (cx + 0.5)) - 0.5);
     const dz = Math.max(0, Math.abs(camCz - (cz + 0.5)) - 0.5);
     return Math.max(dx, dz);
   };
 
-  const quantizeLodDistance = (distance: number) =>
-    Math.round(distance / LOD_DISTANCE_STEP) * LOD_DISTANCE_STEP;
-
-  const getChunkLodDistance = (cx: number, cz: number, camCx: number, camCz: number) =>
-    quantizeLodDistance(getChunkLodDistanceRaw(cx, cz, camCx, camCz));
+  // Convert continuous distance to discrete LOD tier (0-4)
+  // This matches the LOD_DISTANCE_* constants in constants.ts
+  // Tier 0: < 1 chunk (full quality)
+  // Tier 1: 1-2 chunks (simplified trees)
+  // Tier 2: 2-3 chunks (reduced vegetation)
+  // Tier 3+: beyond (minimal detail)
+  const getChunkLodTier = (cx: number, cz: number, camCx: number, camCz: number): number => {
+    const rawDist = getChunkLodDistanceRaw(cx, cz, camCx, camCz);
+    return Math.floor(rawDist);
+  };
 
   // 3. Process Queues (Throttled)
   useFrame((state) => {
@@ -1096,39 +1103,39 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    // LOD updates: Only recalculate when player has moved significantly (half a chunk)
+    // This prevents the constant LOD thrashing that was killing performance
     const lodDx = streamX - lastLodUpdatePos.current.x;
     const lodDz = streamZ - lastLodUpdatePos.current.y;
-    const lodMovedFar = lodDx * lodDx + lodDz * lodDz >= LOD_UPDATE_DISTANCE_SQ;
+    const lodDistSq = lodDx * lodDx + lodDz * lodDz;
+    const shouldUpdateLod = lodDistSq >= LOD_UPDATE_DISTANCE_SQ;
 
-    if (moved || lodMovedFar) {
+    if (shouldUpdateLod) {
       lastLodUpdatePos.current.set(streamX, streamZ);
 
-      // BATCH UPDATE LOD LEVELS
-      let lodChanged = false;
+      // Only update chunks whose LOD TIER actually changes (not continuous distance)
+      // This massively reduces React state churn
       const toUpdate: string[] = [];
 
       for (const [key, chunk] of chunkDataRef.current.entries()) {
-        const dist = getChunkLodDistance(chunk.cx, chunk.cz, camCx, camCz);
-        if (chunk.lodLevel !== dist) {
-          chunkDataRef.current.set(key, { ...chunk, lodLevel: dist });
+        const newTier = getChunkLodTier(chunk.cx, chunk.cz, camCx, camCz);
+        // Only update if integer tier changed
+        if (chunk.lodLevel !== newTier) {
+          // Mutate in place to avoid object allocation - React update is batched below
+          chunk.lodLevel = newTier;
           toUpdate.push(key);
-          lodChanged = true;
         }
       }
 
-      if (lodChanged) {
-        const merged = new Set([...lodUpdateQueue.current, ...toUpdate]);
-        const mergedKeys = Array.from(merged).filter(key => chunkDataRef.current.has(key));
-
-        // Prioritize chunks closer to the player for LOD updates
-        mergedKeys.sort((a, b) => {
-          const ca = chunkDataRef.current.get(a)!;
-          const cb = chunkDataRef.current.get(b)!;
-          const da = getChunkLodDistanceRaw(ca.cx, ca.cz, camCx, camCz);
-          const db = getChunkLodDistanceRaw(cb.cx, cb.cz, camCx, camCz);
-          return da - db;
-        });
-        lodUpdateQueue.current = mergedKeys;
+      // Only trigger React updates if any chunk actually changed tier
+      if (toUpdate.length > 0) {
+        // Merge with existing queue, avoiding duplicates
+        const existingSet = new Set(lodUpdateQueue.current);
+        for (const key of toUpdate) {
+          if (!existingSet.has(key)) {
+            lodUpdateQueue.current.push(key);
+          }
+        }
       }
     }
 
@@ -1200,7 +1207,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
-          const lodLevel = getChunkLodDistance(cx, cz, camCx, camCz);
+          const lodLevel = getChunkLodTier(cx, cz, camCx, camCz);
           const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {

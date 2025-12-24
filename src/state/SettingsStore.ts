@@ -50,7 +50,7 @@ export const useSettingsStore = create<SettingsState>()(
       resolutionScale: 1.0,
       qualityPreset: 'high',
       shadows: true,
-      ao: true,
+      ao: false,
       bloom: true,
       viewDistance: 1.0,
       inputMode: getInitialInputMode(),
@@ -92,7 +92,7 @@ export const useSettingsStore = create<SettingsState>()(
           case 'high':
             set({
               shadows: true,
-              ao: true,
+              ao: false, // AO is expensive - keep off by default even on high
               bloom: true,
               viewDistance: 1.0,
             });

@@ -477,3 +477,21 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Root Cause**: `Cross-Origin-Embedder-Policy: require-corp` was blocking the GLB download because Vite's `server.headers` config option wasn't consistently applying `Cross-Origin-Resource-Policy` to static assets served from the `public` directory.
   - **Fix 1 (Partial)**: Moved assets to `public/` to bypass Vite import resolution issues.
   - **Fix 2 (Definitive)**: Implemented a custom Vite plugin (`coopCoepPlugin`) that uses `server.middlewares` to forcefully inject `Cross-Origin-Resource-Policy: cross-origin` (along with COOP/COEP) onto EVERY response. This guarantees static assets are marked safe for SharedArrayBuffer usage.
+
+- 2025-12-24: **PERFORMANCE INVESTIGATION** - 20-30 FPS on M1 Mac Studio with constant stuttering.
+  - **Root Causes Identified (Multi-Factorial)**:
+    1. **Trimesh BVH Construction**: Rapier trimesh colliders are built synchronously on main thread when `colliderEnabled` flips to `true`. Dense chunks (jungle) can take 10-30ms per chunk. Although there's `colliderEnableQueue` throttling, it doesn't fully eliminate spikes.
+    2. **81+ Active Chunks**: `RENDER_DISTANCE = 4` creates a 9x9 grid = 81 chunks. Each chunk renders terrain mesh + water + trees + vegetation + ground items + lumina lights. This is CPU-heavy for React reconciliation and GPU heavy for draw calls.
+    3. **Per-Chunk Materials**: Although material pooling exists, each chunk still creates its own geometry instances which the GPU must process.
+    4. **LOD Thrashing**: When the player moves, ALL 81 chunks were re-evaluated for LOD changes using continuous distance (0.1 step quantization), which triggered too many React state updates.
+    5. **Post-Processing Pipeline**: `CinematicComposer` includes AO, Bloom, and other effects that add GPU load on already-strained hardware.
+  - **Fixes Applied**:
+    1. Reduced `RENDER_DISTANCE` from 4 to 3 (49 chunks instead of 81, **40% reduction**).
+    2. Disabled AO by default (even on 'high' preset) - AO is very expensive.
+    3. **LOD System Overhaul**:
+       - Changed from continuous distance (0.1 step) to discrete integer tiers (0-4).
+       - Only triggers updates when chunks cross actual LOD thresholds, not on every small movement.
+       - Increased update distance from 6.4 units to 16 units (half a chunk).
+       - Mutates chunk data in-place instead of creating new objects.
+       - Removed unnecessary sorting of LOD update queue.
+       - **Fix**: Resolved `ReferenceError: getChunkLodDistance is not defined` by updating the `GENERATED` message handler to use the new `getChunkLodTier` function.
