@@ -660,11 +660,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   onInitialLoad,
   worldType,
   heightFogEnabled = true,
-  heightFogStrength = 0.5,
-  heightFogRange = 24.0,
-  heightFogOffset = 12.0,
-  fogNear = 20,
-  fogFar = 160
+  heightFogStrength = 0.35,
+  heightFogRange = 50.0,
+  heightFogOffset = 4.0,
+  fogNear = 40,
+  fogFar = 220
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;

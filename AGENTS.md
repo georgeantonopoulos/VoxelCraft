@@ -170,6 +170,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-24: **Project Structure Documentation**
+  - Created `rules/project-structure.md` as a comprehensive quick-reference map of the codebase.
+  - Documents all major directories, key files, and task-to-location lookup table.
+  - Intended for rapid agent onboarding and human developer navigation.
 - 2025-12-24: **CRITICAL: Restored Game Logic & Eliminated Generation Stutter.**
   - **Logic Restoration**: Fully restored all reactive props and configuration logic for `TriplanarMaterial`, `ChunkMesh`, and `VegetationLayer` that were accidentally removed during optimization.
   - **Generation Stutter Fix**: Eliminated the main-thread hitch during chunk streaming by moving away from Rapier's automatic `colliders="trimesh"` (which builds BVHs synchronously on mount) to a manual `<MeshCollider>` using worker-precomputed data.

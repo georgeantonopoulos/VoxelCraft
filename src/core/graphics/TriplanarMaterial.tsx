@@ -105,7 +105,7 @@ export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
   sunDirection,
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
-  shaderFogStrength = 0.9,
+  shaderFogStrength = 0.8,
   threeFogEnabled = true,
   wetnessEnabled = true,
   mossEnabled = true,
@@ -116,11 +116,11 @@ export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
   weightsView = 'off',
   wireframe = false,
   heightFogEnabled = true,
-  heightFogStrength = 0.5,
-  heightFogRange = 20.0,
-  heightFogOffset = 10.0,
-  fogNear = 20,
-  fogFar = 250,
+  heightFogStrength = 0.35,
+  heightFogRange = 50.0,
+  heightFogOffset = 4.0,
+  fogNear = 40,
+  fogFar = 220,
 }) => {
   const mat = useMemo(() => getSharedTerrainMaterial(), []);
 

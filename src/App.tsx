@@ -80,7 +80,7 @@ const App: React.FC = () => {
   const [postProcessingEnabled, setPostProcessingEnabled] = useState(true);
   const [aoIntensity, setAoIntensity] = useState(2.0);
   const [terrainShaderFogEnabled, setTerrainShaderFogEnabled] = useState(true);
-  const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.9);
+  const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.8);
   const [terrainThreeFogEnabled, setTerrainThreeFogEnabled] = useState(true);
   const [terrainFadeEnabled, setTerrainFadeEnabled] = useState(true);
   const [terrainWetnessEnabled, setTerrainWetnessEnabled] = useState(true);
@@ -98,9 +98,9 @@ const App: React.FC = () => {
   const [caOffset, setCaOffset] = useState(0.00001);
   const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
 
-  const [fogNear, setFogNear] = useState(20);
-  const [fogFar, setFogFar] = useState(160);
-  const [atmosphereHaze, setAtmosphereHaze] = useState(0.35);
+  const [fogNear, setFogNear] = useState(40);
+  const [fogFar, setFogFar] = useState(220);
+  const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
   const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
@@ -114,9 +114,9 @@ const App: React.FC = () => {
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
 
   const [heightFogEnabled, setHeightFogEnabled] = useState(true);
-  const [heightFogStrength, setHeightFogStrength] = useState(0.5);
-  const [heightFogRange, setHeightFogRange] = useState(24.0);
-  const [heightFogOffset, setHeightFogOffset] = useState(12.0);
+  const [heightFogStrength, setHeightFogStrength] = useState(0.35);
+  const [heightFogRange, setHeightFogRange] = useState(50.0);
+  const [heightFogOffset, setHeightFogOffset] = useState(4.0);
 
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
@@ -332,7 +332,7 @@ const App: React.FC = () => {
                   terrainWireframeEnabled={terrainWireframeEnabled}
                   terrainWeightsView={terrainWeightsView}
                   fogNear={fogNear}
-                  fogFar={fogFar}
+                  fogFar={fogFar * viewDistance}
                   heightFogEnabled={heightFogEnabled}
                   heightFogStrength={heightFogStrength}
                   heightFogRange={heightFogRange}

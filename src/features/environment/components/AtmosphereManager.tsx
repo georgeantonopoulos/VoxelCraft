@@ -632,7 +632,7 @@ export const AtmosphereManager: React.FC<{
     return (
         <>
             <color attach="background" args={['#87CEEB']} />
-            <fog attach="fog" args={['#87CEEB', props.fogNear, props.fogFar]} />
+            <fog attach="fog" args={['#87CEEB', props.fogNear, props.fogFar * props.viewDistance]} />
             <AmbientController intensityMul={props.ambientIntensityMul} />
             <AtmosphereController
                 orbitConfig={props.orbitConfig}

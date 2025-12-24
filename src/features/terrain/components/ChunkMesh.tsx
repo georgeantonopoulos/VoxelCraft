@@ -58,11 +58,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   terrainWeightsView = 'off',
   lodLevel = 0,
   heightFogEnabled = true,
-  heightFogStrength = 0.5,
-  heightFogRange = 24.0,
-  heightFogOffset = 12.0,
-  fogNear = 20,
-  fogFar = 250
+  heightFogStrength = 0.35,
+  heightFogRange = 50.0,
+  heightFogOffset = 4.0,
+  fogNear = 40,
+  fogFar = 220
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
