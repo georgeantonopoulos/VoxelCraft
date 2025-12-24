@@ -27,3 +27,4 @@ trigger: always_on
 1. **Analyze:** Before coding, identify if the change affects the "Voxel Grid" (data) or the "Mesh" (visual).
 2. **Plan:** Propose the change in a `<plan>` block.
 3. **Verify:** Check that the proposed code does not wipe out existing logic or comments.
+4. **npm run build and npm run dev ** + vite tests every single time!

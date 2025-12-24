@@ -981,20 +981,22 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       });
     }
 
-    // Throttled LOD updates (process 4 per frame to avoid massive reconciliation hitches)
+    // Throttled LOD updates (process in small batches to avoid massive reconciliation hitches)
     if (lodUpdateQueue.current.length > 0) {
-      const BATCH_SIZE = 4;
+      const BATCH_SIZE = 2; // Reduced from 4 for even smoother transitions
       const keys = lodUpdateQueue.current.splice(0, BATCH_SIZE);
-      setChunkVersions(prev => {
-        const next = { ...prev };
-        let changed = false;
-        keys.forEach(key => {
-          if (next[key] && chunkDataRef.current.has(key)) {
-            next[key] = (next[key] || 0) + 1;
-            changed = true;
-          }
+      startTransition(() => {
+        setChunkVersions(prev => {
+          const next = { ...prev };
+          let changed = false;
+          keys.forEach(key => {
+            if (next[key] !== undefined && chunkDataRef.current.has(key)) {
+              next[key] = (next[key] || 0) + 1;
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
         });
-        return changed ? next : prev;
       });
     }
 

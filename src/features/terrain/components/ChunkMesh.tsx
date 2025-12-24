@@ -125,13 +125,6 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     return geom;
   }, [chunk.meshWaterPositions, chunk.meshWaterIndices]);
 
-  useEffect(() => {
-    return () => {
-      terrainGeometry?.dispose();
-      waterGeometry?.dispose();
-    };
-  }, [terrainGeometry, waterGeometry]);
-
   const chunkTintColor = useMemo(() => {
     const c = new THREE.Color();
     const hash = (chunk.cx * 391 + chunk.cz * 727) % 360;
@@ -140,14 +133,60 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     return c;
   }, [chunk.cx, chunk.cz]);
 
+  const waterShoreMaskTexture = useMemo(() => {
+    if (!chunk.meshWaterShoreMask || chunk.meshWaterShoreMask.length === 0) return null;
+    const tex = new THREE.DataTexture(
+      chunk.meshWaterShoreMask,
+      CHUNK_SIZE_XZ,
+      CHUNK_SIZE_XZ,
+      THREE.RedFormat,
+      THREE.UnsignedByteType
+    );
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    return tex;
+  }, [chunk.meshWaterShoreMask]);
+
+  const [deferredColliderEnabled, setDeferredColliderEnabled] = React.useState(false);
+  const colliderEnabled = lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
+
+  useEffect(() => {
+    if (colliderEnabled) {
+      if (lodLevel === 0) {
+        setDeferredColliderEnabled(true);
+      } else {
+        // Defer distant colliders to avoid hitching during LOD transitions
+        if ((window as any).requestIdleCallback) {
+          const handle = (window as any).requestIdleCallback(() => setDeferredColliderEnabled(true), { timeout: 200 });
+          return () => (window as any).cancelIdleCallback(handle);
+        } else {
+          const handle = setTimeout(() => setDeferredColliderEnabled(true), 1);
+          return () => clearTimeout(handle);
+        }
+      }
+    } else {
+      setDeferredColliderEnabled(false);
+    }
+  }, [colliderEnabled, lodLevel]);
+
+  useEffect(() => {
+    return () => {
+      terrainGeometry?.dispose();
+      waterGeometry?.dispose();
+      waterShoreMaskTexture?.dispose();
+    };
+  }, [terrainGeometry, waterGeometry, waterShoreMaskTexture]);
+
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
-  const colliderEnabled = lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
   const useHeightfield = chunk.isHeightfield && chunk.colliderHeightfield && chunk.colliderHeightfield.length > 0;
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
-      {terrainGeometry && (colliderEnabled ? (
+      {deferredColliderEnabled && (
         <RigidBody
           key={colliderKey}
           type="fixed"
@@ -171,45 +210,10 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
               <TrimeshCollider args={[chunk.colliderPositions, chunk.colliderIndices]} />
             )
           )}
-          <mesh
-            ref={meshRef}
-            userData={{ type: 'terrain', key: chunk.key }}
-            scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
-            castShadow
-            receiveShadow
-            frustumCulled
-            geometry={terrainGeometry}
-          >
-            {normalsMode ? (
-              <meshNormalMaterial />
-            ) : terrainChunkTintEnabled ? (
-              <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
-            ) : (
-              <TriplanarMaterial
-                sunDirection={sunDirection}
-                triplanarDetail={triplanarDetail}
-                shaderFogEnabled={terrainShaderFogEnabled}
-                shaderFogStrength={terrainShaderFogStrength}
-                threeFogEnabled={terrainThreeFogEnabled}
-                wetnessEnabled={terrainWetnessEnabled}
-                mossEnabled={terrainMossEnabled}
-                roughnessMin={terrainRoughnessMin}
-                polygonOffsetEnabled={terrainPolygonOffsetEnabled}
-                polygonOffsetFactor={terrainPolygonOffsetFactor}
-                polygonOffsetUnits={terrainPolygonOffsetUnits}
-                weightsView={terrainWeightsView}
-                wireframe={terrainWireframeEnabled}
-                heightFogEnabled={heightFogEnabled}
-                heightFogStrength={heightFogStrength}
-                heightFogRange={heightFogRange}
-                heightFogOffset={heightFogOffset}
-                fogNear={fogNear}
-                fogFar={fogFar}
-              />
-            )}
-          </mesh>
         </RigidBody>
-      ) : (
+      )}
+
+      {terrainGeometry && (
         <mesh
           ref={meshRef}
           userData={{ type: 'terrain', key: chunk.key }}
@@ -247,12 +251,13 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
             />
           )}
         </mesh>
-      ))}
+      )}
+
       {waterGeometry && (
         <mesh
           geometry={waterGeometry}
           scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
-          userData={{ shoreMask: chunk.meshWaterShoreMask }}
+          userData={{ shoreMask: waterShoreMaskTexture }}
         >
           <WaterMaterial
             sunDirection={sunDirection}

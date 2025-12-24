@@ -106,7 +106,7 @@ const WaterMeshShader = shaderMaterial(
 
     void main() {
         vec2 uv = fract(vWorldPos.xz / max(uChunkSize, 0.0001));
-        float mask = texture2D(uShoreMask, uv).r;
+        float mask = texture(uShoreMask, uv).r;
         float edgeAlpha = smoothstep(0.5 - uShoreEdge, 0.5 + uShoreEdge, mask);
         if (edgeAlpha < 0.01) discard;
 
