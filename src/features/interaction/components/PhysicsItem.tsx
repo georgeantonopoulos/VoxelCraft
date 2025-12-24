@@ -204,7 +204,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
             distance={10}
             color={getItemMetadata(ItemType.FIRE)?.emissive || "#ffaa00"}
             decay={2}
-            castShadow
+            castShadow={false}
           />
           <FireParticles />
         </>

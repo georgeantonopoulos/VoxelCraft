@@ -122,6 +122,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshWaterPositions, 3));
     geom.setIndex(new THREE.BufferAttribute(chunk.meshWaterIndices, 1));
     geom.computeVertexNormals();
+
+    // Set an infinitely large bounding sphere to completely bypass frustum culling
+    // The mesh also has frustumCulled={false}, but this is a belt-and-suspenders approach
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 4.5, 16), Infinity);
+
     return geom;
   }, [chunk.meshWaterPositions, chunk.meshWaterIndices]);
 
@@ -185,7 +190,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   const useHeightfield = chunk.isHeightfield && chunk.colliderHeightfield && chunk.colliderHeightfield.length > 0;
 
   return (
-    <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
+    <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]} frustumCulled={false}>
       {deferredColliderEnabled && (
         <RigidBody
           key={colliderKey}
@@ -258,6 +263,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
           geometry={waterGeometry}
           scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
           userData={{ shoreMask: waterShoreMaskTexture }}
+          frustumCulled={false}
+          renderOrder={1}
         >
           <WaterMaterial
             sunDirection={sunDirection}

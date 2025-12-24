@@ -2,9 +2,13 @@ import * as THREE from 'three';
 import React, { useMemo } from 'react';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
+import { useControls, folder } from 'leva';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ } from '@/constants';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+
+// Global water debug mode (accessible from Leva)
+let waterDebugMode = 0;
 
 // Fallback 1x1 shoreline mask
 const FALLBACK_SHORE_MASK = (() => {
@@ -46,26 +50,40 @@ const WaterMeshShader = shaderMaterial(
     uFogColor: new THREE.Color('#87CEEB'),
     uFogNear: 20,
     uFogFar: 250,
-    uFade: 1
+    uFade: 1,
+    uDebugMode: 0,
+    uNoiseEnabled: 1, // 1=true, 0=false
+    uForceFullAlpha: 0 // 1=true, 0=false
   },
-  // Vertex
+  // Vertex shader
   `
     precision highp float;
     uniform float uTime;
+    uniform float uChunkSize;
     varying vec3 vWorldPos;
     varying vec3 vNormal;
     varying vec3 vViewPos;
+    varying float vFragDepth;
+    varying vec2 vLocalUV;
 
     void main() {
-      vNormal = normalize(normalMatrix * normal);
+      // Transform normal to WORLD space (not view space) for consistency with viewDir calculation
+      vNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
+      
+      // Pass local mesh position for UV calculation
+      vLocalUV = position.xz / uChunkSize;
+      
       vec4 worldPos = modelMatrix * vec4(position, 1.0);
       vWorldPos = worldPos.xyz;
       vec4 mvPosition = viewMatrix * worldPos;
       vViewPos = -mvPosition.xyz;
       gl_Position = projectionMatrix * mvPosition;
+      
+      // For logarithmic depth buffer
+      vFragDepth = 1.0 + gl_Position.w;
     }
   `,
-  // Fragment
+  // Fragment shader
   `
     precision highp float;
     precision highp sampler3D;
@@ -89,12 +107,23 @@ const WaterMeshShader = shaderMaterial(
     uniform float uFogNear;
     uniform float uFogFar;
     uniform float uFade;
+    uniform int uDebugMode;
+    uniform int uNoiseEnabled;
+    uniform int uForceFullAlpha;
 
     varying vec3 vWorldPos;
     varying vec3 vNormal;
     varying vec3 vViewPos;
+    varying float vFragDepth;
+    varying vec2 vLocalUV;
+
+    // Logarithmic depth buffer constant
+    const float logDepthBufFC = 0.1823;
 
     vec3 getNormal(vec3 pos, vec3 baseNormal, float time) {
+        // Skip noise calculcations if disabled
+        if (uNoiseEnabled == 0) return baseNormal;
+
         float scale = 0.1;
         float speed = 0.5;
         vec3 p1 = pos * scale + vec3(time * speed * 0.1, time * speed * 0.05, time * 0.02);
@@ -105,10 +134,34 @@ const WaterMeshShader = shaderMaterial(
     }
 
     void main() {
-        vec2 uv = fract(vWorldPos.xz / max(uChunkSize, 0.0001));
-        float mask = texture(uShoreMask, uv).r;
+        vec2 uv = vLocalUV;
+        // float mask = texture(uShoreMask, uv).r; // DISABLED SHORE MASK
+        float mask = 1.0; 
         float edgeAlpha = smoothstep(0.5 - uShoreEdge, 0.5 + uShoreEdge, mask);
-        if (edgeAlpha < 0.01) discard;
+        
+        // Debug mode 1: Show UV as colors (red=U, green=V)
+        if (uDebugMode == 1) {
+            gl_FragColor = vec4(uv.x, uv.y, 0.0, 1.0);
+            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
+            return;
+        }
+
+        // Debug mode 2: Show shore mask value (white=water, black=land)
+        if (uDebugMode == 2) {
+            gl_FragColor = vec4(vec3(mask), 1.0);
+            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
+            return;
+        }
+        
+        // Debug mode 4: Simple solid blue water, alpha=1, no effects
+        if (uDebugMode == 4) {
+            gl_FragColor = vec4(0.2, 0.5, 0.8, 1.0);
+            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
+            return;
+        }
+
+        // Debug mode 3: Skip shore mask discard (show all water)
+        // if (uDebugMode != 3 && edgeAlpha < 0.01) discard; // REMOVED: Causing disappearance at grazing angles
 
         vec3 viewDir = normalize(uCamPos - vWorldPos);
         vec3 normal = getNormal(vWorldPos, vNormal, uTime);
@@ -120,7 +173,10 @@ const WaterMeshShader = shaderMaterial(
         float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
 
         vec3 texP = vec3(vWorldPos.xz * uTexScale, 0.25);
-        vec3 nTex = texture(uNoiseTexture, texP).rgb;
+        vec3 nTex = vec3(0.5);
+        if (uNoiseEnabled == 1) {
+            nTex = texture(uNoiseTexture, texP).rgb;
+        }
         float texVal = (nTex.r + nTex.g) * 0.5;
         float texSigned = (texVal - 0.5) * 2.0;
 
@@ -142,7 +198,14 @@ const WaterMeshShader = shaderMaterial(
         vec3 finalColor = mix(shaded, uFogColor, fogFactor * 0.6);
         float alpha = (uAlphaBase + fresnel * uFresnelAlpha) * uFade * edgeAlpha;
         alpha = clamp(alpha + foam * 0.10, 0.0, 0.92);
+        
+        if (uForceFullAlpha == 1) {
+            alpha = 1.0;
+        }
+        
         gl_FragColor = vec4(finalColor, alpha);
+        
+        gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
     }
   `
 );
@@ -159,6 +222,7 @@ export const getSharedWaterMaterial = () => {
   sharedWaterMaterial.transparent = true;
   sharedWaterMaterial.side = THREE.DoubleSide;
   sharedWaterMaterial.depthWrite = false;
+  //sharedWaterMaterial.depthTest = false; // DIAGNOSTIC: disable depth testing
 
   // Link to shared uniforms to avoid per-frame updates in multiple locations
   sharedWaterMaterial.uniforms.uTime = sharedUniforms.uTime;
@@ -195,6 +259,18 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
   useThree();
   const material = useMemo(() => getSharedWaterMaterial(), []);
 
+  // Debug controls - only active in debug mode
+  const debugControls = useControls('Water Debug', {
+    debugMode: {
+      value: 0,
+      options: { 'Normal': 0, 'Show UV': 1, 'Show Shore Mask': 2, 'No Shore Discard': 3, 'Solid Blue': 4 },
+      label: 'Debug Mode'
+    },
+    depthTestEnabled: { value: true, label: 'Depth Test' },
+    noiseEnabled: { value: true, label: 'Noise Enabled' },
+    forceFullAlpha: { value: false, label: 'Force Alpha=1' }
+  }, { collapsed: true });
+
   useFrame((state) => {
     // Lazy initialization
     if (material.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
@@ -212,6 +288,12 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
       if (alphaBase !== undefined) uniforms.uAlphaBase.value = alphaBase;
       if (texStrength !== undefined) uniforms.uTexStrength.value = texStrength;
       if (foamStrength !== undefined) uniforms.uFoamStrength.value = foamStrength;
+
+      // Apply debug mode
+      uniforms.uDebugMode.value = debugControls.debugMode;
+      uniforms.uNoiseEnabled.value = debugControls.noiseEnabled ? 1 : 0;
+      uniforms.uForceFullAlpha.value = debugControls.forceFullAlpha ? 1 : 0;
+      material.depthTest = debugControls.depthTestEnabled;
 
       // Sync fog from scene
       if (state.scene.fog && (state.scene.fog as any).color) {

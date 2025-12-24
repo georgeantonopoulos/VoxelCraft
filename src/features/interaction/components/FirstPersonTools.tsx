@@ -401,12 +401,20 @@ export const FirstPersonTools: React.FC = () => {
                 visible={false}
             />
             <group ref={torchRef}>
-                <group visible={selectedItem === 'torch'}>
+                <group visible={selectedItem === ItemType.TORCH}>
                     <TorchTool />
                 </group>
             </group>
             <group ref={rightItemRef}>
-                <UniversalTool item={activeCustomTool || selectedItem} />
+                {/* 
+                  Prevent UniversalTool from rendering the torch (and its extra PointLight) 
+                  when TorchTool is already handling it in the left hand.
+                */}
+                <UniversalTool item={
+                    (activeCustomTool || selectedItem) === ItemType.TORCH
+                        ? null
+                        : (activeCustomTool || selectedItem)
+                } />
             </group>
         </group>
     );

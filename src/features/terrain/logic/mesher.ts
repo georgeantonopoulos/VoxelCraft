@@ -72,8 +72,9 @@ export type WaterSurfaceMeshData = {
 /**
  * Generates a separate mesh for the water surface.
  * Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
- * We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
- * a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
+ * 
+ * Uses a simple chunk-spanning quad at WATER_LEVEL. Shoreline transitions are handled entirely
+ * by the shore mask SDF in the shader, ensuring seamless chunk boundaries.
  *
  * IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
  * material grid at runtime rather than relying on physics for water.
@@ -84,7 +85,6 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
   const waterNorms: number[] = [];
 
   // Convert world-space sea level to the chunk's padded grid Y index.
-  // Grid worldY = (yIndex - PAD) + MESH_Y_OFFSET  =>  yIndex = worldY - MESH_Y_OFFSET + PAD.
   const seaGridYRaw = Math.floor(WATER_LEVEL - MESH_Y_OFFSET) + PAD;
   const seaGridY = Math.max(0, Math.min(SIZE_Y - 2, seaGridYRaw));
 
@@ -112,9 +112,9 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
   }
 
   // Emit a chunk-wide sea-level quad only if this chunk actually has sea-level water.
-  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple and smooth.
+  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple.
+  // Using exact chunk boundaries (0 to CHUNK_SIZE_XZ) ensures seamless tiling.
   if (hasAnyWater) {
-    const base = waterVerts.length / 3;
     const y = WATER_LEVEL;
     waterVerts.push(
       0, y, 0,
@@ -129,12 +129,12 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
       0, 1, 0
     );
     waterInds.push(
-      base + 0, base + 2, base + 1,
-      base + 2, base + 3, base + 1
+      0, 2, 1,
+      2, 3, 1
     );
   }
 
-  // --- Compute shoreline SDF mask in the worker so main thread doesn't run BFS ---
+  // --- Compute shoreline SDF mask for the shader ---
   const shoreMask = new Uint8Array(waterW * waterH);
   if (hasAnyWater) {
     const INF = 0x3fff;
@@ -147,7 +147,10 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
     const qz: number[] = [];
     let qh = 0;
     const push = (x: number, z: number) => { qx.push(x); qz.push(z); };
-    const isWater = (x: number, z: number) => waterMask[x + z * waterW] === 1;
+    const isWater = (x: number, z: number) => {
+      if (x < 0 || z < 0 || x >= waterW || z >= waterH) return false;
+      return waterMask[x + z * waterW] === 1;
+    };
 
     const hasDiffNeighbor = (x: number, z: number) => {
       const v = isWater(x, z);
@@ -158,6 +161,7 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
       return false;
     };
 
+    // BFS for inside water distance
     for (let z = 0; z < waterH; z++) {
       for (let x = 0; x < waterW; x++) {
         if (!hasDiffNeighbor(x, z)) continue;
@@ -184,7 +188,7 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
       step(x - 1, z); step(x + 1, z); step(x, z - 1); step(x, z + 1);
     }
 
-    // Reset queue for outside (land)
+    // BFS for outside (land) distance
     qx.length = 0; qz.length = 0; qh = 0;
     for (let z = 0; z < waterH; z++) {
       for (let x = 0; x < waterW; x++) {
@@ -195,7 +199,6 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
         }
       }
     }
-    // BFS outside water
     while (qh < qx.length) {
       const x = qx[qh];
       const z = qz[qh];

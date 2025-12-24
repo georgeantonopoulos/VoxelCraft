@@ -104,7 +104,7 @@ export const DebugControls: React.FC<{
                     haze: { value: 0.35, min: 0.0, max: 1.0, step: 0.01, onChange: props.setAtmosphereHaze, label: 'Haze' },
                     brightness: { value: 1.0, min: 0.6, max: 1.6, step: 0.01, onChange: props.setAtmosphereBrightness, label: 'Brightness' },
                 })
-            }, { collapsed: false }),
+            }, { collapsed: true }),
 
             'Post Processing': folder({
                 ppEnabled: { value: true, onChange: (v) => props.setPostProcessingEnabled(!!v), label: 'Master Switch' },
@@ -153,7 +153,7 @@ export const DebugControls: React.FC<{
                         .then(() => alert('Configuration copied to clipboard!'))
                         .catch((err) => console.error('Failed to copy config:', err));
                 })
-            }, { collapsed: false }),
+            }, { collapsed: true }),
 
             'UI': folder({
                 levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: props.setLevaWidth, label: 'Width' },

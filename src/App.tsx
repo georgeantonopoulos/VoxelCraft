@@ -33,6 +33,7 @@ import { CinematicCamera } from '@features/environment/components/CinematicCamer
 
 // UI
 import { HUD as UI } from '@ui/HUD';
+import { SceneWarmup } from '@features/environment/components/SceneWarmup';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { SettingsMenu } from '@/ui/SettingsMenu';
@@ -282,10 +283,12 @@ const App: React.FC = () => {
           gl={{
             antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
-            toneMapping: THREE.NoToneMapping
+            toneMapping: THREE.NoToneMapping,
+            logarithmicDepthBuffer: true
           }}
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
+          <SceneWarmup />
           <PerformanceMonitor visible={debugMode} />
 
           <AtmosphereManager

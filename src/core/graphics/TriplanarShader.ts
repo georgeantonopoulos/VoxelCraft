@@ -9,6 +9,7 @@ export const triplanarVertexShader = `
 
   uniform vec2 uWindDirXZ;
   uniform float uNormalStrength;
+  uniform float uTime;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -32,8 +33,11 @@ export const triplanarVertexShader = `
     vec3 nn = normalize(n);
     vec2 wind = safeNormalize2(uWindDirXZ);
     float w = clamp(weight, 0.0, 1.0);
-    float base = uNormalStrength * (0.35 + 0.65 * w);
+    // Base strength boost to ensure visibility
+    float base = uNormalStrength * (0.6 + 0.4 * w);
 
+    // --- 1. SAND & RED SAND (Ripples) ---
+    // Keep existing wind-aligned ripples as they are static logic-wise
     if (channel == 5.0 || channel == 10.0) {
       float flatness = pow(clamp(nn.y, 0.0, 1.0), 2.4);
       float freq = 2.8;
@@ -42,38 +46,52 @@ export const triplanarVertexShader = `
       float c = cos(phase);
       vec3 g = vec3(wind.x, 0.0, wind.y);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * flatness * 0.35));
+      nn = normalize(nn + g * (c * base * flatness * 0.4));
     }
-    else if (channel == 2.0 || channel == 1.0 || channel == 15.0) {
-      float freq = 1.4;
-      float phase = worldPos.y * freq + sin(dot(worldPos.xz, vec2(0.04, 0.05))) * 0.65;
-      float c = cos(phase);
+    // --- 2. ROCK, BEDROCK, OBSIDIAN (Stratified Layers) ---
+    // Sharp horizontal ridges to simulate sedimentary rock layers.
+    else if (channel == 2.0 || channel == 1.0 || channel == 15.0 || channel == 9.0) {
+      float freq = 3.5;
+      float warp = sin(worldPos.x * 0.15 + worldPos.z * 0.1) * 0.8;
+      float phase = worldPos.y * freq + warp;
+      float folded = abs(mod(phase, 2.0) - 1.0); // Triangle wave
+      float ridge = smoothstep(0.3, 0.7, folded); // Contrast boost
       vec3 g = vec3(0.0, 1.0, 0.0);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.18));
+      nn = normalize(nn + g * ((ridge - 0.5) * base * 0.7)); // Strong bump
     }
+    // --- 3. DIRT, CLAY, TERRACOTTA (Lumpy Noise) ---
     else if (channel == 3.0 || channel == 7.0 || channel == 11.0) {
-      float fx = 1.05;
-      float fz = 0.95;
-      float sx = sin(worldPos.x * fx);
-      float sz = sin(worldPos.z * fz);
-      vec3 g = vec3(cos(worldPos.x * fx) * sz, 0.0, sx * cos(worldPos.z * fz));
+      float f = 3.5;
+      float n = sin(worldPos.x * f) * sin(worldPos.z * f); // Grid bumps
+      float n2 = sin(worldPos.x * f * 2.0 + worldPos.z) * 0.5; // Detail
+      float bump = n + n2;
+      vec3 g = vec3(1.0, 0.0, 1.0); // Diagonal displacement
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (base * 0.06));
+      nn = normalize(nn + g * (bump * base * 0.4));
     }
+    // --- 4. GRASS & JUNGLE GRASS (Mown/Directional Ridges) ---
+    // STATIC now - removed time animation. 
+    // Uses parallel ridges to simulate mowed grass or directional growth.
     else if (channel == 4.0 || channel == 13.0) {
-      float phase = dot(worldPos.xz, wind.yx) * 2.2 + worldPos.y * 0.4;
-      float c = cos(phase);
-      vec3 g = vec3(wind.y, 0.0, wind.x);
+      float freq = 2.0;
+      // Fixed phase based on world position only
+      float phase = (worldPos.x + worldPos.z * 0.5) * freq; 
+      float ridge = sin(phase);
+      // Sharpen tops
+      ridge = sign(ridge) * pow(abs(ridge), 0.6);
+      
+      vec3 g = vec3(1.0, 0.0, 0.5); // Fixed direction
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.05));
+      nn = normalize(nn + g * (ridge * base * 0.5)); // Strong visible ridges
     }
+    // --- 5. SNOW & ICE (Drifts) ---
     else if (channel == 6.0 || channel == 12.0) {
-      float phase = worldPos.x * 1.8 + worldPos.z * 2.0;
-      float c = cos(phase);
+      float freq = 0.5;
+      float drift = sin(worldPos.x * freq + sin(worldPos.z * freq));
       vec3 g = vec3(1.0, 0.0, 1.0);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.02));
+      nn = normalize(nn + g * (drift * base * 0.4));
     }
     return nn;
   }
