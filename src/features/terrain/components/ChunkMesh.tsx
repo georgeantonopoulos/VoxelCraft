@@ -305,6 +305,7 @@ export const ChunkMesh: React.FC<{
               collidersEnabled={colliderEnabled}
               chunkKey={chunk.key}
               simplified={lodLevel > LOD_DISTANCE_SIMPLIFIED}
+              lodLevel={lodLevel}
             />
           )}
 

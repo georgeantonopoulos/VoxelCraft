@@ -384,7 +384,7 @@ const VegetationBatch: React.FC<{
   }, [batch.positions, geometry]);
 
   // Clean up the cloned geometry when component unmounts
-  React.useEffect(() => {
+  useEffect(() => {
     const geo = geometry;
     return () => {
       geo.dispose();
