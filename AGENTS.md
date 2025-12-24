@@ -168,6 +168,15 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-24: Optimized React State Reconciliation in `VoxelTerrain.tsx`.
+  - **Decoupled Data from Render Cycle**: Introduced `chunkDataRef = useRef<Map<string, ChunkState>>(new Map())` to hold heavy binary data (Float32Arrays) outside of React's direct state management.
+  - **Lightweight State Trigger**: Refactored the `chunks` state into `chunkVersions: Record<string, number>`, which only tracks chunk keys and version numbers.
+  - **Eliminated Reconciliation Tax**: By only updating lightweight version numbers, React no longer performs deep diffing on massive chunk objects, eliminating main-thread stutters during terrain generation and interaction.
+  - **Updated Logic**: Refactored all interaction handlers, worker message processing, and the main render loop to read directly from the `chunkDataRef` Map using keys provided by the `chunkVersions` state.
+- 2025-12-24: Optimized worker message processing in `VoxelTerrain.tsx`.
+  - Replaced the "one-message-per-frame" bottleneck with a **Time-Budgeted Loop** (4ms).
+  - This allows multiple chunks to be processed in a single frame when the budget allows, significantly improving chunk loading speed and streaming responsiveness.
+  - Moved worker message queue garbage collection outside the iteration loop for efficiency.
 - 2025-12-20: Implemented Multi-Tier Graphics Optimization (LOD, Caching, Pooling).
   - **LOD System**: Added 4 discrete tiers for chunks. Simplified trees (opaque materials, low-poly geometry) and reduced vegetation density (50% at LOD 2, 10% at LOD 3, 0% at LOD 4).
   - **Chunk Cache**: Integrated IndexedDB-based persistence for procedural mesh data in `terrain.worker.ts`. Skips Surface Nets/Density generation for pristine chunks on revisits.
