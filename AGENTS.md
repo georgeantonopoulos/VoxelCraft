@@ -170,7 +170,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
-- 2025-12-24: **CRITICAL FIX** - Terrain Collision, Stuttering, and Disappearing Textures.
+- 2025-12-24: **CRITICAL: Restored Game Logic & Eliminated Generation Stutter.**
+  - **Logic Restoration**: Fully restored all reactive props and configuration logic for `TriplanarMaterial`, `ChunkMesh`, and `VegetationLayer` that were accidentally removed during optimization.
+  - **Generation Stutter Fix**: Eliminated the main-thread hitch during chunk streaming by moving away from Rapier's automatic `colliders="trimesh"` (which builds BVHs synchronously on mount) to a manual `<MeshCollider>` using worker-precomputed data.
+  - **Performance**: Implemented a "Single-Update" pattern in `TriplanarMaterial` that ensures global uniforms are synchronized only once per frame across all 80+ chunks, dramatically reducing CPU overhead during camera movement.
   - **Heightfield Shearing**: Fixed `HeightfieldCollider` args in `ChunkMesh.tsx` to use `CHUNK_SIZE_XZ + 1` (33) for rows/cols. Passing 32 caused a 1-pixel shear per row, making the heightfield "wobble" and drift away from the visual mesh.
   - **Disappearing Chunks**: Fixed `geometry.boundingSphere` in `ChunkMesh.tsx`. It was offset by `PAD`, causing chunks to be frustum-culled when viewed from certain angles.
   - **LOD Transition Stutter**: Deferred tree and flora colliders using `requestIdleCallback` in `TreeLayer.tsx`. This spreads the heavy Rapier BVH construction over multiple frames.
@@ -502,3 +505,12 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
        - Mutates chunk data in-place instead of creating new objects.
        - Removed unnecessary sorting of LOD update queue.
        - **Fix**: Resolved `ReferenceError: getChunkLodDistance is not defined` by updating the `GENERATED` message handler to use the new `getChunkLodTier` function.
+- 2025-12-24: Fixed TriplanarMaterial & WaterMaterial Uniform Errors.
+    - Resolved `TypeError: Cannot set properties of undefined (setting 'value')` in `TriplanarMaterial.tsx` by explicitly mapping missing uniforms from `sharedUniforms`.
+    - Optimized `TriplanarMaterial` updates by moving `lastUpdateFrame` to module-level, reducing per-frame uniform updates from $N_{chunks}$ to $1$.
+    - Fixed `TypeError: Failed to execute 'uniform3fv' on 'WebGL2RenderingContext'` in `WaterMaterial.tsx` caused by incorrect uniform initialization in `shaderMaterial`.
+    - Standardized `useFrame` callbacks to use `state.scene` and `state.camera` for more robust scoping.
+- 2025-12-24: Fixed `Uncaught ReferenceError: scene is not defined` in `VoxelTerrain.tsx`.
+  - **Root Cause**: The `updateSharedUniforms` function was being called inside `useFrame` using a reference to `scene` that was failing to be resolved from the component scope in some environments (likely due to broken HMR or scope-mangling during transformation).
+  - **Fix**: Replaced the closure-based `scene` and `camera` references inside the `useFrame` hook with explicit `state.scene` and `state.camera` lookups. Since `state` is the first argument to the frame loop callback, this bypasses potential destructuring or scope issues.
+  - **Verification**: Ran `npm run build` which succeeded. Note: Since the user's Vite HMR failed, a manual browser refresh is required to pick up these changes.

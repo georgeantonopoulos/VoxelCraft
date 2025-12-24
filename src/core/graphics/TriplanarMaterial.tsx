@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import React, { useRef, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import React, { useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { sharedUniforms } from './SharedUniforms';
@@ -8,15 +8,11 @@ import { sharedUniforms } from './SharedUniforms';
 import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragmentShader } from './TriplanarShader';
 
 // Shared material instance to avoid redundant shader compilation/patching per chunk.
-// All chunks share this material; variety is provided by geometry attributes (wetness, spawnTime, etc.)
 let sharedTerrainMaterial: THREE.MeshStandardMaterial | null = null;
+let lastUpdateFrame = -1;
 
-// Placeholder 1x1x1 3D texture - only used until material creation completes.
-// The real noise texture is assigned synchronously in getSharedTerrainMaterial().
 const PLACEHOLDER_NOISE_3D = (() => {
-  const data = new Uint8Array([255, 255, 255, 255]); // 1x1x1 RGBA - White (Max Intensity)
-  // White avoids 'black/dark' terrain (0.6 intensity) by boosting it to 1.2
-  // AND avoids 'Crazy RGB' caustics (which trigger on 0.5 gray values).
+  const data = new Uint8Array([255, 255, 255, 255]);
   const tex = new THREE.Data3DTexture(data, 1, 1, 1);
   tex.format = THREE.RGBAFormat;
   tex.type = THREE.UnsignedByteType;
@@ -24,12 +20,14 @@ const PLACEHOLDER_NOISE_3D = (() => {
   return tex;
 })();
 
+
+
 const getSharedTerrainMaterial = () => {
   if (sharedTerrainMaterial) return sharedTerrainMaterial;
 
   const uniforms = {
     ...sharedUniforms,
-    uNoiseTexture: { value: PLACEHOLDER_NOISE_3D }, // Will be replaced lazily
+    uNoiseTexture: { value: PLACEHOLDER_NOISE_3D },
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },
     uColorDirt: { value: new THREE.Color('#755339') },
@@ -45,28 +43,25 @@ const getSharedTerrainMaterial = () => {
     uColorJungleGrass: { value: new THREE.Color('#2e8b1d') },
     uColorGlowStone: { value: new THREE.Color('#00e5ff') },
     uColorObsidian: { value: new THREE.Color('#0a0814') },
-    uFogColor: { value: new THREE.Color('#87CEEB') },
-    uFogNear: { value: 30 },
-    uFogFar: { value: 400 },
     uOpacity: { value: 1 },
-    uSunDirection: sharedUniforms.uSunDir,
-    uWaterLevel: { value: 4.5 },
-    uTriplanarDetail: { value: 1.0 },
-    uShaderFogEnabled: { value: 1.0 },
-    uShaderFogStrength: { value: 0.9 },
-    uWetnessEnabled: { value: 1.0 },
-    uMossEnabled: { value: 1.0 },
-    uRoughnessMin: { value: 0.0 },
-    uWeightsView: { value: 0 },
     uMacroStrength: { value: 1.0 },
     uCavityStrength: { value: 1.0 },
     uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
     uNormalStrength: { value: 1.0 },
     uFogDensity: { value: 0.01 },
-    uHeightFogEnabled: { value: 1.0 },
-    uHeightFogStrength: { value: 0.5 },
-    uHeightFogRange: { value: 20.0 },
-    uHeightFogOffset: { value: 10.0 },
+    uWaterLevel: { value: 4.5 },
+    uWeightsView: { value: 0 },
+    uTriplanarDetail: sharedUniforms.uTriplanarDetail,
+    uShaderFogEnabled: sharedUniforms.uShaderFogEnabled,
+    uShaderFogStrength: sharedUniforms.uShaderFogStrength,
+    uWetnessEnabled: sharedUniforms.uWetnessEnabled,
+    uMossEnabled: sharedUniforms.uMossEnabled,
+    uRoughnessMin: sharedUniforms.uRoughnessMin,
+    uHeightFogEnabled: sharedUniforms.uHeightFogEnabled,
+    uHeightFogStrength: sharedUniforms.uHeightFogStrength,
+    uHeightFogRange: sharedUniforms.uHeightFogRange,
+    uHeightFogOffset: sharedUniforms.uHeightFogOffset,
+    uSunDirection: sharedUniforms.uSunDirection,
   };
 
   sharedTerrainMaterial = new (CustomShaderMaterial as any)({
@@ -84,7 +79,7 @@ const getSharedTerrainMaterial = () => {
   return sharedTerrainMaterial;
 };
 
-export const TriplanarMaterial: React.FC<{
+export interface TriplanarMaterialProps {
   sunDirection?: THREE.Vector3;
   triplanarDetail?: number;
   shaderFogEnabled?: boolean;
@@ -98,14 +93,16 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetUnits?: number;
   weightsView?: string;
   wireframe?: boolean;
-  waterLevel?: number;
   heightFogEnabled?: boolean;
   heightFogStrength?: number;
   heightFogRange?: number;
   heightFogOffset?: number;
   fogNear?: number;
   fogFar?: number;
-}> = ({
+}
+
+export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
+  sunDirection,
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
   shaderFogStrength = 0.9,
@@ -118,7 +115,6 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetUnits = -1.0,
   weightsView = 'off',
   wireframe = false,
-  waterLevel = 4.5,
   heightFogEnabled = true,
   heightFogStrength = 0.5,
   heightFogRange = 20.0,
@@ -126,103 +122,61 @@ export const TriplanarMaterial: React.FC<{
   fogNear = 20,
   fogFar = 250,
 }) => {
-    const { scene } = useThree();
-    const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
+  const mat = useMemo(() => getSharedTerrainMaterial(), []);
 
-    const mat = useMemo(() => getSharedTerrainMaterial(), []);
+  useFrame((state) => {
+    if (!mat) return;
+    const uniforms = (mat as any).uniforms;
 
-    // Track the last frame we updated the shared material to avoid 
-    // redundant work across hundreds of chunks.
-    const lastUpdateFrameRef = useRef(-1);
+    // Lazy initialization of common central textures
+    if (uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
+      uniforms.uNoiseTexture.value = getNoiseTexture();
+    }
 
-    useFrame((state) => {
-      const matAny = mat as any;
-      if (!matAny) return;
+    // We only update the shared material ONCE per frame, even with 100 chunks.
+    if (lastUpdateFrame !== state.gl.info.render.frame) {
+      lastUpdateFrame = state.gl.info.render.frame;
 
-      // Lazy initialization of noise texture (deferred from module load to avoid memory allocation failures)
-      if (matAny.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
-        matAny.uniforms.uNoiseTexture.value = getNoiseTexture();
+      // Apply all props to the shared material instance
+      const uniforms = (mat as any).uniforms;
+
+      // If props are provided, they OVERRIDE central state for this material instance (which is shared)
+      // Since it's a singleton, the last chunk processed "wins" for that frame.
+      // In practice, these settings are global anyway.
+
+      if (sunDirection && (sunDirection as any).isVector3) {
+        uniforms.uSunDirection.value.copy(sunDirection);
+        uniforms.uSunDir.value.copy(sunDirection);
       }
 
-      // Only update global/shared uniforms once per frame
-      if (lastUpdateFrameRef.current !== state.gl.info.render.frame) {
-        lastUpdateFrameRef.current = state.gl.info.render.frame;
+      uniforms.uTriplanarDetail.value = triplanarDetail;
+      uniforms.uShaderFogEnabled.value = shaderFogEnabled ? 1.0 : 0.0;
+      uniforms.uShaderFogStrength.value = shaderFogStrength;
+      uniforms.uWetnessEnabled.value = wetnessEnabled ? 1.0 : 0.0;
+      uniforms.uMossEnabled.value = mossEnabled ? 1.0 : 0.0;
+      uniforms.uRoughnessMin.value = roughnessMin;
 
-        // Avoid per-frame churn: only touch uniforms when values actually change
-        if (matAny.uniforms.uTriplanarDetail.value !== triplanarDetail) {
-          matAny.uniforms.uTriplanarDetail.value = triplanarDetail;
-        }
+      mat.polygonOffset = polygonOffsetEnabled;
+      mat.polygonOffsetFactor = polygonOffsetFactor;
+      mat.polygonOffsetUnits = polygonOffsetUnits;
+      mat.wireframe = wireframe;
 
-        const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
-        if (matAny.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) {
-          matAny.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
-        }
+      const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+      uniforms.uWeightsView.value = viewMap[weightsView] ?? 0;
 
-        if (matAny.uniforms.uShaderFogStrength.value !== shaderFogStrength) {
-          matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
-        }
+      mat.fog = threeFogEnabled;
+      uniforms.uHeightFogEnabled.value = heightFogEnabled ? 1.0 : 0.0;
+      uniforms.uHeightFogStrength.value = heightFogStrength;
+      uniforms.uHeightFogRange.value = heightFogRange;
+      uniforms.uHeightFogOffset.value = heightFogOffset;
+      uniforms.uFogNear.value = fogNear;
+      uniforms.uFogFar.value = fogFar;
 
-        const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
-        if (matAny.uniforms.uWetnessEnabled.value !== wetnessEnabledF) {
-          matAny.uniforms.uWetnessEnabled.value = wetnessEnabledF;
-        }
-
-        const mossEnabledF = mossEnabled ? 1.0 : 0.0;
-        if (matAny.uniforms.uMossEnabled.value !== mossEnabledF) {
-          matAny.uniforms.uMossEnabled.value = mossEnabledF;
-        }
-
-        if (matAny.uniforms.uRoughnessMin.value !== roughnessMin) {
-          matAny.uniforms.uRoughnessMin.value = roughnessMin;
-        }
-
-        matAny.polygonOffset = polygonOffsetEnabled;
-        matAny.polygonOffsetFactor = polygonOffsetFactor;
-        matAny.polygonOffsetUnits = polygonOffsetUnits;
-        matAny.wireframe = wireframe;
-
-        const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-        const nextWeightsView = viewMap[weightsView] ?? 0;
-        if (matAny.uniforms.uWeightsView.value !== nextWeightsView) {
-          matAny.uniforms.uWeightsView.value = nextWeightsView;
-        }
-
-        matAny.fog = threeFogEnabled;
-        matAny.uniforms.uWaterLevel.value = waterLevel;
-
-        const hFogEnabled = heightFogEnabled ? 1.0 : 0.0;
-        if (matAny.uniforms.uHeightFogEnabled.value !== hFogEnabled) {
-          matAny.uniforms.uHeightFogEnabled.value = hFogEnabled;
-        }
-        if (matAny.uniforms.uHeightFogStrength.value !== heightFogStrength) {
-          matAny.uniforms.uHeightFogStrength.value = heightFogStrength;
-        }
-        if (matAny.uniforms.uHeightFogRange.value !== heightFogRange) {
-          matAny.uniforms.uHeightFogRange.value = heightFogRange;
-        }
-        if (matAny.uniforms.uHeightFogOffset.value !== heightFogOffset) {
-          matAny.uniforms.uHeightFogOffset.value = heightFogOffset;
-        }
-
-        if (matAny.uniforms.uFogNear.value !== fogNear) {
-          matAny.uniforms.uFogNear.value = fogNear;
-        }
-        if (matAny.uniforms.uFogFar.value !== fogFar) {
-          matAny.uniforms.uFogFar.value = fogFar;
-        }
-
-        const fog = scene.fog as any;
-        if (fog) {
-          const colorHex = `#${fog.color.getHexString()}`;
-          const lastFog = lastFogRef.current;
-          // Scene fog color still drives the uFogColor uniform for atmosphere matching
-          if (!lastFog || lastFog.colorHex !== colorHex) {
-            matAny.uniforms.uFogColor.value.copy(fog.color);
-            lastFogRef.current = { near: fog.near ?? 20, far: fog.far ?? 160, colorHex };
-          }
-        }
+      if (state.scene.fog && (state.scene.fog as any).color) {
+        uniforms.uFogColor.value.copy((state.scene.fog as any).color);
       }
-    });
+    }
+  });
 
-    return <primitive object={mat} attach="material" />;
-  };
+  return <primitive object={mat} attach="material" />;
+});

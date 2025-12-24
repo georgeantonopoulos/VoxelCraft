@@ -2,7 +2,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
-import { CACHE_VERSION, getCachedChunk, saveToCache } from '@/state/ChunkCache';
+import { CACHE_VERSION, getCachedChunk } from '@/state/ChunkCache';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
@@ -182,7 +182,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                     if (cached.colliderHeightfield) buffers.push(cached.colliderHeightfield.buffer as ArrayBuffer);
                     if (cached.rockDataBuckets) { for (const b of Object.values(cached.rockDataBuckets)) buffers.push((b as any).buffer); }
                     if (cached.vegetationData) { for (const b of Object.values(cached.vegetationData)) buffers.push((b as any).buffer); }
-                    if (cached.treeInstanceBatches) { for (const b of Object.values(cached.treeInstanceBatches as any)) { if (b.matrices) buffers.push(b.matrices.buffer); if (b.originalIndices) buffers.push(b.originalIndices.buffer); } }
+                    if (cached.treeInstanceBatches) { for (const b of Object.values(cached.treeInstanceBatches as any)) { const batch = b as any; if (batch.matrices) buffers.push(batch.matrices.buffer); if (batch.originalIndices) buffers.push(batch.originalIndices.buffer); } }
                     ctx.postMessage({ type: 'GENERATED', payload: response }, buffers);
                     return;
                 }

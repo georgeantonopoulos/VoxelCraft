@@ -55,6 +55,12 @@ export interface CachedChunk {
     stickHotspots?: Float32Array;
     rockHotspots?: Float32Array;
 
+    // Collider Data
+    colliderPositions?: Float32Array;
+    colliderIndices?: Uint32Array;
+    colliderHeightfield?: Float32Array;
+    isHeightfield?: boolean;
+
     timestamp: number;
 }
 

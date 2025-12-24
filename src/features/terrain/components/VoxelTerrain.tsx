@@ -965,7 +965,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // 3. Process Queues (Throttled)
   useFrame((state) => {
     const frameStart = performance.now();
-    if (!camera || !poolRef.current) return;
+    if (!state.camera || !poolRef.current) return;
 
     lastTimeRef.current = state.clock.getElapsedTime();
 
@@ -1422,7 +1422,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     // Update central uniforms for instanced layers
-    updateSharedUniforms(state, sunDirection);
+    updateSharedUniforms(state, {
+      sunDir: sunDirection,
+      fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
+      fogNear,
+      fogFar,
+      shaderFogStrength: terrainShaderFogStrength,
+      heightFogEnabled,
+      heightFogStrength,
+      heightFogRange,
+      heightFogOffset,
+      triplanarDetail
+    });
   });
 
   useEffect(() => {

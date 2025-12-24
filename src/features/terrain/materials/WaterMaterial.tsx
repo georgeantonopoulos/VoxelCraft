@@ -1,13 +1,12 @@
-
 import * as THREE from 'three';
 import React, { useMemo } from 'react';
 import { extend, useFrame, useThree } from '@react-three/fiber';
 import { shaderMaterial } from '@react-three/drei';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ } from '@/constants';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
-// Fallback 1x1 shoreline mask so water can't disappear if a chunk has no computed mask.
-// This keeps edgeAlpha at 1.0 (fully visible) instead of discarding everything.
+// Fallback 1x1 shoreline mask
 const FALLBACK_SHORE_MASK = (() => {
   const data = new Uint8Array([255]);
   const tex = new THREE.DataTexture(data, 1, 1, THREE.RedFormat, THREE.UnsignedByteType);
@@ -19,10 +18,8 @@ const FALLBACK_SHORE_MASK = (() => {
   return tex;
 })();
 
-// Placeholder 1x1x1 3D texture for module-load time to avoid memory allocation during import.
-// Real noise texture is assigned lazily in useFrame when the material is first used.
 const PLACEHOLDER_NOISE_3D = (() => {
-  const data = new Uint8Array([255, 255, 255, 255]); // 1x1x1 RGBA - White
+  const data = new Uint8Array([255, 255, 255, 255]);
   const tex = new THREE.Data3DTexture(data, 1, 1, 1);
   tex.format = THREE.RGBAFormat;
   tex.type = THREE.UnsignedByteType;
@@ -33,31 +30,27 @@ const PLACEHOLDER_NOISE_3D = (() => {
 const WaterMeshShader = shaderMaterial(
   {
     uTime: 0,
-    uSunDir: new THREE.Vector3(0.5, 0.8, 0.3).normalize(),
-    // Base water colors (tuned to avoid "milky white" surface washout).
+    uSunDir: new THREE.Vector3(0, 1, 0),
     uColorShallow: new THREE.Color('#3ea7d6'),
     uColorDeep: new THREE.Color('#0b3e63'),
-    uNoiseTexture: PLACEHOLDER_NOISE_3D, // Lazy initialization - real texture set in useFrame
+    uNoiseTexture: PLACEHOLDER_NOISE_3D,
     uShoreMask: FALLBACK_SHORE_MASK,
     uShoreEdge: 0.06,
     uAlphaBase: 0.58,
     uFresnelAlpha: 0.22,
-    // Static texture detail (not time-dependent) to break up flatness.
     uTexScale: 0.06,
     uTexStrength: 0.12,
-    // Subtle foam/brightening near shore.
     uFoamStrength: 0.22,
     uChunkSize: CHUNK_SIZE_XZ,
     uCamPos: new THREE.Vector3(),
     uFogColor: new THREE.Color('#87CEEB'),
-    uFogNear: 30,
-    uFogFar: 300,
+    uFogNear: 20,
+    uFogFar: 250,
     uFade: 1
   },
   // Vertex
   `
     precision highp float;
-
     uniform float uTime;
     varying vec3 vWorldPos;
     varying vec3 vNormal;
@@ -67,10 +60,8 @@ const WaterMeshShader = shaderMaterial(
       vNormal = normalize(normalMatrix * normal);
       vec4 worldPos = modelMatrix * vec4(position, 1.0);
       vWorldPos = worldPos.xyz;
-
       vec4 mvPosition = viewMatrix * worldPos;
       vViewPos = -mvPosition.xyz;
-
       gl_Position = projectionMatrix * mvPosition;
     }
   `,
@@ -106,21 +97,14 @@ const WaterMeshShader = shaderMaterial(
     vec3 getNormal(vec3 pos, vec3 baseNormal, float time) {
         float scale = 0.1;
         float speed = 0.5;
-
         vec3 p1 = pos * scale + vec3(time * speed * 0.1, time * speed * 0.05, time * 0.02);
         vec3 p2 = pos * scale - vec3(time * speed * 0.08, 0.0, time * speed * 0.06);
-
         float n1 = texture(uNoiseTexture, p1 * 0.2).r;
         float n2 = texture(uNoiseTexture, p2 * 0.2).g;
-
-        // Perturb
-        vec3 n = normalize(baseNormal + vec3(n1-0.5, n2-0.5, (n1+n2)*0.1) * 0.5);
-        return n;
+        return normalize(baseNormal + vec3(n1-0.5, n2-0.5, (n1+n2)*0.1) * 0.5);
     }
 
     void main() {
-        // Shoreline mask: use world-position modulo chunk size to get stable 0..1 UV per chunk.
-        // This avoids blocky geometry edges by fading/discarding pixels near the land boundary.
         vec2 uv = fract(vWorldPos.xz / max(uChunkSize, 0.0001));
         float mask = texture2D(uShoreMask, uv).r;
         float edgeAlpha = smoothstep(0.5 - uShoreEdge, 0.5 + uShoreEdge, mask);
@@ -129,26 +113,20 @@ const WaterMeshShader = shaderMaterial(
         vec3 viewDir = normalize(uCamPos - vWorldPos);
         vec3 normal = getNormal(vWorldPos, vNormal, uTime);
 
-        // Specular
         vec3 lightDir = normalize(uSunDir);
         vec3 halfVec = normalize(lightDir + viewDir);
         float NdotH = max(dot(normal, halfVec), 0.0);
         float specular = pow(NdotH, 100.0) * 1.0;
-
-        // Fresnel
         float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
 
-        // Static water "texture" (non-animated): subtle color variation using the shared noise volume.
-        // This keeps water from looking like a flat plastic sheet even when waves are subtle.
         vec3 texP = vec3(vWorldPos.xz * uTexScale, 0.25);
         vec3 nTex = texture(uNoiseTexture, texP).rgb;
-        float texVal = (nTex.r + nTex.g) * 0.5; // 0..1
-        float texSigned = (texVal - 0.5) * 2.0; // -1..1
+        float texVal = (nTex.r + nTex.g) * 0.5;
+        float texSigned = (texVal - 0.5) * 2.0;
 
         vec3 albedo = mix(uColorDeep, uColorShallow, fresnel * 0.5 + 0.25);
         albedo *= 1.0 + texSigned * uTexStrength;
 
-        // Foam/brightening near shore: strongest near the boundary (mask ~ 0.5) on the water side.
         float shoreT = clamp((mask - 0.5) / max(uShoreEdge * 2.0, 0.0001), 0.0, 1.0);
         float foam = (1.0 - smoothstep(0.0, 1.0, shoreT));
         foam *= (0.6 + 0.4 * nTex.b);
@@ -164,8 +142,6 @@ const WaterMeshShader = shaderMaterial(
         vec3 finalColor = mix(shaded, uFogColor, fogFactor * 0.6);
         float alpha = (uAlphaBase + fresnel * uFresnelAlpha) * uFade * edgeAlpha;
         alpha = clamp(alpha + foam * 0.10, 0.0, 0.92);
-
-        // IMPORTANT: Don't apply manual gamma here; Three.js renderer handles output color space.
         gl_FragColor = vec4(finalColor, alpha);
     }
   `
@@ -173,8 +149,8 @@ const WaterMeshShader = shaderMaterial(
 
 extend({ WaterMeshShader });
 
-// --- SINGLETON OPTIMIZATION ---
 let sharedWaterMaterial: any = null;
+let lastUpdateFrame = -1;
 
 export const getSharedWaterMaterial = () => {
   if (sharedWaterMaterial) return sharedWaterMaterial;
@@ -184,8 +160,13 @@ export const getSharedWaterMaterial = () => {
   sharedWaterMaterial.side = THREE.DoubleSide;
   sharedWaterMaterial.depthWrite = false;
 
-  // CRITICAL: Apply per-chunk shore mask from userData
-  sharedWaterMaterial.onBeforeRender = (_renderer: any, _scene: any, _camera: any, _geometry: any, object: any, _group: any) => {
+  // Link to shared uniforms to avoid per-frame updates in multiple locations
+  sharedWaterMaterial.uniforms.uTime = sharedUniforms.uTime;
+  sharedWaterMaterial.uniforms.uSunDir = sharedUniforms.uSunDir;
+  sharedWaterMaterial.uniforms.uFogNear = sharedUniforms.uFogNear;
+  sharedWaterMaterial.uniforms.uFogFar = sharedUniforms.uFogFar;
+
+  sharedWaterMaterial.onBeforeRender = (_renderer: any, _scene: any, _camera: any, _geometry: any, object: any) => {
     if (object.userData && object.userData.shoreMask) {
       sharedWaterMaterial.uniforms.uShoreMask.value = object.userData.shoreMask;
     } else {
@@ -196,6 +177,10 @@ export const getSharedWaterMaterial = () => {
   return sharedWaterMaterial;
 };
 
+/**
+ * WaterMaterial Component
+ * Refactored to link to shared uniforms and eliminate prop-drilling.
+ */
 export interface WaterMaterialProps {
   sunDirection?: THREE.Vector3;
   shoreEdge?: number;
@@ -204,51 +189,36 @@ export interface WaterMaterialProps {
   foamStrength?: number;
 }
 
-/**
- * Water material component.
- */
 export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
-  sunDirection,
-  shoreEdge = 0.06,
-  alphaBase = 0.58,
-  texStrength = 0.12,
-  foamStrength = 0.22
+  sunDirection, shoreEdge, alphaBase, texStrength, foamStrength
 }) => {
-  const { camera, scene } = useThree();
+  useThree();
   const material = useMemo(() => getSharedWaterMaterial(), []);
 
-  useFrame(({ clock }) => {
-    // Lazy initialization of noise texture (deferred from module load to avoid memory allocation failures)
+  useFrame((state) => {
+    // Lazy initialization
     if (material.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
       material.uniforms.uNoiseTexture.value = getNoiseTexture();
     }
 
-    // These uniforms are shared across ALL water chunks
-    material.uniforms.uTime.value = clock.getElapsedTime();
-    material.uniforms.uCamPos.value.copy(camera.position);
-    material.uniforms.uFade.value = 1.0;
-    material.uniforms.uShoreEdge.value = shoreEdge;
-    material.uniforms.uAlphaBase.value = alphaBase;
-    material.uniforms.uTexStrength.value = texStrength;
-    material.uniforms.uFoamStrength.value = foamStrength;
-    material.uniforms.uChunkSize.value = CHUNK_SIZE_XZ;
+    if (lastUpdateFrame !== state.gl.info.render.frame) {
+      lastUpdateFrame = state.gl.info.render.frame;
 
-    const fog = scene.fog as THREE.Fog | undefined;
-    if (fog) {
-      material.uniforms.uFogColor.value.copy(fog.color);
-      material.uniforms.uFogNear.value = fog.near;
-      material.uniforms.uFogFar.value = fog.far;
+      const uniforms = material.uniforms;
+      uniforms.uCamPos.value.copy(state.camera.position);
+
+      if (sunDirection) uniforms.uSunDir.value.copy(sunDirection);
+      if (shoreEdge !== undefined) uniforms.uShoreEdge.value = shoreEdge;
+      if (alphaBase !== undefined) uniforms.uAlphaBase.value = alphaBase;
+      if (texStrength !== undefined) uniforms.uTexStrength.value = texStrength;
+      if (foamStrength !== undefined) uniforms.uFoamStrength.value = foamStrength;
+
+      // Sync fog from scene
+      if (state.scene.fog && (state.scene.fog as any).color) {
+        uniforms.uFogColor.value.copy((state.scene.fog as any).color);
+      }
     }
-
-    if (sunDirection) material.uniforms.uSunDir.value.copy(sunDirection);
   });
 
-  return (
-    <primitive
-      object={material}
-      attach="material"
-    // We still need a way to pass the shoreMask to the mesh.
-    // This will be handled in ChunkMesh.tsx by setting mesh.userData.shoreMask
-    />
-  );
+  return <primitive object={material} attach="material" />;
 });

@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
-import { useThree } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { VEGETATION_ASSETS } from '../logic/VegetationConfig';
 import { getNoiseTexture } from '@core/memory/sharedResources';
@@ -26,31 +25,25 @@ const VEGETATION_SHADER = {
     vec3 pos = position;
 
     // --- Deterministic Instance Placement (GPU Side) ---
-    // Extract seed from position for stable per-instance variations
     float seed = (aInstancePos.x * 12.9898 + aInstancePos.z * 78.233);
     float randRot = fract(sin(seed) * 43758.5453) * 6.28318;
     float randScale = 0.85 + fract(sin(seed + 1.0) * 43758.5453) * 0.3;
 
-    // 1. Build Alignment Matrix (Look-At Up)
     vec3 up = aInstanceNormal;
     vec3 helper = abs(up.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
     vec3 tangent = normalize(cross(helper, up));
     vec3 bitangent = cross(up, tangent);
     mat3 alignMat = mat3(tangent, up, bitangent);
 
-    // 2. Build Random Y Rotation Matrix
     float cRot = cos(randRot);
     float sRot = sin(randRot);
     mat3 rotY = mat3(cRot, 0.0, sRot, 0.0, 1.0, 0.0, -sRot, 0.0, cRot);
 
-    // 3. Apply Transform Chain
     pos *= randScale;
     pos = alignMat * (rotY * pos);
     
-    // Final World-ish Position (local to chunk group)
     vec3 finalPos = aInstancePos + pos;
 
-    // --- Wind Simulation ---
     float t = uTime * 0.8;
     float wind1 = sin(t * 1.5 + aInstancePos.x * 0.4 + aInstancePos.z * 0.2);
     float wind2 = sin(t * 4.0 + aInstancePos.x * 2.0 + aInstancePos.z * 1.5) * 0.3;
@@ -62,14 +55,10 @@ const VEGETATION_SHADER = {
     finalPos.x += wind * swayStrength * uWindDir.x;
     finalPos.z += wind * swayStrength * uWindDir.y;
 
-    // Final World Position
     vec4 worldPos = modelMatrix * vec4(finalPos, 1.0);
     vWorldPos = worldPos.xyz;
-    
-    // View dir for SSS
     vViewDir = normalize(cameraPosition - vWorldPos);
     
-    // Transform normal for lighting
     csm_Normal = normalize(mix(alignMat * normal, up, 0.7));
     csm_Position = finalPos; 
   }
@@ -115,7 +104,7 @@ const VEGETATION_SHADER = {
 
        float translucency = pow(gradient, 2.0) * 0.15;
        col += vec3(0.8, 1.0, 0.6) * translucency;
- 
+  
         // Sync with Terrain Fog
         float fogDist = length(vWorldPos - cameraPosition);
         float fogRange = max(uFogFar - uFogNear, 1.0);
@@ -131,7 +120,6 @@ const VEGETATION_SHADER = {
         }
 
         col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
-
        csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     }
   `
@@ -147,7 +135,6 @@ const hashPosition = (x: number, y: number, z: number) => {
   return h - Math.floor(h);
 };
 
-// Deterministic sampling avoids spatial bias when thinning vegetation by LOD.
 const filterPositionsByDensity = (positions: Float32Array, density: number) => {
   if (density >= 0.999) return positions;
   if (density <= 0) return new Float32Array(0);
@@ -180,9 +167,7 @@ const filterPositionsByDensity = (positions: Float32Array, density: number) => {
   return filtered;
 };
 
-// Pool for vegetation materials to avoid per-chunk material creation overhead.
-// Keyed by Asset ID.
-const vegetationMaterialPool: Record<number, THREE.Material> = {};
+export const vegetationMaterialPool: Record<number, THREE.Material> = {};
 
 const getVegetationMaterial = (asset: any) => {
   if (vegetationMaterialPool[asset.id]) return vegetationMaterialPool[asset.id];
@@ -192,19 +177,20 @@ const getVegetationMaterial = (asset: any) => {
     vertexShader: VEGETATION_SHADER.vertex,
     fragmentShader: VEGETATION_SHADER.fragment,
     uniforms: {
-      ...sharedUniforms,
+      uTime: sharedUniforms.uTime,
+      uSunDir: sharedUniforms.uSunDir,
       uSway: { value: asset.sway },
       uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
       uNoiseTexture: { value: getNoiseTexture() },
       uOpacity: { value: 1.0 },
-      uFogColor: { value: new THREE.Color('#87CEEB') },
-      uFogNear: { value: 20 },
-      uFogFar: { value: 160 },
-      uShaderFogStrength: { value: 0.9 },
-      uHeightFogEnabled: { value: 1.0 },
-      uHeightFogStrength: { value: 0.5 },
-      uHeightFogRange: { value: 24.0 },
-      uHeightFogOffset: { value: 12.0 },
+      uFogColor: sharedUniforms.uFogColor,
+      uFogNear: sharedUniforms.uFogNear,
+      uFogFar: sharedUniforms.uFogFar,
+      uShaderFogStrength: sharedUniforms.uShaderFogStrength,
+      uHeightFogEnabled: sharedUniforms.uHeightFogEnabled,
+      uHeightFogStrength: sharedUniforms.uHeightFogStrength,
+      uHeightFogRange: sharedUniforms.uHeightFogRange,
+      uHeightFogOffset: sharedUniforms.uHeightFogOffset,
     },
     color: asset.color,
     roughness: asset.roughness,
@@ -217,54 +203,13 @@ const getVegetationMaterial = (asset: any) => {
 
 interface VegetationLayerProps {
   data: Record<number, Float32Array>;
-  sunDirection?: THREE.Vector3;
   lodLevel?: number;
-  fogNear?: number;
-  fogFar?: number;
-  shaderFogStrength?: number;
-  heightFogEnabled?: boolean;
-  heightFogStrength?: number;
-  heightFogRange?: number;
-  heightFogOffset?: number;
 }
 
 export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({
   data,
-  sunDirection,
   lodLevel = 0,
-  fogNear = 20,
-  fogFar = 160,
-  shaderFogStrength = 0.9,
-  heightFogEnabled = true,
-  heightFogStrength = 0.5,
-  heightFogRange = 24.0,
-  heightFogOffset = 12.0
 }) => {
-  const { scene } = useThree();
-
-  // Update shared materials when fog/sun props change.
-  // We do this in an effect to avoid redundant per-frame work in useFrame,
-  // sync'ing the global pool with the latest global settings.
-  useMemo(() => {
-    Object.values(vegetationMaterialPool).forEach((mat) => {
-      const matAny = (mat as any);
-      if (!matAny.uniforms) return;
-
-      if (sunDirection) matAny.uniforms.uSunDir.value.copy(sunDirection);
-      matAny.uniforms.uFogNear.value = fogNear;
-      matAny.uniforms.uFogFar.value = fogFar;
-      matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
-      matAny.uniforms.uHeightFogEnabled.value = heightFogEnabled ? 1.0 : 0.0;
-      matAny.uniforms.uHeightFogStrength.value = heightFogStrength;
-      matAny.uniforms.uHeightFogRange.value = heightFogRange;
-      matAny.uniforms.uHeightFogOffset.value = heightFogOffset;
-
-      if (scene.fog) {
-        matAny.uniforms.uFogColor.value.copy(scene.fog.color);
-      }
-    });
-  }, [scene.fog, sunDirection, fogNear, fogFar, shaderFogStrength, heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset]);
-
   const batches = useMemo(() => {
     if (!data) return [];
 
@@ -302,7 +247,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = React.memo(({
 
       return {
         id: typeId,
-        asset: { ...asset, id: typeId }, // Ensure ID is present for pooling
+        asset: { ...asset, id: typeId },
         positions: filteredPositions,
         count,
         geometry
@@ -326,69 +271,36 @@ const VegetationBatch: React.FC<{
   batch: any;
 }> = ({ batch }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
-
-  // Clone the source geometry to avoid sharing attribute references across multiple
-  // InstancedBufferGeometry instances. Sharing references caused crashes because
-  // WebGL's internal attribute update/removal tracking got confused when the same
-  // BufferAttribute was attached to multiple geometries.
   const geometry = useMemo(() => {
     const sourceGeo = batch.geometry as THREE.BufferGeometry;
     const instGeo = new THREE.InstancedBufferGeometry();
-
-    // Clone index if present
-    if (sourceGeo.index) {
-      instGeo.setIndex(sourceGeo.index.clone());
-    }
-
-    // Clone position (required)
-    if (sourceGeo.attributes.position) {
-      instGeo.setAttribute('position', sourceGeo.attributes.position.clone());
-    }
-
-    // Clone normal (required)
-    if (sourceGeo.attributes.normal) {
-      instGeo.setAttribute('normal', sourceGeo.attributes.normal.clone());
-    }
-
-    // Clone UV if present, otherwise create a dummy one (some geometries may lack UVs)
-    if (sourceGeo.attributes.uv) {
-      instGeo.setAttribute('uv', sourceGeo.attributes.uv.clone());
-    } else {
-      // Create dummy UVs based on position count
+    if (sourceGeo.index) instGeo.setIndex(sourceGeo.index.clone());
+    if (sourceGeo.attributes.position) instGeo.setAttribute('position', sourceGeo.attributes.position.clone());
+    if (sourceGeo.attributes.normal) instGeo.setAttribute('normal', sourceGeo.attributes.normal.clone());
+    if (sourceGeo.attributes.uv) instGeo.setAttribute('uv', sourceGeo.attributes.uv.clone());
+    else {
       const posCount = sourceGeo.attributes.position?.count || 0;
       const dummyUvs = new Float32Array(posCount * 2);
       instGeo.setAttribute('uv', new THREE.BufferAttribute(dummyUvs, 2));
     }
-
-    instGeo.boundingBox = new THREE.Box3(
-      new THREE.Vector3(-2, -40, -2),
-      new THREE.Vector3(34, 40, 34)
-    );
+    instGeo.boundingBox = new THREE.Box3(new THREE.Vector3(-2, -40, -2), new THREE.Vector3(34, 40, 34));
     instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
-
     return instGeo;
   }, [batch.geometry]);
 
   useLayoutEffect(() => {
     if (!meshRef.current) return;
-    // Stride 6 (x,y,z, nx,ny,nz)
-    // Create and attach instance attributes
     const interleaved = new THREE.InstancedInterleavedBuffer(batch.positions, 6);
     geometry.setAttribute('aInstancePos', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
     geometry.setAttribute('aInstanceNormal', new THREE.InterleavedBufferAttribute(interleaved, 3, 3));
-
-    // Ensure the mesh knows the count has changed if it's already mounted
     if (meshRef.current) {
       meshRef.current.instanceMatrix.needsUpdate = true;
     }
   }, [batch.positions, geometry]);
 
-  // Clean up the cloned geometry when component unmounts
   useEffect(() => {
     const geo = geometry;
-    return () => {
-      geo.dispose();
-    };
+    return () => geo.dispose();
   }, [geometry]);
 
   const material = useMemo(() => getVegetationMaterial(batch.asset), [batch.asset]);
