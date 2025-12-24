@@ -36,10 +36,15 @@ ctx.onmessage = (e: MessageEvent) => {
         meshWaterIndices: mesh.waterIndices,
         meshWaterNormals: mesh.waterNormals,
         // Pre-computed shoreline SDF mask (avoids main-thread BFS).
-        meshWaterShoreMask: mesh.waterShoreMask
+        meshWaterShoreMask: mesh.waterShoreMask,
+        // Optimized Collider Data
+        colliderPositions: mesh.colliderPositions,
+        colliderIndices: mesh.colliderIndices,
+        colliderHeightfield: mesh.colliderHeightfield,
+        isHeightfield: mesh.isHeightfield
       };
 
-      ctx.postMessage({ type: 'MESH_DONE', payload: response }, [
+      const transfers: any[] = [
         mesh.positions.buffer,
         mesh.indices.buffer,
         mesh.matWeightsA.buffer,
@@ -54,7 +59,13 @@ ctx.onmessage = (e: MessageEvent) => {
         mesh.waterIndices.buffer,
         mesh.waterNormals.buffer,
         mesh.waterShoreMask.buffer
-      ]);
+      ];
+
+      if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer);
+      if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer);
+      if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
+
+      ctx.postMessage({ type: 'MESH_DONE', payload: response }, transfers);
     }
   } catch (error) {
     console.error('[mesher.worker] Error:', error);

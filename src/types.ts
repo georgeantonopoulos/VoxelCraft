@@ -76,6 +76,8 @@ export interface MeshData {
   // Simplified Physics Collider (Optional, used if trimesh is too heavy)
   colliderPositions?: Float32Array;
   colliderIndices?: Uint32Array;
+  colliderHeightfield?: Float32Array;
+  isHeightfield?: boolean;
 }
 
 export enum ToolMode {
@@ -137,6 +139,8 @@ export interface ChunkState {
 
   colliderPositions?: Float32Array;
   colliderIndices?: Uint32Array;
+  colliderHeightfield?: Float32Array;
+  isHeightfield?: boolean;
 
   lightPositions?: Float32Array;
   lodLevel?: number; // Distance in chunks from player (continuous, quantized)

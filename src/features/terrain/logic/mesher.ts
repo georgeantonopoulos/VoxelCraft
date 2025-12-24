@@ -597,5 +597,147 @@ export function generateMesh(
     waterIndices: water.indices,
     waterNormals: water.normals,
     waterShoreMask: water.shoreMask,
+    ...generateColliderData(density)
   } as MeshData;
+}
+
+/**
+ * Strategy: Optimize collision by using a Heightfield where possible,
+ * or a simplified trimesh where caves/overhangs exist.
+ */
+function generateColliderData(density: Float32Array): {
+  isHeightfield: boolean;
+  colliderHeightfield?: Float32Array;
+  colliderPositions?: Float32Array;
+  colliderIndices?: Uint32Array;
+} {
+  // 1. Check for heightfield compatibility (no caves/overhangs)
+  const isHF = isHeightfieldCompatible(density);
+
+  if (isHF) {
+    return {
+      isHeightfield: true,
+      colliderHeightfield: extractHeightfield(density)
+    };
+  }
+
+  // 2. Fallback to simplified trimesh
+  const simplified = generateSimplifiedTrimesh(density);
+  return {
+    isHeightfield: false,
+    colliderPositions: simplified.positions,
+    colliderIndices: simplified.indices
+  };
+}
+
+function isHeightfieldCompatible(density: Float32Array): boolean {
+  for (let z = PAD; z < CHUNK_SIZE_XZ + PAD; z++) {
+    for (let x = PAD; x < CHUNK_SIZE_XZ + PAD; x++) {
+      let foundSolid = false;
+      // Start from top, skip padding
+      for (let y = SIZE_Y - PAD - 1; y >= PAD + 4; y--) { // Stop above bedrock margin (+4)
+        const val = density[bufIdx(x, y, z)];
+        if (val > ISO_LEVEL) {
+          foundSolid = true;
+        } else if (foundSolid) {
+          // Air pocket found under solid surface -> Not a heightfield
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function extractHeightfield(density: Float32Array): Float32Array {
+  // Heightfield is (CHUNK_SIZE_XZ + 1) x (CHUNK_SIZE_XZ + 1) to cover 32 units with 1-unit spacing
+  const numSamples = CHUNK_SIZE_XZ + 1;
+  const heights = new Float32Array(numSamples * numSamples);
+  for (let lz = 0; lz < numSamples; lz++) {
+    for (let lx = 0; lx < numSamples; lx++) {
+      const gx = lx + PAD;
+      const gz = lz + PAD;
+      let h = MESH_Y_OFFSET; // default
+
+      for (let y = SIZE_Y - PAD - 1; y >= PAD; y--) {
+        const val = density[bufIdx(gx, y, gz)];
+        if (val > ISO_LEVEL) {
+          const valAbove = getVal(density, gx, y + 1, gz);
+          const t = (ISO_LEVEL - val) / (valAbove - val);
+          h = (y - PAD + t) + MESH_Y_OFFSET;
+          break;
+        }
+      }
+      heights[lx + lz * numSamples] = h;
+    }
+  }
+  return heights;
+}
+
+function generateSimplifiedTrimesh(density: Float32Array): { positions: Float32Array, indices: Uint32Array } {
+  const step = 2; // Reduce resolution by 2x in each dimension (8x volume reduction)
+  const verts: number[] = [];
+  const inds: number[] = [];
+  const vertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
+
+  // Surface Nets logic at coarse resolution
+  for (let z = 0; z < SIZE_Z - step; z += step) {
+    for (let y = 0; y < SIZE_Y - step; y += step) {
+      for (let x = 0; x < SIZE_X - step; x += step) {
+        let mask = 0;
+        if (getVal(density, x, y, z) > ISO_LEVEL) mask |= 1;
+        if (getVal(density, x + step, y, z) > ISO_LEVEL) mask |= 2;
+        if (getVal(density, x, y + step, z) > ISO_LEVEL) mask |= 4;
+        if (getVal(density, x + step, y + step, z) > ISO_LEVEL) mask |= 8;
+        if (getVal(density, x, y, z + step) > ISO_LEVEL) mask |= 16;
+        if (getVal(density, x + step, y, z + step) > ISO_LEVEL) mask |= 32;
+        if (getVal(density, x, y + step, z + step) > ISO_LEVEL) mask |= 64;
+        if (getVal(density, x + step, y + step, z + step) > ISO_LEVEL) mask |= 128;
+
+        if (mask !== 0 && mask !== 255) {
+          // Simplified: place vertex at center of cell if it contains a surface
+          const px = (x + step * 0.5) - PAD;
+          const py = (y + step * 0.5) - PAD + MESH_Y_OFFSET;
+          const pz = (z + step * 0.5) - PAD;
+
+          vertIdx[bufIdx(x, y, z)] = verts.length / 3;
+          verts.push(px, py, pz);
+        }
+      }
+    }
+  }
+
+  const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
+    const c0 = vertIdx[i0]; const c1 = vertIdx[i1]; const c2 = vertIdx[i2]; const c3 = vertIdx[i3];
+    if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
+      if (!flipped) inds.push(c0, c1, c2, c2, c1, c3);
+      else inds.push(c2, c1, c0, c3, c1, c2);
+    }
+  };
+
+  const start = PAD;
+  const endX = PAD + CHUNK_SIZE_XZ;
+  const endY = PAD + CHUNK_SIZE_Y;
+
+  for (let z = start; z < endX; z += step) {
+    for (let y = start; y < endY; y += step) {
+      for (let x = start; x < endX; x += step) {
+        const val = getVal(density, x, y, z);
+        if (x < endX) {
+          const vX = getVal(density, x + step, y, z);
+          if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) pushQuad(bufIdx(x, y - step, z - step), bufIdx(x, y - step, z), bufIdx(x, y, z - step), bufIdx(x, y, z), val > ISO_LEVEL);
+        }
+        if (y < endY) {
+          const vY = getVal(density, x, y + step, z);
+          if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) pushQuad(bufIdx(x - step, y, z - step), bufIdx(x, y, z - step), bufIdx(x - step, y, z), bufIdx(x, y, z), val > ISO_LEVEL);
+        }
+        if (z < endX) {
+          const vZ = getVal(density, x, y, z + step);
+          if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) pushQuad(bufIdx(x - step, y - step, z), bufIdx(x - step, y, z), bufIdx(x, y - step, z), bufIdx(x, y, z), val > ISO_LEVEL);
+        }
+      }
+    }
+  }
+
+  return { positions: new Float32Array(verts), indices: new Uint32Array(inds) };
 }

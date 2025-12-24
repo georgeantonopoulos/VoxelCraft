@@ -1,6 +1,6 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
-import { RigidBody } from '@react-three/rapier';
+import { RigidBody, MeshCollider, HeightfieldCollider } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
 import {
@@ -169,6 +169,16 @@ export const ChunkMesh: React.FC<{
 
   useEffect(() => () => waterShoreMask?.dispose(), [waterShoreMask]);
 
+  const colliderGeometry = useMemo(() => {
+    if (chunk.isHeightfield || !chunk.colliderPositions || !chunk.colliderIndices) return null;
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(chunk.colliderPositions, 3));
+    geom.setIndex(new THREE.BufferAttribute(chunk.colliderIndices, 1));
+    return geom;
+  }, [chunk.colliderPositions, chunk.colliderIndices, chunk.isHeightfield, chunk.terrainVersion]);
+
+  useEffect(() => () => colliderGeometry?.dispose(), [colliderGeometry]);
+
   const chunkTintColor = useMemo(() => {
     // Deterministic color per chunk to expose overlap/z-fighting (you'll see both colors).
     const h = ((chunk.cx * 73856093) ^ (chunk.cz * 19349663)) >>> 0;
@@ -185,7 +195,27 @@ export const ChunkMesh: React.FC<{
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (colliderEnabled ? (
-        <RigidBody key={colliderKey} type="fixed" colliders="trimesh" userData={{ type: 'terrain', key: chunk.key }}>
+        <RigidBody key={colliderKey} type="fixed" userData={{ type: 'terrain', key: chunk.key }}>
+          {chunk.isHeightfield && chunk.colliderHeightfield ? (
+            <HeightfieldCollider
+              args={[
+                CHUNK_SIZE_XZ + 1,
+                CHUNK_SIZE_XZ + 1,
+                Array.from(chunk.colliderHeightfield) as any,
+                { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
+              ]}
+              position={[CHUNK_SIZE_XZ * 0.5, 0, CHUNK_SIZE_XZ * 0.5]}
+            />
+          ) : colliderGeometry ? (
+            <MeshCollider type="trimesh">
+              <mesh geometry={colliderGeometry} visible={false} />
+            </MeshCollider>
+          ) : (
+            <MeshCollider type="trimesh">
+              <mesh geometry={terrainGeometry} visible={false} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} />
+            </MeshCollider>
+          )}
+
           <mesh
             ref={meshRef}
             // Tag the actual render mesh so non-physics raycasters (e.g. placement tools) can reliably detect terrain hits.

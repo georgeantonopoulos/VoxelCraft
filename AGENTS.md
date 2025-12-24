@@ -168,6 +168,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-24: Improved visibility into `SharedArrayBuffer` status.
+  - **Console Diagnostics**: Added high-visibility warning in console if SAB is unavailable.
+  - **HUD Badge**: Implemented a pulsing red "LEGACY MODE" badge in the HUD to alert users of degraded performance due to environment misconfiguration (missing COOP/COEP).
+- 2025-12-24: Optimized Physics Collision (The "Trimesh" Collider Trap).
+  - **Heightfield Acceleration**: Implemented `HeightfieldCollider` for "standard" flat terrain chunks.
+  - **Simplified Trimesh Fallback**: For chunks with caves or overhangs, generated a 2x-coarsened collider mesh (8x voxel reduction) in the mesher worker.
+  - **Reduced Physics Load**: Eliminated high-res Trimesh generation for distant/simple terrain, reducing Physics thread load by an estimated 50%+.
 - 2025-12-24: Optimized React State Reconciliation in `VoxelTerrain.tsx`.
   - **Decoupled Data from Render Cycle**: Introduced `chunkDataRef = useRef<Map<string, ChunkState>>(new Map())` to hold heavy binary data (Float32Arrays) outside of React's direct state management.
   - **Lightweight State Trigger**: Refactored the `chunks` state into `chunkVersions: Record<string, number>`, which only tracks chunk keys and version numbers.

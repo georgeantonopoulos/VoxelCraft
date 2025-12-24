@@ -84,6 +84,7 @@ interface GameState {
   hasPickaxe: boolean;
   hasAxe: boolean;
   currentTool: ItemType.PICKAXE | ItemType.AXE;
+  isSharedArrayBufferEnabled: boolean;
 
   // Custom Tools
   customTools: Record<string, CustomTool>;
@@ -109,6 +110,7 @@ interface GameState {
 
   setSelectedSlotIndex: (index: number) => void;
   cycleSlot: (direction: 1 | -1) => void;
+  setSharedArrayBufferEnabled: (enabled: boolean) => void;
 }
 
 export const useInventoryStore = create<GameState>((set, get) => ({
@@ -121,6 +123,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
   hasPickaxe: false,
   hasAxe: false,
   currentTool: ItemType.PICKAXE,
+  isSharedArrayBufferEnabled: true,
 
   customTools: {},
   customToolIds: [],
@@ -315,4 +318,5 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       selectedItem === ItemType.AXE && state.hasAxe ? ItemType.AXE : ItemType.PICKAXE;
     return { selectedSlotIndex: nextIndex, currentTool: nextTool };
   }),
+  setSharedArrayBufferEnabled: (enabled: boolean) => set({ isSharedArrayBufferEnabled: enabled }),
 }));
