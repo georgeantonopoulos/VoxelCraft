@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { noise } from '@core/math/noise';
 
 export function createNoiseTexture(size = 64): THREE.Data3DTexture {
+    // Safety check: prevent catastrophic allocation failures.
+    // 64^3 * 4 = 1MB. 128^3 * 4 = 8MB. 256^3 * 4 = 64MB.
+    if (size > 128) {
+        console.warn(`[textureGenerator] Requested large size (${size}), capping at 64 to prevent OOM.`);
+        size = 64;
+    }
     const data = new Uint8Array(size * size * size * 4);
 
     let i = 0;
@@ -43,8 +49,12 @@ export function createNoiseTexture(size = 64): THREE.Data3DTexture {
     const texture = new THREE.Data3DTexture(data, size, size, size);
     texture.format = THREE.RGBAFormat;
     texture.type = THREE.UnsignedByteType;
-    texture.minFilter = THREE.LinearFilter;
+
+    // AAA FIX: Enable Mipmaps to avoid Moire patterns (Crazy RGB) in distance/angled views.
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipMapLinearFilter;
     texture.magFilter = THREE.LinearFilter;
+
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.wrapR = THREE.RepeatWrapping;

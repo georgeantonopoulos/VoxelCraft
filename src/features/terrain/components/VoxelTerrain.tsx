@@ -8,6 +8,7 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
+import { useInputStore } from '@/state/InputStore';
 import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
@@ -15,6 +16,7 @@ import { MaterialType, ChunkState, ItemType } from '@/types';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
+import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
@@ -22,6 +24,11 @@ import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/f
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
+import { getToolCapabilities } from '../../interaction/logic/ToolCapabilities';
+import { emitSpark } from '../../interaction/components/SparkSystem';
+import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
+import { getTreeName, TreeType } from '@features/terrain/logic/VegetationConfig';
+import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -47,13 +54,13 @@ const getMaterialColor = (matId: number) => {
 // Sample the terrain voxel material at a world-space point.
 // This is used for "material-aware" feedback (particles + smart build).
 const sampleMaterialAtWorldPoint = (
-  chunks: Record<string, ChunkState>,
+  chunks: Map<string, ChunkState>,
   worldPoint: THREE.Vector3
 ): MaterialType => {
   const cx = Math.floor(worldPoint.x / CHUNK_SIZE_XZ);
   const cz = Math.floor(worldPoint.z / CHUNK_SIZE_XZ);
   const key = `${cx},${cz}`;
-  const chunk = chunks[key];
+  const chunk = chunks.get(key);
   if (!chunk) return MaterialType.DIRT;
 
   const localX = worldPoint.x - cx * CHUNK_SIZE_XZ;
@@ -163,7 +170,7 @@ const rayHitsTorch = (
  * Returns the closest hit along the ray (single-target pickup).
  */
 const rayHitsGeneratedLuminaFlora = (
-  chunks: Record<string, ChunkState>,
+  chunks: Map<string, ChunkState>,
   origin: THREE.Vector3,
   dir: THREE.Vector3,
   maxDist: number,
@@ -184,7 +191,7 @@ const rayHitsGeneratedLuminaFlora = (
   for (let cx = minCx; cx <= maxCx; cx++) {
     for (let cz = minCz; cz <= maxCz; cz++) {
       const key = `${cx},${cz}`;
-      const chunk = chunks[key];
+      const chunk = chunks.get(key);
       if (!chunk?.floraPositions || chunk.floraPositions.length === 0) continue;
 
       const positions = chunk.floraPositions;
@@ -217,7 +224,7 @@ type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
  * Data is chunk-local in XZ (chunk group space) but world-space in Y.
  */
 const rayHitsGeneratedGroundPickup = (
-  chunks: Record<string, ChunkState>,
+  chunks: Map<string, ChunkState>,
   origin: THREE.Vector3,
   dir: THREE.Vector3,
   maxDist: number,
@@ -236,7 +243,7 @@ const rayHitsGeneratedGroundPickup = (
   let bestT = maxDist + 1;
 
   const consider = (key: string, array: GroundPickupArrayKey, data: Float32Array) => {
-    const chunk = chunks[key];
+    const chunk = chunks.get(key);
     if (!chunk) return;
     const originX = chunk.cx * CHUNK_SIZE_XZ;
     const originZ = chunk.cz * CHUNK_SIZE_XZ;
@@ -265,7 +272,7 @@ const rayHitsGeneratedGroundPickup = (
   for (let cx = minCx; cx <= maxCx; cx++) {
     for (let cz = minCz; cz <= maxCz; cz++) {
       const key = `${cx},${cz}`;
-      const chunk = chunks[key];
+      const chunk = chunks.get(key);
       if (!chunk) continue;
       if (chunk.stickPositions && chunk.stickPositions.length > 0) consider(key, 'stickPositions', chunk.stickPositions);
       if (chunk.rockPositions && chunk.rockPositions.length > 0) consider(key, 'rockPositions', chunk.rockPositions);
@@ -568,34 +575,30 @@ const Particles = ({
 };
 
 interface VoxelTerrainProps {
-  action: 'DIG' | 'BUILD' | null;
-  isInteracting: boolean;
   sunDirection?: THREE.Vector3;
   initialSpawnPos?: [number, number, number] | null;
-  // Debug: 0..1 slider to reduce high-frequency triplanar noise contribution in the shader.
   triplanarDetail?: number;
-  // Debug: independently toggle the terrain's fog paths.
-  // - "Shader fog" is the custom fog mix inside TriplanarMaterial.
-  // - "Three fog" is the base MeshStandardMaterial fog (can stack with shader fog).
   terrainShaderFogEnabled?: boolean;
   terrainShaderFogStrength?: number;
   terrainThreeFogEnabled?: boolean;
-  // Debug: disable chunk fade-in to isolate transparency/depth sorting seam artifacts.
   terrainFadeEnabled?: boolean;
-  // Debug: isolate shading overlays and specular shimmer sources.
   terrainWetnessEnabled?: boolean;
   terrainMossEnabled?: boolean;
   terrainRoughnessMin?: number;
-  // Debug: Z-fighting probe.
   terrainPolygonOffsetEnabled?: boolean;
   terrainPolygonOffsetFactor?: number;
   terrainPolygonOffsetUnits?: number;
-  // Debug: visualize chunk overlap/material weights.
   terrainChunkTintEnabled?: boolean;
   terrainWireframeEnabled?: boolean;
   terrainWeightsView?: string;
   onInitialLoad?: () => void;
   worldType: string;
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
+  fogNear?: number;
+  fogFar?: number;
 }
 
 // --- Audio Pool Helper ---
@@ -629,15 +632,15 @@ class AudioPool {
     audio.currentTime = 0;
     audio.volume = volume;
     // Simple pitch shift (speed change)
-    audio.playbackRate = 1.0 + (Math.random() * pitchVar * 2 - pitchVar);
+    audio.playbackRate = Math.max(0.1, 1.0 + (Math.random() * pitchVar * 2 - pitchVar));
 
     audio.play().catch(e => console.warn("Audio play failed", e));
   }
 }
 
+const FRAME_BUDGET_MS = 4; // ms allocated per frame for processing worker messages
+
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
-  action,
-  isInteracting,
   sunDirection,
   initialSpawnPos,
   triplanarDetail = 1.0,
@@ -655,8 +658,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   terrainWireframeEnabled = false,
   terrainWeightsView = 'off',
   onInitialLoad,
-  worldType
+  worldType,
+  heightFogEnabled = true,
+  heightFogStrength = 0.35,
+  heightFogRange = 50.0,
+  heightFogOffset = 4.0,
+  fogNear = 40,
+  fogFar = 220
 }) => {
+  const action = useInputStore(s => s.interactionAction);
+  const isInteracting = action !== null;
   const prevProps = useRef<any>({});
   useEffect(() => {
     const changed = Object.entries({
@@ -702,7 +713,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const manualBuildMatUntilMs = useRef(0);
   const remeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
-  const treeDamageRef = useRef<Map<string, number>>(new Map());
 
   const streamDebug = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -723,8 +733,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const [chunks, setChunks] = useState<Record<string, ChunkState>>({});
-  const chunksRef = useRef<Record<string, ChunkState>>({});
+  const [chunkVersions, setChunkVersions] = useState<Record<string, number>>({});
+  const chunkDataRef = useRef<Map<string, ChunkState>>(new Map());
   const poolRef = useRef<WorkerPool | null>(null);
   const pendingChunks = useRef<Set<string>>(new Set());
   // Queue chunk generation requests so we can throttle how many we send per frame.
@@ -733,6 +743,73 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // Buffer worker messages so we can apply them at a controlled cadence (reduces hitching).
   const workerMessageQueue = useRef<Array<{ type: string; payload: any }>>([]);
   const workerMessageHead = useRef(0);
+
+  // === MEMORY PRESSURE & GENERATION THROTTLING ===
+  // Track how many chunks are currently being generated by workers.
+  // If too many are in-flight, pause dispatching new work to prevent memory exhaustion.
+  const inFlightGenerations = useRef<Set<string>>(new Set());
+
+  const setSharedArrayBufferEnabled = useGameStore(s => s.setSharedArrayBufferEnabled);
+
+  useEffect(() => {
+    const sab = canUseSharedArrayBuffer();
+    setSharedArrayBufferEnabled(sab);
+    if (!sab) {
+      console.warn('%c⚠️ PERFORMANCE WARNING: SharedArrayBuffer unavailable. Falling back to memory copying. Check COOP/COEP headers.', 'color: #ff0000; font-weight: bold; font-size: 14px;');
+    }
+  }, [setSharedArrayBufferEnabled]);
+  const MAX_IN_FLIGHT_GENERATIONS = 8; // Maximum concurrent chunk generations (workers + queue)
+
+  // Memory pressure detection: pause generation if browser signals memory issues.
+  // Uses the Performance Memory API where available (Chrome) and allocation failure tracking.
+  const memoryPressure = useRef(false);
+  const lastMemoryCheck = useRef(0);
+  const allocationFailures = useRef(0);
+  const MEMORY_CHECK_INTERVAL_MS = 500; // Check memory every 500ms
+  const MEMORY_PRESSURE_THRESHOLD_MB = 512; // Pause if less than 512MB estimated available
+
+  // Check if we're under memory pressure
+  const checkMemoryPressure = (): boolean => {
+    const now = performance.now();
+    if (now - lastMemoryCheck.current < MEMORY_CHECK_INTERVAL_MS) {
+      return memoryPressure.current;
+    }
+    lastMemoryCheck.current = now;
+
+    // Method 1: Performance.memory API (Chrome only)
+    const perfMemory = (performance as any).memory;
+    if (perfMemory) {
+      const usedMB = perfMemory.usedJSHeapSize / (1024 * 1024);
+      const limitMB = perfMemory.jsHeapSizeLimit / (1024 * 1024);
+      const availableMB = limitMB - usedMB;
+
+      if (availableMB < MEMORY_PRESSURE_THRESHOLD_MB) {
+        if (!memoryPressure.current) {
+          console.warn(`[VoxelTerrain] Memory pressure detected: ${availableMB.toFixed(0)}MB available. Pausing generation.`);
+        }
+        memoryPressure.current = true;
+        return true;
+      }
+    }
+
+    // Method 2: Allocation failure tracking (cross-browser)
+    // If we've seen recent allocation failures, stay in pressure mode
+    if (allocationFailures.current > 0) {
+      // Gradually decay the failure count
+      allocationFailures.current = Math.max(0, allocationFailures.current - 1);
+      if (allocationFailures.current > 3) {
+        memoryPressure.current = true;
+        return true;
+      }
+    }
+
+    // Clear pressure if we're above threshold and no recent failures
+    if (memoryPressure.current) {
+      console.log('[VoxelTerrain] Memory pressure cleared. Resuming generation.');
+    }
+    memoryPressure.current = false;
+    return false;
+  };
 
   // Queue for throttled chunk removal to prevent frame spikes when crossing boundaries.
   const removeQueue = useRef<string[]>([]);
@@ -782,7 +859,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     simulationManager.setCallback((updates: SimUpdate[]) => {
       updates.forEach(update => {
-        const chunk = chunksRef.current[update.key];
+        const chunk = chunkDataRef.current.get(update.key);
         if (chunk) {
           chunk.material.set(update.material);
           remeshQueue.current.add(update.key);
@@ -801,7 +878,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Handle messages from any worker in the pool
     pool.addMessageListener((e) => {
+      // Guard against null messages from crashed workers
+      if (!e.data) {
+        allocationFailures.current += 5; // Worker crash = severe memory pressure
+        console.warn('[VoxelTerrain] Received null message from worker (likely OOM crash)');
+        return;
+      }
+
+      // Track if this is an error message indicating allocation failure
+      if (e.data.type === 'ERROR' || (e.data.error && String(e.data.error).includes('allocation'))) {
+        allocationFailures.current += 3;
+        console.warn('[VoxelTerrain] Worker reported allocation error');
+        return;
+      }
+
       workerMessageQueue.current.push(e.data);
+    });
+
+    // Listen for worker errors (uncaught exceptions)
+    (pool as any).workers?.forEach?.((worker: Worker) => {
+      worker.addEventListener('error', (err: ErrorEvent) => {
+        if (err.message && err.message.includes('allocation')) {
+          allocationFailures.current += 5;
+          console.warn('[VoxelTerrain] Worker allocation error:', err.message);
+        }
+      });
     });
 
     return () => pool.terminate();
@@ -824,7 +925,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     ];
 
     const allReady = essentialKeys.every(key => {
-      const c = chunks[key];
+      const c = chunkDataRef.current.get(key);
       return c && c.colliderEnabled && c.terrainVersion >= 0;
     });
 
@@ -832,30 +933,78 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       initialLoadTriggered.current = true;
       onInitialLoad();
     }
-  }, [chunks, onInitialLoad, initialLoadTarget]);
+  }, [chunkVersions, onInitialLoad, initialLoadTarget]);
 
   const mountQueue = useRef<any[]>([]);
+  const lodUpdateQueue = useRef<string[]>([]);
   const lastTimeRef = useRef(0);
+  const lastLodUpdatePos = useRef(new THREE.Vector2());
+  // LOD updates should be infrequent - only when player crosses chunk boundaries
+  // Plus a hysteresis buffer to prevent rapid toggling at edges
+  const LOD_UPDATE_DISTANCE = CHUNK_SIZE_XZ * 0.5; // Half a chunk = ~16 units
+  const LOD_UPDATE_DISTANCE_SQ = LOD_UPDATE_DISTANCE * LOD_UPDATE_DISTANCE;
+
+  // Calculate raw Chebyshev distance in chunk-space
+  const getChunkLodDistanceRaw = (cx: number, cz: number, camCx: number, camCz: number) => {
+    const dx = Math.max(0, Math.abs(camCx - (cx + 0.5)) - 0.5);
+    const dz = Math.max(0, Math.abs(camCz - (cz + 0.5)) - 0.5);
+    return Math.max(dx, dz);
+  };
+
+  // Convert continuous distance to discrete LOD tier (0-4)
+  // This matches the LOD_DISTANCE_* constants in constants.ts
+  // Tier 0: < 1 chunk (full quality)
+  // Tier 1: 1-2 chunks (simplified trees)
+  // Tier 2: 2-3 chunks (reduced vegetation)
+  // Tier 3+: beyond (minimal detail)
+  const getChunkLodTier = (cx: number, cz: number, camCx: number, camCz: number): number => {
+    const rawDist = getChunkLodDistanceRaw(cx, cz, camCx, camCz);
+    return Math.floor(rawDist);
+  };
 
   // 3. Process Queues (Throttled)
   useFrame((state) => {
     const frameStart = performance.now();
-    if (!camera || !poolRef.current) return;
+    if (!state.camera || !poolRef.current) return;
 
     lastTimeRef.current = state.clock.getElapsedTime();
 
     // One chunk addition per frame to avoid hitches
     if (mountQueue.current.length > 0) {
       const newChunk = mountQueue.current.shift()!;
-      setChunks((prev) => {
+      if (!chunkDataRef.current.has(newChunk.key)) {
+        chunkDataRef.current.set(newChunk.key, newChunk);
+      }
+      setChunkVersions((prev) => {
         if (prev[newChunk.key]) return prev;
-        return { ...prev, [newChunk.key]: newChunk };
+        return { ...prev, [newChunk.key]: (prev[newChunk.key] || 0) + 1 };
+      });
+    }
+
+    // Throttled LOD updates (process in small batches to avoid massive reconciliation hitches)
+    if (lodUpdateQueue.current.length > 0) {
+      const BATCH_SIZE = 2; // Reduced from 4 for even smoother transitions
+      const keys = lodUpdateQueue.current.splice(0, BATCH_SIZE);
+      startTransition(() => {
+        setChunkVersions(prev => {
+          const next = { ...prev };
+          let changed = false;
+          keys.forEach(key => {
+            if (next[key] !== undefined && chunkDataRef.current.has(key)) {
+              next[key] = (next[key] || 0) + 1;
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
       });
     }
 
     // Use spawnPos for initial load to ensure we have a floor, otherwise use camera
     const streamX = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[0] : camera.position.x;
     const streamZ = (!initialLoadTriggered.current && initialSpawnPos) ? initialSpawnPos[2] : camera.position.z;
+    const camCx = streamX / CHUNK_SIZE_XZ;
+    const camCz = streamZ / CHUNK_SIZE_XZ;
 
     const px = Math.floor(streamX / CHUNK_SIZE_XZ);
     const pz = Math.floor(streamZ / CHUNK_SIZE_XZ);
@@ -904,7 +1053,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           const key = `${cx},${cz}`;
           neededKeys.add(key);
 
-          if (!chunksRef.current[key] && !pendingChunks.current.has(key)) {
+          if (!chunkDataRef.current.has(key) && !pendingChunks.current.has(key)) {
             pendingChunks.current.add(key);
             generateQueue.current.push({ cx, cz, key });
           }
@@ -914,7 +1063,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
       // Identify unneeded chunks and move to removeQueue
       let removalPushed = false;
-      Object.keys(chunksRef.current).forEach(key => {
+      chunkDataRef.current.forEach((_, key) => {
         if (!neededKeys.has(key)) {
           // Check if already in queue to avoid duplicates
           if (!removeQueue.current.includes(key)) {
@@ -947,7 +1096,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         addRadius(px + offsetCx, pz + offsetCz, COLLIDER_RADIUS);
 
         for (const key of candidates) {
-          const c = chunksRef.current[key];
+          const c = chunkDataRef.current.get(key);
           if (c && !c.colliderEnabled && !colliderEnablePending.current.has(key)) {
             colliderEnablePending.current.add(key);
             colliderEnableQueue.current.push(key);
@@ -956,8 +1105,54 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
-    // 2. THROTTLED GENERATION (1 per frame)
-    if (generateQueue.current.length > 0) {
+    // LOD updates: Only recalculate when player has moved significantly (half a chunk)
+    // This prevents the constant LOD thrashing that was killing performance
+    const lodDx = streamX - lastLodUpdatePos.current.x;
+    const lodDz = streamZ - lastLodUpdatePos.current.y;
+    const lodDistSq = lodDx * lodDx + lodDz * lodDz;
+    const shouldUpdateLod = lodDistSq >= LOD_UPDATE_DISTANCE_SQ;
+
+    if (shouldUpdateLod) {
+      lastLodUpdatePos.current.set(streamX, streamZ);
+
+      // Only update chunks whose LOD TIER actually changes (not continuous distance)
+      // This massively reduces React state churn
+      const toUpdate: string[] = [];
+
+      for (const [key, chunk] of chunkDataRef.current.entries()) {
+        const newTier = getChunkLodTier(chunk.cx, chunk.cz, camCx, camCz);
+        // Only update if integer tier changed
+        if (chunk.lodLevel !== newTier) {
+          // Mutate in place to avoid object allocation - React update is batched below
+          chunk.lodLevel = newTier;
+          toUpdate.push(key);
+        }
+      }
+
+      // Only trigger React updates if any chunk actually changed tier
+      if (toUpdate.length > 0) {
+        // Merge with existing queue, avoiding duplicates
+        const existingSet = new Set(lodUpdateQueue.current);
+        for (const key of toUpdate) {
+          if (!existingSet.has(key)) {
+            lodUpdateQueue.current.push(key);
+          }
+        }
+      }
+    }
+
+    // 2. THROTTLED GENERATION (with memory pressure awareness)
+    // Only dispatch new work if:
+    // - Queue has items
+    // - Not under memory pressure
+    // - Not too many in-flight generations
+    const underPressure = checkMemoryPressure();
+    const canGenerate =
+      generateQueue.current.length > 0 &&
+      !underPressure &&
+      inFlightGenerations.current.size < MAX_IN_FLIGHT_GENERATIONS;
+
+    if (canGenerate) {
       let bestIndex = 0;
       let bestDist2 = Infinity;
       const centerCx = streamCenter.current.cx;
@@ -974,31 +1169,33 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       }
       const job = generateQueue.current.splice(bestIndex, 1)[0];
+
+      // Track this generation as in-flight
+      inFlightGenerations.current.add(job.key);
+
       // Distribute generation requests round-robin across the pool
       poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
-    // 3. THROTTLED WORKER MESSAGES (1 per frame)
-    const msg = workerMessageHead.current < workerMessageQueue.current.length
-      ? workerMessageQueue.current[workerMessageHead.current++]
-      : null;
+    // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
+    const workerThrottleStartTime = performance.now();
     let appliedWorkerMessageThisFrame = false;
+    const versionUpdates = new Set<string>();
 
-    if (msg) {
+    while (
+      workerMessageHead.current < workerMessageQueue.current.length &&
+      (performance.now() - workerThrottleStartTime) < FRAME_BUDGET_MS
+    ) {
+      const msg = workerMessageQueue.current[workerMessageHead.current++];
       appliedWorkerMessageThisFrame = true;
-      if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
-        workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
-        workerMessageHead.current = 0;
-      }
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
         const { key, cx, cz, fireflyPositions, metadata, material, density } = payload;
         pendingChunks.current.delete(key);
+        inFlightGenerations.current.delete(key);
 
-        if (!neededKeysRef.current.has(key)) {
-          if (streamDebug) console.log('[VoxelTerrain] Drop generated chunk (not needed):', key);
-        } else {
+        if (neededKeysRef.current.has(key)) {
           if (metadata) {
             metadataDB.initChunk(key, metadata);
             simulationManager.addChunk(key, cx, cz, material, metadata.wetness, metadata.mossiness);
@@ -1012,11 +1209,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
+          const lodLevel = getChunkLodTier(cx, cz, camCx, camCz);
           const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
 
           const newChunk: ChunkState = {
             ...payload,
+            lodLevel,
             colliderEnabled,
+            // Re-wrap collider buffers if they exist (buffers were transferred and are now neutered in worker)
+            colliderPositions: payload.colliderPositions ? new Float32Array(payload.colliderPositions) : undefined,
+            colliderIndices: payload.colliderIndices ? new Uint32Array(payload.colliderIndices) : undefined,
+            colliderHeightfield: payload.colliderHeightfield ? new Float32Array(payload.colliderHeightfield) : undefined,
             terrainVersion: payload.terrainVersion ?? 0,
             visualVersion: payload.visualVersion ?? 0,
             spawnedAt: initialLoadTriggered.current ? (lastTimeRef.current || 0.01) : 0
@@ -1024,19 +1227,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
           setChunkFireflies(key, fireflyPositions);
           terrainRuntime.registerChunk(key, cx, cz, density, material);
-
-          chunksRef.current[key] = newChunk;
+          chunkDataRef.current.set(key, newChunk);
 
           if (!initialLoadTriggered.current) {
-            // During initial load, mount immediately so player has a floor
-            setChunks(prev => ({ ...prev, [key]: newChunk }));
+            versionUpdates.add(key);
           } else {
             mountQueue.current.push(newChunk);
           }
 
-          // If collider was NOT enabled immediately, add to queue
           if (!colliderEnabled && !colliderEnablePending.current.has(key)) {
-            // Re-check if it's within candidate radius
             const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
             const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
             const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
@@ -1048,25 +1247,40 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       } else if (type === 'REMESHED') {
         const { key } = payload;
-        const current = chunksRef.current[key];
+        const current = chunkDataRef.current.get(key);
         if (current) {
           const updatedChunk = {
             ...current,
             ...payload,
+            // Re-wrap collider buffers if they exist
+            colliderPositions: payload.colliderPositions ? new Float32Array(payload.colliderPositions) : current.colliderPositions,
+            colliderIndices: payload.colliderIndices ? new Uint32Array(payload.colliderIndices) : current.colliderIndices,
+            colliderHeightfield: payload.colliderHeightfield ? new Float32Array(payload.colliderHeightfield) : current.colliderHeightfield,
             terrainVersion: (current.terrainVersion ?? 0) + 1,
             visualVersion: (current.visualVersion ?? 0) + 1
           };
-          chunksRef.current[key] = updatedChunk;
-          if (initialLoadTriggered.current) {
-            startTransition(() => {
-              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-            });
-          } else {
-            setChunks(prev => ({ ...prev, [key]: updatedChunk }));
-          }
+          chunkDataRef.current.set(key, updatedChunk);
+          versionUpdates.add(key);
         }
       }
     }
+
+    if (versionUpdates.size > 0) {
+      setChunkVersions(prev => {
+        const next = { ...prev };
+        versionUpdates.forEach(k => {
+          next[k] = (next[k] || 0) + 1;
+        });
+        return next;
+      });
+    }
+
+    // Garbage collection for workerMessageQueue (only once per frame after the loop)
+    if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
+      workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
+      workerMessageHead.current = 0;
+    }
+
 
     // 4. THROTTLED COLLIDER ENABLES
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
@@ -1075,7 +1289,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const key = colliderEnableQueue.current.shift();
       if (key) {
         colliderEnablePending.current.delete(key);
-        const current = chunksRef.current[key];
+        const current = chunkDataRef.current.get(key);
         if (current && !current.colliderEnabled) {
           // Check if this chunk is directly under the player (critical) or adjacent (can defer)
           const [cxStr, czStr] = key.split(',');
@@ -1087,16 +1301,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const enableCollider = () => {
-            const latest = chunksRef.current[key];
+            const latest = chunkDataRef.current.get(key);
             if (latest && !latest.colliderEnabled) {
               const updated = { ...latest, colliderEnabled: true };
-              chunksRef.current[key] = updated;
+              chunkDataRef.current.set(key, updated);
               if (initialLoadTriggered.current) {
                 startTransition(() => {
-                  setChunks(prev => ({ ...prev, [key]: updated }));
+                  setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
                 });
               } else {
-                setChunks(prev => ({ ...prev, [key]: updated }));
+                setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
               }
             }
           };
@@ -1121,30 +1335,45 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     if (!appliedWorkerMessageThisFrame && removeQueue.current.length > 0) {
       const MAX_REMOVALS = 2; // Increased slightly to clear backlog faster
       let removedCount = 0;
-      const newChunks = { ...chunksRef.current };
       let changed = false;
 
       while (removedCount < MAX_REMOVALS && removeQueue.current.length > 0) {
         const key = removeQueue.current.shift();
-        if (key && newChunks[key]) {
+        if (key && chunkDataRef.current.has(key)) {
           simulationManager.removeChunk(key);
           useWorldStore.getState().clearChunkHotspots(key);
           deleteChunkFireflies(key);
           terrainRuntime.unregisterChunk(key);
-          delete newChunks[key];
+          chunkDataRef.current.delete(key);
           changed = true;
           removedCount++;
         }
       }
 
       if (changed) {
-        chunksRef.current = newChunks;
         if (initialLoadTriggered.current) {
           startTransition(() => {
-            setChunks(newChunks);
+            setChunkVersions(prev => {
+              const next = { ...prev };
+              // We need to find which keys were removed from chunkDataRef
+              // but removeQueue might have had more. We already deleted them from Map.
+              // Let's just sync chunkVersions with chunkDataRef keys.
+              const nextKeys = new Set(chunkDataRef.current.keys());
+              Object.keys(next).forEach(k => {
+                if (!nextKeys.has(k)) delete next[k];
+              });
+              return next;
+            });
           });
         } else {
-          setChunks(newChunks);
+          setChunkVersions(prev => {
+            const next = { ...prev };
+            const nextKeys = new Set(chunkDataRef.current.keys());
+            Object.keys(next).forEach(k => {
+              if (!nextKeys.has(k)) delete next[k];
+            });
+            return next;
+          });
         }
       }
     }
@@ -1157,7 +1386,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const key = iterator.next().value as string | undefined;
         if (!key) break;
         remeshQueue.current.delete(key);
-        const chunk = chunksRef.current[key];
+        const chunk = chunkDataRef.current.get(key);
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
@@ -1182,19 +1411,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const diag = (window as any).__vcDiagnostics || {};
       (window as any).__vcDiagnostics = {
         ...diag,
-        chunksLoaded: Object.keys(chunksRef.current).length,
+        chunksLoaded: chunkDataRef.current.size,
         pendingChunks: pendingChunks.current.size,
         generateQueue: generateQueue.current.length,
         workerMessages: workerMessageQueue.current.length - workerMessageHead.current,
         removeQueue: removeQueue.current.length,
         remeshQueue: remeshQueue.current.size,
         colliderQueue: colliderEnableQueue.current.length,
+        activeColliders: Array.from(chunkDataRef.current.values()).filter(c => c.colliderEnabled).length,
         terrainFrameTime: Math.max(diag.terrainFrameTime || 0, performance.now() - frameStart),
       };
     }
 
     // Update central uniforms for instanced layers
-    updateSharedUniforms(state, sunDirection);
+    updateSharedUniforms(state, {
+      sunDir: sunDirection,
+      fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
+      fogNear,
+      fogFar,
+      shaderFogStrength: terrainShaderFogStrength,
+      heightFogEnabled,
+      heightFogStrength,
+      heightFogRange,
+      heightFogOffset,
+      triplanarDetail
+    });
   });
 
   useEffect(() => {
@@ -1221,8 +1462,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       // 4) generated ground pickups (sticks + stones)
       const placedId = rayHitsFlora(origin, dir, maxDist, 0.55);
       const torchHit = rayHitsTorch(origin, dir, maxDist, 0.55);
-      const luminaHit = rayHitsGeneratedLuminaFlora(chunksRef.current, origin, dir, maxDist, 0.55);
-      const groundHit = rayHitsGeneratedGroundPickup(chunksRef.current, origin, dir, maxDist, 0.55);
+      const luminaHit = rayHitsGeneratedLuminaFlora(chunkDataRef.current, origin, dir, maxDist, 0.55);
+      const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current, origin, dir, maxDist, 0.55);
 
       // Physics Item Hit (Pickaxe, Shard, Stick, Stone)
       const physicsHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined, isPhysicsItemCollider);
@@ -1240,7 +1481,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
       const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
         const key = hit.key;
-        const chunk = chunksRef.current[key];
+        const chunk = chunkDataRef.current.get(key);
         if (!chunk?.floraPositions) return;
         const positions = chunk.floraPositions;
         if (positions.length < 4) return;
@@ -1252,13 +1493,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         next[hit.index + 1] = -10000;
 
         const updatedChunk = { ...chunk, floraPositions: next };
-        chunksRef.current[key] = updatedChunk;
-        setChunks((prev) => ({ ...prev, [key]: updatedChunk }));
+        chunkDataRef.current.set(key, updatedChunk);
+        setChunkVersions((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
       };
 
       const removeGround = (hit: NonNullable<typeof groundHit>) => {
-        const chunk = chunksRef.current[hit.key];
+        const chunk = chunkDataRef.current.get(hit.key);
         const positions = chunk?.[hit.array];
         if (!chunk || !positions || positions.length < 8) return;
         const next = new Float32Array(positions);
@@ -1294,8 +1535,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
         next[hit.index + 1] = -10000;
         const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
-        chunksRef.current[hit.key] = updatedChunk;
-        setChunks((prev) => ({ ...prev, [hit.key]: updatedChunk }));
+        chunkDataRef.current.set(hit.key, updatedChunk);
+        setChunkVersions((prev) => ({ ...prev, [hit.key]: (prev[hit.key] || 0) + 1 }));
 
         if (hit.array === 'stickPositions') {
           useWorldStore.getState().setStickHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
@@ -1321,21 +1562,26 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       if (tPhysics <= tTorch && tPhysics <= tPlaced && tPhysics <= tLumina && tPhysics <= tGround && physicsItemHit) {
         // Physics Item Pickup
         pickedStart = physicsItemHit.position;
-        usePhysicsItemStore.getState().removeItem(physicsItemHit.id);
+        const physicsStore = usePhysicsItemStore.getState();
+        const itemData = physicsStore.items.find(i => i.id === physicsItemHit!.id);
 
-        if (physicsItemHit.type === ItemType.PICKAXE) {
+        physicsStore.removeItem(physicsItemHit.id);
+
+        if (itemData?.customToolData) {
+          useGameStore.getState().addCustomTool(itemData.customToolData);
+          const effectId = `${Date.now()}-${Math.random()}`;
+          setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: getItemColor(itemData.customToolData!.baseType) }]);
+          return;
+        } else if (physicsItemHit.type === ItemType.PICKAXE) {
           useGameStore.getState().setHasPickaxe(true);
-          // Pickaxe doesn't go into inventory count, it just unlocks the tool
-          // But we can show a pickup effect
           const effectId = `${Date.now()}-${Math.random()}`;
           setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
-          return; // Special case, return early or handle below?
-          // Logic below expects 'pickedItem' to add to inventory count.
-          // Let's just handle it here and return or set null.
+          return;
         } else {
           pickedItem = physicsItemHit.type;
         }
-      } else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
+      }
+      else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
         pickedItem = ItemType.TORCH;
         pickedStart = torchHit.position;
         useWorldStore.getState().removeEntity(torchHit.id);
@@ -1401,24 +1647,234 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
-    // 0.5 CHECK FOR FLORA TREE INTERACTION (GET AXE)
-    if (action === 'DIG') {
+    // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
+    if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
       const physicsHit = world.castRay(ray, maxRayDistance, true);
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
-        // DEBUG LOGGING
-        // console.log("Ray Hit:", parent?.userData); 
+        const userData = parent?.userData as any;
 
-        if (parent && parent.userData && (parent.userData as any).type === 'flora_tree') {
-          // If we hit a leaf, spawn a pickup animation from the hit point toward the camera
-          if ((parent.userData as any).part === 'leaf') {
-            const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-            setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
+        if (parent && userData) {
+          // --- FLORA TREE ---
+          if (userData.type === 'flora_tree') {
+            if (userData.part === 'leaf') {
+              const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+              setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
+              return;
+            }
+
+            // Tree Damage Logic (from physics hit)
+            const { chunkKey, treeIndex } = userData;
+            const chunk = chunkDataRef.current.get(chunkKey);
+            if (chunk && chunk.treePositions) {
+              const posIdx = treeIndex;
+              const x = chunk.treePositions[posIdx] + chunk.cx * CHUNK_SIZE_XZ;
+              const y = chunk.treePositions[posIdx + 1];
+              const z = chunk.treePositions[posIdx + 2] + chunk.cz * CHUNK_SIZE_XZ;
+              const type = chunk.treePositions[posIdx + 3];
+
+              const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+              const selectedItem = inventorySlots[selectedSlotIndex];
+              const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+                ? customTools[selectedItem as string]
+                : (selectedItem as ItemType);
+              const capabilities = getToolCapabilities(currentTool);
+
+              // Seed/Scale Logic (same as terrain-hit path)
+              const seed = chunk.treePositions[posIdx] * 12.9898 + chunk.treePositions[posIdx + 2] * 78.233;
+              const scale = 0.8 + Math.abs(seed % 0.4);
+              const radius = scale * 0.35;
+              const maxHealth = Math.floor(radius * 60);
+              const woodDamage = capabilities.woodDamage;
+              const treeLabel = getTreeName(type as TreeType);
+
+              const treeId = `${chunkKey}-${posIdx}`;
+              const damageStore = useEntityHistoryStore.getState();
+              const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
+
+              // Visuals
+              const woodPos = new THREE.Vector3(x, y + 1.5, z);
+              const woodDir = origin.clone().sub(woodPos).normalize();
+              setParticleState(prev => ({
+                burstId: prev.burstId + 1,
+                active: true,
+                pos: woodPos,
+                dir: woodDir,
+                kind: 'debris',
+                color: '#8B4513'
+              }));
+              audioPool.play(clunkUrl, 0.4, 0.5);
+
+              if (currentHealth <= 0) {
+                // Remove tree
+                const positions = chunk.treePositions;
+                const newCount = (positions.length / 5) - 1;
+                const newPositions = new Float32Array(newCount * 5);
+                let destIdx = 0;
+                for (let j = 0; j < positions.length; j += 5) {
+                  if (j === posIdx) continue;
+                  newPositions[destIdx++] = positions[j];
+                  newPositions[destIdx++] = positions[j + 1];
+                  newPositions[destIdx++] = positions[j + 2];
+                  newPositions[destIdx++] = positions[j + 3];
+                  newPositions[destIdx++] = positions[j + 4];
+                }
+
+                const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+                chunkDataRef.current.set(chunkKey, updatedChunk);
+                setChunkVersions(prev => ({ ...prev, [chunkKey]: (prev[chunkKey] || 0) + 1 }));
+
+                // Spawn Falling Tree
+                setFallingTrees(prev => [...prev, {
+                  id: `${chunkKey}-${posIdx}-${Date.now()}`,
+                  position: new THREE.Vector3(x, y, z),
+                  type,
+                  seed
+                }]);
+              }
+            }
+            return;
           }
-          // Give Axe!
-          console.log("Interacted with Flora Tree! Granting Axe.");
-          useInventoryStore.getState().setHasAxe(true);
-          return;
+
+          // --- STONE PHYSICS ITEM ---
+          if (userData.type === ItemType.STONE) {
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const selectedItem = inventorySlots[selectedSlotIndex];
+            const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+              ? customTools[selectedItem as string]
+              : (selectedItem as ItemType);
+            const capabilities = getToolCapabilities(currentTool);
+
+            const hitPointRaw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
+
+            // Logic: All interaction has logic
+            // Sharp tools (shards) break stone into shards. 
+            // Blunt tools (stones) generate sparks.
+            const damage = capabilities.stoneDamage > 0 ? capabilities.stoneDamage : (selectedItem === ItemType.STONE ? 2.5 : 0);
+
+            if (damage > 0) {
+              const damageStore = useEntityHistoryStore.getState();
+              const stoneId = userData.id;
+              const h = damageStore.damageEntity(stoneId, damage, 10, 'Hard Stone');
+
+              // Visuals
+              if (capabilities.canSmash || selectedItem === ItemType.STONE) {
+                emitSpark(hitPoint);
+              }
+
+              setParticleState(prev => ({
+                burstId: prev.burstId + 1,
+                active: true,
+                pos: hitPoint,
+                dir: direction.clone().multiplyScalar(-1),
+                kind: 'debris',
+                color: '#888888'
+              }));
+              audioPool.play(clunkUrl, 0.5, 1.2);
+
+              if (h <= 0) {
+                // Break!
+                const physicsStore = usePhysicsItemStore.getState();
+                physicsStore.removeItem(stoneId);
+                const count = 2 + Math.floor(Math.random() * 2);
+                for (let i = 0; i < count; i++) {
+                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                    (Math.random() - 0.5) * 3,
+                    2 + Math.random() * 2,
+                    (Math.random() - 0.5) * 3
+                  ]);
+                }
+              }
+            }
+            return;
+          }
+        }
+      }
+
+      // 0.7 CHECK FOR NATURAL ROCK INTERACTION (GENERATED GROUND PICKUPS)
+      if (action === 'SMASH' || action === 'DIG') {
+        const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current, origin, direction, maxRayDistance, 0.55);
+        if (groundHit && groundHit.array === 'rockPositions') {
+          const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+          const selectedItem = inventorySlots[selectedSlotIndex];
+          const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+            ? customTools[selectedItem as string]
+            : (selectedItem as ItemType);
+          const capabilities = getToolCapabilities(currentTool);
+
+          if (capabilities.stoneDamage > 0) {
+            const rockId = `natural-rock-${groundHit.key}-${groundHit.index}`;
+            const damageStore = useEntityHistoryStore.getState();
+            const h = damageStore.damageEntity(rockId, capabilities.stoneDamage, 10, 'Natural Rock');
+
+            const hitPoint = groundHit.position;
+            emitSpark(hitPoint);
+
+            setParticleState(prev => ({
+              burstId: prev.burstId + 1,
+              active: true,
+              pos: hitPoint,
+              dir: direction.clone().multiplyScalar(-1),
+              kind: 'debris',
+              color: '#888888'
+            }));
+            audioPool.play(clunkUrl, 0.5, 1.2);
+
+            if (h <= 0) {
+              // Break Natural Rock!
+              const removeGround = (hit: NonNullable<typeof groundHit>) => {
+                const chunk = chunkDataRef.current.get(hit.key);
+                const positions = chunk?.[hit.array];
+                if (!chunk || !positions || positions.length < 8) return;
+                const next = new Float32Array(positions);
+
+                // Synchronize visuals for optimized layers
+                let updatedVisuals: Partial<ChunkState> = {};
+                const variant = next[hit.index + 6];
+                const seed = next[hit.index + 7];
+
+                const updateBuffer = (buf: Float32Array | undefined) => {
+                  if (!buf) return undefined;
+                  const nb = new Float32Array(buf);
+                  for (let i = 0; i < nb.length; i += 7) {
+                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                      nb[i + 1] = -10000;
+                      break;
+                    }
+                  }
+                  return nb;
+                };
+
+                if (variant as RockVariant !== undefined && chunk.rockDataBuckets) {
+                  const v = variant as RockVariant;
+                  updatedVisuals.rockDataBuckets = {
+                    ...chunk.rockDataBuckets,
+                    [v]: updateBuffer(chunk.rockDataBuckets[v])!
+                  };
+                }
+
+                next[hit.index + 1] = -10000;
+                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+                chunkDataRef.current.set(hit.key, updatedChunk);
+                setChunkVersions((prev) => ({ ...prev, [hit.key]: (prev[hit.key] || 0) + 1 }));
+                useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
+              };
+
+              removeGround(groundHit);
+
+              const physicsStore = usePhysicsItemStore.getState();
+              const count = 2 + Math.floor(Math.random() * 2);
+              for (let i = 0; i < count; i++) {
+                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                  (Math.random() - 0.5) * 3,
+                  2 + Math.random() * 2,
+                  (Math.random() - 0.5) * 3
+                ]);
+              }
+            }
+            return;
+          }
         }
       }
     }
@@ -1428,12 +1884,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
       // Sample slightly inside the surface so particles/build reflect what we actually hit.
       const samplePoint = impactPoint.clone().addScaledVector(direction, 0.2);
-      const sampledMat = sampleMaterialAtWorldPoint(chunksRef.current, samplePoint);
+      const sampledMat = sampleMaterialAtWorldPoint(chunkDataRef.current, samplePoint);
 
       let isNearTree = false;
 
       // Check for Tree/Vegetation Interaction BEFORE modifying terrain
-      if (action === 'DIG') {
+      if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
         const hitX = impactPoint.x;
         const hitZ = impactPoint.z;
         const cx = Math.floor(hitX / CHUNK_SIZE_XZ);
@@ -1449,7 +1905,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         let anyFloraHit = false;
 
         for (const key of checkKeys) {
-          const chunk = chunksRef.current[key];
+          const chunk = chunkDataRef.current.get(key);
           if (!chunk) continue;
 
           const chunkOriginX = chunk.cx * CHUNK_SIZE_XZ;
@@ -1468,7 +1924,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             const positions = chunk.treePositions;
             const hitIndices: number[] = [];
 
-            for (let i = 0; i < positions.length; i += 4) {
+            for (let i = 0; i < positions.length; i += 5) {
               const x = positions[i] + chunkOriginX;
               const y = positions[i + 1];
               const z = positions[i + 2] + chunkOriginZ;
@@ -1498,51 +1954,74 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                   isNearTree = true;
                 }
 
-                // AAA FIX: Tree Cutting Logic
+                // AAA FIX: Tree Cutting Logic (All interaction has logic)
                 const treeId = `${key}-${i}`;
-                const { hasAxe, currentTool } = useInventoryStore.getState();
+                const { hasAxe, inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+                const selectedItem = inventorySlots[selectedSlotIndex];
 
-                // Only cut if we have an axe AND it is the current tool
-                const canCut = hasAxe && currentTool === 'axe';
+                // Check capabilities
+                const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+                  ? customTools[selectedItem as string]
+                  : (selectedItem as ItemType);
+                const capabilities = getToolCapabilities(currentTool);
 
-                if (!canCut) {
-                  // Play "clunk" sound via pool
-                  audioPool.play(clunkUrl, 0.4, 0.4);
-                  continue;
-                }
+                // Radius/Scale Logic to determine health
+                const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
+                const scale = 0.8 + Math.abs(seed % 0.4);
+                const radius = scale * 0.35;
+                const maxHealth = Math.floor(radius * 60); // e.g. 20-40 health
+                const woodDamage = capabilities.woodDamage;
+                const treeLabel = getTreeName(type as TreeType);
 
-                // Track damage
-                // We use a static map on the component or ref? 
-                // Since this is inside the loop, we need access to the ref.
-                // Assuming treeDamageRef is defined in the component scope (I will add it).
-                const currentDamage = (treeDamageRef.current.get(treeId) || 0) + 1;
-                treeDamageRef.current.set(treeId, currentDamage);
+                const damageStore = useEntityHistoryStore.getState();
+                const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
 
-                // Particles for hit
-                const woodPos = new THREE.Vector3(x, y + 1, z);
-                const woodDir = origin.clone().sub(woodPos).normalize();
-                setParticleState(prev => ({
-                  burstId: prev.burstId + 1,
-                  active: true,
-                  pos: woodPos,
-                  dir: woodDir,
-                  kind: 'debris',
-                  color: '#8B4513' // Wood color
-                }));
-                setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
-
-                if (currentDamage >= 5) {
+                // Check if felled
+                if (currentHealth <= 0) {
                   hitIndices.push(i);
-                  treeDamageRef.current.delete(treeId);
 
                   // Spawn Falling Tree
-                  const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
                   setFallingTrees(prev => [...prev, {
-                    id: `${key}-${i}-${Date.now()}`, // Unique ID
+                    id: `${key}-${i}-${Date.now()}`,
                     position: new THREE.Vector3(x, y, z),
                     type,
                     seed
                   }]);
+                  continue;
+                }
+
+                // Not dead yet: Shake or Hit?
+                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop;
+
+                if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
+                  // SMASH/SHAKE Animation
+                  const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
+                  setLeafPickup(leafPos);
+                  setParticleState(prev => ({
+                    burstId: prev.burstId + 1,
+                    active: true,
+                    pos: leafPos,
+                    dir: new THREE.Vector3(0, -1, 0),
+                    kind: 'debris',
+                    color: '#4fa02a'
+                  }));
+                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  anyFloraHit = true;
+                } else {
+                  // CHOP Animation
+                  const woodPos = new THREE.Vector3(x, y + 1, z);
+                  const woodDir = origin.clone().sub(woodPos).normalize();
+                  setParticleState(prev => ({
+                    burstId: prev.burstId + 1,
+                    active: true,
+                    pos: woodPos,
+                    dir: woodDir,
+                    kind: 'debris',
+                    color: '#8B4513'
+                  }));
+                  setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
+                  audioPool.play(clunkUrl, 0.4, 0.5);
+                  anyFloraHit = true;
                 }
               }
             }
@@ -1551,13 +2030,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               anyFloraHit = true;
               // Remove trees from chunk (filter out hit indices)
               // We need to reconstruct the array
-              const newCount = (positions.length / 4) - hitIndices.length;
-              const newPositions = new Float32Array(newCount * 4);
+              const newCount = (positions.length / 5) - hitIndices.length;
+              const newPositions = new Float32Array(newCount * 5);
               let destIdx = 0;
               let currentHitIdx = 0;
               hitIndices.sort((a, b) => a - b); // Ensure sorted
 
-              for (let i = 0; i < positions.length; i += 4) {
+              for (let i = 0; i < positions.length; i += 5) {
                 if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
                   currentHitIdx++;
                   continue;
@@ -1566,12 +2045,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 newPositions[destIdx + 1] = positions[i + 1];
                 newPositions[destIdx + 2] = positions[i + 2];
                 newPositions[destIdx + 3] = positions[i + 3];
-                destIdx += 4;
+                newPositions[destIdx + 4] = positions[i + 4];
+                destIdx += 5;
               }
 
               const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
-              chunksRef.current[key] = updatedChunk;
-              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+              chunkDataRef.current.set(key, updatedChunk);
+              setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
             }
           }
 
@@ -1644,8 +2124,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               // This prevents the expensive terrain mesh reconstruction (flicker).
               // VegetationLayer updates purely on the 'vegetationData' prop reference change.
               const updatedChunk = { ...chunk, vegetationData: newVegData };
-              chunksRef.current[key] = updatedChunk;
-              setChunks(prev => ({ ...prev, [key]: updatedChunk }));
+              chunkDataRef.current.set(key, updatedChunk);
+              setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
             }
           }
         }
@@ -1680,7 +2160,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       // Particles should spawn on/just above the visible surface (not at the brush center which may be inside terrain).
       const particlePos = impactPoint.clone().addScaledVector(direction, -0.08);
       const particleDir = direction.clone().multiplyScalar(-1);
-      const delta = action === 'DIG' ? -DIG_STRENGTH : DIG_STRENGTH;
+      const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+      const selectedItem = inventorySlots[selectedSlotIndex];
+      const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+        ? customTools[selectedItem as string]
+        : (selectedItem as ItemType);
+      const capabilities = getToolCapabilities(currentTool);
+
+      const delta = (action === 'DIG' || action === 'CHOP' || action === 'SMASH') ? -DIG_STRENGTH * capabilities.digPower : (action === 'BUILD' ? DIG_STRENGTH : 0);
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
       const minWx = hitPoint.x - (radius + 2);
@@ -1707,7 +2194,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       for (let cx = minCx; cx <= maxCx; cx++) {
         for (let cz = minCz; cz <= maxCz; cz++) {
           const key = `${cx},${cz}`;
-          const chunk = chunksRef.current[key];
+          const chunk = chunkDataRef.current.get(key);
           if (chunk) {
             const localX = hitPoint.x - (cx * CHUNK_SIZE_XZ);
             const localY = hitPoint.y;
@@ -1728,6 +2215,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               : TerrainService.modifyChunk(
                 chunk.density,
                 chunk.material,
+                metadata?.wetness,
                 { x: localX, y: localY, z: localZ },
                 radius,
                 delta,
@@ -1750,6 +2238,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       if (anyModified && poolRef.current) {
+        // Trigger version updates for all affected chunks to re-render
+        setChunkVersions(prev => {
+          const next = { ...prev };
+          affectedChunks.forEach(key => {
+            next[key] = (next[key] || 0) + 1;
+          });
+          return next;
+        });
         // Play Dig Sound
         if (action === 'DIG') {
           const sounds = [dig1Url, dig2Url, dig3Url];
@@ -1761,7 +2257,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
 
         affectedChunks.forEach(key => {
-          const chunk = chunksRef.current[key];
+          const chunk = chunkDataRef.current.get(key);
           const metadata = metadataDB.getChunk(key);
           if (chunk && metadata) {
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
@@ -1813,48 +2309,66 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
   return (
     <group>
-      {Object.values(chunks).map(chunk => (
-        <React.Fragment key={chunk.key}>
-          <ChunkMesh
-            chunk={chunk}
-            sunDirection={sunDirection}
-            triplanarDetail={triplanarDetail}
-            terrainShaderFogEnabled={terrainShaderFogEnabled}
-            terrainShaderFogStrength={terrainShaderFogStrength}
-            terrainThreeFogEnabled={terrainThreeFogEnabled}
-            terrainFadeEnabled={terrainFadeEnabled}
-            terrainWetnessEnabled={terrainWetnessEnabled}
-            terrainMossEnabled={terrainMossEnabled}
-            terrainRoughnessMin={terrainRoughnessMin}
-            terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
-            terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}
-            terrainPolygonOffsetUnits={terrainPolygonOffsetUnits}
-            terrainChunkTintEnabled={terrainChunkTintEnabled}
-            terrainWireframeEnabled={terrainWireframeEnabled}
-            terrainWeightsView={terrainWeightsView}
-          />
-          {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
-            // STRIDE IS NOW 6 (x, y, z, nx, ny, nz)
-            Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
-              (
-                <RootHollow
-                  key={`${chunk.key}-root-${i}`}
-                  position={[
-                    chunk.rootHollowPositions![i * 6] + chunk.cx * CHUNK_SIZE_XZ,
-                    chunk.rootHollowPositions![i * 6 + 1],
-                    chunk.rootHollowPositions![i * 6 + 2] + chunk.cz * CHUNK_SIZE_XZ
-                  ]}
-                  normal={[
-                    chunk.rootHollowPositions![i * 6 + 3],
-                    chunk.rootHollowPositions![i * 6 + 4],
-                    chunk.rootHollowPositions![i * 6 + 5]
-                  ]}
-                />
-              )
-            ))
-          )}
-        </React.Fragment>
-      ))}
+      {Object.keys(chunkVersions).map(key => {
+        const chunk = chunkDataRef.current.get(key);
+        if (!chunk) return null;
+
+        return (
+          <React.Fragment key={chunk.key}>
+            <ChunkMesh
+              key={chunk.key}
+              chunk={chunk}
+              lodLevel={chunk.lodLevel}
+              sunDirection={sunDirection}
+              triplanarDetail={triplanarDetail}
+              terrainShaderFogEnabled={terrainShaderFogEnabled}
+              terrainShaderFogStrength={terrainShaderFogStrength}
+              terrainThreeFogEnabled={terrainThreeFogEnabled}
+              terrainFadeEnabled={terrainFadeEnabled}
+              terrainWetnessEnabled={terrainWetnessEnabled}
+              terrainMossEnabled={terrainMossEnabled}
+              terrainRoughnessMin={terrainRoughnessMin}
+              terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
+              terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}
+              terrainPolygonOffsetUnits={terrainPolygonOffsetUnits}
+              terrainChunkTintEnabled={terrainChunkTintEnabled}
+              terrainWireframeEnabled={terrainWireframeEnabled}
+              terrainWeightsView={terrainWeightsView}
+              heightFogEnabled={heightFogEnabled}
+              heightFogStrength={heightFogStrength}
+              heightFogRange={heightFogRange}
+              heightFogOffset={heightFogOffset}
+              fogNear={fogNear}
+              fogFar={fogFar}
+            />
+            {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
+              <>
+                {/* Instanced rendering for the base meshes (chunk-local XZ, world Y). */}
+                <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
+                  <StumpLayer positions={chunk.rootHollowPositions} chunkKey={chunk.key} />
+                </group>
+
+                {/* Logic layer for interaction/growth (only active within physics distance) */}
+                {chunk.lodLevel <= COLLIDER_RADIUS && Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
+                  <RootHollow
+                    key={`${chunk.key}-root-${i}`}
+                    position={[
+                      chunk.rootHollowPositions![i * 6] + chunk.cx * CHUNK_SIZE_XZ,
+                      chunk.rootHollowPositions![i * 6 + 1],
+                      chunk.rootHollowPositions![i * 6 + 2] + chunk.cz * CHUNK_SIZE_XZ
+                    ]}
+                    normal={[
+                      chunk.rootHollowPositions![i * 6 + 3],
+                      chunk.rootHollowPositions![i * 6 + 4],
+                      chunk.rootHollowPositions![i * 6 + 5]
+                    ]}
+                  />
+                ))}
+              </>
+            )}
+          </React.Fragment>
+        );
+      })}
       <Particles
         burstId={particleState.burstId}
         active={particleState.active}

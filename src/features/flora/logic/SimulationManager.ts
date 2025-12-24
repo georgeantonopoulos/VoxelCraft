@@ -20,8 +20,8 @@ export class SimulationManager {
         // and can cause noticeable hitches during terrain streaming.
         this.enabled = (() => {
             if (typeof window === 'undefined') return false;
-            const params = new URLSearchParams(window.location.search);
-            return params.has('vcSim');
+            // Default to true for Phase 3 verification
+            return true;
         })();
 
         if (!this.enabled) return;
@@ -29,6 +29,8 @@ export class SimulationManager {
         this.worker = new Worker(new URL('../workers/simulation.worker.ts', import.meta.url), { type: 'module' });
 
         this.worker.onmessage = (e) => {
+            // Defensive check - workers may send null messages when crashed/memory exhausted
+            if (!e.data) return;
             const { type, payload } = e.data;
             if (type === 'CHUNKS_UPDATED') {
                 const updates = payload as SimUpdate[];

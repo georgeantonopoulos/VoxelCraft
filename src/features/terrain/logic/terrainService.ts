@@ -579,8 +579,8 @@ export class TerrainService {
                     treeThreshold = -0.4;
                     patchThreshold = -0.8;
                 } else if (biome === 'THE_GROVE') {
-                    treeThreshold = 0.0;
-                    patchThreshold = -0.4;
+                    treeThreshold = 0.2; // Slightly higher to reduce density (performance)
+                    patchThreshold = -0.3; // Slightly higher to reduce forest patch size
                 } else if (biome === 'SAVANNA') {
                     treeThreshold = 0.7;
                     patchThreshold = 0.2;
@@ -1146,10 +1146,68 @@ export class TerrainService {
         localPoint: { x: number, y: number, z: number },
         radius: number,
         delta: number,
+        brushMaterial?: MaterialType,
+        cx?: number,
+        cz?: number
+    ): boolean;
+    static modifyChunk(
+        density: Float32Array,
+        materialData: Uint8Array,
+        wetness: Uint8Array | undefined,
+        localPoint: { x: number, y: number, z: number },
+        radius: number,
+        delta: number,
+        brushMaterial?: MaterialType,
+        cx?: number,
+        cz?: number
+    ): boolean;
+    static modifyChunk(
+        density: Float32Array,
+        materialData: Uint8Array,
+        wetnessOrPoint: Uint8Array | { x: number, y: number, z: number } | undefined,
+        localPointOrRadius: { x: number, y: number, z: number } | number,
+        radiusOrDelta: number,
+        deltaOrMaterial?: number | MaterialType,
         brushMaterial: MaterialType = MaterialType.DIRT,
         cx: number = 0, // World Chunk coords for noise consistency
         cz: number = 0
     ): boolean {
+        const isLocalPoint = (value: unknown): value is { x: number, y: number, z: number } => {
+            if (!value || typeof value !== 'object') return false;
+            const candidate = value as { x?: unknown; y?: unknown; z?: unknown };
+            return typeof candidate.x === 'number'
+                && typeof candidate.y === 'number'
+                && typeof candidate.z === 'number';
+        };
+
+        // Back-compat: allow signature without the wetness param (density, material, point, radius, delta, ...)
+        let wetness: Uint8Array | undefined;
+        let localPoint: { x: number, y: number, z: number };
+        let radius: number;
+        let delta: number;
+        let finalBrushMaterial: MaterialType;
+        let finalCx: number;
+        let finalCz: number;
+
+        if (isLocalPoint(wetnessOrPoint) && typeof localPointOrRadius === 'number') {
+            wetness = undefined;
+            localPoint = wetnessOrPoint;
+            radius = localPointOrRadius;
+            delta = radiusOrDelta;
+            finalBrushMaterial = (typeof deltaOrMaterial === 'number' ? deltaOrMaterial : MaterialType.DIRT) as MaterialType;
+            finalCx = typeof brushMaterial === 'number' ? brushMaterial : 0;
+            finalCz = typeof cx === 'number' ? cx : 0;
+        } else {
+            wetness = wetnessOrPoint as Uint8Array | undefined;
+            if (!isLocalPoint(localPointOrRadius)) return false;
+            localPoint = localPointOrRadius;
+            radius = radiusOrDelta;
+            if (typeof deltaOrMaterial !== 'number') return false;
+            delta = deltaOrMaterial;
+            finalBrushMaterial = brushMaterial;
+            finalCx = cx;
+            finalCz = cz;
+        }
         const sizeX = TOTAL_SIZE_XZ;
         const sizeY = TOTAL_SIZE_Y;
         const sizeZ = TOTAL_SIZE_XZ;
@@ -1160,8 +1218,8 @@ export class TerrainService {
 
         const rSq = radius * radius;
         // Optimization: Pre-calculate world offset
-        const worldOffsetX = cx * CHUNK_SIZE_XZ - PAD; // -PAD because loop x includes PAD
-        const worldOffsetZ = cz * CHUNK_SIZE_XZ - PAD;
+        const worldOffsetX = finalCx * CHUNK_SIZE_XZ - PAD; // -PAD because loop x includes PAD
+        const worldOffsetZ = finalCz * CHUNK_SIZE_XZ - PAD;
 
         const iRad = Math.ceil(radius + 1.0); // Slightly larger for noise
         const minX = Math.max(0, Math.floor(hx - iRad));
@@ -1234,11 +1292,18 @@ export class TerrainService {
 
                     if (delta > 0 && density[idx] > ISO_LEVEL) {
                         if (oldDensity <= ISO_LEVEL) {
-                            materialData[idx] = brushMaterial;
+                            materialData[idx] = finalBrushMaterial;
                         }
                     }
                     if (delta < 0 && density[idx] <= ISO_LEVEL) {
                         materialData[idx] = MaterialType.AIR;
+                    }
+
+                    // --- UNDERWATER WETNESS FIX ---
+                    // If we modify density or material below sea level, ensure wetness is updated.
+                    // This prevents the "texture disappearance" where caustics vanish in newly dug areas.
+                    if (wetness && ((y - PAD) + MESH_Y_OFFSET <= WATER_LEVEL + 0.5)) {
+                        wetness[idx] = 255;
                     }
 
                     if (density[idx] > 20.0) density[idx] = 20.0;

@@ -5,6 +5,7 @@ import { useWorldStore } from '@/state/WorldStore';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
+import { TargetHealthBar } from '@/ui/TargetHealthBar';
 
 // --- Minimap Configuration ---
 const MAP_SIZE = 128; // Pixel width/height of the map
@@ -148,6 +149,7 @@ export const HUD: React.FC = () => {
   const inventoryCount = useGameStore((state) => state.inventoryCount);
   const stickCount = useGameStore((state) => state.stickCount);
   const stoneCount = useGameStore((state) => state.stoneCount);
+  const isSharedArrayBufferEnabled = useGameStore((state) => state.isSharedArrayBufferEnabled);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
 
   // Use store for player coordinates instead of event listener
@@ -240,9 +242,18 @@ export const HUD: React.FC = () => {
         style={{ ['--crosshair-color' as any]: crosshairColor }}
       />
 
+      <TargetHealthBar />
+
       {/* Top Left: Controls Info */}
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
-        <h1 className="font-semibold text-base text-emerald-700 mb-1">Organic Voxel Engine</h1>
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="font-semibold text-sm text-emerald-700">Organic Voxel Engine</h1>
+          {!isSharedArrayBufferEnabled && (
+            <span className="px-1.5 py-0.5 bg-red-500 text-[9px] font-bold text-white rounded animate-pulse">
+              LEGACY MODE
+            </span>
+          )}
+        </div>
         <div className="space-y-0.5 text-xs font-medium leading-tight">
           <p>WASD + Space to move</p>
           <p>Left Click: <span className="text-red-500 font-semibold">DIG</span> (pickaxe selected)</p>

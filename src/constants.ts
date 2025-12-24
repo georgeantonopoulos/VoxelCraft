@@ -23,7 +23,13 @@ export function setSnapEpsilon(v: number): void {
 export const VOXEL_SCALE = 1.0;
 
 // World Generation
-export const RENDER_DISTANCE = 2;
+export const RENDER_DISTANCE = 3;
+// LOD Distances (in chunks from player)
+export const LOD_DISTANCE_VEGETATION = 1; // Start fading small vegetation beyond this distance
+export const LOD_DISTANCE_PHYSICS = 1;    // >1: No colliders on valid entities
+export const LOD_DISTANCE_SIMPLIFIED = 1; // >1: Trees use simplified geometry (opaque/low-poly)
+export const LOD_DISTANCE_VEGETATION_ANY = 2; // >2: No vegetation at all
+export const LOD_DISTANCE_TREES_ANY = 3;  // >3: No trees at all
 export const WATER_LEVEL = 4.5;
 
 // Physics

@@ -431,7 +431,7 @@ export class BiomeManager {
 
     // Temperate Row
     const dTempDry = 0.5;   // Plains
-    const dTempMid = 0.95;  // The Grove (Lush)
+    const dTempMid = 0.85;  // The Grove (Lush) - Reduced from 0.95 for performance
     const dTempWet = 0.85;  // Jungle/Swamp-ish
 
     // Hot Row

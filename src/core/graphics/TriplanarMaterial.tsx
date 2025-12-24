@@ -1,22 +1,33 @@
 import * as THREE from 'three';
-import React, { useRef, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import React, { useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { sharedUniforms } from './SharedUniforms';
 
 import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragmentShader } from './TriplanarShader';
 
 // Shared material instance to avoid redundant shader compilation/patching per chunk.
-// All chunks share this material; variety is provided by geometry attributes (wetness, spawnTime, etc.).
 let sharedTerrainMaterial: THREE.MeshStandardMaterial | null = null;
+let lastUpdateFrame = -1;
+
+const PLACEHOLDER_NOISE_3D = (() => {
+  const data = new Uint8Array([255, 255, 255, 255]);
+  const tex = new THREE.Data3DTexture(data, 1, 1, 1);
+  tex.format = THREE.RGBAFormat;
+  tex.type = THREE.UnsignedByteType;
+  tex.needsUpdate = true;
+  return tex;
+})();
+
+
 
 const getSharedTerrainMaterial = () => {
   if (sharedTerrainMaterial) return sharedTerrainMaterial;
 
   const uniforms = {
     ...sharedUniforms,
-    uNoiseTexture: { value: noiseTexture },
+    uNoiseTexture: { value: PLACEHOLDER_NOISE_3D },
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },
     uColorDirt: { value: new THREE.Color('#755339') },
@@ -32,23 +43,25 @@ const getSharedTerrainMaterial = () => {
     uColorJungleGrass: { value: new THREE.Color('#2e8b1d') },
     uColorGlowStone: { value: new THREE.Color('#00e5ff') },
     uColorObsidian: { value: new THREE.Color('#0a0814') },
-    uFogColor: { value: new THREE.Color('#87CEEB') },
-    uFogNear: { value: 30 },
-    uFogFar: { value: 400 },
     uOpacity: { value: 1 },
-    uSunDirection: sharedUniforms.uSunDir,
-    uWaterLevel: { value: 4.5 },
-    uTriplanarDetail: { value: 1.0 },
-    uShaderFogEnabled: { value: 1.0 },
-    uShaderFogStrength: { value: 0.9 },
-    uWetnessEnabled: { value: 1.0 },
-    uMossEnabled: { value: 1.0 },
-    uRoughnessMin: { value: 0.0 },
-    uWeightsView: { value: 0 },
     uMacroStrength: { value: 1.0 },
     uCavityStrength: { value: 1.0 },
     uWindDirXZ: { value: new THREE.Vector2(0.85, 0.25) },
     uNormalStrength: { value: 1.0 },
+    uFogDensity: { value: 0.01 },
+    uWaterLevel: { value: 4.5 },
+    uWeightsView: { value: 0 },
+    uTriplanarDetail: sharedUniforms.uTriplanarDetail,
+    uShaderFogEnabled: sharedUniforms.uShaderFogEnabled,
+    uShaderFogStrength: sharedUniforms.uShaderFogStrength,
+    uWetnessEnabled: sharedUniforms.uWetnessEnabled,
+    uMossEnabled: sharedUniforms.uMossEnabled,
+    uRoughnessMin: sharedUniforms.uRoughnessMin,
+    uHeightFogEnabled: sharedUniforms.uHeightFogEnabled,
+    uHeightFogStrength: sharedUniforms.uHeightFogStrength,
+    uHeightFogRange: sharedUniforms.uHeightFogRange,
+    uHeightFogOffset: sharedUniforms.uHeightFogOffset,
+    uSunDirection: sharedUniforms.uSunDirection,
   };
 
   sharedTerrainMaterial = new (CustomShaderMaterial as any)({
@@ -66,7 +79,7 @@ const getSharedTerrainMaterial = () => {
   return sharedTerrainMaterial;
 };
 
-export const TriplanarMaterial: React.FC<{
+export interface TriplanarMaterialProps {
   sunDirection?: THREE.Vector3;
   triplanarDetail?: number;
   shaderFogEnabled?: boolean;
@@ -80,11 +93,19 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetUnits?: number;
   weightsView?: string;
   wireframe?: boolean;
-  waterLevel?: number;
-}> = ({
+  heightFogEnabled?: boolean;
+  heightFogStrength?: number;
+  heightFogRange?: number;
+  heightFogOffset?: number;
+  fogNear?: number;
+  fogFar?: number;
+}
+
+export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
+  sunDirection,
   triplanarDetail = 1.0,
   shaderFogEnabled = true,
-  shaderFogStrength = 0.9,
+  shaderFogStrength = 0.8,
   threeFogEnabled = true,
   wetnessEnabled = true,
   mossEnabled = true,
@@ -94,55 +115,68 @@ export const TriplanarMaterial: React.FC<{
   polygonOffsetUnits = -1.0,
   weightsView = 'off',
   wireframe = false,
-  waterLevel = 4.5,
+  heightFogEnabled = true,
+  heightFogStrength = 0.35,
+  heightFogRange = 50.0,
+  heightFogOffset = 4.0,
+  fogNear = 40,
+  fogFar = 220,
 }) => {
-    const { scene } = useThree();
-    const lastFogRef = useRef<{ near: number; far: number; colorHex: string } | null>(null);
+  const mat = useMemo(() => getSharedTerrainMaterial(), []);
 
-    const mat = useMemo(() => getSharedTerrainMaterial(), []);
+  useFrame((state) => {
+    if (!mat) return;
+    const uniforms = (mat as any).uniforms;
 
-    useFrame(() => {
-      const matAny = mat as any;
-      if (!matAny) return;
+    // Lazy initialization of common central textures
+    if (uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
+      uniforms.uNoiseTexture.value = getNoiseTexture();
+    }
 
-      // Keep shared noise up to date
-      if (matAny.uniforms.uNoiseTexture.value !== noiseTexture) matAny.uniforms.uNoiseTexture.value = noiseTexture;
+    // We only update the shared material ONCE per frame, even with 100 chunks.
+    if (lastUpdateFrame !== state.gl.info.render.frame) {
+      lastUpdateFrame = state.gl.info.render.frame;
 
-      // Avoid per-frame churn: only touch uniforms when values actually change
-      if (matAny.uniforms.uTriplanarDetail.value !== triplanarDetail) matAny.uniforms.uTriplanarDetail.value = triplanarDetail;
-      const shaderFogEnabledF = shaderFogEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uShaderFogEnabled.value !== shaderFogEnabledF) matAny.uniforms.uShaderFogEnabled.value = shaderFogEnabledF;
-      if (matAny.uniforms.uShaderFogStrength.value !== shaderFogStrength) matAny.uniforms.uShaderFogStrength.value = shaderFogStrength;
-      const wetnessEnabledF = wetnessEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uWetnessEnabled.value !== wetnessEnabledF) matAny.uniforms.uWetnessEnabled.value = wetnessEnabledF;
-      const mossEnabledF = mossEnabled ? 1.0 : 0.0;
-      if (matAny.uniforms.uMossEnabled.value !== mossEnabledF) matAny.uniforms.uMossEnabled.value = mossEnabledF;
-      if (matAny.uniforms.uRoughnessMin.value !== roughnessMin) matAny.uniforms.uRoughnessMin.value = roughnessMin;
+      // Apply all props to the shared material instance
+      const uniforms = (mat as any).uniforms;
 
-      matAny.polygonOffset = polygonOffsetEnabled;
-      matAny.polygonOffsetFactor = polygonOffsetFactor;
-      matAny.polygonOffsetUnits = polygonOffsetUnits;
-      matAny.wireframe = wireframe;
+      // If props are provided, they OVERRIDE central state for this material instance (which is shared)
+      // Since it's a singleton, the last chunk processed "wins" for that frame.
+      // In practice, these settings are global anyway.
+
+      if (sunDirection && (sunDirection as any).isVector3) {
+        uniforms.uSunDirection.value.copy(sunDirection);
+        uniforms.uSunDir.value.copy(sunDirection);
+      }
+
+      uniforms.uTriplanarDetail.value = triplanarDetail;
+      uniforms.uShaderFogEnabled.value = shaderFogEnabled ? 1.0 : 0.0;
+      uniforms.uShaderFogStrength.value = shaderFogStrength;
+      uniforms.uWetnessEnabled.value = wetnessEnabled ? 1.0 : 0.0;
+      uniforms.uMossEnabled.value = mossEnabled ? 1.0 : 0.0;
+      uniforms.uRoughnessMin.value = roughnessMin;
+
+      mat.polygonOffset = polygonOffsetEnabled;
+      mat.polygonOffsetFactor = polygonOffsetFactor;
+      mat.polygonOffsetUnits = polygonOffsetUnits;
+      mat.wireframe = wireframe;
 
       const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-      const nextWeightsView = viewMap[weightsView] ?? 0;
-      if (matAny.uniforms.uWeightsView.value !== nextWeightsView) matAny.uniforms.uWeightsView.value = nextWeightsView;
-      matAny.fog = threeFogEnabled;
+      uniforms.uWeightsView.value = viewMap[weightsView] ?? 0;
 
-      matAny.uniforms.uWaterLevel.value = waterLevel;
+      mat.fog = threeFogEnabled;
+      uniforms.uHeightFogEnabled.value = heightFogEnabled ? 1.0 : 0.0;
+      uniforms.uHeightFogStrength.value = heightFogStrength;
+      uniforms.uHeightFogRange.value = heightFogRange;
+      uniforms.uHeightFogOffset.value = heightFogOffset;
+      uniforms.uFogNear.value = fogNear;
+      uniforms.uFogFar.value = fogFar;
 
-      const fog = scene.fog as THREE.Fog | undefined;
-      if (fog) {
-        const colorHex = `#${fog.color.getHexString()}`;
-        const lastFog = lastFogRef.current;
-        if (!lastFog || lastFog.near !== fog.near || lastFog.far !== fog.far || lastFog.colorHex !== colorHex) {
-          matAny.uniforms.uFogColor.value.copy(fog.color);
-          matAny.uniforms.uFogNear.value = fog.near;
-          matAny.uniforms.uFogFar.value = fog.far;
-          lastFogRef.current = { near: fog.near, far: fog.far, colorHex };
-        }
+      if (state.scene.fog && (state.scene.fog as any).color) {
+        uniforms.uFogColor.value.copy((state.scene.fog as any).color);
       }
-    });
+    }
+  });
 
-    return <primitive object={mat} attach="material" />;
-  };
+  return <primitive object={mat} attach="material" />;
+});

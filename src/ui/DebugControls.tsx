@@ -16,6 +16,8 @@ export const DebugControls: React.FC<{
     setExposureUnderwater: (v: number) => void;
     setFogNear: (v: number) => void;
     setFogFar: (v: number) => void;
+    setAtmosphereHaze: (v: number) => void;
+    setAtmosphereBrightness: (v: number) => void;
     setSunIntensityMul: (v: number) => void;
     setAmbientIntensityMul: (v: number) => void;
     setMoonIntensityMul: (v: number) => void;
@@ -39,6 +41,10 @@ export const DebugControls: React.FC<{
     setTerrainWeightsView: (v: string) => void;
     setCaOffset: (v: number) => void;
     setVignetteDarkness: (v: number) => void;
+    setHeightFogEnabled: (v: boolean) => void;
+    setHeightFogStrength: (v: number) => void;
+    setHeightFogRange: (v: number) => void;
+    setHeightFogOffset: (v: number) => void;
     // Sun Shadow Params
     setSunShadowBias: (v: number) => void;
     setSunShadowNormalBias: (v: number) => void;
@@ -87,8 +93,18 @@ export const DebugControls: React.FC<{
                 Fog: folder({
                     fogNear: { value: 20, min: 0, max: 120, step: 1, onChange: props.setFogNear, label: 'Near' },
                     fogFar: { value: 160, min: 20, max: 600, step: 5, onChange: props.setFogFar, label: 'Far' },
+                    'Height Fog': folder({
+                        hFogEnabled: { value: true, onChange: (v) => props.setHeightFogEnabled(!!v), label: 'Enabled' },
+                        hFogStrength: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: props.setHeightFogStrength, label: 'Strength' },
+                        hFogRange: { value: 24.0, min: 5.0, max: 100.0, step: 1.0, onChange: props.setHeightFogRange, label: 'Range' },
+                        hFogOffset: { value: 12.0, min: -20.0, max: 60.0, step: 1.0, onChange: props.setHeightFogOffset, label: 'Offset' },
+                    }, { collapsed: true })
+                }),
+                Atmosphere: folder({
+                    haze: { value: 0.35, min: 0.0, max: 1.0, step: 0.01, onChange: props.setAtmosphereHaze, label: 'Haze' },
+                    brightness: { value: 1.0, min: 0.6, max: 1.6, step: 0.01, onChange: props.setAtmosphereBrightness, label: 'Brightness' },
                 })
-            }, { collapsed: false }),
+            }, { collapsed: true }),
 
             'Post Processing': folder({
                 ppEnabled: { value: true, onChange: (v) => props.setPostProcessingEnabled(!!v), label: 'Master Switch' },
@@ -137,7 +153,7 @@ export const DebugControls: React.FC<{
                         .then(() => alert('Configuration copied to clipboard!'))
                         .catch((err) => console.error('Failed to copy config:', err));
                 })
-            }, { collapsed: false }),
+            }, { collapsed: true }),
 
             'UI': folder({
                 levaWidth: { value: 520, min: 320, max: 900, step: 10, onChange: props.setLevaWidth, label: 'Width' },

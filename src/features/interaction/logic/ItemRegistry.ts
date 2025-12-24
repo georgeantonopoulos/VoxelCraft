@@ -3,6 +3,8 @@ import torchImg from '@/assets/images/torch_gemini.png';
 import floraImg from '@/assets/images/flora_icon.png';
 import stickImg from '@/assets/images/stick.svg';
 import stoneImg from '@/assets/images/stone.svg';
+import pickaxeImg from '@/assets/images/pickaxe_icon.png';
+import axeImg from '@/assets/images/axe_icon.png';
 
 export interface ItemMetadata {
     name: string;
@@ -40,6 +42,7 @@ export const ITEM_REGISTRY: Record<ItemType, ItemMetadata> = {
         name: 'Pickaxe',
         color: '#666666',
         isStackable: false,
+        icon: pickaxeImg,
     },
     [ItemType.FIRE]: {
         name: 'Fire',
@@ -70,12 +73,21 @@ export const ITEM_REGISTRY: Record<ItemType, ItemMetadata> = {
         name: 'Axe',
         color: '#777777',
         isStackable: false,
+        icon: axeImg,
     },
 };
 
 export const STACKABLE_ITEMS = Object.values(ItemType).filter(t => ITEM_REGISTRY[t].isStackable);
 
 export const getItemMetadata = (type: ItemType | string): ItemMetadata | undefined => {
+    if (typeof type === 'string' && type.startsWith('tool_')) {
+        return {
+            name: 'Custom Tool',
+            color: '#c99a63',
+            isStackable: false,
+            icon: stickImg, // Fallback icon
+        };
+    }
     return ITEM_REGISTRY[type as ItemType];
 };
 

@@ -1,11 +1,12 @@
-import React, { useMemo, useRef, useLayoutEffect } from 'react';
+import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { LOD_DISTANCE_SIMPLIFIED, LOD_DISTANCE_TREES_ANY } from '@/constants';
 
 // Type for pre-computed tree instance data from worker
 interface TreeInstanceBatch {
@@ -13,15 +14,34 @@ interface TreeInstanceBatch {
     variant: number;
     count: number;
     matrices: Float32Array;
+    originalIndices: Int32Array;
 }
 
 interface TreeLayerProps {
     data: Float32Array; // Stride 4: x, y, z, type (fallback if no pre-computed data)
     treeInstanceBatches?: Record<string, TreeInstanceBatch>; // Pre-computed from worker
     collidersEnabled: boolean;
+    chunkKey: string;
+    simplified?: boolean;
+    lodLevel?: number;
 }
 
-export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled }) => {
+const smoothstep = (edge0: number, edge1: number, x: number) => {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+};
+
+const getLeafLodAlpha = (lodLevel: number) => {
+    const simplifyFade = smoothstep(LOD_DISTANCE_SIMPLIFIED - 0.2, LOD_DISTANCE_SIMPLIFIED + 0.5, lodLevel);
+    const densityAfterSimplify = 0.85;
+    const densityBase = 1.0 - (1.0 - densityAfterSimplify) * simplifyFade;
+    const fadeOut = smoothstep(LOD_DISTANCE_TREES_ANY - 0.6, LOD_DISTANCE_TREES_ANY + 0.2, lodLevel);
+    return Math.max(0, Math.min(1, densityBase * (1.0 - fadeOut)));
+};
+
+export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled, chunkKey, simplified, lodLevel = 0 }) => {
+    const leafLodAlpha = useMemo(() => getLeafLodAlpha(lodLevel), [lodLevel]);
+
     // Use pre-computed batches if available, otherwise fall back to client-side batching
     const batches = useMemo(() => {
         // If we have pre-computed batches from worker, use them directly
@@ -34,6 +54,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
         const JUNGLE_VARIANTS = 4;
         const positionsByKey: Record<string, number[]> = {};
         const scalesByKey: Record<string, number[]> = {};
+        const originalIndicesByKey: Record<string, number[]> = {};
         const STRIDE = 5;
 
         for (let i = 0; i < data.length; i += STRIDE) {
@@ -54,9 +75,11 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
             if (!positionsByKey[key]) {
                 positionsByKey[key] = [];
                 scalesByKey[key] = [];
+                originalIndicesByKey[key] = [];
             }
             positionsByKey[key].push(x, y, z);
             scalesByKey[key].push(scaleFactor);
+            originalIndicesByKey[key].push(i);
         }
 
         // Build matrices
@@ -65,8 +88,10 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
             const type = parseInt(typeStr);
             const variant = parseInt(variantStr);
             const scales = scalesByKey[key];
+            const originalIndices = originalIndicesByKey[key];
             const count = positions.length / 3;
             const matrices = new Float32Array(count * 16);
+            const indices = new Int32Array(originalIndices);
 
             for (let i = 0; i < count; i++) {
                 const x = positions[i * 3];
@@ -99,7 +124,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                 matrices[offset + 15] = 1;
             }
 
-            map[key] = { type, variant, count, matrices };
+            map[key] = { type, variant, count, matrices, originalIndices: indices };
         }
 
         return map;
@@ -113,8 +138,13 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                     type={batch.type}
                     variant={batch.variant}
                     matrices={batch.matrices}
+                    originalIndices={batch.originalIndices}
                     count={batch.count}
                     collidersEnabled={collidersEnabled}
+                    chunkKey={chunkKey}
+                    simplified={simplified}
+                    leafLodAlpha={leafLodAlpha}
+                    lodLevel={lodLevel}
                 />
             ))}
         </group>
@@ -124,6 +154,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
 // Material pools for trees to avoid per-chunk creation.
 const treeWoodMaterialPool: Record<string, THREE.Material> = {};
 const treeLeafMaterialPool: Record<string, THREE.Material> = {};
+const treeLeafOpaqueMaterialPool: Record<string, THREE.Material> = {};
 
 const getTreeWoodMaterial = (type: number, colors: any) => {
     const key = `${type}`;
@@ -209,7 +240,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
         uniforms: {
             uColorBase: { value: new THREE.Color(colors.base) },
             uColorTip: { value: new THREE.Color(colors.tip) },
-            uNoiseTexture: { value: noiseTexture },
+            uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
             uIsInstanced: { value: 1.0 },
         },
@@ -220,12 +251,15 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
     return treeWoodMaterialPool[key];
 };
 
-const getTreeLeafMaterial = (type: number, colors: any) => {
-    const key = `${type}`;
-    if (treeLeafMaterialPool[key]) return treeLeafMaterialPool[key];
+const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
+    const key = `${type}${opaque ? ':opaque' : ''}`;
+    const pool = opaque ? treeLeafOpaqueMaterialPool : treeLeafMaterialPool;
+    if (pool[key]) return pool[key];
 
-    treeLeafMaterialPool[key] = new (CustomShaderMaterial as any)({
+    pool[key] = new (CustomShaderMaterial as any)({
         baseMaterial: THREE.MeshStandardMaterial,
+        transparent: !opaque,
+        alphaTest: opaque ? 0.5 : 0.0,
         vertexShader: `
             uniform float uTime;
             uniform float uLeafHueVariation;
@@ -275,9 +309,11 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
             varying float vTreeSeed;
             varying float vHueCos;
             varying float vHueSin;
+            varying float vLeafRand;
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
             uniform float uTime;
+            uniform float uLeafLodAlpha;
 
             vec3 hueRotateCS(vec3 color, float c, float s) {
                 vec3 k = vec3(0.57735026919);
@@ -285,6 +321,10 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
             }
 
             void main() {
+                float lodRand = fract(sin(vLeafRand * 173.1 + vTreeSeed * 19.7) * 43758.5453123);
+                if (lodRand > uLeafLodAlpha) {
+                    discard;
+                }
                 float treeBrightness = 0.85 + vTreeSeed * 0.30;
                 float treeSaturation = 0.70 + fract(vTreeSeed * 7.3) * 0.20;
                 float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
@@ -309,9 +349,10 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
         `,
         uniforms: {
             uColorTip: { value: new THREE.Color(colors.tip) },
-            uNoiseTexture: { value: noiseTexture },
+            uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
-            uLeafHueVariation: { value: 0.30 }
+            uLeafHueVariation: { value: 0.30 },
+            uLeafLodAlpha: { value: 1.0 }
         },
         toneMapped: false,
     });
@@ -323,13 +364,35 @@ const InstancedTreeBatch: React.FC<{
     type: number,
     variant: number,
     matrices: Float32Array,
+    originalIndices: Int32Array,
     count: number,
-    collidersEnabled: boolean
-}> = ({ type, variant, matrices, count, collidersEnabled }) => {
+    collidersEnabled: boolean;
+    chunkKey: string;
+    simplified?: boolean;
+    leafLodAlpha: number;
+    lodLevel: number;
+}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, leafLodAlpha, lodLevel }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
+    const leafLodAlphaRef = useRef(leafLodAlpha);
+    const [deferredCollidersEnabled, setDeferredCollidersEnabled] = React.useState(false);
 
-    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
+    useEffect(() => {
+        if (collidersEnabled) {
+            // If we are very close (lodLevel 0), enable immediately.
+            // Otherwise, defer to a later frame to avoid the LOD transition hitch.
+            if (lodLevel === 0) {
+                setDeferredCollidersEnabled(true);
+            } else {
+                const handle = requestIdleCallback(() => setDeferredCollidersEnabled(true), { timeout: 200 });
+                return () => cancelIdleCallback(handle);
+            }
+        } else {
+            setDeferredCollidersEnabled(false);
+        }
+    }, [collidersEnabled, lodLevel]);
+
+    const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant, simplified), [type, variant, simplified]);
 
     useLayoutEffect(() => {
         if (!woodMesh.current || !matrices || matrices.length === 0) return;
@@ -340,7 +403,11 @@ const InstancedTreeBatch: React.FC<{
             leafMesh.current.instanceMatrix.array.set(matrices);
             leafMesh.current.instanceMatrix.needsUpdate = true;
         }
-    }, [matrices]);
+    }, [matrices, wood, leaves]);
+
+    useEffect(() => {
+        leafLodAlphaRef.current = leafLodAlpha;
+    }, [leafLodAlpha]);
 
     // Prepare Physics Instances
     const rigidBodyGroups = useMemo(() => {
@@ -363,17 +430,18 @@ const InstancedTreeBatch: React.FC<{
                 tempMatrix.decompose(pos, quat, scl);
                 const euler = new THREE.Euler().setFromQuaternion(quat);
 
+                const originalIndex = originalIndices[i];
                 instances.push({
                     key: `tree-${type}-${i}-branch-${branchIndex}`,
                     position: [pos.x, pos.y, pos.z],
                     rotation: [euler.x, euler.y, euler.z],
                     scale: [scl.x, scl.y, scl.z],
-                    userData: { type: 'flora_tree' }
+                    userData: { type: 'flora_tree', chunkKey, treeIndex: originalIndex }
                 });
             }
             return instances;
         });
-    }, [collisionData, matrices, count, type]);
+    }, [collisionData, matrices, count, type, chunkKey, originalIndices]);
 
     const colors = useMemo(() => {
         let base = '#3e2723';
@@ -390,7 +458,7 @@ const InstancedTreeBatch: React.FC<{
     }, [type]);
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
-    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors), [type, colors]);
+    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified), [type, colors, simplified]);
 
     const colliderGeometries = useMemo(() => {
         const cylinder = new THREE.CylinderGeometry(0.225, 0.225, 1.0, 6);
@@ -416,10 +484,16 @@ const InstancedTreeBatch: React.FC<{
                     castShadow
                     receiveShadow
                     material={leafMaterial}
+                    onBeforeRender={() => {
+                        const matAny = leafMaterial as any;
+                        if (matAny?.uniforms?.uLeafLodAlpha) {
+                            matAny.uniforms.uLeafLodAlpha.value = leafLodAlphaRef.current;
+                        }
+                    }}
                 />
             )}
 
-            {collidersEnabled && rigidBodyGroups.map((instances, i) => (
+            {deferredCollidersEnabled && rigidBodyGroups.map((instances, i) => (
                 <InstancedRigidBodies
                     key={i}
                     instances={instances}
