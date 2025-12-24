@@ -272,7 +272,7 @@ const rayHitsGeneratedGroundPickup = (
   for (let cx = minCx; cx <= maxCx; cx++) {
     for (let cz = minCz; cz <= maxCz; cz++) {
       const key = `${cx},${cz}`;
-      const chunk = chunks[key];
+      const chunk = chunks.get(key);
       if (!chunk) continue;
       if (chunk.stickPositions && chunk.stickPositions.length > 0) consider(key, 'stickPositions', chunk.stickPositions);
       if (chunk.rockPositions && chunk.rockPositions.length > 0) consider(key, 'rockPositions', chunk.rockPositions);
@@ -1171,6 +1171,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
     const workerThrottleStartTime = performance.now();
     let appliedWorkerMessageThisFrame = false;
+    const versionUpdates = new Set<string>();
 
     while (
       workerMessageHead.current < workerMessageQueue.current.length &&
@@ -1183,13 +1184,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       if (type === 'GENERATED') {
         const { key, cx, cz, fireflyPositions, metadata, material, density } = payload;
         pendingChunks.current.delete(key);
-
-        // Clear in-flight tracking for this chunk
         inFlightGenerations.current.delete(key);
 
-        if (!neededKeysRef.current.has(key)) {
-          if (streamDebug) console.log('[VoxelTerrain] Drop generated chunk (not needed):', key);
-        } else {
+        if (neededKeysRef.current.has(key)) {
           if (metadata) {
             metadataDB.initChunk(key, metadata);
             simulationManager.addChunk(key, cx, cz, material, metadata.wetness, metadata.mossiness);
@@ -1210,6 +1207,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             ...payload,
             lodLevel,
             colliderEnabled,
+            // Re-wrap collider buffers if they exist (buffers were transferred and are now neutered in worker)
+            colliderPositions: payload.colliderPositions ? new Float32Array(payload.colliderPositions) : undefined,
+            colliderIndices: payload.colliderIndices ? new Uint32Array(payload.colliderIndices) : undefined,
+            colliderHeightfield: payload.colliderHeightfield ? new Float32Array(payload.colliderHeightfield) : undefined,
             terrainVersion: payload.terrainVersion ?? 0,
             visualVersion: payload.visualVersion ?? 0,
             spawnedAt: initialLoadTriggered.current ? (lastTimeRef.current || 0.01) : 0
@@ -1217,19 +1218,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
           setChunkFireflies(key, fireflyPositions);
           terrainRuntime.registerChunk(key, cx, cz, density, material);
-
           chunkDataRef.current.set(key, newChunk);
 
           if (!initialLoadTriggered.current) {
-            // During initial load, mount immediately so player has a floor
-            setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+            versionUpdates.add(key);
           } else {
             mountQueue.current.push(newChunk);
           }
 
-          // If collider was NOT enabled immediately, add to queue
           if (!colliderEnabled && !colliderEnablePending.current.has(key)) {
-            // Re-check if it's within candidate radius
             const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
             const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
             const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
@@ -1243,24 +1240,30 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const { key } = payload;
         const current = chunkDataRef.current.get(key);
         if (current) {
-          // Increment versions to trigger re-memoization of geometry and physics
           const updatedChunk = {
             ...current,
             ...payload,
+            // Re-wrap collider buffers if they exist
+            colliderPositions: payload.colliderPositions ? new Float32Array(payload.colliderPositions) : current.colliderPositions,
+            colliderIndices: payload.colliderIndices ? new Uint32Array(payload.colliderIndices) : current.colliderIndices,
+            colliderHeightfield: payload.colliderHeightfield ? new Float32Array(payload.colliderHeightfield) : current.colliderHeightfield,
             terrainVersion: (current.terrainVersion ?? 0) + 1,
             visualVersion: (current.visualVersion ?? 0) + 1
           };
           chunkDataRef.current.set(key, updatedChunk);
-
-          setChunkVersions(prev => {
-            if (!prev[key]) return prev;
-            return {
-              ...prev,
-              [key]: (prev[key] || 0) + 1
-            };
-          });
+          versionUpdates.add(key);
         }
       }
+    }
+
+    if (versionUpdates.size > 0) {
+      setChunkVersions(prev => {
+        const next = { ...prev };
+        versionUpdates.forEach(k => {
+          next[k] = (next[k] || 0) + 1;
+        });
+        return next;
+      });
     }
 
     // Garbage collection for workerMessageQueue (only once per frame after the loop)

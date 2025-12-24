@@ -120,6 +120,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Lumina Stride Mismatch**: `floraPositions` has stride 4 (x,y,z,type). Using stride 3 for extraction (e.g. for light positions in `LuminaLayer.tsx`) causes coordinate shifting and invisible/misplaced lights.
 - **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. ALWAYS cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`).
 - **Chunk Cache Restoration**: For items/trees to persist on revisit, ALL entity data (flora, trees, sticks, rocks, hotspots, and processed buckets/batches) MUST be saved to and correctly restored from `CachedChunk` in `terrain.worker.ts`.
+- **HeightfieldCollider Pattern**: For heightfield colliders to work correctly: (1) Use `colliders={false}` on RigidBody to disable auto-generation, (2) Add `<HeightfieldCollider>` as a child with `args=[nRows, nCols, heights, scale]`, (3) Heights must be in column-major order (`heights[z + x * numSamplesZ]`), (4) Scale defines TOTAL size (`{x: 32, y: 1, z: 32}`), (5) Position at center of chunk (`[16, 0, 16]`). For cave chunks, use `colliders="trimesh"` which auto-generates from the first child mesh.
 
 ---
 
@@ -168,6 +169,26 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
+- 2025-12-24: **BUG FIX** - Stick/Rock pickup not working.
+  - **Root Cause**: `rayHitsGeneratedGroundPickup` used `chunks[key]` on a Map instead of `chunks.get(key)`. This silently failed (returned undefined), causing all ground item pickups to fail.
+  - **Fix**: Changed to `chunks.get(key)`.
+  - **Lesson**: Always use `.get()` on Maps; bracket notation only works on plain objects.
+- 2025-12-24: **HeightfieldCollider working** - Implemented correct pattern.
+  - Set `colliders={false}` on RigidBody for heightfield chunks
+  - Add HeightfieldCollider as child with correct args
+  - Heights in column-major order, scale as total size, position at chunk center
+- 2025-12-24: **CRITICAL FIX** - Player Floating / Terrain Collision Off after Heightfield Introduction.
+  - **Root Cause**: The `HeightfieldCollider` in `ChunkMesh.tsx` was using `scale: { x: 1, y: 1, z: 1 }`. The `scale` argument to Rapier's HeightfieldCollider defines the **TOTAL SIZE** of the heightfield in world units, NOT a per-vertex scale. With a scale of 1, the entire 32x32 heightfield was being crammed into a 1x1 unit area!
+  - **Fix**: Changed scale from `{ x: 1, y: 1, z: 1 }` to `{ x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }` (i.e., `{ x: 32, y: 1, z: 32 }`). Now the heightfield correctly spans the full 32x32 chunk area.
+  - **Why the huge refactor didn't help**: The previous agent focused on vertex counts, Surface Nets algorithms, and centroid placement—all of which were already correct. The bug was a simple API misunderstanding: Rapier's scale parameter is a total-size, not a per-cell multiplier.
+  - **Lesson**: When physics colliders don't match visual geometry, first check coordinate scales and transforms before diving into mesh generation algorithms.
+- 2025-12-24: Fixed Heightfield Shearing and Collision Accuracy.
+  - **Surface Nets Centroid Placement**: Refactored `generateSimplifiedTrimesh` to use actual edge intersections instead of voxel-centers. This provides a high-fidelity collision boundary that perfectly follows visual terrain.
+  - **Grid Alignment**: Corrected `HeightfieldCollider` vertex count to 33 (32 subdivisions + 1 vertex), resolving the cumulative row-index shift that caused "shearing" and random-feeling terrain heights.
+  - **Scan Robustness**: Updated `isHeightfieldCompatible` to scan the full chunk depth, ensuring complex overhangs are correctly identified as needing trimesh colliders.
+  - **Documentation Restoration**: Re-added all critical comments and architectural documentation to `mesher.ts` that were lost during the optimization refactor.
+  - **Performance Optimization**: Replaced `Array.from` with direct `Float32Array` usage for the heightfield collider, reducing frame-time spikes during chunk streaming.
+- 2025-12-24: Fixed "The Off-By-One" Trap and React Render Thrashing.
 - 2025-12-24: Improved visibility into `SharedArrayBuffer` status.
   - **Console Diagnostics**: Added high-visibility warning in console if SAB is unavailable.
   - **HUD Badge**: Implemented a pulsing red "LEGACY MODE" badge in the HUD to alert users of degraded performance due to environment misconfiguration (missing COOP/COEP).

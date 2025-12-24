@@ -170,8 +170,8 @@ const App: React.FC = () => {
     }
 
     // Instant surface scan
-    const y = TerrainService.getHeightAt(targetX, targetZ);
-    setSpawnPos([targetX, y + 2.5, targetZ]);
+    const worldY = TerrainService.getHeightAt(targetX, targetZ);
+    setSpawnPos([targetX, worldY + 2.5, targetZ]);
     if (autoStart) setGameStarted(true);
   }, [worldType, findSpawnForBiome, autoStart]);
 

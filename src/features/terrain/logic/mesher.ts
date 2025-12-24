@@ -37,6 +37,7 @@ const MATERIAL_TO_CHANNEL = (() => {
 })();
 
 const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.length ? MATERIAL_TO_CHANNEL[mat] : -1);
+
 /**
  * Clamp a voxel sample coordinate so central differences stay inside the padded grid.
  */
@@ -68,15 +69,16 @@ export type WaterSurfaceMeshData = {
   shoreMask: Uint8Array;
 };
 
+/**
+ * Generates a separate mesh for the water surface.
+ * Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
+ * We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
+ * a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
+ *
+ * IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
+ * material grid at runtime rather than relying on physics for water.
+ */
 export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8Array): WaterSurfaceMeshData {
-  // --- Water Surface Mesh (Sea-level surface + shoreline mask) ---
-  //
-  // Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
-  // We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
-  // a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
-  //
-  // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
-  // material grid at runtime rather than relying on physics for water.
   const waterVerts: number[] = [];
   const waterInds: number[] = [];
   const waterNorms: number[] = [];
@@ -92,7 +94,6 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
     return getVal(density, x, y, z) <= ISO_LEVEL;
   };
 
-  // Build a 2D mask of water-present columns at the sea-level plane.
   const waterW = CHUNK_SIZE_XZ;
   const waterH = CHUNK_SIZE_XZ;
   const waterMask = new Uint8Array(waterW * waterH);
@@ -157,7 +158,6 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
       return false;
     };
 
-    // Seed inside-water boundary cells
     for (let z = 0; z < waterH; z++) {
       for (let x = 0; x < waterW; x++) {
         if (!hasDiffNeighbor(x, z)) continue;
@@ -167,7 +167,6 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
         }
       }
     }
-    // BFS inside water
     while (qh < qx.length) {
       const x = qx[qh];
       const z = qz[qh];
@@ -236,6 +235,10 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
   };
 }
 
+/**
+ * The main entry point for mesh generation. Extracting both visual and physics geometry
+ * from the density and material buffers using a Dual-Contouring-like Surface Nets approach.
+ */
 export function generateMesh(
   density: Float32Array,
   material: Uint8Array,
@@ -245,7 +248,7 @@ export function generateMesh(
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
 
-  // --- Buffers ---
+  // --- Intermediate Buffers ---
   const tVerts: number[] = [];
   const tInds: number[] = [];
   const tWa: number[] = [];
@@ -259,6 +262,11 @@ export function generateMesh(
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
+  // Snap epsilon is used to close seams by snapping vertices near chunk borders.
+  // IMPORTANT: Do NOT clamp vertices to the chunk interior. Surface-Nets-style vertices can land
+  // slightly outside the chunk due to averaging edge intersections. We only snap very-near-boundary
+  // vertices onto the exact plane and rely on index emission to manage borders.
+  //
   // Snap epsilon is tuned via Leva in `App.tsx` through `setSnapEpsilon(...)`.
   // This is used to close seams by snapping vertices near chunk borders.
   //
@@ -280,7 +288,6 @@ export function generateMesh(
   for (let z = 0; z < SIZE_Z - 1; z++) {
     for (let y = 0; y < SIZE_Y - 1; y++) {
       for (let x = 0; x < SIZE_X - 1; x++) {
-
         const v000 = getVal(density, x, y, z);
         const v100 = getVal(density, x + 1, y, z);
         const v010 = getVal(density, x, y + 1, z);
@@ -302,29 +309,16 @@ export function generateMesh(
 
         if (mask !== 0 && mask !== 255) {
           let edgeCount = 0;
-          let avgX = 0;
-          let avgY = 0;
-          let avgZ = 0;
+          let avgX = 0, avgY = 0, avgZ = 0;
 
           const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
             if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
               // 1. Safe Denominator: Prevent Infinity/NaN
               // Preserve sign to keep vertex on correct side of edge
               let denominator = valB - valA;
-              if (Math.abs(denominator) < 0.00001) {
-                // Preserve sign to keep vertex on correct side of edge
-                denominator = (Math.sign(denominator) || 1) * 0.00001;
-              }
-
-              // 2. Calculate mu (position along edge 0..1)
+              if (Math.abs(denominator) < 0.00001) denominator = (Math.sign(denominator) || 1) * 0.00001;
               const mu = (ISO_LEVEL - valA) / denominator;
-
-              // 3. AAA FIX: Soft Clamp.
-              // Instead of 0.0/1.0, use a tiny buffer.
-              // This prevents vertices from collapsing into the same coordinate,
-              // preserving the triangle's "direction" for the normal calculator.
               const clampedMu = Math.max(0.001, Math.min(0.999, mu));
-
               if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
               if (axis === 'y') { avgX += x + offX; avgY += y + clampedMu; avgZ += z + offZ; }
               if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + clampedMu; }
@@ -346,47 +340,27 @@ export function generateMesh(
           addInter(v110, v111, 'z', 1, 1, 0);
 
           if (edgeCount > 0) {
-            avgX /= edgeCount;
-            avgY /= edgeCount;
-            avgZ /= edgeCount;
-
+            avgX /= edgeCount; avgY /= edgeCount; avgZ /= edgeCount;
             const px = snapBoundary(avgX, CHUNK_SIZE_XZ) - PAD;
             const py = snapBoundary(avgY, CHUNK_SIZE_Y) - PAD + MESH_Y_OFFSET;
             const pz = snapBoundary(avgZ, CHUNK_SIZE_XZ) - PAD;
 
             tVerts.push(px, py, pz);
-            const centerX = Math.round(avgX);
-            const centerY = Math.round(avgY);
-            const centerZ = Math.round(avgZ);
-
-            // Trilinear Gradient Normal
-            const fx = avgX - x;
-            const fy = avgY - y;
-            const fz = avgZ - z;
+            const centerX = Math.round(avgX), centerY = Math.round(avgY), centerZ = Math.round(avgZ);
+            // Trilinear Gradient Normal calculation for smooth shading surfaces.
+            const fx = avgX - x, fy = avgY - y, fz = avgZ - z;
             const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-            const x00 = lerp(v000, v010, fy);
-            const x01 = lerp(v001, v011, fy);
-            const val_x0 = lerp(x00, x01, fz);
-            const x10 = lerp(v100, v110, fy);
-            const x11 = lerp(v101, v111, fy);
-            const val_x1 = lerp(x10, x11, fz);
+            const x00 = lerp(v000, v010, fy), x01 = lerp(v001, v011, fy), val_x0 = lerp(x00, x01, fz);
+            const x10 = lerp(v100, v110, fy), x11 = lerp(v101, v111, fy), val_x1 = lerp(x10, x11, fz);
             const nx = val_x0 - val_x1;
 
-            const y00 = lerp(v000, v100, fx);
-            const y01 = lerp(v001, v101, fx);
-            const val_y0 = lerp(y00, y01, fz);
-            const y10 = lerp(v010, v110, fx);
-            const y11 = lerp(v011, v111, fx);
-            const val_y1 = lerp(y10, y11, fz);
+            const y00 = lerp(v000, v100, fx), y01 = lerp(v001, v101, fz), val_y0 = lerp(y00, y01, fz);
+            const y10 = lerp(v010, v110, fx), y11 = lerp(v011, v111, fz), val_y1 = lerp(y10, y11, fz);
             const ny = val_y0 - val_y1;
 
-            const z00 = lerp(v000, v100, fx);
-            const z01 = lerp(v010, v110, fx);
-            const val_z0 = lerp(z00, z01, fy);
-            const z10 = lerp(v001, v101, fx);
-            const z11 = lerp(v011, v111, fx);
-            const val_z1 = lerp(z10, z11, fy);
+            const z00 = lerp(v000, v100, fx), z01 = lerp(v010, v110, fx), val_z0 = lerp(z00, z01, fy);
+            const z10 = lerp(v001, v101, fx), z11 = lerp(v011, v111, fx), val_z1 = lerp(z10, z11, fy);
             const nz = val_z0 - val_z1;
 
             const lenSq = nx * nx + ny * ny + nz * nz;
@@ -396,112 +370,60 @@ export function generateMesh(
               const len = Math.sqrt(lenSq);
               tNorms.push(nx / len, ny / len, nz / len);
             } else {
-              // Fallback: sample a clamped central difference across the density field.
-              // Isolated peaks sometimes lack neighbors inside the cell, so we probe the padded grid.
-              const sx = clampSampleCoord(centerX, SIZE_X);
-              const sy = clampSampleCoord(centerY, SIZE_Y);
-              const sz = clampSampleCoord(centerZ, SIZE_Z);
-
+              // Fallback: sample central difference across fields for isolated vertices.
+              const sx = clampSampleCoord(centerX, SIZE_X), sy = clampSampleCoord(centerY, SIZE_Y), sz = clampSampleCoord(centerZ, SIZE_Z);
               const fnx = getVal(density, sx + 1, sy, sz) - getVal(density, sx - 1, sy, sz);
               const fny = getVal(density, sx, sy + 1, sz) - getVal(density, sx, sy - 1, sz);
               const fnz = getVal(density, sx, sy, sz + 1) - getVal(density, sx, sy, sz - 1);
               const fallbackLenSq = fnx * fnx + fny * fny + fnz * fnz;
-
               if (Number.isFinite(fallbackLenSq) && fallbackLenSq >= 0.000001) {
                 const len = Math.sqrt(fallbackLenSq);
                 tNorms.push(fnx / len, fny / len, fnz / len);
-              } else {
-                // Fallback: If normal is still degenerate, point Up.
-                // This prevents black flickers in the shader.
-                tNorms.push(0, 1, 0);
-              }
+              } else { tNorms.push(0, 1, 0); }
             }
 
-            // Fixed-channel weight splatting
             const BLEND_RADIUS = 3;
             const localWeights = new Float32Array(16);
-            let bestWet = 0;
-            let bestMoss = 0;
-            let bestVal = -Infinity;
-            let totalWeight = 0;
-            // Micro-occlusion: measure how "enclosed" this surface point is.
-            // We compute the fraction of nearby samples that are solid (density > ISO_LEVEL)
-            // using the same neighbor sweep as material splatting (no extra memory access pattern).
-            let occTotalW = 0;
-            let occSolidW = 0;
-            let nearestSolidMat = MaterialType.AIR;
-            let minSolidDistSq = Infinity;
+            let bestWet = 0, bestMoss = 0, bestVal = -Infinity;
+            let totalWeight = 0, occTotalW = 0, occSolidW = 0;
+            let nearestSolidMat = MaterialType.AIR, minSolidDistSq = Infinity;
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
                 for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
-                  const sx = centerX + dx;
-                  const sy = centerY + dy;
-                  const sz = centerZ + dz;
-
+                  const sx = centerX + dx, sy = centerY + dy, sz = centerZ + dz;
                   const val = getVal(density, sx, sy, sz);
                   const distSq = dx * dx + dy * dy + dz * dz;
-                  const w = 1.0 / (distSq + 0.1); // Soft inverse square falloff
+                  const w = 1.0 / (distSq + 0.1);
                   occTotalW += w;
                   if (val > ISO_LEVEL) occSolidW += w;
                   if (val > ISO_LEVEL) {
                     const mat = getMat(material, sx, sy, sz);
-
-                    // AAA FIX: Track nearest solid non-liquid material for robust fallback.
-                    // This ensures that even if all local voxels are technically "air" or "water"
-                    // (common at chunk boundaries or after digging), we pick a plausible surface color.
                     if (mat !== MaterialType.AIR && !isLiquidMaterial(mat)) {
-                      if (distSq < minSolidDistSq) {
-                        minSolidDistSq = distSq;
-                        nearestSolidMat = mat;
-                      }
+                      if (distSq < minSolidDistSq) { minSolidDistSq = distSq; nearestSolidMat = mat; }
                     }
-
                     const channel = resolveChannel(mat);
-                    // AIR and WATER are handled separately (water is a distinct mesh)
-                    if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) {
-                      localWeights[channel] += w;
-                      totalWeight += w;
-                    }
-
-                    if (val > bestVal) {
-                      bestVal = val;
-                      bestWet = getByte(wetData, sx, sy, sz);
-                      bestMoss = getByte(mossData, sx, sy, sz);
-                    }
+                    if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) { localWeights[channel] += w; totalWeight += w; }
+                    if (val > bestVal) { bestVal = val; bestWet = getByte(wetData, sx, sy, sz); bestMoss = getByte(mossData, sx, sy, sz); }
                   }
                 }
               }
             }
-
-            if (totalWeight > 0.0001) {
-              for (let i = 0; i < localWeights.length; i++) {
-                localWeights[i] /= totalWeight;
-              }
-            } else if (nearestSolidMat !== MaterialType.AIR) {
-              // AAA FIX: Use the material of the nearest solid neighbor found in the loop
-              const channel = resolveChannel(nearestSolidMat);
-              if (channel > -1) localWeights[channel] = 1.0;
-            } else {
-              // Absolute fallback: If no valid solid neighbors were found at all, use height-based bias.
-              const dirtChannel = resolveChannel(MaterialType.DIRT);
-              const sandChannel = resolveChannel(MaterialType.SAND);
+            if (totalWeight > 0.0001) { for (let i = 0; i < localWeights.length; i++) localWeights[i] /= totalWeight; }
+            else if (nearestSolidMat !== MaterialType.AIR) { const channel = resolveChannel(nearestSolidMat); if (channel > -1) localWeights[channel] = 1.0; }
+            else {
+              const dirtChannel = resolveChannel(MaterialType.DIRT), sandChannel = resolveChannel(MaterialType.SAND);
               const fallbackChannel = ((centerY - PAD) + MESH_Y_OFFSET <= WATER_LEVEL + 4.0) ? sandChannel : dirtChannel;
               if (fallbackChannel > -1) localWeights[fallbackChannel] = 1.0;
-              else if (dirtChannel > -1) localWeights[dirtChannel] = 1.0;
             }
 
             tWa.push(localWeights[0], localWeights[1], localWeights[2], localWeights[3]);
             tWb.push(localWeights[4], localWeights[5], localWeights[6], localWeights[7]);
             tWc.push(localWeights[8], localWeights[9], localWeights[10], localWeights[11]);
             tWd.push(localWeights[12], localWeights[13], localWeights[14], localWeights[15]);
-            tWets.push(bestWet / 255.0);
-            tMoss.push(bestMoss / 255.0);
-            // Map local solidity fraction to a cavity factor (0=open, 1=enclosed).
-            // Open surface tends to be ~0.5; caves/creases trend higher.
+            tWets.push(bestWet / 255.0); tMoss.push(bestMoss / 255.0);
             const solidFrac = occTotalW > 0.0001 ? occSolidW / occTotalW : 0.5;
-            const cavity = Math.max(0, Math.min(1, (solidFrac - 0.55) / (0.9 - 0.55)));
-            tCavity.push(cavity);
+            tCavity.push(Math.max(0, Math.min(1, (solidFrac - 0.55) / (0.9 - 0.55))));
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -509,78 +431,42 @@ export function generateMesh(
     }
   }
 
-  // 2. Quad Generation
-  const start = PAD;
-  const endX = PAD + CHUNK_SIZE_XZ;
-  const endY = PAD + CHUNK_SIZE_Y;
-
+  const start = PAD, endX = PAD + CHUNK_SIZE_XZ, endY = PAD + CHUNK_SIZE_Y;
   const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
-    const c0 = tVertIdx[i0];
-    const c1 = tVertIdx[i1];
-    const c2 = tVertIdx[i2];
-    const c3 = tVertIdx[i3];
-
+    const c0 = tVertIdx[i0], c1 = tVertIdx[i1], c2 = tVertIdx[i2], c3 = tVertIdx[i3];
     if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
       if (!flipped) tInds.push(c0, c1, c2, c2, c1, c3);
       else tInds.push(c2, c1, c0, c3, c1, c2);
     }
   };
 
+  // 2. Quad Generation
   // Seam ownership rule (crack-free, overlap-free):
   // - Only emit quads for interior cells: [PAD .. PAD+CHUNK_SIZE) (half-open).
-  // - Still sample the neighbor side via PAD when reading x+1 / z+1.
+  // - Still sample neighbor side via PAD when reading x+1 / z+1.
   // This ensures exactly one chunk owns the shared border plane.
   for (let z = start; z < endX; z++) {
     for (let y = start; y < endY; y++) {
       for (let x = start; x < endX; x++) {
         const val = getVal(density, x, y, z);
-
         if (x < endX) {
-          const vX = getVal(density, x + 1, y, z);
-          if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) {
-            pushQuad(
-              bufIdx(x, y - 1, z - 1), bufIdx(x, y - 1, z),
-              bufIdx(x, y, z - 1), bufIdx(x, y, z),
-              val > ISO_LEVEL
-            );
-          }
+          const vNext = getVal(density, x + 1, y, z);
+          if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x, y - 1, z - 1), bufIdx(x, y - 1, z), bufIdx(x, y, z - 1), bufIdx(x, y, z), val > ISO_LEVEL);
         }
-
         if (y < endY) {
-          const vY = getVal(density, x, y + 1, z);
-          if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) {
-            pushQuad(
-              bufIdx(x - 1, y, z - 1), bufIdx(x, y, z - 1),
-              bufIdx(x - 1, y, z), bufIdx(x, y, z),
-              val > ISO_LEVEL
-            );
-          }
+          const vNext = getVal(density, x, y + 1, z);
+          if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x - 1, y, z - 1), bufIdx(x, y, z - 1), bufIdx(x - 1, y, z), bufIdx(x, y, z), val > ISO_LEVEL);
         }
-
         if (z < endX) {
-          const vZ = getVal(density, x, y, z + 1);
-          if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) {
-            // Swapped indices 1 and 2 for Z-face winding
-            pushQuad(
-              bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z),
-              bufIdx(x, y - 1, z), bufIdx(x, y, z),
-              val > ISO_LEVEL
-            );
-          }
+          const vNext = getVal(density, x, y, z + 1);
+          if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z), bufIdx(x, y - 1, z), bufIdx(x, y, z), val > ISO_LEVEL);
         }
       }
     }
   }
 
-  // --- 3. Water Surface Mesh (Sea-level surface + shoreline mask) ---
-  //
-  // Rendering water as a separate mesh avoids expensive "water volume" faces against the seabed.
-  // We emit a single chunk-wide sea-level plane when the chunk contains sea-level water and rely on
-  // a per-chunk shoreline mask in the shader to create a smooth coastline (no square/stair edges).
-  //
-  // IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
-  // material grid at runtime rather than relying on physics for water.
   const water = generateWaterSurfaceMesh(density, material);
+  const collider = generateColliderData(density);
 
   return {
     positions: new Float32Array(tVerts),
@@ -597,70 +483,59 @@ export function generateMesh(
     waterIndices: water.indices,
     waterNormals: water.normals,
     waterShoreMask: water.shoreMask,
-    ...generateColliderData(density)
+    ...collider
   } as MeshData;
 }
 
 /**
  * Strategy: Optimize collision by using a Heightfield where possible,
- * or a simplified trimesh where caves/overhangs exist.
+ * or a high-accuracy simplified trimesh where caves or overhangs exist.
  */
-function generateColliderData(density: Float32Array): {
-  isHeightfield: boolean;
-  colliderHeightfield?: Float32Array;
-  colliderPositions?: Float32Array;
-  colliderIndices?: Uint32Array;
-} {
-  // 1. Check for heightfield compatibility (no caves/overhangs)
-  const isHF = isHeightfieldCompatible(density);
-
-  if (isHF) {
-    return {
-      isHeightfield: true,
-      colliderHeightfield: extractHeightfield(density)
-    };
+function generateColliderData(density: Float32Array) {
+  const isHf = isHeightfieldCompatible(density);
+  if (isHf) {
+    return { isHeightfield: true, colliderHeightfield: extractHeightfield(density) };
   }
-
-  // 2. Fallback to simplified trimesh
-  const simplified = generateSimplifiedTrimesh(density);
-  return {
-    isHeightfield: false,
-    colliderPositions: simplified.positions,
-    colliderIndices: simplified.indices
-  };
+  const simple = generateSimplifiedTrimesh(density);
+  return { isHeightfield: false, colliderPositions: simple.positions, colliderIndices: simple.indices };
 }
 
+/**
+ * Logic to decide if a chunk can use a memory-efficient Heightfield collider.
+ * It scans columns; if any air pockets are found under solid surfaces, it returns false (Complex terrain/caves).
+ */
 function isHeightfieldCompatible(density: Float32Array): boolean {
   for (let z = PAD; z < CHUNK_SIZE_XZ + PAD; z++) {
     for (let x = PAD; x < CHUNK_SIZE_XZ + PAD; x++) {
       let foundSolid = false;
-      // Start from top, skip padding
-      for (let y = SIZE_Y - PAD - 1; y >= PAD + 4; y--) { // Stop above bedrock margin (+4)
-        const val = density[bufIdx(x, y, z)];
-        if (val > ISO_LEVEL) {
-          foundSolid = true;
-        } else if (foundSolid) {
-          // Air pocket found under solid surface -> Not a heightfield
-          return false;
-        }
+      for (let y = SIZE_Y - PAD - 1; y >= PAD; y--) {
+        const val = density[x + y * SIZE_X + z * SIZE_X * SIZE_Y];
+        if (val > ISO_LEVEL) foundSolid = true;
+        else if (foundSolid && val <= ISO_LEVEL) return false;
       }
     }
   }
   return true;
 }
 
+/**
+ * Extracts a (CHUNK_SIZE_XZ + 1) height grid from the density field.
+ * This resolution is required by Rapier to provide 32 subdivisions of collision.
+ * 
+ * IMPORTANT: Rapier expects heightfield data in COLUMN-MAJOR order:
+ * - Each "column" in the matrix corresponds to a different X position
+ * - Elements within a column are consecutive Z positions
+ * - So for index: `heights[z + x * numSamplesZ] = height`
+ */
 function extractHeightfield(density: Float32Array): Float32Array {
-  // Heightfield is (CHUNK_SIZE_XZ + 1) x (CHUNK_SIZE_XZ + 1) to cover 32 units with 1-unit spacing
   const numSamples = CHUNK_SIZE_XZ + 1;
   const heights = new Float32Array(numSamples * numSamples);
   for (let lz = 0; lz < numSamples; lz++) {
     for (let lx = 0; lx < numSamples; lx++) {
-      const gx = lx + PAD;
-      const gz = lz + PAD;
-      let h = MESH_Y_OFFSET; // default
-
+      const gx = lx + PAD, gz = lz + PAD;
+      let h = MESH_Y_OFFSET;
       for (let y = SIZE_Y - PAD - 1; y >= PAD; y--) {
-        const val = density[bufIdx(gx, y, gz)];
+        const val = density[gx + y * SIZE_X + gz * SIZE_X * SIZE_Y];
         if (val > ISO_LEVEL) {
           const valAbove = getVal(density, gx, y + 1, gz);
           const t = (ISO_LEVEL - val) / (valAbove - val);
@@ -668,76 +543,85 @@ function extractHeightfield(density: Float32Array): Float32Array {
           break;
         }
       }
-      heights[lx + lz * numSamples] = h;
+      // Column-major order for Rapier: index = z + x * numSamplesZ
+      heights[lz + lx * numSamples] = h;
     }
   }
   return heights;
 }
 
+/**
+ * Generates a low-resolution trimesh for complex terrain (caves/overhangs).
+ *
+ * HIGH-ACCURACY FIX: We use a Surface Nets approach with centroid placement.
+ * Instead of placing vertices at the voxel cell centers, we calculate the exact
+ * edge crossing points and average them. This ensures the physics collider
+ * tightly follows the visual terrain, preventing the "floating" or "puffy"
+ * boundary artifacts seen with simpler voxel-center approaches.
+ */
 function generateSimplifiedTrimesh(density: Float32Array): { positions: Float32Array, indices: Uint32Array } {
-  const step = 2; // Reduce resolution by 2x in each dimension (8x volume reduction)
+  const step = 2; // Reduce resolution by 2x (8x volume reduction)
   const verts: number[] = [];
   const inds: number[] = [];
   const vertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
-  // Surface Nets logic at coarse resolution
-  for (let z = 0; z < SIZE_Z - step; z += step) {
-    for (let y = 0; y < SIZE_Y - step; y += step) {
-      for (let x = 0; x < SIZE_X - step; x += step) {
+  for (let z = 0; z <= SIZE_Z - step; z += step) {
+    for (let y = 0; y <= SIZE_Y - step; y += step) {
+      for (let x = 0; x <= SIZE_X - step; x += step) {
         let mask = 0;
-        if (getVal(density, x, y, z) > ISO_LEVEL) mask |= 1;
-        if (getVal(density, x + step, y, z) > ISO_LEVEL) mask |= 2;
-        if (getVal(density, x, y + step, z) > ISO_LEVEL) mask |= 4;
-        if (getVal(density, x + step, y + step, z) > ISO_LEVEL) mask |= 8;
-        if (getVal(density, x, y, z + step) > ISO_LEVEL) mask |= 16;
-        if (getVal(density, x + step, y, z + step) > ISO_LEVEL) mask |= 32;
-        if (getVal(density, x, y + step, z + step) > ISO_LEVEL) mask |= 64;
-        if (getVal(density, x + step, y + step, z + step) > ISO_LEVEL) mask |= 128;
-
+        const v0 = getVal(density, x, y, z), v1 = getVal(density, x + step, y, z), v2 = getVal(density, x, y + step, z), v3 = getVal(density, x + step, y + step, z);
+        const v4 = getVal(density, x, y, z + step), v5 = getVal(density, x + step, y, z + step), v6 = getVal(density, x, y + step, z + step), v7 = getVal(density, x + step, y + step, z + step);
+        if (v0 > ISO_LEVEL) mask |= 1; if (v1 > ISO_LEVEL) mask |= 2; if (v2 > ISO_LEVEL) mask |= 4; if (v3 > ISO_LEVEL) mask |= 8;
+        if (v4 > ISO_LEVEL) mask |= 16; if (v5 > ISO_LEVEL) mask |= 32; if (v6 > ISO_LEVEL) mask |= 64; if (v7 > ISO_LEVEL) mask |= 128;
         if (mask !== 0 && mask !== 255) {
-          // Simplified: place vertex at center of cell if it contains a surface
-          const px = (x + step * 0.5) - PAD;
-          const py = (y + step * 0.5) - PAD + MESH_Y_OFFSET;
-          const pz = (z + step * 0.5) - PAD;
+          // Centroid Placement: find crossing points on all 12 edges and average them.
+          let avgX = 0, avgY = 0, avgZ = 0, count = 0;
+          const lerpPos = (vA: number, vB: number) => (ISO_LEVEL - vA) / (vB - vA);
+          const check = (va: number, vb: number, x1: number, y1: number, z1: number, x2: number, y2: number, z2: number) => {
+            if ((va > ISO_LEVEL) !== (vb > ISO_LEVEL)) {
+              const t = lerpPos(va, vb);
+              avgX += x1 + (x2 - x1) * t;
+              avgY += y1 + (y2 - y1) * t;
+              avgZ += z1 + (z2 - z1) * t;
+              count++;
+            }
+          };
+          // Check all 12 edges of the 2x2x2 cell
+          check(v0, v1, x, y, z, x + step, y, z);
+          check(v2, v3, x, y + step, z, x + step, y + step, z);
+          check(v4, v5, x, y, z + step, x + step, y, z + step);
+          check(v6, v7, x, y + step, z + step, x + step, y + step, z + step);
 
-          vertIdx[bufIdx(x, y, z)] = verts.length / 3;
-          verts.push(px, py, pz);
+          check(v0, v2, x, y, z, x, y + step, z);
+          check(v1, v3, x + step, y, z, x + step, y + step, z);
+          check(v4, v6, x, y, z + step, x, y + step, z + step);
+          check(v5, v7, x + step, y, z + step, x + step, y + step, z + step);
+
+          check(v0, v4, x, y, z, x, y, z + step);
+          check(v1, v5, x + step, y, z, x + step, y, z + step);
+          check(v2, v6, x, y + step, z, x, y + step, z + step);
+          check(v3, v7, x + step, y + step, z, x + step, y + step, z + step);
+          if (count > 0) { avgX /= count; avgY /= count; avgZ /= count; vertIdx[bufIdx(x, y, z)] = verts.length / 3; verts.push(avgX - PAD, avgY - PAD + MESH_Y_OFFSET, avgZ - PAD); }
         }
       }
     }
   }
-
-  const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
-    const c0 = vertIdx[i0]; const c1 = vertIdx[i1]; const c2 = vertIdx[i2]; const c3 = vertIdx[i3];
+  const push = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
+    const c0 = vertIdx[i0], c1 = vertIdx[i1], c2 = vertIdx[i2], c3 = vertIdx[i3];
     if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
       if (!flipped) inds.push(c0, c1, c2, c2, c1, c3);
       else inds.push(c2, c1, c0, c3, c1, c2);
     }
   };
-
-  const start = PAD;
-  const endX = PAD + CHUNK_SIZE_XZ;
-  const endY = PAD + CHUNK_SIZE_Y;
-
-  for (let z = start; z < endX; z += step) {
-    for (let y = start; y < endY; y += step) {
-      for (let x = start; x < endX; x += step) {
+  for (let z = PAD; z < PAD + CHUNK_SIZE_XZ; z += step) {
+    for (let y = PAD; y < PAD + CHUNK_SIZE_Y; y += step) {
+      for (let x = PAD; x < PAD + CHUNK_SIZE_XZ; x += step) {
         const val = getVal(density, x, y, z);
-        if (x < endX) {
-          const vX = getVal(density, x + step, y, z);
-          if ((val > ISO_LEVEL) !== (vX > ISO_LEVEL)) pushQuad(bufIdx(x, y - step, z - step), bufIdx(x, y - step, z), bufIdx(x, y, z - step), bufIdx(x, y, z), val > ISO_LEVEL);
-        }
-        if (y < endY) {
-          const vY = getVal(density, x, y + step, z);
-          if ((val > ISO_LEVEL) !== (vY > ISO_LEVEL)) pushQuad(bufIdx(x - step, y, z - step), bufIdx(x, y, z - step), bufIdx(x - step, y, z), bufIdx(x, y, z), val > ISO_LEVEL);
-        }
-        if (z < endX) {
-          const vZ = getVal(density, x, y, z + step);
-          if ((val > ISO_LEVEL) !== (vZ > ISO_LEVEL)) pushQuad(bufIdx(x - step, y - step, z), bufIdx(x - step, y, z), bufIdx(x, y - step, z), bufIdx(x, y, z), val > ISO_LEVEL);
-        }
+        if (x < PAD + CHUNK_SIZE_XZ) { const vNext = getVal(density, x + step, y, z); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x, y - step, z - step), bufIdx(x, y - step, z), bufIdx(x, y, z - step), bufIdx(x, y, z), val > ISO_LEVEL); }
+        if (y < PAD + CHUNK_SIZE_Y) { const vNext = getVal(density, x, y + step, z); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x - step, y, z - step), bufIdx(x, y, z - step), bufIdx(x - step, y, z), bufIdx(x, y, z), val > ISO_LEVEL); }
+        if (z < PAD + CHUNK_SIZE_XZ) { const vNext = getVal(density, x, y, z + step); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x - step, y - step, z), bufIdx(x - step, y, z), bufIdx(x, y - step, z), bufIdx(x, y, z), val > ISO_LEVEL); }
       }
     }
   }
-
   return { positions: new Float32Array(verts), indices: new Uint32Array(inds) };
 }

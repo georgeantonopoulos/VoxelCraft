@@ -1,6 +1,6 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
-import { RigidBody, MeshCollider, HeightfieldCollider } from '@react-three/rapier';
+import { RigidBody, HeightfieldCollider } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
 import { WaterMaterial } from '@features/terrain/materials/WaterMaterial';
 import {
@@ -169,16 +169,6 @@ export const ChunkMesh: React.FC<{
 
   useEffect(() => () => waterShoreMask?.dispose(), [waterShoreMask]);
 
-  const colliderGeometry = useMemo(() => {
-    if (chunk.isHeightfield || !chunk.colliderPositions || !chunk.colliderIndices) return null;
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(chunk.colliderPositions, 3));
-    geom.setIndex(new THREE.BufferAttribute(chunk.colliderIndices, 1));
-    return geom;
-  }, [chunk.colliderPositions, chunk.colliderIndices, chunk.isHeightfield, chunk.terrainVersion]);
-
-  useEffect(() => () => colliderGeometry?.dispose(), [colliderGeometry]);
-
   const chunkTintColor = useMemo(() => {
     // Deterministic color per chunk to expose overlap/z-fighting (you'll see both colors).
     const h = ((chunk.cx * 73856093) ^ (chunk.cz * 19349663)) >>> 0;
@@ -191,31 +181,33 @@ export const ChunkMesh: React.FC<{
   if (!terrainGeometry && !waterGeometry) return null;
   const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
   const colliderEnabled = lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
+  // Determine collider strategy: heightfield for flat terrain, trimesh for caves
+  const useHeightfield = chunk.isHeightfield && chunk.colliderHeightfield && chunk.colliderHeightfield.length > 0;
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]}>
       {terrainGeometry && (colliderEnabled ? (
-        <RigidBody key={colliderKey} type="fixed" userData={{ type: 'terrain', key: chunk.key }}>
-          {chunk.isHeightfield && chunk.colliderHeightfield ? (
+        <RigidBody
+          key={colliderKey}
+          type="fixed"
+          // If using heightfield, disable auto-collider and add HeightfieldCollider manually
+          // If using trimesh, let RigidBody auto-generate from the terrain mesh
+          colliders={useHeightfield ? false : "trimesh"}
+          userData={{ type: 'terrain', key: chunk.key }}
+        >
+          {/* HeightfieldCollider for flat terrain - more efficient than trimesh */}
+          {useHeightfield && (
             <HeightfieldCollider
               args={[
-                CHUNK_SIZE_XZ + 1,
-                CHUNK_SIZE_XZ + 1,
-                Array.from(chunk.colliderHeightfield) as any,
-                { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
+                CHUNK_SIZE_XZ,  // Number of rows (subdivisions along X)
+                CHUNK_SIZE_XZ,  // Number of columns (subdivisions along Z)
+                Array.from(chunk.colliderHeightfield),  // Height data (column-major order) - convert from Float32Array to number[]
+                { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }  // Scale: total size of heightfield
               ]}
+              // Position at center of chunk
               position={[CHUNK_SIZE_XZ * 0.5, 0, CHUNK_SIZE_XZ * 0.5]}
             />
-          ) : colliderGeometry ? (
-            <MeshCollider type="trimesh">
-              <mesh geometry={colliderGeometry} visible={false} />
-            </MeshCollider>
-          ) : (
-            <MeshCollider type="trimesh">
-              <mesh geometry={terrainGeometry} visible={false} scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]} />
-            </MeshCollider>
           )}
-
           <mesh
             ref={meshRef}
             // Tag the actual render mesh so non-physics raycasters (e.g. placement tools) can reliably detect terrain hits.
