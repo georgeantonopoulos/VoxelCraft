@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { CHUNK_SIZE_XZ } from '@/constants';
@@ -38,10 +38,8 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
   const count = data.length / 4;
-
-  // Track visibility of lights within this chunk to avoid 8 useFrame calls
-  const [visibleLights, setVisibleLights] = useState<THREE.Vector3[]>([]);
   const lastCullTime = useRef(0);
+  const lightRefs = useRef<(THREE.PointLight | null)[]>([]);
 
   const lights = useMemo(() => {
     if (!lightPositions || lightPositions.length === 0) return [];
@@ -65,22 +63,18 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
     lastCullTime.current = now;
 
     if (simplified || !collidersEnabled || lights.length === 0) {
-      if (visibleLights.length > 0) setVisibleLights([]);
+      lightRefs.current.forEach(l => { if (l) l.visible = false; });
       return;
     }
 
-    const near: THREE.Vector3[] = [];
     const MAX_DIST_SQ = 45 * 45;
-    for (const light of lights) {
-      if (state.camera.position.distanceToSquared(light) < MAX_DIST_SQ) {
-        near.push(light);
+    lights.forEach((lightPos, i) => {
+      const light = lightRefs.current[i];
+      if (light) {
+        const isNear = state.camera.position.distanceToSquared(lightPos) < MAX_DIST_SQ;
+        light.visible = isNear;
       }
-    }
-
-    // Only update state if set of visible lights changed (shallow comparison)
-    if (near.length !== visibleLights.length || near.some((v, i) => v !== visibleLights[i])) {
-      setVisibleLights(near);
-    }
+    });
   });
 
   useLayoutEffect(() => {
@@ -122,14 +116,16 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
         <sphereGeometry args={[0.25, simplified ? 6 : 12, simplified ? 6 : 12]} />
       </instancedMesh>
 
-      {visibleLights.map((pos, i) => (
+      {lights.map((pos, i) => (
         <pointLight
           key={i}
+          ref={el => lightRefs.current[i] = el}
           position={pos}
           color="#00e5ff"
           intensity={2.0}
           distance={12}
           decay={2}
+          visible={false}
           castShadow={false}
         />
       ))}

@@ -111,9 +111,9 @@ export const ChunkMesh: React.FC<{
     else geom.computeVertexNormals();
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
 
-    const r = Math.sqrt((CHUNK_SIZE_XZ + PAD * 2) ** 2 * 2 + (CHUNK_SIZE_Y + PAD * 2) ** 2) * 0.5;
+    const r = Math.sqrt((CHUNK_SIZE_XZ) ** 2 * 2 + (CHUNK_SIZE_Y + PAD * 2) ** 2) * 0.5;
     geom.boundingSphere = new THREE.Sphere(
-      new THREE.Vector3(CHUNK_SIZE_XZ * 0.5 - PAD, MESH_Y_OFFSET + CHUNK_SIZE_Y * 0.5, CHUNK_SIZE_XZ * 0.5 - PAD),
+      new THREE.Vector3(CHUNK_SIZE_XZ * 0.5, MESH_Y_OFFSET + CHUNK_SIZE_Y * 0.5, CHUNK_SIZE_XZ * 0.5),
       r
     );
     const end = performance.now();
@@ -199,9 +199,9 @@ export const ChunkMesh: React.FC<{
           {useHeightfield && (
             <HeightfieldCollider
               args={[
-                CHUNK_SIZE_XZ,  // Number of rows (subdivisions along X)
-                CHUNK_SIZE_XZ,  // Number of columns (subdivisions along Z)
-                Array.from(chunk.colliderHeightfield),  // Height data (column-major order) - convert from Float32Array to number[]
+                CHUNK_SIZE_XZ + 1,  // Number of vertices along X (32 subdivisions = 33 vertices)
+                CHUNK_SIZE_XZ + 1,  // Number of vertices along Z
+                chunk.colliderHeightfield,  // Height data (column-major order)
                 { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }  // Scale: total size of heightfield
               ]}
               // Position at center of chunk

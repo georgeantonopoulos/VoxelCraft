@@ -144,6 +144,7 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                     chunkKey={chunkKey}
                     simplified={simplified}
                     leafLodAlpha={leafLodAlpha}
+                    lodLevel={lodLevel}
                 />
             ))}
         </group>
@@ -369,10 +370,27 @@ const InstancedTreeBatch: React.FC<{
     chunkKey: string;
     simplified?: boolean;
     leafLodAlpha: number;
-}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, leafLodAlpha }) => {
+    lodLevel: number;
+}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, leafLodAlpha, lodLevel }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
     const leafLodAlphaRef = useRef(leafLodAlpha);
+    const [deferredCollidersEnabled, setDeferredCollidersEnabled] = React.useState(false);
+
+    useEffect(() => {
+        if (collidersEnabled) {
+            // If we are very close (lodLevel 0), enable immediately.
+            // Otherwise, defer to a later frame to avoid the LOD transition hitch.
+            if (lodLevel === 0) {
+                setDeferredCollidersEnabled(true);
+            } else {
+                const handle = requestIdleCallback(() => setDeferredCollidersEnabled(true), { timeout: 200 });
+                return () => cancelIdleCallback(handle);
+            }
+        } else {
+            setDeferredCollidersEnabled(false);
+        }
+    }, [collidersEnabled, lodLevel]);
 
     const { wood, leaves, collisionData } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant, simplified), [type, variant, simplified]);
 
@@ -475,7 +493,7 @@ const InstancedTreeBatch: React.FC<{
                 />
             )}
 
-            {collidersEnabled && rigidBodyGroups.map((instances, i) => (
+            {deferredCollidersEnabled && rigidBodyGroups.map((instances, i) => (
                 <InstancedRigidBodies
                     key={i}
                     instances={instances}

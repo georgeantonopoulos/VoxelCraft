@@ -118,7 +118,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Trimesh Collider Creation is Expensive**: Rapier's `trimesh` colliders require building a BVH acceleration structure on the main thread. When `colliderEnabled` flips to `true`, the `<RigidBody colliders="trimesh">` creation can cause a 10-30ms stall depending on mesh complexity. The current throttled queue (`colliderEnableQueue` in `VoxelTerrain.tsx`) spreads this out, but doesn't eliminate the synchronous creation. Future optimization: use `requestIdleCallback` or pre-build colliders in a worker (if Rapier supports it).
 - **Instance Matrix Calculations in Render Effects**: `TreeLayer.tsx` and `VegetationLayer.tsx` compute instance matrices in `useLayoutEffect` loops. For dense chunks (jungle trees, 100+ instances), this can block the main thread for 2-5ms. Consider pre-computing matrices in the terrain worker and passing them in the `GENERATED` payload.
 - **Lumina Stride Mismatch**: `floraPositions` has stride 4 (x,y,z,type). Using stride 3 for extraction (e.g. for light positions in `LuminaLayer.tsx`) causes coordinate shifting and invisible/misplaced lights.
-- **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. ALWAYS cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`).
+- **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. ALWAYS cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`). Avoid using `useState` inside `useFrame` to toggle these lights; use imperative `visible` control via refs to bypass React's reconciler (see `LuminaLayer.tsx`).
+- **Chunk Bounding Spheres and Frustum Culling**: If chunks disappear when viewed at grazing angles, verify `geometry.boundingSphere`. It must be centered at the chunk's visual center (e.g. `[16, 64, 16]`) and have a radius spanning the full volume. Misalignment (e.g. due to `PAD` offsets) will cause Three.js to cull the chunk prematurely. (Fixed in `ChunkMesh.tsx`).
 - **Chunk Cache Restoration**: For items/trees to persist on revisit, ALL entity data (flora, trees, sticks, rocks, hotspots, and processed buckets/batches) MUST be saved to and correctly restored from `CachedChunk` in `terrain.worker.ts`.
 - **HeightfieldCollider Pattern**: For heightfield colliders to work correctly: (1) Use `colliders={false}` on RigidBody to disable auto-generation, (2) Add `<HeightfieldCollider>` as a child with `args=[nRows, nCols, heights, scale]`, (3) Heights must be in column-major order (`heights[z + x * numSamplesZ]`), (4) Scale defines TOTAL size (`{x: 32, y: 1, z: 32}`), (5) Position at center of chunk (`[16, 0, 16]`). For cave chunks, use `colliders="trimesh"` which auto-generates from the first child mesh.
 
@@ -169,7 +170,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (short, keep last ~5 entries)
 
-- 2025-12-24: **BUG FIX** - Stick/Rock pickup not working.
+- 2025-12-24: **CRITICAL FIX** - Terrain Collision, Stuttering, and Disappearing Textures.
+  - **Heightfield Shearing**: Fixed `HeightfieldCollider` args in `ChunkMesh.tsx` to use `CHUNK_SIZE_XZ + 1` (33) for rows/cols. Passing 32 caused a 1-pixel shear per row, making the heightfield "wobble" and drift away from the visual mesh.
+  - **Disappearing Chunks**: Fixed `geometry.boundingSphere` in `ChunkMesh.tsx`. It was offset by `PAD`, causing chunks to be frustum-culled when viewed from certain angles.
+  - **LOD Transition Stutter**: Deferred tree and flora colliders using `requestIdleCallback` in `TreeLayer.tsx`. This spreads the heavy Rapier BVH construction over multiple frames.
+  - **Ocean Performance**: Reduced the radius for expensive terrain caustics from 64m to 32m and tightened the depth mask.
+  - **Lumina Opt**: Refactored `LuminaLayer.tsx` to use imperative `.visible` toggling for point lights, avoiding React state updates inside `useFrame`.
+  - **Vegetation Opt**: Reduced `LOD_DISTANCE_VEGETATION_ANY` to 2 chunks to significantly reduce draw calls on M1 hardware.
   - **Root Cause**: `rayHitsGeneratedGroundPickup` used `chunks[key]` on a Map instead of `chunks.get(key)`. This silently failed (returned undefined), causing all ground item pickups to fail.
   - **Fix**: Changed to `chunks.get(key)`.
   - **Lesson**: Always use `.get()` on Maps; bracket notation only works on plain objects.
