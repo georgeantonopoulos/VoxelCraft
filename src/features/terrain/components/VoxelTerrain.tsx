@@ -637,6 +637,8 @@ class AudioPool {
   }
 }
 
+const FRAME_BUDGET_MS = 4; // ms allocated per frame for processing worker messages
+
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   sunDirection,
   initialSpawnPos,
@@ -1156,18 +1158,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
-    // 3. THROTTLED WORKER MESSAGES (1 per frame)
-    const msg = workerMessageHead.current < workerMessageQueue.current.length
-      ? workerMessageQueue.current[workerMessageHead.current++]
-      : null;
+    // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
+    const workerThrottleStartTime = performance.now();
     let appliedWorkerMessageThisFrame = false;
 
-    if (msg) {
+    while (
+      workerMessageHead.current < workerMessageQueue.current.length &&
+      (performance.now() - workerThrottleStartTime) < FRAME_BUDGET_MS
+    ) {
+      const msg = workerMessageQueue.current[workerMessageHead.current++];
       appliedWorkerMessageThisFrame = true;
-      if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
-        workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
-        workerMessageHead.current = 0;
-      }
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
@@ -1252,6 +1252,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       }
     }
+
+    // Garbage collection for workerMessageQueue (only once per frame after the loop)
+    if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
+      workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
+      workerMessageHead.current = 0;
+    }
+
 
     // 4. THROTTLED COLLIDER ENABLES
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
