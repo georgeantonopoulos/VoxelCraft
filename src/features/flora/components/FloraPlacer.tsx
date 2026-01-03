@@ -42,7 +42,14 @@ export const FloraPlacer: React.FC = () => {
     // Keep a small, fixed number of point lights mounted at all times.
     // Creating/removing point lights can cause a noticeable hitch due to shader/light reconfiguration.
     const LUMA_LIGHT_POOL_SIZE = 1;
-    useFrame(() => {
+    const lastLightUpdateFrame = useRef(0);
+    useFrame((state) => {
+        // Throttle light position updates to every 5 frames (~12Hz) - finding nearest flora
+        // doesn't need to run at 60fps and the light position change is imperceptible
+        const frameNum = Math.floor(state.clock.elapsedTime * 60);
+        if (frameNum - lastLightUpdateFrame.current < 5) return;
+        lastLightUpdateFrame.current = frameNum;
+
         // Pick the nearest placed flora and attach the pooled light to it.
         // We intentionally do not create one light per flora.
         const entities = useWorldStore.getState().entities;

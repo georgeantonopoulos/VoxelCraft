@@ -94,9 +94,13 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
     const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
     const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
     const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
+    const lastBlend = useRef(-1);
 
     useFrame(() => {
         if (!ambientRef.current) return;
+        // Skip update if blend hasn't changed significantly (reduces per-frame work)
+        if (Math.abs(undergroundBlend - lastBlend.current) < 0.01) return;
+        lastBlend.current = undergroundBlend;
         ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend) * intensityMul;
         ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
     });

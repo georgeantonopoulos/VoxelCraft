@@ -47,7 +47,7 @@ const getInitialInputMode = (): InputMode => {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
-      resolutionScale: 1.0,
+      resolutionScale: 0.75, // Default to 75% for better performance on high-DPI displays
       qualityPreset: 'high',
       shadows: true,
       ao: false,

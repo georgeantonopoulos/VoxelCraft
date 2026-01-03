@@ -29,6 +29,7 @@ import { emitSpark } from '../../interaction/components/SparkSystem';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import { getTreeName, TreeType } from '@features/terrain/logic/VegetationConfig';
 import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -964,8 +965,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
   // 3. Process Queues (Throttled)
   useFrame((state) => {
+    frameProfiler.tick();
+    frameProfiler.begin('terrain-main');
     const frameStart = performance.now();
-    if (!state.camera || !poolRef.current) return;
+    if (!state.camera || !poolRef.current) {
+      frameProfiler.end('terrain-main');
+      return;
+    }
 
     lastTimeRef.current = state.clock.getElapsedTime();
 
@@ -1193,6 +1199,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
+    frameProfiler.begin('terrain-worker-msgs');
     const workerThrottleStartTime = performance.now();
     let appliedWorkerMessageThisFrame = false;
     const versionUpdates = new Set<string>();
@@ -1295,7 +1302,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
       workerMessageHead.current = 0;
     }
-
+    frameProfiler.end('terrain-worker-msgs');
 
     // 4. THROTTLED COLLIDER ENABLES
     // Process multiple colliders per frame to reduce physics activation latency.
@@ -1478,6 +1485,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     // Update central uniforms for instanced layers
+    frameProfiler.begin('terrain-uniforms');
     updateSharedUniforms(state, {
       sunDir: sunDirection,
       fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
@@ -1490,6 +1498,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       heightFogOffset,
       triplanarDetail
     });
+    frameProfiler.end('terrain-uniforms');
+    frameProfiler.end('terrain-main');
   });
 
   useEffect(() => {

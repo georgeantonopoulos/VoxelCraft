@@ -350,42 +350,24 @@ export function generateMesh(
 
             tVerts.push(px, py, pz);
             const centerX = Math.round(avgX), centerY = Math.round(avgY), centerZ = Math.round(avgZ);
-            // Trilinear Gradient Normal calculation for smooth shading surfaces.
-            const fx = avgX - x, fy = avgY - y, fz = avgZ - z;
-            const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-            const x00 = lerp(v000, v010, fy), x01 = lerp(v001, v011, fy), val_x0 = lerp(x00, x01, fz);
-            const x10 = lerp(v100, v110, fy), x11 = lerp(v101, v111, fy), val_x1 = lerp(x10, x11, fz);
-            const nx = val_x0 - val_x1;
-
-            const y00 = lerp(v000, v100, fx), y01 = lerp(v001, v101, fz), val_y0 = lerp(y00, y01, fz);
-            const y10 = lerp(v010, v110, fx), y11 = lerp(v011, v111, fz), val_y1 = lerp(y10, y11, fz);
-            const ny = val_y0 - val_y1;
-
-            const z00 = lerp(v000, v100, fx), z01 = lerp(v010, v110, fx), val_z0 = lerp(z00, z01, fy);
-            const z10 = lerp(v001, v101, fx), z11 = lerp(v011, v111, fx), val_z1 = lerp(z10, z11, fy);
-            const nz = val_z0 - val_z1;
-
+            // Central difference normal calculation - simpler and faster than trilinear interpolation
+            // with minimal visual quality loss. Uses 6 density samples instead of 8 lerps.
+            const sx = clampSampleCoord(centerX, SIZE_X), sy = clampSampleCoord(centerY, SIZE_Y), sz = clampSampleCoord(centerZ, SIZE_Z);
+            const nx = getVal(density, sx - 1, sy, sz) - getVal(density, sx + 1, sy, sz);
+            const ny = getVal(density, sx, sy - 1, sz) - getVal(density, sx, sy + 1, sz);
+            const nz = getVal(density, sx, sy, sz - 1) - getVal(density, sx, sy, sz + 1);
             const lenSq = nx * nx + ny * ny + nz * nz;
 
-            // AAA FIX: Check squared length to avoid Sqrt on 0, and handle NaN
             if (Number.isFinite(lenSq) && lenSq >= MIN_NORMAL_LEN_SQ) {
               const len = Math.sqrt(lenSq);
               tNorms.push(nx / len, ny / len, nz / len);
             } else {
-              // Fallback: sample central difference across fields for isolated vertices.
-              const sx = clampSampleCoord(centerX, SIZE_X), sy = clampSampleCoord(centerY, SIZE_Y), sz = clampSampleCoord(centerZ, SIZE_Z);
-              const fnx = getVal(density, sx + 1, sy, sz) - getVal(density, sx - 1, sy, sz);
-              const fny = getVal(density, sx, sy + 1, sz) - getVal(density, sx, sy - 1, sz);
-              const fnz = getVal(density, sx, sy, sz + 1) - getVal(density, sx, sy, sz - 1);
-              const fallbackLenSq = fnx * fnx + fny * fny + fnz * fnz;
-              if (Number.isFinite(fallbackLenSq) && fallbackLenSq >= 0.000001) {
-                const len = Math.sqrt(fallbackLenSq);
-                tNorms.push(fnx / len, fny / len, fnz / len);
-              } else { tNorms.push(0, 1, 0); }
+              tNorms.push(0, 1, 0);
             }
 
-            const BLEND_RADIUS = 3;
+            // Reduced blend radius from 3 to 2: samples 5x5x5=125 voxels instead of 7x7x7=343 (2.7x faster)
+            const BLEND_RADIUS = 2;
             const localWeights = new Float32Array(16);
             let bestWet = 0, bestMoss = 0, bestVal = -Infinity;
             let totalWeight = 0, occTotalW = 0, occSolidW = 0;

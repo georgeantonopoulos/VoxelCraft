@@ -11,10 +11,7 @@ interface PerformanceMonitorProps {
  * Also provides an on-screen visual overlay of detailed stats when visible.
  */
 export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ visible }) => {
-    const { gl, camera, scene } = useThree();
-    const lastTime = useRef(performance.now());
-    const frameTimes = useRef<number[]>([]);
-    const lastLogTime = useRef(0);
+    const { gl, scene } = useThree();
     const frameCount = useRef(0);
 
     // Visual stats state
@@ -28,61 +25,18 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ visible 
     });
 
     useFrame(() => {
-        const now = performance.now();
-        const dt = now - lastTime.current;
-        lastTime.current = now;
-
-        // Sliding window of frame times for logic
-        frameTimes.current.push(dt);
-        if (frameTimes.current.length > 30) frameTimes.current.shift();
-
-        const avgFrameTime = frameTimes.current.reduce((a, b) => a + b, 0) / frameTimes.current.length;
-        const fps = 1000 / avgFrameTime;
-
-        // Visual Stats Update (every 30 frames)
-        if (visible) {
-            frameCount.current++;
-            if (frameCount.current % 30 === 0) {
-                setGlStats({
-                    calls: gl.info.render.calls,
-                    triangles: gl.info.render.triangles,
-                    geometries: gl.info.memory.geometries,
-                    textures: gl.info.memory.textures,
-                    programs: gl.info.programs?.length || 0,
-                    entities: scene.children.length
-                });
-            }
-        }
-
-        // If FPS drops below 20 for the window (and not flooded), log diagnostics
-        if (fps < 20 && now - lastLogTime.current > 3000) {
-            lastLogTime.current = now;
-
-            const diagnostics = (window as any).__vcDiagnostics || {};
-
-            console.warn(`[PerformanceMonitor] FPS dropped to ${Math.round(fps)}! Diagnostics:`, {
-                time: new Date().toLocaleTimeString(),
-                fps: Math.round(fps),
-                avgFrameTime: Math.round(avgFrameTime * 10) / 10,
-                playerPos: camera.position.toArray().map(v => Math.round(v * 10) / 10),
-                terrainState: { ...diagnostics },
-                lastPropChange: diagnostics.lastPropChange,
-                glInfo: {
-                    drawCalls: gl.info.render.calls,
-                    triangles: gl.info.render.triangles,
-                    geometries: gl.info.memory.geometries,
-                    textures: gl.info.memory.textures,
-                    programs: gl.info.programs?.length
-                },
-                sceneObjects: scene.children.length
+        // Visual Stats Update (every 30 frames) - only when overlay is visible
+        if (!visible) return;
+        frameCount.current++;
+        if (frameCount.current % 30 === 0) {
+            setGlStats({
+                calls: gl.info.render.calls,
+                triangles: gl.info.render.triangles,
+                geometries: gl.info.memory.geometries,
+                textures: gl.info.memory.textures,
+                programs: gl.info.programs?.length || 0,
+                entities: scene.children.length
             });
-
-            // Reset counters
-            diagnostics.totalChunkRenders = 0;
-            diagnostics.geomCount = 0;
-            diagnostics.terrainRenders = 0;
-            diagnostics.terrainFrameTime = 0;
-            diagnostics.minimapDrawTime = 0;
         }
     });
 
