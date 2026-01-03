@@ -122,6 +122,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Chunk Bounding Spheres and Frustum Culling**: If chunks disappear when viewed at grazing angles, verify `geometry.boundingSphere`. It must be centered at the chunk's visual center (e.g. `[16, 64, 16]`) and have a radius spanning the full volume. Misalignment (e.g. due to `PAD` offsets) will cause Three.js to cull the chunk prematurely. (Fixed in `ChunkMesh.tsx`).
 - **Chunk Cache Restoration**: For items/trees to persist on revisit, ALL entity data (flora, trees, sticks, rocks, hotspots, and processed buckets/batches) MUST be saved to and correctly restored from `CachedChunk` in `terrain.worker.ts`.
 - **HeightfieldCollider Pattern**: For heightfield colliders to work correctly: (1) Use `colliders={false}` on RigidBody to disable auto-generation, (2) Add `<HeightfieldCollider>` as a child with `args=[nRows, nCols, heights, scale]`, (3) Heights must be in column-major order (`heights[z + x * numSamplesZ]`), (4) Scale defines TOTAL size (`{x: 32, y: 1, z: 32}`), (5) Position at center of chunk (`[16, 0, 16]`). For cave chunks, use `colliders="trimesh"` which auto-generates from the first child mesh.
+- **React Reconciliation Batching**: Multiple `setChunkVersions` calls per frame (e.g., from worker messages, LOD updates, chunk mounts) trigger multiple React reconciliation passes (60-90ms spikes). Solution: Queue updates in refs (`pendingVersionAdds`, `pendingVersionUpdates`, `pendingVersionRemovals`) and flush once at end of `useFrame` via `flushVersionUpdates()`. Use `startTransition` for post-initial-load flushes. See `VoxelTerrain.tsx` keyword: `BATCHED VERSION UPDATES`.
+- **Version Add vs Increment Distinction**: `queueVersionAdd(key)` adds new chunks with version 1. `queueVersionIncrement(key)` increments existing entries. Using increment for new chunks does nothing (the `if (next[k] !== undefined)` guard fails). During initial load, new chunks MUST use `queueVersionAdd`, not `queueVersionIncrement`.
+- **Initial Load vs Post-Load Code Paths**: `initialLoadTriggered.current` gates two different streaming behaviors. During initial load (`false`): chunks go directly to version state for immediate rendering. After initial load (`true`): chunks go through `mountQueue` for throttled addition. Mixing these paths causes spawn chunk to not appear.
 
 ---
 
@@ -147,6 +150,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - `?vcDeerNear`, `?vcDeerStatic`: FogDeer spawn helpers (`src/features/creatures/FogDeer.tsx`).
 - Placement tracing can also be enabled via `localStorage.vcDebugPlacement = "1"` or `window.__vcDebugPlacement = true` (`src/features/flora/components/FloraPlacer.tsx`).
 - Streaming logs (opt-in): `?debug&vcStreamDebug` prints chunk drop/apply notes while tuning streaming (`src/features/terrain/components/VoxelTerrain.tsx` keyword: `vcStreamDebug`).
+- **Performance Isolation Flags** (use to identify bottlenecks):
+  - `?profile` or `localStorage.vcProfiler = "1"`: Enables `FrameProfiler` with auto-logging every 5s and spike detection (>50ms frames). Access via `window.frameProfiler.log()`.
+  - `?nocolliders`: Disables all terrain colliders (isolates Rapier BVH construction).
+  - `?nosim`: Disables `SimulationManager` worker (isolates wetness/mossiness updates).
+  - `?nominimap`: Disables HUD minimap (isolates `BiomeManager.getBiomeAt` calls).
 
 - **Physics Object Budget**: Avoid exceeding ~1000-2000 active/mounted rigid bodies in the scene. Rapier's performance (especially for `fixed` hulls/trimeshes) degrades significantly beyond this.
 - **Per-Chunk caps**: Always implement `MAX_X_PER_CHUNK` caps for procedurally generated entities that have colliders (Trees, Rocks, etc.). Default for trees: 32.
@@ -169,6 +177,18 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-03: **React Reconciliation Performance Fix**.
+  - **Issue**: 60-90ms frame spikes labeled "unknown" in profiler caused by multiple `setChunkVersions` calls per frame triggering React reconciliation.
+  - **Root Cause**: ~20 direct `setChunkVersions` calls scattered throughout `VoxelTerrain.tsx` (worker messages, LOD updates, chunk mounts, removals).
+  - **Fix**: Implemented batched version update system:
+    1. Three queues: `pendingVersionAdds`, `pendingVersionUpdates`, `pendingVersionRemovals` (refs, not state).
+    2. Helper functions: `queueVersionAdd()`, `queueVersionIncrement()`, `queueVersionRemoval()`.
+    3. Single `flushVersionUpdates()` call at end of `useFrame` processes all queued changes in one `setState`.
+    4. Post-initial-load flushes wrapped in `startTransition()` for non-blocking updates.
+  - **Critical Bug Fixed**: Spawn chunk not appearing - initial load chunks were using `queueVersionIncrement` (does nothing for non-existent keys) instead of `queueVersionAdd`.
+  - **Files**: `VoxelTerrain.tsx` (keyword: `BATCHED VERSION UPDATES`), `FrameProfiler.ts` (spike detection), `HUD.tsx` (minimap optimization), `ChunkMesh.tsx` (collider deferral).
+  - **Debug Flags Added**: `?nocolliders`, `?nosim`, `?nominimap`, `?profile` for performance isolation.
 
 - 2025-12-24: **Fixed Water Z-Fighting and Chunk Seams**.
   - **Issue 1**: Water surface disappearing when viewed at certain angles due to depth buffer precision issues.

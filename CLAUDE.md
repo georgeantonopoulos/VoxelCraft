@@ -81,6 +81,10 @@ Changing these breaks mesher output dimensions and worker communication.
 - `?debug` - Enable Leva debug panels (sun, shadows, fog controls)
 - `?mode=map` - Biome/map debug view
 - `?normals` - Normal material for geometry inspection
+- `?profile` or `localStorage.vcProfiler = "1"` - Enable FrameProfiler with spike detection
+- `?nocolliders` - Disable all terrain colliders (physics debugging)
+- `?nosim` - Disable simulation worker (performance isolation)
+- `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
 
 ## Key Invariants
@@ -99,6 +103,8 @@ See `AGENTS.md` for the complete list. Most critical:
 - React StrictMode mounts effects twice - store timeout IDs in refs
 - If `ShaderMaterial` has `fog=true`, must provide fogColor/fogNear/fogFar uniforms
 - Ground items need original stride-8 data for interaction, not just optimized render buffers
+- **React state batching**: Multiple `setState` calls per frame cause multiple reconciliations. Use batched update queues flushed once per frame (see `VoxelTerrain.tsx` `flushVersionUpdates`)
+- **Version adds vs increments**: When adding new chunks to `chunkVersions`, use `queueVersionAdd` (sets value). `queueVersionIncrement` only works on existing entries
 
 ## Testing
 
