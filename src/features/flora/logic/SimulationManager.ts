@@ -8,6 +8,9 @@ export interface SimUpdate {
     mossiness: Uint8Array;
 }
 
+// Debug flag to disable simulation - use ?nosim URL param
+const simulationDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nosim');
+
 export class SimulationManager {
     private worker: Worker | null = null;
     private enabled: boolean;
@@ -20,6 +23,10 @@ export class SimulationManager {
         // and can cause noticeable hitches during terrain streaming.
         this.enabled = (() => {
             if (typeof window === 'undefined') return false;
+            if (simulationDisabled) {
+                console.log('[SimulationManager] Disabled via ?nosim');
+                return false;
+            }
             // Default to true for Phase 3 verification
             return true;
         })();
@@ -29,6 +36,7 @@ export class SimulationManager {
         this.worker = new Worker(new URL('../workers/simulation.worker.ts', import.meta.url), { type: 'module' });
 
         this.worker.onmessage = (e) => {
+            const msgStart = performance.now();
             // Defensive check - workers may send null messages when crashed/memory exhausted
             if (!e.data) return;
             const { type, payload } = e.data;
@@ -47,6 +55,11 @@ export class SimulationManager {
                 // Notify UI/Terrain
                 if (this.onChunksUpdated) {
                     this.onChunksUpdated(updates);
+                }
+
+                const duration = performance.now() - msgStart;
+                if (duration > 5) {
+                    console.warn(`[SimulationManager] CHUNKS_UPDATED handler took ${duration.toFixed(1)}ms for ${updates.length} chunks`);
                 }
             }
         };

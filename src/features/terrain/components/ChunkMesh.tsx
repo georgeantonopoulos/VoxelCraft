@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect, useState } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { RigidBody, HeightfieldCollider, TrimeshCollider } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
@@ -28,12 +28,6 @@ const ProfiledRigidBody: React.FC<{
   colliderPositions?: Float32Array;
   colliderIndices?: Uint32Array;
 }> = React.memo(({ colliderKey, chunkKey, useHeightfield, colliderHeightfield, colliderPositions, colliderIndices }) => {
-  useEffect(() => {
-    const start = performance.now();
-    return () => {
-      // This runs on unmount - not useful for creation timing
-    };
-  }, []);
 
   // Log creation timing
   const mountStart = useRef(performance.now());
@@ -145,7 +139,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
-    const start = shouldProfile() ? performance.now() : 0;
+    const start = performance.now();
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
@@ -174,9 +168,9 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
       geom.boundingSphere.radius = 45;
     }
 
-    if (start > 0) {
-      const duration = performance.now() - start;
-      if (duration > 5) console.log(`[ChunkMesh] Geometry creation took ${duration.toFixed(1)}ms for ${chunk.key}`);
+    const duration = performance.now() - start;
+    if (duration > 10) {
+      console.warn(`[ChunkMesh] Geometry creation took ${duration.toFixed(1)}ms for ${chunk.key}`);
     }
 
     return geom;

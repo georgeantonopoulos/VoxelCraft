@@ -982,6 +982,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // One chunk addition per frame to avoid hitches
     if (mountQueue.current.length > 0) {
+      frameProfiler.trackOperation('chunk-mount');
+      const mountStart = performance.now();
       const newChunk = mountQueue.current.shift()!;
       if (!chunkDataRef.current.has(newChunk.key)) {
         chunkDataRef.current.set(newChunk.key, newChunk);
@@ -990,12 +992,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (prev[newChunk.key]) return prev;
         return { ...prev, [newChunk.key]: (prev[newChunk.key] || 0) + 1 };
       });
+      const mountDuration = performance.now() - mountStart;
+      if (mountDuration > 5) {
+        console.warn(`[VoxelTerrain] Chunk mount took ${mountDuration.toFixed(1)}ms for ${newChunk.key}`);
+      }
     }
 
     // Throttled LOD updates (process in small batches to avoid massive reconciliation hitches)
     if (lodUpdateQueue.current.length > 0) {
+      frameProfiler.trackOperation('lod-batch');
+      const lodBatchStart = performance.now();
       const BATCH_SIZE = 2; // Reduced from 4 for even smoother transitions
       const keys = lodUpdateQueue.current.splice(0, BATCH_SIZE);
+      const remainingInQueue = lodUpdateQueue.current.length;
       startTransition(() => {
         setChunkVersions(prev => {
           const next = { ...prev };
@@ -1009,6 +1018,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           return changed ? next : prev;
         });
       });
+      const lodBatchDuration = performance.now() - lodBatchStart;
+      if (lodBatchDuration > 5) {
+        console.warn(`[VoxelTerrain] LOD batch update took ${lodBatchDuration.toFixed(1)}ms for ${keys.length} chunks (${remainingInQueue} remaining)`);
+      }
     }
 
     // Use spawnPos for initial load to ensure we have a floor, otherwise use camera
@@ -1124,6 +1137,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const shouldUpdateLod = lodDistSq >= LOD_UPDATE_DISTANCE_SQ;
 
     if (shouldUpdateLod) {
+      const lodStart = performance.now();
       lastLodUpdatePos.current.set(streamX, streamZ);
 
       // Only update chunks whose LOD TIER actually changes (not continuous distance)
@@ -1148,6 +1162,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           if (!existingSet.has(key)) {
             lodUpdateQueue.current.push(key);
           }
+        }
+        const lodDuration = performance.now() - lodStart;
+        if (lodDuration > 2 || toUpdate.length > 4) {
+          console.log(`[VoxelTerrain] LOD tier update: ${toUpdate.length} chunks queued in ${lodDuration.toFixed(1)}ms`);
         }
       }
     }
@@ -1293,6 +1311,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     if (versionUpdates.size > 0) {
+      frameProfiler.trackOperation(`version-update-${versionUpdates.size}`);
       setChunkVersions(prev => {
         const next = { ...prev };
         versionUpdates.forEach(k => {
@@ -1304,6 +1323,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Garbage collection for workerMessageQueue (only once per frame after the loop)
     if (workerMessageHead.current > 64 && workerMessageHead.current > workerMessageQueue.current.length / 2) {
+      frameProfiler.trackOperation('msg-queue-gc');
       workerMessageQueue.current = workerMessageQueue.current.slice(workerMessageHead.current);
       workerMessageHead.current = 0;
     }
@@ -1399,6 +1419,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // 5. THROTTLED CHUNK REMOVAL (Process up to 2 per frame if not already busy)
     if (!appliedWorkerMessageThisFrame && removeQueue.current.length > 0) {
+      frameProfiler.trackOperation('chunk-removal');
       const MAX_REMOVALS = 2; // Increased slightly to clear backlog faster
       let removedCount = 0;
       let changed = false;

@@ -28,6 +28,12 @@ class FrameProfiler {
   private lastReportTime: number = 0;
   private readonly MAX_SAMPLES = 60; // Keep last 60 samples for averaging
 
+  // Spike detection
+  private frameStartTime: number = 0;
+  private spikeThresholdMs: number = 50; // Log frames taking > 50ms
+  private lastSpikeLog: number = 0;
+  private spikeLabelsThisFrame: string[] = [];
+
   constructor() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -89,8 +95,30 @@ class FrameProfiler {
 
   // Call once per frame to track frame boundaries
   tick() {
+    // Always check for spikes, even if profiler is disabled
+    const now = performance.now();
+
+    // End previous frame spike detection
+    if (this.frameStartTime > 0) {
+      const frameTime = now - this.frameStartTime;
+      if (frameTime > this.spikeThresholdMs && now - this.lastSpikeLog > 500) {
+        this.lastSpikeLog = now;
+        const labels = this.spikeLabelsThisFrame.join(', ') || 'unknown';
+        console.warn(`[FrameProfiler] SPIKE: ${frameTime.toFixed(1)}ms frame (operations: ${labels})`);
+      }
+    }
+
+    // Start new frame
+    this.frameStartTime = now;
+    this.spikeLabelsThisFrame = [];
+
     if (!this.enabled) return;
     this.frameCount++;
+  }
+
+  // Track what operations happen this frame for spike debugging
+  trackOperation(label: string) {
+    this.spikeLabelsThisFrame.push(label);
   }
 
   reset() {
