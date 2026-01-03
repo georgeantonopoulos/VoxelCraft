@@ -18,6 +18,7 @@ let playerCx = 0;
 let playerCz = 0;
 // @ts-ignore
 let tickCount = 0;
+let loopStarted = false;
 
 // Dimensions
 const SIZE_X = TOTAL_SIZE_XZ;
@@ -246,6 +247,12 @@ self.onmessage = (e: MessageEvent) => {
         playerCz = cz;
     }
     else if (type === 'START_LOOP') {
+        // Guard against duplicate START_LOOP calls (React StrictMode mounts effects twice)
+        if (loopStarted) {
+            console.log('[Simulation] Loop already running, ignoring duplicate START_LOOP');
+            return;
+        }
+        loopStarted = true;
         console.log('[Simulation] Loop started (1fps).');
 
         setInterval(() => {

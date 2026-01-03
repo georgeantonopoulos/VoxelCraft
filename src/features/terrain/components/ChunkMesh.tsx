@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { RigidBody, HeightfieldCollider, TrimeshCollider } from '@react-three/rapier';
 import { TriplanarMaterial } from '@core/graphics/TriplanarMaterial';
@@ -12,6 +12,65 @@ import { VegetationLayer } from './VegetationLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
+
+// Profiling flag - enable via console: window.__vcChunkProfile = true
+const shouldProfile = () => typeof window !== 'undefined' && (window as any).__vcChunkProfile;
+
+// Debug flag to completely disable terrain colliders - use ?nocolliders URL param
+const collidersDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nocolliders');
+
+// Wrapper component to profile Rapier collider creation
+const ProfiledRigidBody: React.FC<{
+  colliderKey: string;
+  chunkKey: string;
+  useHeightfield: boolean;
+  colliderHeightfield?: Float32Array;
+  colliderPositions?: Float32Array;
+  colliderIndices?: Uint32Array;
+}> = React.memo(({ colliderKey, chunkKey, useHeightfield, colliderHeightfield, colliderPositions, colliderIndices }) => {
+  useEffect(() => {
+    const start = performance.now();
+    return () => {
+      // This runs on unmount - not useful for creation timing
+    };
+  }, []);
+
+  // Log creation timing
+  const mountStart = useRef(performance.now());
+  useEffect(() => {
+    const duration = performance.now() - mountStart.current;
+    if (duration > 15) {
+      console.warn(`[ChunkMesh] Collider mount took ${duration.toFixed(1)}ms for ${chunkKey} (${useHeightfield ? 'heightfield' : 'trimesh'})`);
+    }
+  }, [chunkKey, useHeightfield]);
+
+  return (
+    <RigidBody
+      key={colliderKey}
+      type="fixed"
+      colliders={false}
+      userData={{ type: 'terrain', key: chunkKey }}
+    >
+      {useHeightfield ? (
+        colliderHeightfield ? (
+          <HeightfieldCollider
+            args={[
+              CHUNK_SIZE_XZ + 1,
+              CHUNK_SIZE_XZ + 1,
+              colliderHeightfield as any,
+              { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
+            ]}
+            position={[CHUNK_SIZE_XZ * 0.5, 0, CHUNK_SIZE_XZ * 0.5]}
+          />
+        ) : null
+      ) : (
+        colliderPositions && colliderIndices && (
+          <TrimeshCollider args={[colliderPositions, colliderIndices]} />
+        )
+      )}
+    </RigidBody>
+  );
+});
 
 export interface ChunkMeshProps {
   chunk: ChunkState;
@@ -86,6 +145,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
+    const start = shouldProfile() ? performance.now() : 0;
+
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
 
@@ -111,6 +172,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     if (geom.boundingSphere) {
       geom.boundingSphere.center.set(16, 0, 16);
       geom.boundingSphere.radius = 45;
+    }
+
+    if (start > 0) {
+      const duration = performance.now() - start;
+      if (duration > 5) console.log(`[ChunkMesh] Geometry creation took ${duration.toFixed(1)}ms for ${chunk.key}`);
     }
 
     return geom;
@@ -156,22 +222,18 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   }, [chunk.meshWaterShoreMask]);
 
   const [deferredColliderEnabled, setDeferredColliderEnabled] = React.useState(false);
-  const colliderEnabled = lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
+  const colliderEnabled = !collidersDisabled && lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
 
   useEffect(() => {
     if (colliderEnabled) {
-      if (lodLevel === 0) {
-        setDeferredColliderEnabled(true);
-      } else {
-        // Defer distant colliders to avoid hitching during LOD transitions
-        if ((window as any).requestIdleCallback) {
-          const handle = (window as any).requestIdleCallback(() => setDeferredColliderEnabled(true), { timeout: 200 });
-          return () => (window as any).cancelIdleCallback(handle);
-        } else {
-          const handle = setTimeout(() => setDeferredColliderEnabled(true), 1);
-          return () => clearTimeout(handle);
-        }
-      }
+      // Stagger collider creation heavily to avoid BVH construction stutters
+      // Use longer delays - BVH takes 50-200ms, so we need significant gaps between colliders
+      // LOD 0 = 500ms base delay, +200ms per distance level
+      const baseDelay = 500 + lodLevel * 200;
+      // Add random jitter to prevent multiple colliders from all firing at once
+      const jitter = Math.random() * 300;
+      const handle = setTimeout(() => setDeferredColliderEnabled(true), baseDelay + jitter);
+      return () => clearTimeout(handle);
     } else {
       setDeferredColliderEnabled(false);
     }
@@ -192,30 +254,14 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]} frustumCulled={false}>
       {deferredColliderEnabled && (
-        <RigidBody
-          key={colliderKey}
-          type="fixed"
-          colliders={false}
-          userData={{ type: 'terrain', key: chunk.key }}
-        >
-          {useHeightfield ? (
-            chunk.colliderHeightfield ? (
-              <HeightfieldCollider
-                args={[
-                  CHUNK_SIZE_XZ + 1,
-                  CHUNK_SIZE_XZ + 1,
-                  chunk.colliderHeightfield as any,
-                  { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
-                ]}
-                position={[CHUNK_SIZE_XZ * 0.5, 0, CHUNK_SIZE_XZ * 0.5]}
-              />
-            ) : null
-          ) : (
-            chunk.colliderPositions && chunk.colliderIndices && (
-              <TrimeshCollider args={[chunk.colliderPositions, chunk.colliderIndices]} />
-            )
-          )}
-        </RigidBody>
+        <ProfiledRigidBody
+          colliderKey={colliderKey}
+          chunkKey={chunk.key}
+          useHeightfield={useHeightfield}
+          colliderHeightfield={chunk.colliderHeightfield}
+          colliderPositions={chunk.colliderPositions}
+          colliderIndices={chunk.colliderIndices}
+        />
       )}
 
       {terrainGeometry && (

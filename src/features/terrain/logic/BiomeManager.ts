@@ -74,6 +74,7 @@ export class BiomeManager {
   private static currentWorldType: WorldType = WorldType.DEFAULT;
 
   static setWorldType(type: WorldType) {
+    if (this.currentWorldType === type) return; // Avoid duplicate calls from StrictMode
     this.currentWorldType = type;
     console.log('[BiomeManager] World Type set to:', type);
   }

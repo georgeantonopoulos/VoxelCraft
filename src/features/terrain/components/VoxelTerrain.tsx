@@ -879,6 +879,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Handle messages from any worker in the pool
     pool.addMessageListener((e) => {
+      const msgStart = performance.now();
       // Guard against null messages from crashed workers
       if (!e.data) {
         allocationFailures.current += 5; // Worker crash = severe memory pressure
@@ -894,6 +895,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       workerMessageQueue.current.push(e.data);
+      const msgDuration = performance.now() - msgStart;
+      if (msgDuration > 10) {
+        console.warn(`[VoxelTerrain] Message handler took ${msgDuration.toFixed(1)}ms for ${e.data.type}`);
+      }
     });
 
     // Listen for worker errors (uncaught exceptions)
@@ -1309,8 +1314,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
     // to push collider BVH construction to idle time when possible.
     if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
-      // Enable 2-3 colliders per frame to speed up physics activation after chunk boundary crossing
-      const MAX_COLLIDERS_PER_FRAME = 3;
+      // Enable 1 collider per frame max - BVH construction can take 20-50ms even with simplified geometry
+      const MAX_COLLIDERS_PER_FRAME = 1;
       const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
       const keysEnabledSync: string[] = [];
 

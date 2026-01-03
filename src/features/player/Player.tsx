@@ -8,6 +8,7 @@ import { usePlayerInput } from './usePlayerInput';
 import { useWorldStore } from '@/state/WorldStore';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
 import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
@@ -58,7 +59,11 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   }, []);
 
   useFrame((state, delta) => {
-    if (!body.current) return;
+    frameProfiler.begin('player');
+    if (!body.current) {
+      frameProfiler.end('player');
+      return;
+    }
 
     const pos = body.current.translation();
     scratchPos.set(pos.x, pos.y, pos.z);
@@ -82,6 +87,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
           setIsLuminaDashing(false);
           luminaTarget.current = null;
         }
+        frameProfiler.end('player');
         return;
       }
     }
@@ -187,6 +193,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
     // Sync camera to body eye level
     camera.position.set(pos.x, pos.y + 0.75, pos.z);
+    frameProfiler.end('player');
   });
 
   return (
