@@ -714,6 +714,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const manualBuildMatUntilMs = useRef(0);
   const remeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
+  // Phased initial loading: start with spawn chunk, expand outward in rings.
+  // This prevents queuing all 49 chunks at once and reduces initial frame spikes.
+  const initialLoadPhase = useRef(0); // Current ring distance (0 = spawn only, 1 = 3x3, etc.)
+  const initialLoadPhasePending = useRef(0); // Chunks pending in current phase
+  const MAX_INITIAL_PHASE = RENDER_DISTANCE; // Final ring distance
 
   const streamDebug = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -830,7 +835,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       console.warn('%c⚠️ PERFORMANCE WARNING: SharedArrayBuffer unavailable. Falling back to memory copying. Check COOP/COEP headers.', 'color: #ff0000; font-weight: bold; font-size: 14px;');
     }
   }, [setSharedArrayBufferEnabled]);
-  const MAX_IN_FLIGHT_GENERATIONS = 8; // Maximum concurrent chunk generations (workers + queue)
+  // During initial load, use fewer concurrent generations to reduce frame spikes.
+  // Post-load, we can be more aggressive since chunks are processed one at a time via mountQueue.
+  const MAX_IN_FLIGHT_INITIAL = 4; // Lower limit during initial load
+  const MAX_IN_FLIGHT_NORMAL = 8; // Normal limit after initial load
+  const getMaxInFlight = () => initialLoadTriggered.current ? MAX_IN_FLIGHT_NORMAL : MAX_IN_FLIGHT_INITIAL;
 
   // Memory pressure detection: pause generation if browser signals memory issues.
   // Uses the Performance Memory API where available (Chrome) and allocation failure tracking.
@@ -898,7 +907,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const playerChunk = useRef<{ px: number; pz: number }>({ px: 0, pz: 0 });
 
   // Physics collider enabling is intentionally more conservative than rendering to reduce spikes.
-  const COLLIDER_RADIUS = 1; // Chebyshev distance (0 => current chunk only; 1 => 3x3)
+  // Progressive collider loading: start with smaller radius during initial load, expand after.
+  const COLLIDER_RADIUS_INITIAL = 0; // During initial load: only player's chunk (1x1)
+  const COLLIDER_RADIUS_FULL = 1; // After initial load: 3x3 area (Chebyshev distance)
+  const getColliderRadius = () => initialLoadTriggered.current ? COLLIDER_RADIUS_FULL : COLLIDER_RADIUS_INITIAL;
   const colliderEnableQueue = useRef<string[]>([]);
   const colliderEnablePending = useRef<Set<string>>(new Set());
   const lastColliderCenterKey = useRef<string>('');
@@ -996,18 +1008,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     const px = Math.floor(initialLoadTarget.x / CHUNK_SIZE_XZ);
     const pz = Math.floor(initialLoadTarget.z / CHUNK_SIZE_XZ);
+    const spawnChunkKey = `${px},${pz}`;
     const essentialKeys = [
-      `${px},${pz}`, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
+      spawnChunkKey, `${px},${pz + 1}`, `${px},${pz - 1}`, `${px + 1},${pz}`, `${px - 1},${pz}`,
       `${px + 1},${pz + 1}`, `${px + 1},${pz - 1}`, `${px - 1},${pz + 1}`, `${px - 1},${pz - 1}`
     ];
 
+    // All essential chunks need terrain data, but only spawn chunk needs collider
+    // (progressive collider loading expands radius after initial load)
     const allReady = essentialKeys.every(key => {
       const c = chunkDataRef.current.get(key);
-      return c && c.colliderEnabled && c.terrainVersion >= 0;
+      if (!c || c.terrainVersion < 0) return false;
+      // Only require collider for spawn chunk - player needs to stand on something
+      if (key === spawnChunkKey) return c.colliderEnabled;
+      return true;
     });
 
     if (allReady) {
       initialLoadTriggered.current = true;
+      // Force collider queue re-evaluation with expanded radius
+      // by resetting the last center key - next frame will queue additional colliders
+      lastColliderCenterKey.current = '';
       onInitialLoad();
     }
   }, [chunkVersions, onInitialLoad, initialLoadTarget]);
@@ -1132,6 +1153,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       streamCenter.current.cx = centerCx;
       streamCenter.current.cz = centerCz;
 
+      // During initial load, use phased loading: expand in rings to reduce burst.
+      // After initial load, queue all needed chunks immediately.
+      const currentPhase = initialLoadTriggered.current ? RENDER_DISTANCE : initialLoadPhase.current;
+
       for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
         for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
           const cx = centerCx + x;
@@ -1139,9 +1164,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           const key = `${cx},${cz}`;
           neededKeys.add(key);
 
-          if (!chunkDataRef.current.has(key) && !pendingChunks.current.has(key)) {
+          // Calculate Chebyshev distance (ring distance) from center
+          const ringDist = Math.max(Math.abs(x), Math.abs(z));
+
+          // Only queue if within current phase and not already pending/loaded
+          if (ringDist <= currentPhase && !chunkDataRef.current.has(key) && !pendingChunks.current.has(key)) {
             pendingChunks.current.add(key);
             generateQueue.current.push({ cx, cz, key });
+            if (!initialLoadTriggered.current) {
+              initialLoadPhasePending.current++;
+            }
           }
         }
       }
@@ -1178,8 +1210,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             }
           }
         };
-        addRadius(px, pz, COLLIDER_RADIUS);
-        addRadius(px + offsetCx, pz + offsetCz, COLLIDER_RADIUS);
+        const colliderRadius = getColliderRadius();
+        addRadius(px, pz, colliderRadius);
+        addRadius(px + offsetCx, pz + offsetCz, colliderRadius);
 
         for (const key of candidates) {
           const c = chunkDataRef.current.get(key);
@@ -1238,17 +1271,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // - Not under memory pressure
     // - Not too many in-flight generations
     const underPressure = checkMemoryPressure();
+    const maxInFlight = getMaxInFlight();
     const canGenerate =
       generateQueue.current.length > 0 &&
       !underPressure &&
-      inFlightGenerations.current.size < MAX_IN_FLIGHT_GENERATIONS;
+      inFlightGenerations.current.size < maxInFlight;
 
     if (canGenerate) {
       // Process multiple chunks per frame when queue is backed up to reduce streaming lag
       // Use adaptive drain rate: more chunks when queue is large, fewer when nearly empty
       const queueSize = generateQueue.current.length;
       const inFlightCount = inFlightGenerations.current.size;
-      const availableSlots = MAX_IN_FLIGHT_GENERATIONS - inFlightCount;
+      const availableSlots = maxInFlight - inFlightCount;
       // Drain 1-3 chunks per frame based on backlog, but never exceed available worker slots
       const maxDrain = queueSize > 6 ? 3 : queueSize > 3 ? 2 : 1;
       const chunksToDrain = Math.min(maxDrain, queueSize, availableSlots);
@@ -1317,7 +1351,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
           const dChebyPlayer = Math.max(Math.abs(cx - px), Math.abs(cz - pz));
           const lodLevel = getChunkLodTier(cx, cz, camCx, camCz);
-          const colliderEnabled = dChebyPlayer <= COLLIDER_RADIUS;
+          const colliderEnabled = dChebyPlayer <= getColliderRadius();
 
           const newChunk: ChunkState = {
             ...payload,
@@ -1340,6 +1374,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             // During initial load, use queueVersionAdd directly for new chunks
             // versionUpdates is only for increments - new chunks need Add, not Increment
             queueVersionAdd(key);
+
+            // Track phase progress and advance to next ring when current phase completes
+            initialLoadPhasePending.current--;
+            if (initialLoadPhasePending.current <= 0 && initialLoadPhase.current < MAX_INITIAL_PHASE) {
+              initialLoadPhase.current++;
+              // Force streaming window re-evaluation next frame by resetting last processed position
+              // This ensures the next ring of chunks gets queued
+              lastProcessedPlayerChunk.current = { px: -9999, pz: -9999 };
+              if (streamDebug) {
+                console.log(`[VoxelTerrain] Advancing to initial load phase ${initialLoadPhase.current}`);
+              }
+            }
           } else {
             mountQueue.current.push(newChunk);
           }
@@ -1348,7 +1394,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
             const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
             const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
-            if (dChebyAhead <= COLLIDER_RADIUS) {
+            if (dChebyAhead <= getColliderRadius()) {
               colliderEnablePending.current.add(key);
               colliderEnableQueue.current.push(key);
             }
@@ -2444,7 +2490,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 </group>
 
                 {/* Logic layer for interaction/growth (only active within physics distance) */}
-                {chunk.lodLevel <= COLLIDER_RADIUS && Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
+                {chunk.lodLevel <= COLLIDER_RADIUS_FULL && Array.from({ length: chunk.rootHollowPositions.length / 6 }).map((_, i) => (
                   <RootHollow
                     key={`${chunk.key}-root-${i}`}
                     position={[
