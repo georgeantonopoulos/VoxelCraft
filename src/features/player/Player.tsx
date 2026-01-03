@@ -9,6 +9,7 @@ import { useWorldStore } from '@/state/WorldStore';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
 import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { updatePlayerState, notifyListeners } from '@core/player/PlayerState';
 
 const FLY_SPEED = 8;
 const DOUBLE_TAP_TIME = 300;
@@ -36,6 +37,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const spacePressHandled = useRef<boolean>(false);
 
   const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
+
+  // Throttle WorldStore sync for backward compatibility (10Hz instead of 60fps)
+  const lastStoreSyncTime = useRef(0);
+  const lastStoreSyncPos = useRef({ x: 0, z: 0 });
+  const STORE_SYNC_INTERVAL = 100; // ms
+  const STORE_SYNC_DISTANCE_SQ = 0.25; // 0.5m squared
 
   useEffect(() => {
     if (!body.current) return;
@@ -123,7 +130,20 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     camera.getWorldDirection(scratchCamDir);
     const rotation = Math.atan2(-scratchCamDir.x, -scratchCamDir.z);
 
-    setPlayerParams({ x: pos.x, y: pos.y, z: pos.z, rotation });
+    // Update singleton every frame (no allocations, no subscriptions triggered)
+    updatePlayerState(pos.x, pos.y, pos.z, rotation);
+    notifyListeners(); // Throttled internally to 10Hz
+
+    // Sync to WorldStore at reduced frequency for backward compatibility
+    const now = performance.now();
+    const dx = pos.x - lastStoreSyncPos.current.x;
+    const dz = pos.z - lastStoreSyncPos.current.z;
+    const distSq = dx * dx + dz * dz;
+    if (now - lastStoreSyncTime.current > STORE_SYNC_INTERVAL || distSq > STORE_SYNC_DISTANCE_SQ) {
+      setPlayerParams({ x: pos.x, y: pos.y, z: pos.z, rotation });
+      lastStoreSyncTime.current = now;
+      lastStoreSyncPos.current = { x: pos.x, z: pos.z };
+    }
 
     // Movement calculation: Use horizontal heading to avoid speed loss when looking down
     scratchForward.copy(scratchCamDir);

@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
 import { useInventoryStore as useGameStore } from '@/state/InventoryStore';
-import { useWorldStore } from '@/state/WorldStore';
+import { subscribeThrottled, PlayerPosition } from '@core/player/PlayerState';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
@@ -35,12 +35,13 @@ const CACHE_DISTANCE_THRESHOLD = 32; // Regenerate when player moves 32 units
 
 const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, z: pz, rotation }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rotatingRef = useRef<HTMLDivElement>(null);
 
-  // Only redraw when player moves significantly (not every frame)
+  // Only redraw biome texture when player moves significantly (not every frame)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
     if (!ctx) return;
 
     // Check if we need to regenerate the biome texture
@@ -75,12 +76,19 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
     cachedBiomeCenter = { x: px, z: pz };
   }, [px, pz]);
 
+  // Update rotation via DOM manipulation to avoid React re-renders
+  useLayoutEffect(() => {
+    if (rotatingRef.current) {
+      rotatingRef.current.style.transform = `rotate(${rotation}rad)`;
+    }
+  }, [rotation]);
+
   return (
     <div className="relative rounded-full border-4 border-slate-800/50 shadow-2xl overflow-hidden bg-slate-900 w-32 h-32 flex items-center justify-center">
       {/* Rotating Container for Map and Cardinal Directions */}
       <div
+        ref={rotatingRef}
         className="relative w-full h-full"
-        style={{ transform: `rotate(${rotation}rad)` }}
       >
         <canvas
           ref={canvasRef}
@@ -111,28 +119,24 @@ export const HUD: React.FC = () => {
   const isSharedArrayBufferEnabled = useGameStore((state) => state.isSharedArrayBufferEnabled);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
 
-  // Use store for player coordinates instead of event listener
-  // Use local state to avoid full HUD re-renders every frame.
-  // We'll update this state at a slower cadence or only on significant movement.
+  // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
+  // This keeps the UI responsive without constant re-renders.
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
   const lastStateUpdatePos = useRef({ x: 0, z: 0 });
 
   useEffect(() => {
-    // Subscribe to store for coordinates but with a throttled local state update.
-    // This keeps the UI Snappy (60FPS for crosshair/inventory) without 
-    // the heavy Minimap/Text updates every single frame.
-    const unsub = useWorldStore.subscribe((state) => {
-      const p = state.playerParams;
-      const dx = p.x - lastStateUpdatePos.current.x;
-      const dz = p.z - lastStateUpdatePos.current.z;
+    // Subscribe to throttled player position updates (already 10Hz limited)
+    // Additional distance check to reduce state updates further
+    return subscribeThrottled((state: PlayerPosition) => {
+      const dx = state.x - lastStateUpdatePos.current.x;
+      const dz = state.z - lastStateUpdatePos.current.z;
 
-      // Update local state if we moved > 0.1m or rotation changed significantly
+      // Update local state if we moved > 0.1m
       if (dx * dx + dz * dz > 0.01) {
-        setCoords({ ...p });
-        lastStateUpdatePos.current = { x: p.x, z: p.z };
+        setCoords({ x: state.x, y: state.y, z: state.z, rotation: state.rotation });
+        lastStateUpdatePos.current = { x: state.x, z: state.z };
       }
     });
-    return unsub;
   }, []);
 
   const [crosshairHit, setCrosshairHit] = useState(false);

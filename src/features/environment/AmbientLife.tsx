@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
-import { useWorldStore } from '@/state/WorldStore';
+import { playerState } from '@core/player/PlayerState';
 import { FogDeer } from '@features/creatures/FogDeer';
 import { forEachChunkFireflies, getFireflyRegistryVersion } from '@features/environment/fireflyRegistry';
 
@@ -223,30 +223,22 @@ const FirefliesField: React.FC<{
  * Entry point for cheap, always-on "early life" ambience: fireflies + distant fog creatures.
  *
  * IMPORTANT:
- * - Uses the global WorldStore `playerParams` to avoid tight coupling to Player via events.
+ * - Reads directly from the playerState singleton for high-frequency position data.
+ * - No Zustand subscriptions needed - singleton is updated every frame by Player.tsx.
  * - Avoids React state updates inside `useFrame()` to keep GC and rerenders low.
  */
 export const AmbientLife: React.FC<{ enabled?: boolean }> = ({ enabled = true }) => {
   const playerRef = useRef<PlayerMovedRef>({ x: 0, y: 0, z: 0, rotation: 0, hasSignal: false });
 
-  // Connect to the store but via a transient subscriber if possible, or just standard selector.
-  // Since we want to update the ref without re-rendering this component, we can use `useWorldStore.getState()` in useFrame
-  // OR just subscribe via effect.
-  // However, since `useFrame` runs every frame, we can just poll the store state there,
-  // BUT `useWorldStore` is a hook.
-
-  // A transient update pattern:
-  useEffect(() => {
+  // Sync from playerState singleton every frame - no subscription overhead
+  useFrame(() => {
     if (!enabled) return;
-    const unsub = useWorldStore.subscribe((state) => {
-      playerRef.current.x = state.playerParams.x;
-      playerRef.current.y = state.playerParams.y;
-      playerRef.current.z = state.playerParams.z;
-      playerRef.current.rotation = state.playerParams.rotation;
-      playerRef.current.hasSignal = true;
-    });
-    return () => unsub();
-  }, [enabled]);
+    playerRef.current.x = playerState.x;
+    playerRef.current.y = playerState.y;
+    playerRef.current.z = playerState.z;
+    playerRef.current.rotation = playerState.rotation;
+    playerRef.current.hasSignal = playerState.version > 0;
+  });
 
   if (!enabled) return null;
 
