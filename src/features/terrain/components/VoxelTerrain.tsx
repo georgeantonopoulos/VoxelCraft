@@ -1153,28 +1153,43 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       inFlightGenerations.current.size < MAX_IN_FLIGHT_GENERATIONS;
 
     if (canGenerate) {
-      let bestIndex = 0;
-      let bestDist2 = Infinity;
+      // Process multiple chunks per frame when queue is backed up to reduce streaming lag
+      // Use adaptive drain rate: more chunks when queue is large, fewer when nearly empty
+      const queueSize = generateQueue.current.length;
+      const inFlightCount = inFlightGenerations.current.size;
+      const availableSlots = MAX_IN_FLIGHT_GENERATIONS - inFlightCount;
+      // Drain 1-3 chunks per frame based on backlog, but never exceed available worker slots
+      const maxDrain = queueSize > 6 ? 3 : queueSize > 3 ? 2 : 1;
+      const chunksToDrain = Math.min(maxDrain, queueSize, availableSlots);
+
       const centerCx = streamCenter.current.cx;
       const centerCz = streamCenter.current.cz;
 
-      for (let i = 0; i < generateQueue.current.length; i++) {
-        const job = generateQueue.current[i];
-        const dx = job.cx - centerCx;
-        const dz = job.cz - centerCz;
-        const d2 = dx * dx + dz * dz;
-        if (d2 < bestDist2) {
-          bestDist2 = d2;
-          bestIndex = i;
+      for (let c = 0; c < chunksToDrain; c++) {
+        if (generateQueue.current.length === 0) break;
+
+        // Find closest chunk to player (prioritize nearby chunks)
+        let bestIndex = 0;
+        let bestDist2 = Infinity;
+
+        for (let i = 0; i < generateQueue.current.length; i++) {
+          const job = generateQueue.current[i];
+          const dx = job.cx - centerCx;
+          const dz = job.cz - centerCz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < bestDist2) {
+            bestDist2 = d2;
+            bestIndex = i;
+          }
         }
+        const job = generateQueue.current.splice(bestIndex, 1)[0];
+
+        // Track this generation as in-flight
+        inFlightGenerations.current.add(job.key);
+
+        // Distribute generation requests round-robin across the pool
+        poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
       }
-      const job = generateQueue.current.splice(bestIndex, 1)[0];
-
-      // Track this generation as in-flight
-      inFlightGenerations.current.add(job.key);
-
-      // Distribute generation requests round-robin across the pool
-      poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
     }
 
     // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
@@ -1283,11 +1298,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
 
     // 4. THROTTLED COLLIDER ENABLES
+    // Process multiple colliders per frame to reduce physics activation latency.
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
     // to push collider BVH construction to idle time when possible.
     if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
-      const key = colliderEnableQueue.current.shift();
-      if (key) {
+      // Enable 2-3 colliders per frame to speed up physics activation after chunk boundary crossing
+      const MAX_COLLIDERS_PER_FRAME = 3;
+      const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
+      const keysEnabledSync: string[] = [];
+
+      for (let i = 0; i < collidersToProcess; i++) {
+        const key = colliderEnableQueue.current.shift();
+        if (!key) break;
+
         colliderEnablePending.current.delete(key);
         const current = chunkDataRef.current.get(key);
         if (current && !current.colliderEnabled) {
@@ -1300,18 +1323,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             Math.abs(cz - playerChunk.current.pz)
           );
 
-          const enableCollider = () => {
-            const latest = chunkDataRef.current.get(key);
+          const enableColliderForKey = (k: string) => {
+            const latest = chunkDataRef.current.get(k);
             if (latest && !latest.colliderEnabled) {
               const updated = { ...latest, colliderEnabled: true };
-              chunkDataRef.current.set(key, updated);
-              if (initialLoadTriggered.current) {
-                startTransition(() => {
-                  setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
-                });
-              } else {
-                setChunkVersions(prev => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
-              }
+              chunkDataRef.current.set(k, updated);
             }
           };
 
@@ -1319,14 +1335,52 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           // Adjacent chunks (distance 1): defer to idle callback if available
           if (distToPlayer === 0 || !initialLoadTriggered.current) {
             // Synchronous enable for player chunk or during initial load
-            enableCollider();
+            enableColliderForKey(key);
+            keysEnabledSync.push(key);
           } else if (typeof requestIdleCallback !== 'undefined') {
             // Defer to idle time for adjacent chunks
-            requestIdleCallback(enableCollider, { timeout: 100 });
+            const deferredKey = key;
+            requestIdleCallback(() => {
+              enableColliderForKey(deferredKey);
+              if (initialLoadTriggered.current) {
+                startTransition(() => {
+                  setChunkVersions(prev => ({ ...prev, [deferredKey]: (prev[deferredKey] || 0) + 1 }));
+                });
+              } else {
+                setChunkVersions(prev => ({ ...prev, [deferredKey]: (prev[deferredKey] || 0) + 1 }));
+              }
+            }, { timeout: 100 });
           } else {
             // Fallback for browsers without requestIdleCallback
-            setTimeout(enableCollider, 0);
+            const deferredKey = key;
+            setTimeout(() => {
+              enableColliderForKey(deferredKey);
+              setChunkVersions(prev => ({ ...prev, [deferredKey]: (prev[deferredKey] || 0) + 1 }));
+            }, 0);
           }
+        }
+      }
+
+      // Batch update for synchronously enabled colliders to reduce React reconciliation
+      if (keysEnabledSync.length > 0) {
+        if (initialLoadTriggered.current) {
+          startTransition(() => {
+            setChunkVersions(prev => {
+              const next = { ...prev };
+              for (const k of keysEnabledSync) {
+                next[k] = (next[k] || 0) + 1;
+              }
+              return next;
+            });
+          });
+        } else {
+          setChunkVersions(prev => {
+            const next = { ...prev };
+            for (const k of keysEnabledSync) {
+              next[k] = (next[k] || 0) + 1;
+            }
+            return next;
+          });
         }
       }
     }
