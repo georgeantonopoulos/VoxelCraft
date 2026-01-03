@@ -8,6 +8,7 @@ import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/
 import { ItemType } from '@/types';
 import { UniversalTool } from './UniversalTool';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -250,7 +251,11 @@ export const FirstPersonTools: React.FC = () => {
     }, [activeCustomTool, selectedItem]);
 
     useFrame((state, delta) => {
-        if (!torchRef.current && !rightItemRef.current) return;
+        frameProfiler.begin('first-person-tools');
+        if (!torchRef.current && !rightItemRef.current) {
+            frameProfiler.end('first-person-tools');
+            return;
+        }
         const aspect = size.width / size.height;
         const responsiveX = THREE.MathUtils.clamp(aspect / 1.1, 0.5, 1.0);
         const time = state.clock.getElapsedTime();
@@ -385,6 +390,7 @@ export const FirstPersonTools: React.FC = () => {
                 luminaLightRef.current.visible = false;
             }
         }
+        frameProfiler.end('first-person-tools');
     });
 
 

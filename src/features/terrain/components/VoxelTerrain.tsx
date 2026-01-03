@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo, startTransition } from 'react';
+import React, { useEffect, useRef, useState, useMemo, startTransition, useLayoutEffect } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
@@ -753,17 +753,27 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // === BATCHED VERSION UPDATES ===
   // Instead of calling setChunkVersions multiple times per frame (causing multiple React reconciliations),
   // we queue version updates and flush them once at the end of each frame in useFrame.
+  // Additionally, we throttle flushes to 10Hz to reduce React reconciliation overhead.
   const pendingVersionUpdates = useRef<Set<string>>(new Set());
   const pendingVersionRemovals = useRef<Set<string>>(new Set());
   const pendingVersionAdds = useRef<Map<string, number>>(new Map());
+  const lastFlushTime = useRef(0);
 
   // Flush all pending version updates in a single React state update
-  const flushVersionUpdates = () => {
+  // Throttled to 10Hz (100ms) to reduce React reconciliation overhead
+  const flushVersionUpdates = (forceImmediate = false) => {
     if (pendingVersionUpdates.current.size === 0 &&
         pendingVersionRemovals.current.size === 0 &&
         pendingVersionAdds.current.size === 0) {
       return;
     }
+
+    // Throttle to 10Hz unless forced (e.g., during initial load or critical updates)
+    const now = performance.now();
+    if (!forceImmediate && now - lastFlushTime.current < 100) {
+      return; // Skip this flush, will catch up on next tick
+    }
+    lastFlushTime.current = now;
 
     const updates = new Set(pendingVersionUpdates.current);
     const removals = new Set(pendingVersionRemovals.current);
@@ -1580,7 +1590,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     frameProfiler.end('terrain-uniforms');
 
     // Flush all batched version updates at the end of the frame
-    flushVersionUpdates();
+    // Force immediate during initial load for faster terrain appearance
+    flushVersionUpdates(!initialLoadTriggered.current);
 
     frameProfiler.end('terrain-main');
   });
@@ -2447,6 +2458,23 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
   }, [isInteracting, action, camera, world, rapier, buildMat]);
+
+  // Track React render phase timing - this runs during the render,
+  // so we can see when React itself is taking too long
+  const renderStartTime = useRef(0);
+  const chunkCount = Object.keys(chunkVersions).length;
+
+  // Mark render start
+  renderStartTime.current = performance.now();
+
+  // Track render completion in useLayoutEffect (runs synchronously after render)
+  useLayoutEffect(() => {
+    const renderTime = performance.now() - renderStartTime.current;
+    if (renderTime > 16 && frameProfiler.isEnabled()) {
+      frameProfiler.trackOperation(`react-render-${chunkCount}chunks`);
+      console.warn(`[VoxelTerrain] React render took ${renderTime.toFixed(1)}ms for ${chunkCount} chunks`);
+    }
+  });
 
   return (
     <group>

@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { playerState } from '@core/player/PlayerState';
-import { FogDeer } from '@features/creatures/FogDeer';
+// import { FogDeer } from '@features/creatures/FogDeer'; // Disabled for performance investigation
 import { forEachChunkFireflies, getFireflyRegistryVersion } from '@features/environment/fireflyRegistry';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 export type PlayerMovedRef = {
   x: number;
@@ -144,9 +145,16 @@ const FirefliesField: React.FC<{
   }, []);
 
   useFrame((state) => {
+    frameProfiler.begin('fireflies');
     const mesh = meshRef.current;
-    if (!enabled || !mesh) return;
-    if (!playerRef.current.hasSignal) return;
+    if (!enabled || !mesh) {
+      frameProfiler.end('fireflies');
+      return;
+    }
+    if (!playerRef.current.hasSignal) {
+      frameProfiler.end('fireflies');
+      return;
+    }
 
     // Global intensity gates (cheap, avoids doing extra work underwater/underground).
     const biomeAtPlayer = BiomeManager.getBiomeAt(playerRef.current.x, playerRef.current.z);
@@ -207,6 +215,7 @@ const FirefliesField: React.FC<{
     const t = state.clock.elapsedTime;
     material.uniforms.uTime.value = t;
     material.uniforms.uIntensity.value = THREE.MathUtils.clamp(globalIntensity, 0, 1);
+    frameProfiler.end('fireflies');
   });
 
   return (
@@ -232,12 +241,17 @@ export const AmbientLife: React.FC<{ enabled?: boolean }> = ({ enabled = true })
 
   // Sync from playerState singleton every frame - no subscription overhead
   useFrame(() => {
-    if (!enabled) return;
+    frameProfiler.begin('ambient-life');
+    if (!enabled) {
+      frameProfiler.end('ambient-life');
+      return;
+    }
     playerRef.current.x = playerState.x;
     playerRef.current.y = playerState.y;
     playerRef.current.z = playerState.z;
     playerRef.current.rotation = playerState.rotation;
     playerRef.current.hasSignal = playerState.version > 0;
+    frameProfiler.end('ambient-life');
   });
 
   if (!enabled) return null;
@@ -245,7 +259,8 @@ export const AmbientLife: React.FC<{ enabled?: boolean }> = ({ enabled = true })
   return (
     <>
       <FirefliesField enabled={enabled} playerRef={playerRef} />
-      <FogDeer enabled={enabled} playerRef={playerRef} />
+      {/* FogDeer disabled for performance investigation */}
+      {/* <FogDeer enabled={enabled} playerRef={playerRef} /> */}
     </>
   );
 };

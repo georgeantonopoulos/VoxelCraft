@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { CHUNK_SIZE_XZ } from '@/constants';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 interface LuminaLayerProps {
   data: Float32Array; // stride 4: x, y, z, type (type unused for now)
@@ -57,13 +58,18 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
   }, [lightPositions]);
 
   useFrame((state) => {
+    frameProfiler.begin('lumina-layer');
     // Throttled culling check (every ~200ms)
     const now = state.clock.getElapsedTime();
-    if (now - lastCullTime.current < 0.2) return;
+    if (now - lastCullTime.current < 0.2) {
+      frameProfiler.end('lumina-layer');
+      return;
+    }
     lastCullTime.current = now;
 
     if (simplified || !collidersEnabled || lights.length === 0) {
       lightRefs.current.forEach(l => { if (l) l.visible = false; });
+      frameProfiler.end('lumina-layer');
       return;
     }
 
@@ -75,6 +81,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
         light.visible = isNear;
       }
     });
+    frameProfiler.end('lumina-layer');
   });
 
   useLayoutEffect(() => {

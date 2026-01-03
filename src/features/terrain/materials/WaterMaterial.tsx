@@ -6,6 +6,7 @@ import { useControls, folder } from 'leva';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ } from '@/constants';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 // Global water debug mode (accessible from Leva)
 let waterDebugMode = 0;
@@ -272,6 +273,7 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
   }, { collapsed: true });
 
   useFrame((state) => {
+    frameProfiler.begin('water-material');
     // Lazy initialization
     if (material.uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
       material.uniforms.uNoiseTexture.value = getNoiseTexture();
@@ -300,6 +302,7 @@ export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({
         uniforms.uFogColor.value.copy((state.scene.fog as any).color);
       }
     }
+    frameProfiler.end('water-material');
   });
 
   return <primitive object={material} attach="material" />;

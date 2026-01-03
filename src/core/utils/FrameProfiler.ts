@@ -95,7 +95,8 @@ class FrameProfiler {
 
   // Call once per frame to track frame boundaries
   tick() {
-    // Always check for spikes, even if profiler is disabled
+    if (!this.enabled) return;
+
     const now = performance.now();
 
     // End previous frame spike detection
@@ -111,13 +112,12 @@ class FrameProfiler {
     // Start new frame
     this.frameStartTime = now;
     this.spikeLabelsThisFrame = [];
-
-    if (!this.enabled) return;
     this.frameCount++;
   }
 
   // Track what operations happen this frame for spike debugging
   trackOperation(label: string) {
+    if (!this.enabled) return;
     this.spikeLabelsThisFrame.push(label);
   }
 
