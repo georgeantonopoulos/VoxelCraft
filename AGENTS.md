@@ -121,6 +121,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Input Logic**: `src/features/player/usePlayerInput.ts` abstracts input sources (`useKeyboardControls` vs `InputStore`).
 - **Touch Camera**: `src/features/player/TouchCameraControls.tsx` handles look rotation for touch mode, bypassing `PointerLockControls`.
 - **Fire Mechanics**: `InteractionHandler.tsx` manages Raycast detection for Stone-on-Stone (sparks) and Stick-on-Fire (torch) events.
+- **Fog & Atmosphere**: `AtmosphereManager.tsx` and `TriplanarShader.ts` handle fog.
+  - **Three.js Fog**: Standard `THREE.Fog` attached to `scene.fog`. Color follows sky gradient.
+  - **Shader Fog**: Custom exponential squared fog in terrain shader (`uShaderFogStrength`, `uFogNear`, `uFogFar`).
+  - **Height Fog**: Ground-level fog layer controlled by `uHeightFogStrength`, `uHeightFogRange`, and `uHeightFogOffset`.
+  - **Scaling**: Fog far distance is dynamically scaled by `viewDistance` setting.
 
 ## Known Pitfalls (keep this list small)
 
@@ -206,7 +211,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (last 5 entries)
 
-- 2026-01-04: **Crafting Interface Visual Fix**.
+- 2026-01-04: **Fog System Investigation**.
+  - **Goal**: Identify all variables and systems producing the current fog state.
+  - **Findings**: Fog is a hybrid of native `THREE.Fog` (for objects/sky) and custom `TriplanarShader.ts` GLSL (for terrain). Key variables: `fogNear` (40), `fogFar` (220 * viewDistance), `atmosphereHaze` (0.25), `heightFogStrength` (0.35).
+  - **Files**: `AtmosphereManager.tsx`, `TriplanarShader.ts`, `App.tsx`, `SharedUniforms.ts`.
   - **Issue**: Attaching `ItemType.FLORA` (Lumina flora) to a tool in the crafting menu did not render the model, making it appear invisible/disconnected.
   - **Fix**: 
     1. Extracted `FloraMesh` as a reusable component in `UniversalTool.tsx`.
@@ -326,3 +334,27 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - **Dirt/Clay**: High-contrast lumpy/grid bumps (Channels 3, 7, 11).
     - **Snow/Ice**: Large, smooth static drifts (Channels 6, 12).
     - **Sand/Red Sand**: Preserved existing wind ripples (Channels 5, 10).
+- 2026-01-04: **Ambient Lighting Adjustment**.
+  - **Goal**: Increase indirect lighting slightly to avoid harsh blacks in shadows while maintaining contrast.
+  - **Changes**:
+    - `AtmosphereManager.tsx`: Surface ambient `0.08` → `0.10`, Cave `0.04` → `0.05`.
+    - `TriplanarMaterial.tsx`: `uGIIntensity` `1.2` → `1.35`.
+  - **Result**: Softens deep shadows without washing out directional contrast.
+- 2026-01-04: **Disabled Shader Fog**.
+  - **Goal**: Disable the custom exponential shader fog and height fog system as it was found to negatively impact visual clarity (e.g., causing "blue beach" syndrome).
+  - **Changes**:
+    - `SharedUniforms.ts`: Set default `uShaderFogEnabled` to `0.0`.
+    - `TriplanarMaterial.tsx`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`: Set default `shaderFogEnabled` / `terrainShaderFogEnabled` props to `false`.
+  - **Result**: Visual clarity improved; atmospheric blue tinting now depends solely on sky/ambient light and standard Three.js distance fog.
+- 2026-01-04: **Adjusted Fog and LOD Distances**.
+  - **Goal**: Tune standard distance fog for better visibility and bias LOD transitions toward the player's view direction.
+  - **Changes**:
+    - Fog: Set `uFogNear` = 23, `uFogFar` = 85 (standardized across `SharedUniforms.ts`, components, and `App.tsx` state).
+    - LOD: Updated `getChunkLodTier` in `VoxelTerrain.tsx` with a `0.5` chunk forward bias using `streamForward` vector.
+  - **Result**: More atmospheric distance fog and guaranteed "Full LOD" (Tier 0) for the current chunk and the next one in front.
+- 2026-01-04: **Cleaned up Debug Logs**.
+  - **Goal**: Silenced high-frequency console logs (noise initialization, seed setting, LOD updates, worker loop status, etc.) to improve development console experience.
+  - **Changes**: Commented out `console.log` and `console.warn` calls in `noise.ts`, `WorldSeed.ts`, `BiomeManager.ts`, `simulation.worker.ts`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`, and `App.tsx`.
+  - **Result**: A much cleaner game console, focusing only on critical system events.
+ 
+[diff_block_end]

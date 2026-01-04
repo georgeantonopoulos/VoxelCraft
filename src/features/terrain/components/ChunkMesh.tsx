@@ -66,58 +66,44 @@ const ProfiledRigidBody: React.FC<{
   );
 });
 
+/**
+ * ChunkMesh props - simplified after sharedUniforms refactor.
+ *
+ * Most terrain material settings (fog, wetness, moss, triplanar detail, etc.) are now
+ * controlled via sharedUniforms in SharedUniforms.ts, updated once per frame by VoxelTerrain.
+ * This eliminates prop drilling for ~15 uniform-related settings.
+ *
+ * Remaining props are either:
+ * - Chunk-specific data (chunk, terrainVersion, lodLevel)
+ * - Material properties that can't be uniforms (wireframe, polygonOffset, threeFog)
+ * - Debug modes (chunkTint)
+ */
 export interface ChunkMeshProps {
   chunk: ChunkState;
   terrainVersion: number; // Passed as primitive to bypass object reference mutation issues
-  sunDirection?: THREE.Vector3;
-  triplanarDetail?: number;
-  terrainShaderFogEnabled?: boolean;
-  terrainShaderFogStrength?: number;
+  lodLevel?: number;
+  // Material properties (not uniforms - must be passed to TriplanarMaterial)
   terrainThreeFogEnabled?: boolean;
-  terrainFadeEnabled?: boolean;
-  terrainWetnessEnabled?: boolean;
-  terrainMossEnabled?: boolean;
-  terrainRoughnessMin?: number;
   terrainPolygonOffsetEnabled?: boolean;
   terrainPolygonOffsetFactor?: number;
   terrainPolygonOffsetUnits?: number;
-  terrainChunkTintEnabled?: boolean;
   terrainWireframeEnabled?: boolean;
-  terrainWeightsView?: string;
-  lodLevel?: number;
-  heightFogEnabled?: boolean;
-  heightFogStrength?: number;
-  heightFogRange?: number;
-  heightFogOffset?: number;
-  fogNear?: number;
-  fogFar?: number;
+  // Debug modes
+  terrainChunkTintEnabled?: boolean;
 }
 
 export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   chunk,
   terrainVersion,
-  sunDirection,
-  triplanarDetail = 1.0,
-  terrainShaderFogEnabled = true,
-  terrainShaderFogStrength = 0.9,
+  lodLevel = 0,
+  // Material properties (passed to TriplanarMaterial)
   terrainThreeFogEnabled = true,
-  terrainFadeEnabled = true,
-  terrainWetnessEnabled = true,
-  terrainMossEnabled = true,
-  terrainRoughnessMin = 0.0,
   terrainPolygonOffsetEnabled = false,
   terrainPolygonOffsetFactor = -1.0,
   terrainPolygonOffsetUnits = -1.0,
-  terrainChunkTintEnabled = false,
   terrainWireframeEnabled = false,
-  terrainWeightsView = 'off',
-  lodLevel = 0,
-  heightFogEnabled = true,
-  heightFogStrength = 0.35,
-  heightFogRange = 50.0,
-  heightFogOffset = 4.0,
-  fogNear = 40,
-  fogFar = 220
+  // Debug modes
+  terrainChunkTintEnabled = false,
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
@@ -133,11 +119,6 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     const frame = requestAnimationFrame(() => setShowLayers(true));
     return () => cancelAnimationFrame(frame);
   }, []);
-
-  // Suppress unused warnings for debug-only props
-  useEffect(() => {
-    void terrainFadeEnabled;
-  }, [terrainFadeEnabled]);
 
   // Track if this is an update (for debug logging)
   const prevVersion = useRef(chunk.terrainVersion);
@@ -297,25 +278,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
             <meshBasicMaterial color={chunkTintColor} wireframe={terrainWireframeEnabled} />
           ) : (
             <TriplanarMaterial
-              sunDirection={sunDirection}
-              triplanarDetail={triplanarDetail}
-              shaderFogEnabled={terrainShaderFogEnabled}
-              shaderFogStrength={terrainShaderFogStrength}
               threeFogEnabled={terrainThreeFogEnabled}
-              wetnessEnabled={terrainWetnessEnabled}
-              mossEnabled={terrainMossEnabled}
-              roughnessMin={terrainRoughnessMin}
               polygonOffsetEnabled={terrainPolygonOffsetEnabled}
               polygonOffsetFactor={terrainPolygonOffsetFactor}
               polygonOffsetUnits={terrainPolygonOffsetUnits}
-              weightsView={terrainWeightsView}
               wireframe={terrainWireframeEnabled}
-              heightFogEnabled={heightFogEnabled}
-              heightFogStrength={heightFogStrength}
-              heightFogRange={heightFogRange}
-              heightFogOffset={heightFogOffset}
-              fogNear={fogNear}
-              fogFar={fogFar}
             />
           )}
         </mesh>
@@ -330,7 +297,6 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
           renderOrder={1}
         >
           <WaterMaterial
-            sunDirection={sunDirection}
             shoreEdge={0.07}
             alphaBase={0.58}
             texStrength={0.12}
@@ -399,9 +365,9 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   if (prevProps.lodLevel !== nextProps.lodLevel) return false;
   if (prevProps.chunk.key !== nextProps.chunk.key) return false;
 
-  // For all other props, use shallow equality (they rarely change)
-  return prevProps.triplanarDetail === nextProps.triplanarDetail &&
-    prevProps.terrainShaderFogEnabled === nextProps.terrainShaderFogEnabled &&
-    prevProps.terrainWireframeEnabled === nextProps.terrainWireframeEnabled &&
-    prevProps.terrainChunkTintEnabled === nextProps.terrainChunkTintEnabled;
+  // Material property changes (these are the only remaining props that affect rendering)
+  return prevProps.terrainWireframeEnabled === nextProps.terrainWireframeEnabled &&
+    prevProps.terrainChunkTintEnabled === nextProps.terrainChunkTintEnabled &&
+    prevProps.terrainThreeFogEnabled === nextProps.terrainThreeFogEnabled &&
+    prevProps.terrainPolygonOffsetEnabled === nextProps.terrainPolygonOffsetEnabled;
 });

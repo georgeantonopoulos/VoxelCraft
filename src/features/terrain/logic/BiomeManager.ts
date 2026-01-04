@@ -30,6 +30,23 @@ export interface BiomeCaveSettings {
   surfaceBreachChance: number; // 0..1 chance of caves breaking surface (modulated by noise)
 }
 
+/**
+ * Fog settings per biome for atmospheric rendering.
+ * These create distinct visual identities for different environments.
+ */
+export interface BiomeFogSettings {
+  /** Density multiplier (0.5 = half fog, 2.0 = double). Higher humidity = more fog. */
+  densityMul: number;
+  /** Height fog multiplier. Jungles pool fog in valleys, mountains have clear air. */
+  heightFogMul: number;
+  /** RGB tint added to fog color (normalized -0.2 to 0.2). Desert = warm, snow = cool. */
+  tintR: number;
+  tintG: number;
+  tintB: number;
+  /** How much fog absorbs color saturation at distance (0 = none, 1 = full desaturation). */
+  aerialPerspective: number;
+}
+
 export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
   // Archetypes
   GRASSLANDS: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 }, // Wider, more breaches
@@ -62,6 +79,102 @@ export function getCaveSettings(biomeId: string): BiomeCaveSettings {
   return BIOME_CAVE_SETTINGS[biomeId] || BIOME_CAVE_SETTINGS.DEFAULT;
 }
 
+/**
+ * Biome-specific fog settings for atmospheric rendering.
+ * Each biome has distinct fog characteristics that enhance its identity.
+ */
+export const BIOME_FOG_SETTINGS: Record<string, BiomeFogSettings> = {
+  // --- Arid Biomes (Low humidity = distant haze, warm tint) ---
+  DESERT: {
+    densityMul: 0.6,        // Less fog overall
+    heightFogMul: 0.3,      // Minimal ground fog
+    tintR: 0.08, tintG: 0.04, tintB: -0.04,  // Warm sandy haze
+    aerialPerspective: 0.7  // Strong desaturation at distance
+  },
+  RED_DESERT: {
+    densityMul: 0.7,
+    heightFogMul: 0.4,
+    tintR: 0.12, tintG: 0.02, tintB: -0.06,  // Reddish dust
+    aerialPerspective: 0.75
+  },
+  SAVANNA: {
+    densityMul: 0.8,
+    heightFogMul: 0.5,
+    tintR: 0.06, tintG: 0.04, tintB: -0.02,  // Subtle warm
+    aerialPerspective: 0.5
+  },
+
+  // --- Humid Biomes (High humidity = thick mist, lush tint) ---
+  JUNGLE: {
+    densityMul: 1.4,        // Thick jungle mist
+    heightFogMul: 1.6,      // Heavy ground fog pooling
+    tintR: -0.02, tintG: 0.04, tintB: 0.0,   // Slight green tint
+    aerialPerspective: 0.3  // Maintains color vibrancy
+  },
+  THE_GROVE: {
+    densityMul: 1.1,
+    heightFogMul: 1.2,
+    tintR: 0.0, tintG: 0.02, tintB: 0.02,    // Neutral with slight cool
+    aerialPerspective: 0.4
+  },
+
+  // --- Cold Biomes (Crisp air, blue tint) ---
+  SNOW: {
+    densityMul: 0.7,        // Clear cold air
+    heightFogMul: 0.8,
+    tintR: -0.04, tintG: -0.02, tintB: 0.06, // Blue-white
+    aerialPerspective: 0.6
+  },
+  ICE_SPIKES: {
+    densityMul: 0.5,        // Very clear
+    heightFogMul: 0.6,
+    tintR: -0.06, tintG: 0.0, tintB: 0.1,    // Icy blue
+    aerialPerspective: 0.65
+  },
+
+  // --- Mountain Biomes (Very clear, slight blue) ---
+  MOUNTAINS: {
+    densityMul: 0.4,        // Crystal clear mountain air
+    heightFogMul: 0.3,      // Minimal ground fog at elevation
+    tintR: -0.02, tintG: 0.0, tintB: 0.04,   // Slight atmospheric blue
+    aerialPerspective: 0.8  // Strong aerial perspective (distant peaks fade)
+  },
+
+  // --- Neutral Biomes ---
+  PLAINS: {
+    densityMul: 1.0,
+    heightFogMul: 1.0,
+    tintR: 0.0, tintG: 0.0, tintB: 0.0,
+    aerialPerspective: 0.45
+  },
+  BEACH: {
+    densityMul: 1.1,        // Sea mist
+    heightFogMul: 1.3,      // Pools near water
+    tintR: 0.02, tintG: 0.02, tintB: 0.04,   // Salty blue
+    aerialPerspective: 0.4
+  },
+
+  // --- Special ---
+  SKY_ISLANDS: {
+    densityMul: 1.2,
+    heightFogMul: 2.0,      // Heavy cloud banks below islands
+    tintR: 0.0, tintG: 0.0, tintB: 0.02,
+    aerialPerspective: 0.35
+  },
+
+  // Default fallback
+  DEFAULT: {
+    densityMul: 1.0,
+    heightFogMul: 1.0,
+    tintR: 0.0, tintG: 0.0, tintB: 0.0,
+    aerialPerspective: 0.45
+  }
+};
+
+export function getFogSettings(biomeId: string): BiomeFogSettings {
+  return BIOME_FOG_SETTINGS[biomeId] || BIOME_FOG_SETTINGS.DEFAULT;
+}
+
 // Helper function for linear interpolation
 const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * t;
 
@@ -69,21 +182,60 @@ const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
 export class BiomeManager {
-  // Using a fixed seed for now, could be passed in
+  // World seed - configurable for different world generation
   private static seed = 1337;
   private static currentWorldType: WorldType = WorldType.DEFAULT;
+
+  /**
+   * Get the current seed value.
+   */
+  static getSeed(): number {
+    return this.seed;
+  }
+
+  /**
+   * Reinitialize all noise generators with a new seed.
+   * Call this when starting a new world or changing seeds.
+   *
+   * @param newSeed - The new seed value (positive integer)
+   */
+  static reinitialize(newSeed: number): void {
+    const normalizedSeed = Math.abs(Math.floor(newSeed)) || 1;
+
+    if (this.seed === normalizedSeed) {
+      // console.log('[BiomeManager] Seed unchanged, skipping reinitialization');
+      return;
+    }
+
+    this.seed = normalizedSeed;
+
+    // Recreate all noise functions with the new seed
+    this.tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
+    this.humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
+    this.continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
+    this.erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+
+    // console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
+  }
 
   static setWorldType(type: WorldType) {
     if (this.currentWorldType === type) return; // Avoid duplicate calls from StrictMode
     this.currentWorldType = type;
-    console.log('[BiomeManager] World Type set to:', type);
+    // console.log('[BiomeManager] World Type set to:', type);
+  }
+
+  /**
+   * Get the current world type.
+   */
+  static getWorldType(): WorldType {
+    return this.currentWorldType;
   }
 
   // 2D Noise functions for macro-climate
   private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
   private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
 
-  // NEW: Physical Reality noise layers
+  // Physical Reality noise layers
   // ContinentalNoise: Low frequency, defines Ocean vs Land.
   private static continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
   // ErosionNoise: Defines "Flatness" vs "Mountainous".
@@ -208,6 +360,19 @@ export class BiomeManager {
       return 'BEACH';
     }
     // --------------------------
+
+    // --- Mountain Biome ---
+    // High erosion indicates rugged, mountainous terrain.
+    // Use the same erosion01 threshold (0.75) that already boosts terrain amplitude.
+    // Must not override BEACH (coastal takes priority) or frozen biomes (keeps ICE_SPIKES).
+    const isMountainous = erosion01 > 0.75;
+    const isNotCoastal = !isCoastal;
+    const isNotFrozenBiome = baseBiome !== 'ICE_SPIKES'; // Allow SNOW->MOUNTAINS, keep ICE_SPIKES distinct
+
+    if (isMountainous && isNotCoastal && isNotFrozenBiome) {
+      return 'MOUNTAINS';
+    }
+    // ----------------------
 
     return baseBiome;
   }

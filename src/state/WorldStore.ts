@@ -116,6 +116,11 @@ interface WorldState {
    * Combined clear for performance during chunk unload.
    */
   clearChunkHotspots: (chunkKey: string) => void;
+
+  /**
+   * Reset all world state for a fresh start (new world).
+   */
+  resetAll: () => void;
 }
 
 export const useWorldStore = create<WorldState>((set, get) => ({
@@ -357,5 +362,17 @@ export const useWorldStore = create<WorldState>((set, get) => ({
       stickHotspots: nextSticks,
       rockHotspots: nextRocks
     };
+  }),
+
+  /**
+   * Reset all world state for a fresh start (new world).
+   */
+  resetAll: () => set({
+    playerParams: { x: 0, y: 0, z: 0, rotation: 0 },
+    entities: new Map(),
+    spatialMap: new Map(),
+    floraHotspots: new Map(),
+    stickHotspots: new Map(),
+    rockHotspots: new Map(),
   }),
 }));

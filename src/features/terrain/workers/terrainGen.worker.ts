@@ -28,9 +28,18 @@ ctx.onmessage = async (e: MessageEvent) => {
 
   try {
     if (type === 'CONFIGURE') {
-      const { worldType } = payload;
-      BiomeManager.setWorldType(worldType);
-      console.log('[terrainGen.worker] Configured WorldType:', worldType);
+      const { worldType, seed } = payload;
+      if (seed !== undefined) {
+        BiomeManager.reinitialize(seed);
+        // Also reinitialize Perlin noise
+        const { initializeNoise } = await import('@core/math/noise');
+        initializeNoise(seed);
+        console.log('[terrainGen.worker] Configured seed:', seed);
+      }
+      if (worldType !== undefined) {
+        BiomeManager.setWorldType(worldType);
+        console.log('[terrainGen.worker] Configured WorldType:', worldType);
+      }
       return;
     }
 

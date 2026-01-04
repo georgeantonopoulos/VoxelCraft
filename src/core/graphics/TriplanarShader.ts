@@ -181,6 +181,13 @@ export const triplanarFragmentShader = `
   uniform float uGIEnabled;       // Toggle for GI (0 = off, 1 = on)
   uniform float uGIIntensity;     // GI strength multiplier
 
+  // Biome-aware fog uniforms
+  uniform float uBiomeFogDensityMul;  // Density multiplier from biome
+  uniform float uBiomeFogHeightMul;   // Height fog multiplier from biome
+  uniform vec3 uBiomeFogTint;         // RGB tint offset from biome
+  uniform float uBiomeFogAerial;      // Aerial perspective strength
+  uniform float uBiomeFogEnabled;     // Toggle for biome fog effects
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -415,30 +422,65 @@ export const triplanarFragmentShader = `
     } 
     if (uShaderFogEnabled > 0.5) {
       float fogDist = length(vWorldPosition - cameraPosition);
-      
-      // Exponential Squared Fog (Tip 1)
-      // d = 4.0 / fogRange ensures near-full opacity at the far distance
+
+      // === BIOME-AWARE FOG SYSTEM ===
+
+      // 1. Base density from biome (deserts thin, jungles thick)
+      float biomeDensity = uBiomeFogEnabled > 0.5 ? uBiomeFogDensityMul : 1.0;
+
+      // 2. Exponential Squared Fog with biome modulation
       float fogRange = max(uFogFar - uFogNear, 1.0);
-      float density = 4.0 / fogRange; 
+      float density = (4.0 / fogRange) * biomeDensity;
       float distFactor = max(0.0, fogDist - uFogNear);
       float baseFog = 1.0 - exp(-pow(distFactor * density, 2.0));
-      
+
       float fogAmt = baseFog;
 
-      // Height Fog logic (Tip 3/4)
+      // 3. Height Fog with biome modulation and valley pooling
       if (uHeightFogEnabled > 0.5) {
-          // Height factor: 1.0 at floor, 0.0 at ceiling
+          float biomeHeightMul = uBiomeFogEnabled > 0.5 ? uBiomeFogHeightMul : 1.0;
+
+          // Base height factor: 1.0 at floor, 0.0 at ceiling
           float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPosition.y);
-          
-          // Distance factor: Don't fog the player's feet. 
+
+          // Valley pooling: use world-space noise to create natural fog accumulation
+          // Low-frequency noise simulates fog pooling in terrain depressions
+          vec4 valleyNoise = texture(uNoiseTexture, vec3(vWorldPosition.xz * 0.008, 0.1));
+          float valleyPool = valleyNoise.r * 0.4 + 0.6; // 0.6 to 1.0 range
+
+          // Boost factor in valleys (lower areas get more fog)
+          float valleyBoost = mix(1.0, valleyPool * 1.3, heightFactor);
+
+          // Distance factor: Don't fog the player's feet.
           // Fade in height fog from 5m to 25m.
           float hDistFactor = smoothstep(5.0, 25.0, fogDist);
-          
-          float heightFog = heightFactor * uHeightFogStrength * hDistFactor;
+
+          float heightFog = heightFactor * uHeightFogStrength * biomeHeightMul * valleyBoost * hDistFactor;
           fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);
       }
 
-      col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
+      // 4. Aerial Perspective (desaturation with distance, independent of fog opacity)
+      // This simulates how air scatters light, making distant objects appear washed out
+      if (uBiomeFogEnabled > 0.5 && uBiomeFogAerial > 0.01) {
+          float aerialDist = smoothstep(uFogNear * 0.5, uFogFar * 0.8, fogDist);
+          float aerialStrength = aerialDist * uBiomeFogAerial;
+
+          // Desaturate: blend toward luminance
+          float luma = dot(col, vec3(0.299, 0.587, 0.114));
+          vec3 desaturated = vec3(luma);
+          col = mix(col, desaturated, aerialStrength * 0.6);
+
+          // Shift toward sky color slightly
+          col = mix(col, uFogColor, aerialStrength * 0.15);
+      }
+
+      // 5. Biome color tinting
+      vec3 tintedFogColor = uFogColor;
+      if (uBiomeFogEnabled > 0.5) {
+          tintedFogColor = clamp(uFogColor + uBiomeFogTint, 0.0, 1.0);
+      }
+
+      col = mix(col, tintedFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     csm_Emissive = vec3(accEmission * accColor);
