@@ -14,8 +14,9 @@
  * - View layer subscribes to events, doesn't directly access internal state
  */
 
-import { ChunkState } from '@/types';
+import { ChunkState, MaterialType } from '@/types';
 import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET } from '@/constants';
+import { saveChunkModificationsBulk, getChunkModifications } from '@/state/WorldDB';
 
 // Event types emitted by ChunkDataManager
 export type ChunkEventType = 'chunk-ready' | 'chunk-updated' | 'chunk-remove' | 'chunk-dirty';
@@ -32,6 +33,7 @@ interface CacheEntry {
   chunk: ChunkState;
   lastAccess: number;
   isDirty: boolean;
+  modifiedVoxels: Set<number>; // Track which voxel indices were modified
 }
 
 class ChunkDataManager {
@@ -106,6 +108,7 @@ class ChunkDataManager {
         chunk,
         lastAccess: now,
         isDirty: false,
+        modifiedVoxels: new Set(),
       });
       this.emit('chunk-ready', { key, chunk });
 
@@ -185,14 +188,23 @@ class ChunkDataManager {
   /**
    * Mark a chunk as modified by player action.
    * This ensures it will be persisted and not evicted.
+   *
+   * @param voxelIndices Optional array of modified voxel indices for precise persistence
    */
-  markDirty(key: string): void {
+  markDirty(key: string, voxelIndices?: number[]): void {
     const entry = this.chunks.get(key);
     if (!entry) return;
 
     if (!entry.isDirty) {
       entry.isDirty = true;
       this.emit('chunk-dirty', { key, chunk: entry.chunk });
+    }
+
+    // Track modified voxels if provided
+    if (voxelIndices) {
+      for (const idx of voxelIndices) {
+        entry.modifiedVoxels.add(idx);
+      }
     }
 
     this.queuePersistence(key);
@@ -227,6 +239,8 @@ class ChunkDataManager {
         if (mod.material !== undefined && chunk.material) {
           chunk.material[idx] = mod.material;
         }
+        // Track this voxel as modified for persistence
+        entry.modifiedVoxels.add(idx);
       }
     }
 
@@ -331,16 +345,28 @@ class ChunkDataManager {
     const entry = this.chunks.get(key);
     if (!entry || !entry.isDirty) return;
 
-    try {
-      // TODO: Implement IndexedDB persistence
-      // await WorldDB.saveChunk(key, {
-      //   density: entry.chunk.density,
-      //   material: entry.chunk.material,
-      //   terrainVersion: entry.chunk.terrainVersion,
-      //   lastModified: Date.now(),
-      // });
+    // Skip if no specific voxels were tracked as modified
+    // (this means only metadata changed, not terrain)
+    if (entry.modifiedVoxels.size === 0) return;
 
-      console.log(`[ChunkDataManager] Would persist chunk ${key} (not implemented yet)`);
+    try {
+      const chunk = entry.chunk;
+      const [cxStr, czStr] = key.split(',');
+      const cx = parseInt(cxStr);
+      const cz = parseInt(czStr);
+
+      // Build modifications array from tracked voxels
+      const modifications: Array<{ voxelIndex: number; material: MaterialType; density: number }> = [];
+      for (const idx of entry.modifiedVoxels) {
+        modifications.push({
+          voxelIndex: idx,
+          material: chunk.material[idx] as MaterialType,
+          density: chunk.density[idx]
+        });
+      }
+
+      // Save to IndexedDB
+      await saveChunkModificationsBulk(cx, cz, modifications);
 
       // Note: We intentionally don't clear isDirty here.
       // The chunk remains dirty in memory so we know it has player modifications.
@@ -374,20 +400,42 @@ class ChunkDataManager {
   }
 
   /**
-   * Load a chunk from IndexedDB if it was previously modified.
-   * Returns null if no persisted data exists.
+   * Load and apply persisted modifications to a chunk.
+   * Call this after a chunk is procedurally generated to restore player modifications.
+   *
+   * @returns true if modifications were applied, false if none existed
    */
-  async loadPersistedChunk(key: string): Promise<Partial<ChunkState> | null> {
-    // TODO: Implement IndexedDB loading
-    // const saved = await WorldDB.getChunk(key);
-    // if (saved) {
-    //   return {
-    //     density: saved.density,
-    //     material: saved.material,
-    //     terrainVersion: saved.terrainVersion,
-    //   };
-    // }
-    return null;
+  async applyPersistedModifications(key: string): Promise<boolean> {
+    const entry = this.chunks.get(key);
+    if (!entry) return false;
+
+    try {
+      const [cxStr, czStr] = key.split(',');
+      const cx = parseInt(cxStr);
+      const cz = parseInt(czStr);
+
+      const modifications = await getChunkModifications(cx, cz);
+      if (modifications.length === 0) return false;
+
+      const chunk = entry.chunk;
+
+      // Apply each modification
+      for (const mod of modifications) {
+        if (mod.voxelIndex >= 0 && mod.voxelIndex < chunk.density.length) {
+          chunk.density[mod.voxelIndex] = mod.density;
+          chunk.material[mod.voxelIndex] = mod.material;
+          entry.modifiedVoxels.add(mod.voxelIndex);
+        }
+      }
+
+      // Mark as dirty since it has player modifications
+      entry.isDirty = true;
+
+      return true;
+    } catch (e) {
+      console.error(`[ChunkDataManager] Failed to load persisted modifications for ${key}:`, e);
+      return false;
+    }
   }
 
   // === HELPERS ===

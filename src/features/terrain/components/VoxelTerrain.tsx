@@ -954,7 +954,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     simulationManager.setCallback((updates: SimUpdate[]) => {
       updates.forEach(update => {
-        const chunk = chunkDataRef.current.get(update.key);
+        const chunk = chunkDataManager.getChunk(update.key);
         if (chunk) {
           chunk.material.set(update.material);
           remeshQueue.current.add(update.key);
@@ -1008,6 +1008,62 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     return () => pool.terminate();
   }, [worldType]);
 
+  // Phase 5: Subscribe to ChunkDataManager events for cleaner separation
+  // This centralizes event handling for chunk updates and removals.
+  // Note: 'chunk-ready' events are NOT used here because initial load logic
+  // requires access to mountQueue and initialLoadTriggered which are refs.
+  // Instead, 'chunk-updated' handles remesh completions and 'chunk-dirty' handles
+  // player modifications that need re-rendering.
+  useEffect(() => {
+    // When a chunk is updated (remesh complete, etc.), trigger a re-render
+    const unsubUpdated = chunkDataManager.on('chunk-updated', ({ key }) => {
+      // Only queue increment if chunk is currently visible (has a version entry)
+      // The worker message handler already calls queueVersionIncrement for REMESHED,
+      // so this is a fallback for any other update paths.
+      if (chunkDataRef.current.has(key)) {
+        queueVersionIncrement(key);
+      }
+    });
+
+    // When a chunk is marked dirty (player modification), ensure it re-renders
+    const unsubDirty = chunkDataManager.on('chunk-dirty', ({ key }) => {
+      if (chunkDataRef.current.has(key)) {
+        // Queue remesh for dirty chunks so terrain modifications are visible
+        remeshQueue.current.add(key);
+      }
+    });
+
+    return () => {
+      unsubUpdated();
+      unsubDirty();
+    };
+  }, []);
+
+  // Save dirty chunks on page hide/unload to persist player modifications
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Use sendBeacon-compatible approach: trigger persistence queue flush
+        // Note: saveAllDirty is async but we can't await it here - the debounced
+        // persistence should have already saved most changes, this is just a safety net
+        chunkDataManager.saveAllDirty();
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      // Synchronous attempt to save (may not complete if page closes too fast)
+      chunkDataManager.saveAllDirty();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
   // Determine a stable target for initial loading (don't chase moving camera)
   const initialLoadTarget = useMemo(() => {
     if (initialSpawnPos) return { x: initialSpawnPos[0], z: initialSpawnPos[2] };
@@ -1028,7 +1084,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // All essential chunks need terrain data, but only spawn chunk needs collider
     // (progressive collider loading expands radius after initial load)
     const allReady = essentialKeys.every(key => {
-      const c = chunkDataRef.current.get(key);
+      const c = chunkDataManager.getChunk(key);
       if (!c || c.terrainVersion < 0) return false;
       // Only require collider for spawn chunk - player needs to stand on something
       if (key === spawnChunkKey) return c.colliderEnabled;
@@ -1226,7 +1282,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         addRadius(px + offsetCx, pz + offsetCz, colliderRadius);
 
         for (const key of candidates) {
-          const c = chunkDataRef.current.get(key);
+          const c = chunkDataManager.getChunk(key);
           if (c && !c.colliderEnabled && !colliderEnablePending.current.has(key)) {
             colliderEnablePending.current.add(key);
             colliderEnableQueue.current.push(key);
@@ -1416,7 +1472,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       } else if (type === 'REMESHED') {
         const { key } = payload;
-        const current = chunkDataRef.current.get(key);
+        const current = chunkDataManager.getChunk(key);
         if (current) {
           const updatedChunk = {
             ...current,
@@ -1466,7 +1522,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (!key) break;
 
         colliderEnablePending.current.delete(key);
-        const current = chunkDataRef.current.get(key);
+        const current = chunkDataManager.getChunk(key);
         if (current && !current.colliderEnabled) {
           // Check if this chunk is directly under the player (critical) or adjacent (can defer)
           const [cxStr, czStr] = key.split(',');
@@ -1478,10 +1534,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           );
 
           const enableColliderForKey = (k: string) => {
-            const latest = chunkDataRef.current.get(k);
+            const latest = chunkDataManager.getChunk(k);
             if (latest && !latest.colliderEnabled) {
               const updated = { ...latest, colliderEnabled: true };
               chunkDataRef.current.set(k, updated);
+              chunkDataManager.addChunk(k, updated); // Keep both in sync
             }
           };
 
@@ -1547,7 +1604,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const key = iterator.next().value as string | undefined;
         if (!key) break;
         remeshQueue.current.delete(key);
-        const chunk = chunkDataRef.current.get(key);
+        const chunk = chunkDataManager.getChunk(key);
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
@@ -1650,7 +1707,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
       const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
         const key = hit.key;
-        const chunk = chunkDataRef.current.get(key);
+        const chunk = chunkDataManager.getChunk(key);
         if (!chunk?.floraPositions) return;
         const positions = chunk.floraPositions;
         if (positions.length < 4) return;
@@ -1669,7 +1726,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       };
 
       const removeGround = (hit: NonNullable<typeof groundHit>) => {
-        const chunk = chunkDataRef.current.get(hit.key);
+        const chunk = chunkDataManager.getChunk(hit.key);
         const positions = chunk?.[hit.array];
         if (!chunk || !positions || positions.length < 8) return;
         const next = new Float32Array(positions);
@@ -1836,7 +1893,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
             // Tree Damage Logic (from physics hit)
             const { chunkKey, treeIndex } = userData;
-            const chunk = chunkDataRef.current.get(chunkKey);
+            const chunk = chunkDataManager.getChunk(chunkKey);
             if (chunk && chunk.treePositions) {
               const posIdx = treeIndex;
               const x = chunk.treePositions[posIdx] + chunk.cx * CHUNK_SIZE_XZ;
@@ -1996,7 +2053,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             if (h <= 0) {
               // Break Natural Rock!
               const removeGround = (hit: NonNullable<typeof groundHit>) => {
-                const chunk = chunkDataRef.current.get(hit.key);
+                const chunk = chunkDataManager.getChunk(hit.key);
                 const positions = chunk?.[hit.array];
                 if (!chunk || !positions || positions.length < 8) return;
                 const next = new Float32Array(positions);
@@ -2078,7 +2135,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         let anyFloraHit = false;
 
         for (const key of checkKeys) {
-          const chunk = chunkDataRef.current.get(key);
+          const chunk = chunkDataManager.getChunk(key);
           if (!chunk) continue;
 
           const chunkOriginX = chunk.cx * CHUNK_SIZE_XZ;
@@ -2369,7 +2426,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       for (let cx = minCx; cx <= maxCx; cx++) {
         for (let cz = minCz; cz <= maxCz; cz++) {
           const key = `${cx},${cz}`;
-          const chunk = chunkDataRef.current.get(key);
+          const chunk = chunkDataManager.getChunk(key);
           if (chunk) {
             const localX = hitPoint.x - (cx * CHUNK_SIZE_XZ);
             const localY = hitPoint.y;
@@ -2429,7 +2486,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
 
         affectedChunks.forEach(key => {
-          const chunk = chunkDataRef.current.get(key);
+          const chunk = chunkDataManager.getChunk(key);
           const metadata = metadataDB.getChunk(key);
           if (chunk && metadata) {
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
@@ -2499,7 +2556,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   return (
     <group>
       {Object.keys(chunkVersions).map(key => {
-        const chunk = chunkDataRef.current.get(key);
+        const chunk = chunkDataManager.getChunk(key);
         if (!chunk) return null;
 
         return (

@@ -76,9 +76,25 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - Chunk sizing/padding lives in `src/constants.ts`:
   - `CHUNK_SIZE_XZ = 32`, `CHUNK_SIZE_Y = 128`, `PAD = 2`, `ISO_LEVEL = 0.5`.
   - `TOTAL_SIZE_XZ = CHUNK_SIZE_XZ + PAD * 2`, `TOTAL_SIZE_Y = CHUNK_SIZE_Y + PAD * 2`.
-- The terrain mesh uses fixed “material weight channels”:
+- The terrain mesh uses fixed "material weight channels":
   - Mesher output: `src/features/terrain/logic/mesher.ts` produces `matWeightsA`–`D`.
   - Render binding: `src/features/terrain/components/ChunkMesh.tsx` maps them to geometry attrs `aMatWeightsA`–`D`.
+
+## Chunk Data Management (ChunkDataManager)
+
+**Single source of truth** for all chunk data (`src/core/terrain/ChunkDataManager.ts`):
+- **LRU Cache**: Keeps ~150 chunks in memory (3x render distance squared). Clean chunks can be evicted and regenerated.
+- **Dirty Tracking**: Player-modified chunks (digging, flora pickup, tree removal) are marked dirty and NEVER evicted until persisted.
+- **Event System**: Emits `chunk-ready`, `chunk-updated`, `chunk-remove`, `chunk-dirty` for view layer synchronization.
+- **Persistence**: Debounced (2s) bulk persistence to WorldDB. `visibilitychange`/`beforeunload` handlers ensure dirty chunks are saved.
+- **API**:
+  - `getChunk(key)`: Retrieve chunk (updates LRU). Returns undefined if not in cache.
+  - `addChunk(key, chunk)`: Add/update chunk. Triggers eviction if over capacity.
+  - `markDirty(key, voxelIndices?)`: Mark chunk dirty (prevents eviction, queues persistence).
+  - `modifyTerrain(key, modifications)`: Apply voxel changes and auto-mark dirty.
+  - `hideChunk(key)`: Signal chunk no longer visible (persists if dirty).
+- **Critical Rule**: NEVER directly mutate `chunk.density` or `chunk.material`. Always use `chunkDataManager.markDirty()` or `modifyTerrain()`.
+- **Debug Access**: `window.__chunkDataManager.getStats()` returns `{ totalChunks, dirtyChunks, pendingPersistence, memoryEstimateMB }`.
 
 ## Workers & Messages (verified)
 
@@ -177,6 +193,19 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-04: **ChunkDataManager Integration (6-phase)**.
+  - **Goal**: Centralize chunk data ownership, implement LRU cache, and add dirty tracking for player modifications.
+  - **Changes**:
+    1. Created `ChunkDataManager` (`src/core/terrain/ChunkDataManager.ts`) as single source of truth for chunk data.
+    2. LRU cache (maxSize=150) evicts clean chunks when over capacity. Dirty chunks protected from eviction.
+    3. Dirty tracking for player modifications (digging, flora pickup, tree removal, rock smash).
+    4. Event system (`chunk-ready`, `chunk-updated`, `chunk-remove`, `chunk-dirty`) for view layer synchronization.
+    5. IndexedDB persistence via `WorldDB.saveChunkModificationsBulk()` (debounced 2s). Only modified voxels persisted.
+    6. `VoxelTerrain.tsx` refactored to use `chunkDataManager.getChunk()` throughout (40+ call sites).
+    7. `visibilitychange`/`beforeunload` handlers ensure dirty chunks saved before exit.
+  - **Files**: `ChunkDataManager.ts` (new), `WorldDB.ts` (add bulk save/clear), `VoxelTerrain.tsx` (integration), `FrameProfiler.ts` (disable noisy logging).
+  - **Debug**: `window.__chunkDataManager.getStats()` for cache metrics.
 
 - 2026-01-03: **React Reconciliation Performance Fix**.
   - **Issue**: 60-90ms frame spikes labeled "unknown" in profiler caused by multiple `setChunkVersions` calls per frame triggering React reconciliation.

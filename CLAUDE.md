@@ -22,11 +22,15 @@ VoxelCraft is a voxel terrain engine using React Three Fiber, Three.js, and Rapi
 
 ```
 Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
-    → Check IndexedDB cache (ChunkCache.ts)
+    → ChunkDataManager checks memory cache (LRU, maxSize=150)
+    → If miss: Check IndexedDB for player modifications (WorldDB)
     → If miss: Worker generates chunk via 3D Simplex noise
+    → Apply persisted modifications if they exist
     → Surface Nets meshing produces smooth geometry
     → Trimesh colliders created (throttled via colliderEnableQueue)
     → ChunkMesh mounted with TriplanarMaterial
+    → Player modifications tracked as dirty in ChunkDataManager
+    → Dirty chunks persisted to IndexedDB (debounced 2s)
 ```
 
 ### Key Directories
@@ -58,6 +62,13 @@ Message format: `{ type: string, payload: {...} }`. Use transferables for Float3
 - `EntityHistoryStore` - Health/damage tracking
 - `ChunkCache` / `WorldDB` - IndexedDB persistence
 
+**ChunkDataManager** (src/core/terrain/ChunkDataManager.ts):
+- Single source of truth for all chunk data
+- LRU cache (maxSize=150) with dirty chunk protection
+- Event system (chunk-ready, chunk-updated, chunk-remove, chunk-dirty)
+- Dirty tracking for player-modified chunks (digging, flora pickup, tree removal)
+- Debounced persistence to WorldDB (2s delay)
+
 ### Material System
 
 TriplanarMaterial uses custom shaders with:
@@ -86,16 +97,18 @@ Changing these breaks mesher output dimensions and worker communication.
 - `?nosim` - Disable simulation worker (performance isolation)
 - `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
+- `window.__chunkDataManager.getStats()` - View chunk cache stats (total, dirty, pending persistence, memory MB)
 
 ## Key Invariants
 
 See `AGENTS.md` for the complete list. Most critical:
 
-1. **Collider throttling**: Trimesh creation causes 10-30ms stalls. Always use `colliderEnableQueue`.
-2. **CustomShaderMaterial**: Use `three-custom-shader-material/vanilla` for class usage. Never redeclare `vNormal` or `vViewDir`.
-3. **Material channels**: Mesher outputs matWeightsA-D bound in ChunkMesh.tsx. Shader expects this structure.
-4. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
-5. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
+1. **Chunk data ownership**: ChunkDataManager is the single source of truth. Always use `chunkDataManager.getChunk(key)` to access chunk data. Never mutate chunk data directly - use `markDirty()` or `modifyTerrain()`.
+2. **Collider throttling**: Trimesh creation causes 10-30ms stalls. Always use `colliderEnableQueue`.
+3. **CustomShaderMaterial**: Use `three-custom-shader-material/vanilla` for class usage. Never redeclare `vNormal` or `vViewDir`.
+4. **Material channels**: Mesher outputs matWeightsA-D bound in ChunkMesh.tsx. Shader expects this structure.
+5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
+6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
 
 ## Common Pitfalls
 

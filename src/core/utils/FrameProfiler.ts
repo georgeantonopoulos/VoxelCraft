@@ -99,15 +99,15 @@ class FrameProfiler {
 
     const now = performance.now();
 
-    // End previous frame spike detection
-    if (this.frameStartTime > 0) {
-      const frameTime = now - this.frameStartTime;
-      if (frameTime > this.spikeThresholdMs && now - this.lastSpikeLog > 500) {
-        this.lastSpikeLog = now;
-        const labels = this.spikeLabelsThisFrame.join(', ') || 'unknown';
-        console.warn(`[FrameProfiler] SPIKE: ${frameTime.toFixed(1)}ms frame (operations: ${labels})`);
-      }
-    }
+    // End previous frame spike detection (disabled - too noisy)
+    // if (this.frameStartTime > 0) {
+    //   const frameTime = now - this.frameStartTime;
+    //   if (frameTime > this.spikeThresholdMs && now - this.lastSpikeLog > 500) {
+    //     this.lastSpikeLog = now;
+    //     const labels = this.spikeLabelsThisFrame.join(', ') || 'unknown';
+    //     console.warn(`[FrameProfiler] SPIKE: ${frameTime.toFixed(1)}ms frame (operations: ${labels})`);
+    //   }
+    // }
 
     // Start new frame
     this.frameStartTime = now;
