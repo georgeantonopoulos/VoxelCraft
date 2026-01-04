@@ -53,7 +53,7 @@ const getSharedTerrainMaterial = () => {
     uWeightsView: { value: 0 },
     // GI uniforms
     uGIEnabled: { value: 1.0 },
-    uGIIntensity: { value: 1.2 },
+    uGIIntensity: { value: 1.35 },
     uTriplanarDetail: sharedUniforms.uTriplanarDetail,
     uShaderFogEnabled: sharedUniforms.uShaderFogEnabled,
     uShaderFogStrength: sharedUniforms.uShaderFogStrength,
