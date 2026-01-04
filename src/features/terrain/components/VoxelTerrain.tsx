@@ -1720,6 +1720,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
         const updatedChunk = { ...chunk, floraPositions: next };
         chunkDataRef.current.set(key, updatedChunk);
+        chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
         queueVersionIncrement(key);
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
@@ -1763,6 +1764,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         next[hit.index + 1] = -10000;
         const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
         chunkDataRef.current.set(hit.key, updatedChunk);
+        chunkDataManager.addChunk(hit.key, updatedChunk); // Sync to manager
         chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
         queueVersionIncrement(hit.key);
 
@@ -1950,6 +1952,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
                 const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current.set(chunkKey, updatedChunk);
+                chunkDataManager.addChunk(chunkKey, updatedChunk); // Sync to manager
                 chunkDataManager.markDirty(chunkKey); // Phase 2: Track tree removal
                 queueVersionIncrement(chunkKey);
 
@@ -2086,6 +2089,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 next[hit.index + 1] = -10000;
                 const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
                 chunkDataRef.current.set(hit.key, updatedChunk);
+                chunkDataManager.addChunk(hit.key, updatedChunk); // Sync to manager
                 chunkDataManager.markDirty(hit.key); // Phase 2: Track natural rock smash
                 queueVersionIncrement(hit.key);
                 useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
@@ -2281,6 +2285,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
               const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current.set(key, updatedChunk);
+              chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
               chunkDataManager.markDirty(key); // Phase 2: Track tree removal (terrain raycast)
               queueVersionIncrement(key);
             }
@@ -2356,6 +2361,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               // VegetationLayer updates purely on the 'vegetationData' prop reference change.
               const updatedChunk = { ...chunk, vegetationData: newVegData };
               chunkDataRef.current.set(key, updatedChunk);
+              chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
               chunkDataManager.markDirty(key); // Phase 2: Track vegetation removal
               queueVersionIncrement(key);
             }

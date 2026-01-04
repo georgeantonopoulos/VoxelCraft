@@ -234,8 +234,13 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         return;
       }
 
-      // Right Click: Throw
+      // Right Click: BUILD or Throw
       if (e.button === 2) {
+        // BUILD with pickaxe or digging tools
+        if (pickaxeSelected || capabilities.canDig) {
+          setInteractionAction('BUILD');
+          return;
+        }
         if (tryThrowSelected()) return;
       }
     };
