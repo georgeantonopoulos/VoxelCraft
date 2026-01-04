@@ -37,7 +37,10 @@ Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
 ### Key Directories
 
 - `src/core/` - Shared engine: materials, shaders, worker pools, math utilities, lighting
-- `src/features/terrain/` - Chunk generation, meshing, streaming (VoxelTerrain.tsx, mesher.ts)
+- `src/features/terrain/` - Chunk generation, meshing, streaming
+  - `components/VoxelTerrain.tsx` - Chunk streaming and rendering orchestration
+  - `hooks/useTerrainInteraction.ts` - Dig, build, chop, smash interaction logic
+  - `logic/mesher.ts`, `raycastUtils.ts` - Meshing and raycast utilities
 - `src/features/flora/` - Trees, vegetation, particle systems
 - `src/features/player/` - Movement, input, camera
 - `src/features/interaction/` - Tools, digging, building, inventory

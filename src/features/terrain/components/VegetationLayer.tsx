@@ -283,8 +283,10 @@ const VegetationBatch: React.FC<{
       const dummyUvs = new Float32Array(posCount * 2);
       instGeo.setAttribute('uv', new THREE.BufferAttribute(dummyUvs, 2));
     }
-    instGeo.boundingBox = new THREE.Box3(new THREE.Vector3(-2, -40, -2), new THREE.Vector3(34, 40, 34));
-    instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
+    // Match terrain bounding volume to prevent vegetation disappearing on tall terrain
+    // Y range: MESH_Y_OFFSET (-35) to MESH_Y_OFFSET + CHUNK_SIZE_Y (-35 + 128 = 93)
+    instGeo.boundingBox = new THREE.Box3(new THREE.Vector3(-2, -40, -2), new THREE.Vector3(34, 100, 34));
+    instGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 29, 16), 70);
     return instGeo;
   }, [batch.geometry]);
 

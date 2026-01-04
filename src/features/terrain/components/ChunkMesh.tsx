@@ -237,6 +237,12 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
   useEffect(() => {
     if (colliderEnabled) {
+      // Initial load chunks (spawnedAt === 0) need immediate colliders so player doesn't fall through
+      const isInitialLoadChunk = chunk.spawnedAt === 0;
+      if (isInitialLoadChunk) {
+        setDeferredColliderEnabled(true);
+        return;
+      }
       // Stagger collider creation heavily to avoid BVH construction stutters
       // Use longer delays - BVH takes 50-200ms, so we need significant gaps between colliders
       // LOD 0 = 500ms base delay, +200ms per distance level
@@ -248,7 +254,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     } else {
       setDeferredColliderEnabled(false);
     }
-  }, [colliderEnabled, lodLevel]);
+  }, [colliderEnabled, lodLevel, chunk.spawnedAt]);
 
   useEffect(() => {
     return () => {

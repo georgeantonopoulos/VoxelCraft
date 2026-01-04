@@ -8,7 +8,7 @@ import { useInventoryStore } from '@/state/InventoryStore';
 import { STICK_SLOTS } from '../CraftingData';
 import { ItemType } from '@/types';
 
-import { StickMesh, StoneMesh, ShardMesh } from '@/features/interaction/components/UniversalTool';
+import { StickMesh, StoneMesh, ShardMesh, FloraMesh } from '@/features/interaction/components/UniversalTool';
 
 
 // The "Ghost" Slot
@@ -199,6 +199,7 @@ export const CraftingInterface: React.FC = () => {
                     {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh scale={0.6} />}
                     {attachedItems[slot.id] === ItemType.STONE && <StoneMesh scale={0.5} />}
                     {attachedItems[slot.id] === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
+                    {attachedItems[slot.id] === ItemType.FLORA && <FloraMesh scale={0.4} />}
 
                     {/* Subtle highlight ring for detachability */}
                     <mesh rotation={[Math.PI / 2, 0, 0]}>

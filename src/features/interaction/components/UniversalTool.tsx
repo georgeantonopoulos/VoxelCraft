@@ -76,6 +76,23 @@ export const ShardMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, 
         />
     </mesh>
 );
+ 
+export const FloraMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => (
+    <group scale={scale}>
+        <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <sphereGeometry args={[0.2, isThumbnail ? 8 : 16, isThumbnail ? 8 : 16]} />
+            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={1.3} toneMapped={false} />
+        </mesh>
+        <mesh position={[0.12, -0.08, 0.08]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <sphereGeometry args={[0.12, isThumbnail ? 6 : 12, isThumbnail ? 6 : 12]} />
+            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
+        </mesh>
+        <mesh position={[-0.12, -0.12, -0.04]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <sphereGeometry args={[0.1, isThumbnail ? 6 : 12, isThumbnail ? 6 : 12]} />
+            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
+        </mesh>
+    </group>
+);
 
 export const AxeHeadMesh = () => (
     <group>
@@ -179,18 +196,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
             case ItemType.FLORA:
                 return (
                     <group scale={thumbScale}>
-                        <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                            <sphereGeometry args={[0.2, 16, 16]} />
-                            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={1.3} toneMapped={false} />
-                        </mesh>
-                        <mesh position={[0.12, -0.08, 0.08]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                            <sphereGeometry args={[0.12, 12, 12]} />
-                            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
-                        </mesh>
-                        <mesh position={[-0.12, -0.12, -0.04]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                            <sphereGeometry args={[0.1, 12, 12]} />
-                            <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={0.5} toneMapped={false} />
-                        </mesh>
+                        <FloraMesh isThumbnail={isThumbnail} />
                     </group>
                 );
             default: return null;
@@ -215,10 +221,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                         {attachmentType === ItemType.STICK && <StickMesh scale={0.4} height={0.5} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.FLORA && (
                             <group scale={0.4}>
-                                <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                                    <sphereGeometry args={[0.2, isThumbnail ? 8 : 16, isThumbnail ? 8 : 16]} />
-                                    <meshStandardMaterial color="#111" emissive="#00FFFF" emissiveIntensity={1.3} toneMapped={false} />
-                                </mesh>
+                                <FloraMesh isThumbnail={isThumbnail} />
                                 {/* Only add individual attachment light if not a thumbnail and not first person? 
                                     Actually, for now, strictly NO lights in thumbnails. */}
                                 {!isThumbnail && (

@@ -64,11 +64,11 @@ const App: React.FC = () => {
   const [worldType, setWorldType] = useState<WorldType | null>(null);
 
   // Wait for colliders to be created after terrain loads
-  // ChunkMesh defers collider creation by 500-800ms to avoid BVH stutter,
-  // so we need to wait before spawning the player to prevent falling through
+  // Initial load chunks now create colliders immediately (spawnedAt === 0 in ChunkMesh),
+  // but we still add a small delay to ensure Rapier has processed the trimesh BVH
   useEffect(() => {
     if (terrainLoaded && !collidersReady) {
-      const handle = setTimeout(() => setCollidersReady(true), 700);
+      const handle = setTimeout(() => setCollidersReady(true), 150);
       return () => clearTimeout(handle);
     }
   }, [terrainLoaded, collidersReady]);

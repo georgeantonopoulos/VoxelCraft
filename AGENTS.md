@@ -42,7 +42,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 ## Repo Map (high-signal)
 
 - `src/core/`: Common engine utilities, math, materials, and generic worker pools (e.g. `TriplanarMaterial.tsx`, `WorkerPool.ts`).
-- `src/features/terrain/`: Voxel generation, meshing, and chunk streaming logic (`VoxelTerrain.tsx`, `mesher.ts`).
+- `src/features/terrain/`: Voxel generation, meshing, and chunk streaming logic.
+  - `components/VoxelTerrain.tsx` - Chunk streaming orchestration (1792 lines, down from 2701).
+  - `hooks/useTerrainInteraction.ts` - Terrain interaction hook (dig/build/chop/smash, particles, audio).
+  - `logic/mesher.ts`, `raycastUtils.ts` - Meshing and raycast utilities.
 - `src/features/environment/`: Dynamic atmosphere, sky, cinematic post-processing, and performance monitoring.
 - `src/features/player/`: Player movement, input handling, and first/third-person camera logic.
 - `src/features/interaction/`: First-person tools, inventory logic, and real-time voxel modification.
@@ -202,6 +205,22 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-04: **Crafting Interface Visual Fix**.
+  - **Issue**: Attaching `ItemType.FLORA` (Lumina flora) to a tool in the crafting menu did not render the model, making it appear invisible/disconnected.
+  - **Fix**: 
+    1. Extracted `FloraMesh` as a reusable component in `UniversalTool.tsx`.
+    2. Added the missing `ItemType.FLORA` case to the attachment rendering loop in `CraftingInterface.tsx`.
+  - **Files**: `UniversalTool.tsx`, `CraftingInterface.tsx`.
+
+- 2026-01-04: **VoxelTerrain.tsx Refactor - Separation of Concerns**.
+  - **Goal**: Reduce VoxelTerrain.tsx complexity by extracting interaction logic and raycast utilities.
+  - **Changes**:
+    1. Extracted `raycastUtils.ts` (348 lines) - Pure functions for ray intersection tests (`getMaterialColor`, `isTerrainCollider`, `rayHitsFlora/Torch/Lumina/GroundPickup`, `buildFloraHotspots`).
+    2. Extracted `useTerrainInteraction.ts` hook (782 lines) - All dig/build/chop/smash handling, physics item interaction, particle effects, audio feedback, terrain modification triggers.
+    3. VoxelTerrain.tsx reduced from 2701 → 1792 lines (34% reduction). Now focuses on chunk streaming, LOD updates, meshing orchestration.
+  - **Architecture**: Clean separation between streaming (VoxelTerrain) and interaction (useTerrainInteraction hook). Hook consumes raycast utils for hit detection.
+  - **Files**: `src/features/terrain/logic/raycastUtils.ts` (new), `src/features/terrain/hooks/useTerrainInteraction.ts` (new), `VoxelTerrain.tsx` (refactored).
 
 - 2026-01-04: **Voxel-based Global Illumination System**.
   - **Goal**: Replace flat ambient lighting with dynamic, environment-aware indirect lighting that responds to sky, caves, and point lights.

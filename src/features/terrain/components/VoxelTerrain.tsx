@@ -660,8 +660,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const playerChunk = useRef<{ px: number; pz: number }>({ px: 0, pz: 0 });
 
   // Physics collider enabling is intentionally more conservative than rendering to reduce spikes.
-  // Progressive collider loading: start with smaller radius during initial load, expand after.
-  const COLLIDER_RADIUS_INITIAL = 0; // During initial load: only player's chunk (1x1)
+  // Progressive collider loading: start with 3x3 during initial load to prevent falling through adjacent chunks.
+  const COLLIDER_RADIUS_INITIAL = 1; // During initial load: 3x3 area so player can walk to adjacent chunks
   const COLLIDER_RADIUS_FULL = 1; // After initial load: 3x3 area (Chebyshev distance)
   const getColliderRadius = () => initialLoadTriggered.current ? COLLIDER_RADIUS_FULL : COLLIDER_RADIUS_INITIAL;
   const colliderEnableQueue = useRef<string[]>([]);
