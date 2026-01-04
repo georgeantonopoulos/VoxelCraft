@@ -203,7 +203,7 @@ export class BiomeManager {
     const normalizedSeed = Math.abs(Math.floor(newSeed)) || 1;
 
     if (this.seed === normalizedSeed) {
-      console.log('[BiomeManager] Seed unchanged, skipping reinitialization');
+      // console.log('[BiomeManager] Seed unchanged, skipping reinitialization');
       return;
     }
 
@@ -215,13 +215,13 @@ export class BiomeManager {
     this.continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
     this.erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
 
-    console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
+    // console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
   }
 
   static setWorldType(type: WorldType) {
     if (this.currentWorldType === type) return; // Avoid duplicate calls from StrictMode
     this.currentWorldType = type;
-    console.log('[BiomeManager] World Type set to:', type);
+    // console.log('[BiomeManager] World Type set to:', type);
   }
 
   /**

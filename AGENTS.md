@@ -346,3 +346,15 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - `SharedUniforms.ts`: Set default `uShaderFogEnabled` to `0.0`.
     - `TriplanarMaterial.tsx`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`: Set default `shaderFogEnabled` / `terrainShaderFogEnabled` props to `false`.
   - **Result**: Visual clarity improved; atmospheric blue tinting now depends solely on sky/ambient light and standard Three.js distance fog.
+- 2026-01-04: **Adjusted Fog and LOD Distances**.
+  - **Goal**: Tune standard distance fog for better visibility and bias LOD transitions toward the player's view direction.
+  - **Changes**:
+    - Fog: Set `uFogNear` = 23, `uFogFar` = 85 (standardized across `SharedUniforms.ts`, components, and `App.tsx` state).
+    - LOD: Updated `getChunkLodTier` in `VoxelTerrain.tsx` with a `0.5` chunk forward bias using `streamForward` vector.
+  - **Result**: More atmospheric distance fog and guaranteed "Full LOD" (Tier 0) for the current chunk and the next one in front.
+- 2026-01-04: **Cleaned up Debug Logs**.
+  - **Goal**: Silenced high-frequency console logs (noise initialization, seed setting, LOD updates, worker loop status, etc.) to improve development console experience.
+  - **Changes**: Commented out `console.log` and `console.warn` calls in `noise.ts`, `WorldSeed.ts`, `BiomeManager.ts`, `simulation.worker.ts`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`, and `App.tsx`.
+  - **Result**: A much cleaner game console, focusing only on critical system events.
+ 
+[diff_block_end]

@@ -41,7 +41,7 @@ export function initializeNoise(seed: number): void {
     PERM[i] = p[i & 255];
   }
 
-  console.log(`[Noise] Perlin noise initialized with seed: ${seed}`);
+  // console.log(`[Noise] Perlin noise initialized with seed: ${seed}`);
 }
 
 /**

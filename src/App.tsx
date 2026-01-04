@@ -133,7 +133,7 @@ const App: React.FC = () => {
   const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
 
   const [fogNear, setFogNear] = useState(40);
-  const [fogFar, setFogFar] = useState(220);
+  const [fogFar, setFogFar] = useState(85);
   const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
   const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
@@ -203,7 +203,7 @@ const App: React.FC = () => {
     initializeNoise(worldSeed);
     BiomeManager.setWorldType(worldType);
 
-    console.log(`[App] World initialized: type=${worldType}, seed=${worldSeed}`);
+    // console.log(`[App] World initialized: type=${worldType}, seed=${worldSeed}`);
 
     const params = new URLSearchParams(window.location.search);
     const requestedBiome = params.get('vcSpawnBiome') as BiomeType | null;
@@ -228,7 +228,7 @@ const App: React.FC = () => {
     // We no longer quit the game on unlock. 
     // This allows the player to use the settings menu or just regain cursor control
     // without losing their progress in the world.
-    console.log('[App] Pointer unlocked');
+    // console.log('[App] Pointer unlocked');
   }, []);
 
   if (mapMode) return <MapDebug />;

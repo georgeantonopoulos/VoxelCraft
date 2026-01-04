@@ -320,35 +320,44 @@ const Particles = ({
   );
 };
 
+/**
+ * VoxelTerrain props.
+ *
+ * Most terrain material settings are now managed via sharedUniforms (SharedUniforms.ts).
+ * VoxelTerrain receives these props from its parent and updates sharedUniforms once per frame.
+ * ChunkMesh no longer receives these as props - it reads directly from sharedUniforms.
+ */
 interface VoxelTerrainProps {
   sunDirection?: THREE.Vector3;
   initialSpawnPos?: [number, number, number] | null;
+  // Uniform-based settings (updated via updateSharedUniforms)
   triplanarDetail?: number;
   terrainShaderFogEnabled?: boolean;
   terrainShaderFogStrength?: number;
-  terrainThreeFogEnabled?: boolean;
-  terrainFadeEnabled?: boolean;
   terrainWetnessEnabled?: boolean;
   terrainMossEnabled?: boolean;
   terrainRoughnessMin?: number;
-  terrainPolygonOffsetEnabled?: boolean;
-  terrainPolygonOffsetFactor?: number;
-  terrainPolygonOffsetUnits?: number;
-  terrainChunkTintEnabled?: boolean;
-  terrainWireframeEnabled?: boolean;
   terrainWeightsView?: string;
-  onInitialLoad?: () => void;
-  worldType: string;
-  /** World seed for terrain generation. If not provided, uses default (1337). */
-  seed?: number;
   heightFogEnabled?: boolean;
   heightFogStrength?: number;
   heightFogRange?: number;
   heightFogOffset?: number;
   fogNear?: number;
   fogFar?: number;
-  // Biome fog
   biomeFogEnabled?: boolean;
+  // Material properties (passed to ChunkMesh → TriplanarMaterial)
+  terrainThreeFogEnabled?: boolean;
+  terrainPolygonOffsetEnabled?: boolean;
+  terrainPolygonOffsetFactor?: number;
+  terrainPolygonOffsetUnits?: number;
+  terrainWireframeEnabled?: boolean;
+  // Debug modes
+  terrainChunkTintEnabled?: boolean;
+  // Callbacks and world settings
+  onInitialLoad?: () => void;
+  worldType: string;
+  /** World seed for terrain generation. If not provided, uses default (1337). */
+  seed?: number;
 }
 
 // --- Audio Pool Helper ---
@@ -397,7 +406,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   terrainShaderFogEnabled = false,
   terrainShaderFogStrength = 0.9,
   terrainThreeFogEnabled = true,
-  terrainFadeEnabled = true,
   terrainWetnessEnabled = true,
   terrainMossEnabled = true,
   terrainRoughnessMin = 0.0,
@@ -414,8 +422,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   heightFogStrength = 0.35,
   heightFogRange = 50.0,
   heightFogOffset = 4.0,
-  fogNear = 40,
-  fogFar = 220,
+  fogNear = 23,
+  fogFar = 85,
   biomeFogEnabled = true
 }) => {
   const action = useInputStore(s => s.interactionAction);
@@ -425,7 +433,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const changed = Object.entries({
       action, isInteracting, sunDirection, triplanarDetail,
       terrainShaderFogEnabled, terrainShaderFogStrength, terrainThreeFogEnabled,
-      terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
+      terrainWetnessEnabled, terrainMossEnabled,
       terrainRoughnessMin, terrainPolygonOffsetEnabled, terrainPolygonOffsetFactor,
       terrainPolygonOffsetUnits, terrainChunkTintEnabled, terrainWireframeEnabled,
       terrainWeightsView, worldType
@@ -441,7 +449,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     prevProps.current = {
       action, isInteracting, sunDirection, triplanarDetail,
       terrainShaderFogEnabled, terrainShaderFogStrength, terrainThreeFogEnabled,
-      terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
+      terrainWetnessEnabled, terrainMossEnabled,
       terrainRoughnessMin, terrainPolygonOffsetEnabled, terrainPolygonOffsetFactor,
       terrainPolygonOffsetUnits, terrainChunkTintEnabled, terrainWireframeEnabled,
       terrainWeightsView, worldType
@@ -1013,7 +1021,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // Tier 2: 2-3 chunks (reduced vegetation)
   // Tier 3+: beyond (minimal detail)
   const getChunkLodTier = (cx: number, cz: number, camCx: number, camCz: number): number => {
-    const rawDist = getChunkLodDistanceRaw(cx, cz, camCx, camCz);
+    // Bias the LOD center forward in the player's view direction.
+    // This ensures "full LOD" (Tier 0) for the current chunk AND the one in front.
+    const axisThreshold = 0.35;
+    const forwardX = Math.abs(streamForward.current.x) > axisThreshold ? Math.sign(streamForward.current.x) * 0.5 : 0;
+    const forwardZ = Math.abs(streamForward.current.z) > axisThreshold ? Math.sign(streamForward.current.z) * 0.5 : 0;
+
+    const rawDist = getChunkLodDistanceRaw(cx, cz, camCx + forwardX, camCz + forwardZ);
     return Math.floor(rawDist);
   };
 
@@ -1189,7 +1203,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const shouldUpdateLod = lodDistSq >= LOD_UPDATE_DISTANCE_SQ;
 
     if (shouldUpdateLod) {
-      const lodStart = performance.now();
+      // const lodStart = performance.now();
       lastLodUpdatePos.current.set(streamX, streamZ);
 
       // Only update chunks whose LOD TIER actually changes (not continuous distance)
@@ -1215,10 +1229,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             lodUpdateQueue.current.push(key);
           }
         }
-        const lodDuration = performance.now() - lodStart;
-        if (lodDuration > 2 || toUpdate.length > 4) {
-          console.log(`[VoxelTerrain] LOD tier update: ${toUpdate.length} chunks queued in ${lodDuration.toFixed(1)}ms`);
-        }
+        // const lodDuration = performance.now() - lodStart;
+        // if (lodDuration > 2 || toUpdate.length > 4) {
+        //   console.log(`[VoxelTerrain] LOD tier update: ${toUpdate.length} chunks queued in ${lodDuration.toFixed(1)}ms`);
+        // }
       }
     }
 
@@ -1343,7 +1357,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               // This ensures the next ring of chunks gets queued
               lastProcessedPlayerChunk.current = { px: -9999, pz: -9999 };
               if (streamDebug) {
-                console.log(`[VoxelTerrain] Advancing to initial load phase ${initialLoadPhase.current}`);
+                // console.log(`[VoxelTerrain] Advancing to initial load phase ${initialLoadPhase.current}`);
               }
             }
           } else {
@@ -1393,8 +1407,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
           // DEBUG: Only log for dirty chunks (player digs)
           if (isDirty) {
-            const mgr = chunkDataManager.getChunk(key);
-            console.log(`[DIG] ${key} remeshed: ${mgr?.meshPositions?.length / 3}v, ver=${mgr?.terrainVersion}`);
+            // const mgr = chunkDataManager.getChunk(key);
+            // console.log(`[DIG] ${key} remeshed: ${mgr?.meshPositions?.length / 3}v, ver=${mgr?.terrainVersion}`);
           }
         }
       }
@@ -1524,7 +1538,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               if (d > maxD) maxD = d;
               if (d < 0.5) negCount++;
             }
-            console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
+            // console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
           }
 
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
@@ -1586,17 +1600,25 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       biomeFogTintVec.current.set(fog.tintR, fog.tintG, fog.tintB);
     }
 
+    // Convert weightsView string to numeric value for shader
+    const weightsViewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+
     updateSharedUniforms(state, {
       sunDir: sunDirection,
       fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
       fogNear,
       fogFar,
+      shaderFogEnabled: terrainShaderFogEnabled,
       shaderFogStrength: terrainShaderFogStrength,
       heightFogEnabled,
       heightFogStrength,
       heightFogRange,
       heightFogOffset,
       triplanarDetail,
+      wetnessEnabled: terrainWetnessEnabled,
+      mossEnabled: terrainMossEnabled,
+      roughnessMin: terrainRoughnessMin,
+      weightsView: weightsViewMap[terrainWeightsView] ?? 0,
       // Biome fog parameters
       biomeFogEnabled,
       biomeFogDensityMul: biomeFogState.current.densityMul,
@@ -1855,27 +1877,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               chunk={chunk}
               terrainVersion={chunk.terrainVersion ?? 0}
               lodLevel={chunk.lodLevel}
-              sunDirection={sunDirection}
-              triplanarDetail={triplanarDetail}
-              terrainShaderFogEnabled={terrainShaderFogEnabled}
-              terrainShaderFogStrength={terrainShaderFogStrength}
               terrainThreeFogEnabled={terrainThreeFogEnabled}
-              terrainFadeEnabled={terrainFadeEnabled}
-              terrainWetnessEnabled={terrainWetnessEnabled}
-              terrainMossEnabled={terrainMossEnabled}
-              terrainRoughnessMin={terrainRoughnessMin}
               terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
               terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}
               terrainPolygonOffsetUnits={terrainPolygonOffsetUnits}
               terrainChunkTintEnabled={terrainChunkTintEnabled}
               terrainWireframeEnabled={terrainWireframeEnabled}
-              terrainWeightsView={terrainWeightsView}
-              heightFogEnabled={heightFogEnabled}
-              heightFogStrength={heightFogStrength}
-              heightFogRange={heightFogRange}
-              heightFogOffset={heightFogOffset}
-              fogNear={fogNear}
-              fogFar={fogFar}
             />
             {chunk.rootHollowPositions && chunk.rootHollowPositions.length > 0 && (
               <>

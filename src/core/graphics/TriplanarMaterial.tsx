@@ -9,7 +9,7 @@ import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragm
 
 // Shared material instance to avoid redundant shader compilation/patching per chunk.
 let sharedTerrainMaterial: THREE.MeshStandardMaterial | null = null;
-let lastUpdateFrame = -1;
+let noiseTextureInitialized = false;
 
 const PLACEHOLDER_NOISE_3D = (() => {
   const data = new Uint8Array([255, 255, 255, 255]);
@@ -20,13 +20,18 @@ const PLACEHOLDER_NOISE_3D = (() => {
   return tex;
 })();
 
-
-
+/**
+ * Creates the shared terrain material singleton.
+ *
+ * All uniform values come from sharedUniforms, which are updated once per frame
+ * by VoxelTerrain.tsx via updateSharedUniforms(). This eliminates prop drilling
+ * and redundant uniform updates.
+ */
 const getSharedTerrainMaterial = () => {
   if (sharedTerrainMaterial) return sharedTerrainMaterial;
 
-  const uniforms = {
-    ...sharedUniforms,
+  // Material-specific uniforms (colors, textures) that don't change per-frame
+  const materialUniforms = {
     uNoiseTexture: { value: PLACEHOLDER_NOISE_3D },
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },
@@ -50,27 +55,15 @@ const getSharedTerrainMaterial = () => {
     uNormalStrength: { value: 1.0 },
     uFogDensity: { value: 0.01 },
     uWaterLevel: { value: 4.5 },
-    uWeightsView: { value: 0 },
     // GI uniforms
     uGIEnabled: { value: 1.0 },
     uGIIntensity: { value: 1.35 },
-    uTriplanarDetail: sharedUniforms.uTriplanarDetail,
-    uShaderFogEnabled: sharedUniforms.uShaderFogEnabled,
-    uShaderFogStrength: sharedUniforms.uShaderFogStrength,
-    uWetnessEnabled: sharedUniforms.uWetnessEnabled,
-    uMossEnabled: sharedUniforms.uMossEnabled,
-    uRoughnessMin: sharedUniforms.uRoughnessMin,
-    uHeightFogEnabled: sharedUniforms.uHeightFogEnabled,
-    uHeightFogStrength: sharedUniforms.uHeightFogStrength,
-    uHeightFogRange: sharedUniforms.uHeightFogRange,
-    uHeightFogOffset: sharedUniforms.uHeightFogOffset,
-    uSunDirection: sharedUniforms.uSunDirection,
-    // Biome fog uniforms
-    uBiomeFogDensityMul: sharedUniforms.uBiomeFogDensityMul,
-    uBiomeFogHeightMul: sharedUniforms.uBiomeFogHeightMul,
-    uBiomeFogTint: sharedUniforms.uBiomeFogTint,
-    uBiomeFogAerial: sharedUniforms.uBiomeFogAerial,
-    uBiomeFogEnabled: sharedUniforms.uBiomeFogEnabled,
+  };
+
+  // Merge with sharedUniforms - these are updated by VoxelTerrain each frame
+  const uniforms = {
+    ...sharedUniforms,
+    ...materialUniforms,
   };
 
   sharedTerrainMaterial = new (CustomShaderMaterial as any)({
@@ -88,102 +81,63 @@ const getSharedTerrainMaterial = () => {
   return sharedTerrainMaterial;
 };
 
+/**
+ * Props that affect material properties (not uniforms).
+ * These cannot be in sharedUniforms because they're THREE.Material properties.
+ */
 export interface TriplanarMaterialProps {
-  sunDirection?: THREE.Vector3;
-  triplanarDetail?: number;
-  shaderFogEnabled?: boolean;
-  shaderFogStrength?: number;
+  /** Enable Three.js scene fog on this material */
   threeFogEnabled?: boolean;
-  wetnessEnabled?: boolean;
-  mossEnabled?: boolean;
-  roughnessMin?: number;
+  /** Enable polygon offset for z-fighting prevention */
   polygonOffsetEnabled?: boolean;
   polygonOffsetFactor?: number;
   polygonOffsetUnits?: number;
-  weightsView?: string;
+  /** Render as wireframe */
   wireframe?: boolean;
-  heightFogEnabled?: boolean;
-  heightFogStrength?: number;
-  heightFogRange?: number;
-  heightFogOffset?: number;
-  fogNear?: number;
-  fogFar?: number;
 }
 
+/**
+ * Triplanar terrain material component.
+ *
+ * Most rendering settings (fog, wetness, moss, triplanar detail, etc.) are now
+ * controlled via sharedUniforms, which VoxelTerrain.tsx updates once per frame.
+ * This component only handles:
+ * 1. Lazy noise texture initialization
+ * 2. Material properties that aren't uniforms (wireframe, polygonOffset, fog flag)
+ */
 export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
-  sunDirection,
-  triplanarDetail = 1.0,
-  shaderFogEnabled = false,
-  shaderFogStrength = 0.8,
   threeFogEnabled = true,
-  wetnessEnabled = true,
-  mossEnabled = true,
-  roughnessMin = 0.0,
   polygonOffsetEnabled = false,
   polygonOffsetFactor = -1.0,
   polygonOffsetUnits = -1.0,
-  weightsView = 'off',
   wireframe = false,
-  heightFogEnabled = true,
-  heightFogStrength = 0.35,
-  heightFogRange = 50.0,
-  heightFogOffset = 4.0,
-  fogNear = 40,
-  fogFar = 220,
 }) => {
   const mat = useMemo(() => getSharedTerrainMaterial(), []);
 
   useFrame((state) => {
     if (!mat) return;
-    const uniforms = (mat as any).uniforms;
 
-    // Lazy initialization of common central textures
-    if (uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
-      uniforms.uNoiseTexture.value = getNoiseTexture();
+    // Lazy initialization of noise texture (only runs once)
+    if (!noiseTextureInitialized) {
+      const uniforms = (mat as any).uniforms;
+      if (uniforms.uNoiseTexture.value === PLACEHOLDER_NOISE_3D) {
+        uniforms.uNoiseTexture.value = getNoiseTexture();
+        noiseTextureInitialized = true;
+      }
     }
 
-    // We only update the shared material ONCE per frame, even with 100 chunks.
-    if (lastUpdateFrame !== state.gl.info.render.frame) {
-      lastUpdateFrame = state.gl.info.render.frame;
+    // Update material properties that can't be uniforms
+    // These are inexpensive property assignments, not uniform uploads
+    mat.polygonOffset = polygonOffsetEnabled;
+    mat.polygonOffsetFactor = polygonOffsetFactor;
+    mat.polygonOffsetUnits = polygonOffsetUnits;
+    mat.wireframe = wireframe;
+    mat.fog = threeFogEnabled;
 
-      // Apply all props to the shared material instance
+    // Sync fog color from scene (if scene fog exists)
+    if (state.scene.fog && (state.scene.fog as any).color) {
       const uniforms = (mat as any).uniforms;
-
-      // If props are provided, they OVERRIDE central state for this material instance (which is shared)
-      // Since it's a singleton, the last chunk processed "wins" for that frame.
-      // In practice, these settings are global anyway.
-
-      if (sunDirection && (sunDirection as any).isVector3) {
-        uniforms.uSunDirection.value.copy(sunDirection);
-        uniforms.uSunDir.value.copy(sunDirection);
-      }
-
-      uniforms.uTriplanarDetail.value = triplanarDetail;
-      uniforms.uShaderFogEnabled.value = shaderFogEnabled ? 1.0 : 0.0;
-      uniforms.uShaderFogStrength.value = shaderFogStrength;
-      uniforms.uWetnessEnabled.value = wetnessEnabled ? 1.0 : 0.0;
-      uniforms.uMossEnabled.value = mossEnabled ? 1.0 : 0.0;
-      uniforms.uRoughnessMin.value = roughnessMin;
-
-      mat.polygonOffset = polygonOffsetEnabled;
-      mat.polygonOffsetFactor = polygonOffsetFactor;
-      mat.polygonOffsetUnits = polygonOffsetUnits;
-      mat.wireframe = wireframe;
-
-      const viewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
-      uniforms.uWeightsView.value = viewMap[weightsView] ?? 0;
-
-      mat.fog = threeFogEnabled;
-      uniforms.uHeightFogEnabled.value = heightFogEnabled ? 1.0 : 0.0;
-      uniforms.uHeightFogStrength.value = heightFogStrength;
-      uniforms.uHeightFogRange.value = heightFogRange;
-      uniforms.uHeightFogOffset.value = heightFogOffset;
-      uniforms.uFogNear.value = fogNear;
-      uniforms.uFogFar.value = fogFar;
-
-      if (state.scene.fog && (state.scene.fog as any).color) {
-        uniforms.uFogColor.value.copy((state.scene.fog as any).color);
-      }
+      uniforms.uFogColor.value.copy((state.scene.fog as any).color);
     }
   });
 

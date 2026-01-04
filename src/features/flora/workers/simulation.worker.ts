@@ -249,11 +249,11 @@ self.onmessage = (e: MessageEvent) => {
     else if (type === 'START_LOOP') {
         // Guard against duplicate START_LOOP calls (React StrictMode mounts effects twice)
         if (loopStarted) {
-            console.log('[Simulation] Loop already running, ignoring duplicate START_LOOP');
+            // console.log('[Simulation] Loop already running, ignoring duplicate START_LOOP');
             return;
         }
         loopStarted = true;
-        console.log('[Simulation] Loop started (1fps).');
+        // console.log('[Simulation] Loop started (1fps).');
 
         setInterval(() => {
             // @ts-ignore

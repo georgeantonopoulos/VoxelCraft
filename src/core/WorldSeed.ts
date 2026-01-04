@@ -51,7 +51,7 @@ class WorldSeedManager {
     this._seed = normalizedSeed;
     this._initialized = true;
 
-    console.log(`[WorldSeed] Seed set to: ${this._seed}`);
+    // console.log(`[WorldSeed] Seed set to: ${this._seed}`);
 
     // Notify listeners
     for (const listener of this._listeners) {
