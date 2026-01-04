@@ -23,13 +23,14 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
 
     const colors = useMemo(() => {
         let base = '#3e2723';
-        let tip = '#00FFFF';
+        let tip = '#4CAF50'; // Default to green (not cyan)
 
         if (type === TreeType.OAK) { base = '#4e342e'; tip = '#4CAF50'; }
         else if (type === TreeType.PINE) { base = '#3e2723'; tip = '#1B5E20'; }
         else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
         else if (type === TreeType.ACACIA) { base = '#6D4C41'; tip = '#CDDC39'; }
         else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
+        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; }
 
         return { base, tip };
     }, [type]);
@@ -49,13 +50,14 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
             position={position}
             colliders={false}
             type="dynamic"
-            linearDamping={1.5}
-            angularDamping={4.0}
+            linearDamping={6.0}
+            angularDamping={8.0}
             mass={150 * scale}
-            friction={2.0}
+            friction={3.0}
+            restitution={0}
         >
             {/* Approximate collider for the trunk - positioned so it pivots from the base slightly */}
-            <CylinderCollider args={[2.0 * scale, 0.35 * scale]} position={[0, 2.0 * scale, 0]} friction={2.0} />
+            <CylinderCollider args={[2.0 * scale, 0.35 * scale]} position={[0, 2.0 * scale, 0]} friction={3.0} restitution={0} />
 
             <group rotation={[0, rotation, 0]} scale={[scale, scale, scale]}>
                 <mesh geometry={wood} castShadow receiveShadow>

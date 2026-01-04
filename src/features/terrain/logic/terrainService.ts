@@ -679,8 +679,10 @@ export class TerrainService {
                         baseScale = 0.6 + (hash % 0.4);
                     }
 
-                    // Anchoring sink: on slopes, we sink more
-                    const sink = 0.15 + (1.0 - normalY) * 0.5;
+                    // Anchoring sink: compensate for Surface Nets mesh shift on slopes
+                    // Base sink (0.15) keeps tree trunk partially underground
+                    // Slope component (0.75) matches slopeSinkFactor used by ground items
+                    const sink = 0.15 + (1.0 - normalY) * 0.75;
 
                     treeCandidates.push(
                         (localX - PAD),
@@ -854,6 +856,17 @@ export class TerrainService {
             return [nx, ny, nz];
         };
 
+        // Surface Nets mesh uses edge averaging which shifts vertices downward on slopes.
+        // Pure vertical interpolation overestimates height on slopes.
+        // This sink factor compensates: steeper slopes (lower ny) need more sink.
+        const slopeSinkFactor = (ny: number): number => {
+            // On flat ground (ny=1): sink = 0
+            // On 45° slope (ny≈0.707): sink ≈ 0.22
+            // On steep slope (ny=0.5): sink ≈ 0.38
+            const slopeFactor = 1.0 - ny;
+            return slopeFactor * 0.75;
+        };
+
         const findTopSurfaceAtLocalXZ = (localX: number, localZ: number): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
             const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
             const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
@@ -867,8 +880,10 @@ export class TerrainService {
                     const dSolid = density[idx];
                     const dAir = density[idxAbove];
                     const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                    const worldY = (y - PAD + t) + MESH_Y_OFFSET;
                     const n = normalAt(ix, y, iz);
+                    // Apply slope-aware sink to match Surface Nets mesh positioning
+                    const sink = slopeSinkFactor(n[1]);
+                    const worldY = (y - PAD + t) + MESH_Y_OFFSET - sink;
                     const matBelow = material[idx] ?? MaterialType.DIRT;
                     return { worldY, normal: n, matBelow };
                 }
@@ -906,8 +921,10 @@ export class TerrainService {
                 const dAir = density[idxAir];
                 const dSolid = density[idxBelow];
                 const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                const worldY = (fy - PAD - 1 + t) + MESH_Y_OFFSET;
                 const n = normalAt(ix, fy - 1, iz);
+                // Apply slope-aware sink to match Surface Nets mesh positioning
+                const sink = slopeSinkFactor(n[1]);
+                const worldY = (fy - PAD - 1 + t) + MESH_Y_OFFSET - sink;
                 const matBelow = material[idxBelow] ?? MaterialType.DIRT;
                 return { worldY, normal: n, matBelow };
             }

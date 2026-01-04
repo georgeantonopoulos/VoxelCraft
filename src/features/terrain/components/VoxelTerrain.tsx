@@ -713,7 +713,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     kind: 'debris',
     active: false
   });
-  const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
+  const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
   const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
@@ -731,8 +731,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     setFallingTrees(prev => [...prev, tree]);
   }, []);
 
-  const handleLeafHit = useCallback((position: THREE.Vector3) => {
-    setLeafPickup(position);
+  const handleLeafHit = useCallback((position: THREE.Vector3, color?: string) => {
+    setLeafPickup({ position, color: color || '#4CAF50' }); // Default to green
   }, []);
 
   // Use extracted terrain interaction hook
@@ -1925,7 +1925,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       ))}
       {leafPickup && (
         <LeafPickupEffect
-          start={leafPickup}
+          start={leafPickup.position}
+          color={leafPickup.color}
           onDone={() => {
             setLeafPickup(null);
           }}

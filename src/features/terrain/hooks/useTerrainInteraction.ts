@@ -51,6 +51,19 @@ import dig2Url from '@/assets/sounds/Dig_2.wav?url';
 import dig3Url from '@/assets/sounds/Dig_3.wav?url';
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
 
+// Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
+function getLeafColorForTreeType(treeType: number): string {
+  switch (treeType) {
+    case TreeType.OAK: return '#4CAF50';
+    case TreeType.PINE: return '#1B5E20';
+    case TreeType.PALM: return '#8BC34A';
+    case TreeType.ACACIA: return '#CDDC39';
+    case TreeType.CACTUS: return '#43A047';
+    case TreeType.JUNGLE: return '#2E7D32';
+    default: return '#4CAF50'; // Default green
+  }
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -79,7 +92,7 @@ export interface InteractionCallbacks {
   /** Called when a tree is felled */
   onTreeFall: (tree: FallingTreeData) => void;
   /** Called when a leaf is hit (for pickup effect) */
-  onLeafHit: (position: THREE.Vector3) => void;
+  onLeafHit: (position: THREE.Vector3, color?: string) => void;
   /** Called to queue a chunk version increment for re-render */
   queueVersionIncrement: (key: string) => void;
   /** Called to queue a chunk remesh */
@@ -162,13 +175,23 @@ export function useTerrainInteraction(
         if (parent && userData) {
           // --- FLORA TREE ---
           if (userData.type === 'flora_tree') {
-            if (userData.part === 'leaf') {
-              const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-              onLeafHit(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
-              return;
-            }
+            // Skip physics tree hit if terrain is closer - let terrain-based proximity detection
+            // find the correct nearest tree instead of hitting background trees
+            const physicsDistance = (physicsHit as any).timeOfImpact ?? Infinity;
+            if (terrainHit && terrainHit.timeOfImpact < physicsDistance) {
+              // Terrain is closer, skip physics path and fall through to terrain-based tree check
+            } else {
+              if (userData.part === 'leaf') {
+                const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+                // Get tree type from chunk data for proper leaf color
+                const { chunkKey: leafChunkKey, treeIndex: leafTreeIndex } = userData;
+                const leafChunk = chunkDataManager.getChunk(leafChunkKey);
+                const leafTreeType = leafChunk?.treePositions?.[leafTreeIndex + 3] ?? 0;
+                onLeafHit(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z), getLeafColorForTreeType(leafTreeType));
+                return;
+              }
 
-            // Tree Damage Logic (from physics hit)
+              // Tree Damage Logic (from physics hit)
             const { chunkKey, treeIndex } = userData;
             const chunk = chunkDataManager.getChunk(chunkKey);
             if (chunk && chunk.treePositions) {
@@ -246,6 +269,7 @@ export function useTerrainInteraction(
               }
             }
             return;
+            } // end else (physics tree is closer)
           }
 
           // --- STONE PHYSICS ITEM ---
@@ -472,12 +496,13 @@ export function useTerrainInteraction(
                 if (!capabilities.canChop) {
                   // SMASH/SHAKE Animation for non-chopping tools
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
-                  onLeafHit(leafPos);
+                  const leafColor = getLeafColorForTreeType(type);
+                  onLeafHit(leafPos, leafColor);
                   emitParticle({
                     pos: leafPos,
                     dir: new THREE.Vector3(0, -1, 0),
                     kind: 'debris',
-                    color: '#4fa02a'
+                    color: leafColor
                   });
                   audioPool.play(clunkUrl, 0.4, 0.85);
                   anyFloraHit = true;
@@ -515,12 +540,13 @@ export function useTerrainInteraction(
                 if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
                   // SMASH/SHAKE Animation
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
-                  onLeafHit(leafPos);
+                  const leafColor = getLeafColorForTreeType(type);
+                  onLeafHit(leafPos, leafColor);
                   emitParticle({
                     pos: leafPos,
                     dir: new THREE.Vector3(0, -1, 0),
                     kind: 'debris',
-                    color: '#4fa02a'
+                    color: leafColor
                   });
                   audioPool.play(clunkUrl, 0.4, 0.85);
                   anyFloraHit = true;

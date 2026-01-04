@@ -222,6 +222,25 @@ ctx.onmessage = async (e: MessageEvent) => {
                 ]);
                 return;
             }
+            // Surface Nets mesh shifts vertices downward on slopes vs pure vertical interpolation.
+            // This sink factor compensates: steeper slopes (lower ny) need more sink.
+            const slopeSinkFactor = (ny: number): number => (1.0 - ny) * 0.75;
+
+            // Check if position is near a cave opening by sampling density below surface
+            // Returns true if there's substantial air within a few voxels below the surface
+            const isNearCaveOpening = (dx: number, surfaceYInt: number, dz: number, sizeX: number, sizeY: number): boolean => {
+                const checkDepth = 4; // Check 4 voxels below surface
+                let airCount = 0;
+                for (let dy = 1; dy <= checkDepth; dy++) {
+                    const checkY = surfaceYInt - dy;
+                    if (checkY < 0) break;
+                    const idx = dx + checkY * sizeX + dz * sizeX * sizeY;
+                    if (density[idx] <= ISO_LEVEL) airCount++;
+                }
+                // If 2+ of the 4 voxels below are air, we're near a cave opening
+                return airCount >= 2;
+            };
+
             const vegetationBuckets: Record<number, number[]> = {};
             for (let z = 0; z < CHUNK_SIZE_XZ; z++) {
                 for (let x = 0; x < CHUNK_SIZE_XZ; x++) {
@@ -236,10 +255,16 @@ ctx.onmessage = async (e: MessageEvent) => {
                         }
                         const worldY = (surfaceY - pad) - 35;
                         if (surfaceY > 0 && worldY > 11) {
-                            const cX = Math.floor(dx), cY = Math.floor(surfaceY), cZ = Math.floor(dz);
+                            // Skip vegetation near cave openings to prevent floating grass
+                            const surfaceYInt = Math.floor(surfaceY);
+                            if (isNearCaveOpening(dx, surfaceYInt, dz, sizeX, sizeY)) continue;
+
+                            const cX = Math.floor(dx), cY = surfaceYInt, cZ = Math.floor(dz);
                             const getD = (ox: number, oy: number, oz: number) => density[Math.max(0, Math.min(sizeX - 1, cX + ox)) + Math.max(0, Math.min(sizeY - 1, cY + oy)) * sizeX + Math.max(0, Math.min(sizeX - 1, cZ + oz)) * sizeX * sizeY];
                             const nx = -(getD(1, 0, 0) - getD(-1, 0, 0)), ny = -(getD(0, 1, 0) - getD(0, -1, 0)), nz = -(getD(0, 0, 1) - getD(0, 0, -1)), len = Math.sqrt(nx * nx + ny * ny + nz * nz), invLen = len > 0.0001 ? 1.0 / len : 0;
                             const nxV = nx * invLen, nyV = len > 0.0001 ? ny * invLen : 1, nzV = nz * invLen;
+                            // Slope sink to match Surface Nets mesh positioning
+                            const slopeSink = slopeSinkFactor(nyV);
                             let numPlants = (biome === 'JUNGLE' || biome === 'THE_GROVE') ? 3 : 1;
                             const vegType = getVegetationForBiome(biome, (noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100) + 1) * 0.5);
                             if (vegType !== null) {
@@ -248,7 +273,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                                     const seed = worldX * 31 + worldZ * 17 + i * 13, r1 = Math.sin(seed) * 43758.5453, r2 = Math.cos(seed) * 43758.5453;
                                     const offX = (r1 - Math.floor(r1) - 0.5) * 1.4, offZ = (r2 - Math.floor(r2) - 0.5) * 1.4, offY = ((r1 + r2) % 1) * -0.15;
                                     let slopeY = nyV > 0.1 ? -(nxV * offX + nzV * offZ) / nyV : 0;
-                                    vegetationBuckets[vegType].push(x + offX, worldY - 0.1 + offY + Math.max(-1.0, Math.min(1.0, slopeY)), z + offZ, nxV, nyV, nzV);
+                                    vegetationBuckets[vegType].push(x + offX, worldY - 0.1 + offY + Math.max(-1.0, Math.min(1.0, slopeY)) - slopeSink, z + offZ, nxV, nyV, nzV);
                                 }
                             }
                         }
