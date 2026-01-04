@@ -24,6 +24,7 @@ import { WorkerPool } from '@core/workers/WorkerPool';
 import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
+import { saveGroundPickup, getGroundPickups, GroundItemType } from '@state/WorldDB';
 
 // Extracted modules
 import {
@@ -810,9 +811,101 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     });
 
+    // Apply persisted ground item pickups when a new chunk is loaded
+    // This restores the "picked up" state for sticks, rocks, and flora
+    const unsubReady = chunkDataManager.on('chunk-ready', async ({ key, chunk }) => {
+      try {
+        const pickups = await getGroundPickups(chunk.cx, chunk.cz);
+        if (pickups.length === 0) return;
+
+        let modified = false;
+        const updatedChunk = { ...chunk };
+
+        for (const pickup of pickups) {
+          if (pickup.itemType === 'stick' && updatedChunk.stickPositions) {
+            if (pickup.index < updatedChunk.stickPositions.length) {
+              const next = new Float32Array(updatedChunk.stickPositions);
+              next[pickup.index + 1] = -10000;
+              updatedChunk.stickPositions = next;
+
+              // Also update visual buffers
+              const variant = next[pickup.index + 6];
+              const seed = next[pickup.index + 7];
+              const updateVisualBuffer = (buf: Float32Array | undefined) => {
+                if (!buf) return buf;
+                const nb = new Float32Array(buf);
+                for (let i = 0; i < nb.length; i += 7) {
+                  if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                    nb[i + 1] = -10000;
+                    break;
+                  }
+                }
+                return nb;
+              };
+              if (variant === 0) updatedChunk.drySticks = updateVisualBuffer(updatedChunk.drySticks);
+              else updatedChunk.jungleSticks = updateVisualBuffer(updatedChunk.jungleSticks);
+              modified = true;
+            }
+          } else if (pickup.itemType === 'rock' && updatedChunk.rockPositions) {
+            if (pickup.index < updatedChunk.rockPositions.length) {
+              const next = new Float32Array(updatedChunk.rockPositions);
+              next[pickup.index + 1] = -10000;
+              updatedChunk.rockPositions = next;
+
+              // Also update visual buffers
+              const variant = next[pickup.index + 6];
+              const seed = next[pickup.index + 7];
+              if (updatedChunk.rockDataBuckets) {
+                const buf = updatedChunk.rockDataBuckets[variant];
+                if (buf) {
+                  const nb = new Float32Array(buf);
+                  for (let i = 0; i < nb.length; i += 7) {
+                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                      nb[i + 1] = -10000;
+                      break;
+                    }
+                  }
+                  updatedChunk.rockDataBuckets = { ...updatedChunk.rockDataBuckets, [variant]: nb };
+                }
+              }
+              modified = true;
+            }
+          } else if (pickup.itemType === 'flora' && updatedChunk.floraPositions) {
+            if (pickup.index < updatedChunk.floraPositions.length) {
+              const next = new Float32Array(updatedChunk.floraPositions);
+              next[pickup.index + 1] = -10000;
+              updatedChunk.floraPositions = next;
+              modified = true;
+            }
+          }
+        }
+
+        if (modified) {
+          // Update both local ref and ChunkDataManager
+          chunkDataRef.current.set(key, updatedChunk);
+          chunkDataManager.replaceChunk(key, updatedChunk);
+          queueVersionIncrement(key);
+
+          // Update hotspots
+          if (updatedChunk.stickPositions) {
+            useWorldStore.getState().setStickHotspots(key, buildChunkLocalHotspots(chunk.cx, chunk.cz, updatedChunk.stickPositions));
+          }
+          if (updatedChunk.rockPositions) {
+            useWorldStore.getState().setRockHotspots(key, buildChunkLocalHotspots(chunk.cx, chunk.cz, updatedChunk.rockPositions));
+          }
+          if (updatedChunk.floraPositions) {
+            useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(updatedChunk.floraPositions));
+          }
+        }
+      } catch (e) {
+        console.warn('[VoxelTerrain] Failed to apply persisted pickups:', e);
+      }
+    });
+
     return () => {
       unsubUpdated();
       unsubDirty();
+      unsubReady();
     };
   }, []);
 
@@ -1531,6 +1624,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
         queueVersionIncrement(key);
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
+
+        // Persist pickup to IndexedDB so it survives chunk reload
+        saveGroundPickup(chunk.cx, chunk.cz, 'flora', hit.index);
       };
 
       const removeGround = (hit: NonNullable<typeof groundHit>) => {
@@ -1580,6 +1676,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         } else {
           useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
         }
+
+        // Persist pickup to IndexedDB so it survives chunk reload
+        const itemType: GroundItemType = hit.array === 'stickPositions' ? 'stick' : 'rock';
+        saveGroundPickup(chunk.cx, chunk.cz, itemType, hit.index);
       };
 
       let pickedStart: THREE.Vector3 | null = null;

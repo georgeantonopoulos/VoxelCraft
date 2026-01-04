@@ -10,8 +10,17 @@ export interface ChunkModification {
   density: number;
 }
 
+// Ground item pickup entry - tracks which generated items have been picked up
+export type GroundItemType = 'stick' | 'rock' | 'flora';
+export interface GroundItemPickup {
+  chunkId: string; // "cx,cz"
+  itemType: GroundItemType;
+  index: number; // Index in the source array (stickPositions, rockPositions, floraPositions)
+}
+
 export class TheGroveDB extends Dexie {
   modifications!: Table<ChunkModification>;
+  groundPickups!: Table<GroundItemPickup>;
 
   constructor() {
     super('TheGroveDB');
@@ -26,6 +35,12 @@ export class TheGroveDB extends Dexie {
     // We also keep chunkId index for fast fetching of all mods in a chunk
     this.version(2).stores({
       modifications: '[chunkId+voxelIndex], chunkId'
+    });
+
+    // Version 3: Add ground item pickups table
+    this.version(3).stores({
+      modifications: '[chunkId+voxelIndex], chunkId',
+      groundPickups: '[chunkId+itemType+index], chunkId'
     });
   }
 }
@@ -133,4 +148,40 @@ export async function clearChunkModifications(cx: number, cz: number): Promise<v
 
   const chunkId = `${cx},${cz}`;
   await worldDB.modifications.where('chunkId').equals(chunkId).delete();
+}
+
+// ============================================================================
+// Ground Item Pickup Persistence
+// ============================================================================
+
+/**
+ * Record a ground item pickup (stick, rock, or flora).
+ */
+export async function saveGroundPickup(
+  cx: number,
+  cz: number,
+  itemType: GroundItemType,
+  index: number
+): Promise<void> {
+  await worldDBReady;
+  const chunkId = `${cx},${cz}`;
+  await worldDB.groundPickups.put({ chunkId, itemType, index });
+}
+
+/**
+ * Get all ground item pickups for a chunk.
+ */
+export async function getGroundPickups(cx: number, cz: number): Promise<GroundItemPickup[]> {
+  await worldDBReady;
+  const chunkId = `${cx},${cz}`;
+  return await worldDB.groundPickups.where('chunkId').equals(chunkId).toArray();
+}
+
+/**
+ * Clear all ground pickups for a chunk (e.g., world reset).
+ */
+export async function clearGroundPickups(cx: number, cz: number): Promise<void> {
+  await worldDBReady;
+  const chunkId = `${cx},${cz}`;
+  await worldDB.groundPickups.where('chunkId').equals(chunkId).delete();
 }
