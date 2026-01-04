@@ -6,6 +6,12 @@ import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import {
+  createStoneGeometry,
+  createLargeRockGeometry,
+  ITEM_COLORS,
+  STONE_MATERIALS,
+} from '@core/items/ItemGeometry';
 
 // Material pool for ground items (sticks, rocks)
 const groundItemMaterialPool: Record<string, THREE.Material> = {};
@@ -73,28 +79,35 @@ export const GroundItemsLayer: React.FC<{
     return groups;
   }, [largeRockData]);
 
-  // Shared Geometries
-  const stickGeometry = useMemo(() => new THREE.CylinderGeometry(1, 0.7, 1.0, 8, 4), []);
-  const rockGeometry = useMemo(() => new THREE.DodecahedronGeometry(0.22, 1), []);
-  const largeRockGeometry = useMemo(() => new THREE.IcosahedronGeometry(1.0, 2), []);
+  // Shared Geometries - using unified factory from ItemGeometry.ts
+  // Note: Stick geometry for instancing needs normalized scale (1,1,1 base)
+  // The actual dimensions are applied via instance transforms
+  const stickGeometry = useMemo(() => {
+    // For instanced ground items, we use a unit cylinder that gets scaled per-instance
+    // This differs from UniversalTool which uses the actual stick dimensions directly
+    return new THREE.CylinderGeometry(1, 0.7, 1.0, 8, 4);
+  }, []);
+  const rockGeometry = useMemo(() => createStoneGeometry(false), []);
+  const largeRockGeometry = useMemo(() => createLargeRockGeometry(), []);
 
+  // Rock materials using unified color palette from ItemGeometry.ts
   const rockMats = useMemo(() => {
-    const mk = (color: string, roughness: number) => ({ color, roughness });
+    // Map RockVariant enum to StoneVariant and get materials
     return new Map<RockVariant, { color: string, roughness: number }>([
-      [RockVariant.MOUNTAIN, mk('#8c8c96', 0.92)],
-      [RockVariant.CAVE, mk('#4b4b55', 0.96)],
-      [RockVariant.BEACH, mk('#b89f7c', 0.85)],
-      [RockVariant.MOSSY, mk('#5c7a3a', 0.93)]
+      [RockVariant.MOUNTAIN, { color: ITEM_COLORS.stone.mountain, roughness: STONE_MATERIALS.mountain.roughness }],
+      [RockVariant.CAVE, { color: ITEM_COLORS.stone.cave, roughness: STONE_MATERIALS.cave.roughness }],
+      [RockVariant.BEACH, { color: ITEM_COLORS.stone.beach, roughness: STONE_MATERIALS.beach.roughness }],
+      [RockVariant.MOSSY, { color: ITEM_COLORS.stone.mossy, roughness: STONE_MATERIALS.mossy.roughness }]
     ]);
   }, []);
 
   return (
     <group>
       {drySticks && drySticks.length > 0 && (
-        <GroundItemBatch geometry={stickGeometry} data={drySticks} color="#8b5a2b" shader={STICK_SHADER} />
+        <GroundItemBatch geometry={stickGeometry} data={drySticks} color={ITEM_COLORS.stick.default} shader={STICK_SHADER} />
       )}
       {jungleSticks && jungleSticks.length > 0 && (
-        <GroundItemBatch geometry={stickGeometry} data={jungleSticks} color="#6a4a2a" shader={STICK_SHADER} />
+        <GroundItemBatch geometry={stickGeometry} data={jungleSticks} color={ITEM_COLORS.stick.jungle} shader={STICK_SHADER} />
       )}
 
       {rockDataBuckets && Object.entries(rockDataBuckets).map(([vStr, data]) => {

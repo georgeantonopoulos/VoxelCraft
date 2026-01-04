@@ -49,8 +49,8 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
             position={position}
             colliders={false}
             type="dynamic"
-            linearDamping={1.0}
-            angularDamping={1.0}
+            linearDamping={1.5}
+            angularDamping={4.0}
             mass={150 * scale}
             friction={2.0}
         >

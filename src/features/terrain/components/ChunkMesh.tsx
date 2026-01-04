@@ -129,9 +129,9 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     const start = performance.now();
 
     // DEBUG: Log when geometry is recreated due to terrain modification
-    if (chunk.terrainVersion && chunk.terrainVersion > 1) {
-      console.log(`[ChunkMesh] Recreating geometry for ${chunk.key}: ${chunk.meshPositions.length / 3} verts, ver=${chunk.terrainVersion}`);
-    }
+    // if (chunk.terrainVersion && chunk.terrainVersion > 1) {
+    //   console.log(`[ChunkMesh] Recreating geometry for ${chunk.key}: ${chunk.meshPositions.length / 3} verts, ver=${chunk.terrainVersion}`);
+    // }
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));

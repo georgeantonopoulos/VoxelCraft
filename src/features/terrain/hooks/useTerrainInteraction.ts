@@ -185,6 +185,12 @@ export function useTerrainInteraction(
                 : (selectedItem as ItemType);
               const capabilities = getToolCapabilities(currentTool);
 
+              // Guard: Only tools with canChop capability can damage trees
+              if (!capabilities.canChop) {
+                audioPool.play(clunkUrl, 0.3, 1.5);
+                return;
+              }
+
               // Seed/Scale Logic (same as terrain-hit path)
               const seed = chunk.treePositions[posIdx] * 12.9898 + chunk.treePositions[posIdx + 2] * 78.233;
               const scale = 0.8 + Math.abs(seed % 0.4);
@@ -223,7 +229,8 @@ export function useTerrainInteraction(
                   newPositions[destIdx++] = positions[j + 4];
                 }
 
-                const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+                // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
+                const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current?.set(chunkKey, updatedChunk);
                 chunkDataManager.replaceChunk(chunkKey, updatedChunk);
                 chunkDataManager.markDirty(chunkKey);
@@ -460,6 +467,23 @@ export function useTerrainInteraction(
                   : (selectedItem as ItemType);
                 const capabilities = getToolCapabilities(currentTool);
 
+                // Guard: Only tools with canChop capability can damage trees
+                // Non-chopping tools can still shake/interact but deal no damage
+                if (!capabilities.canChop) {
+                  // SMASH/SHAKE Animation for non-chopping tools
+                  const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
+                  onLeafHit(leafPos);
+                  emitParticle({
+                    pos: leafPos,
+                    dir: new THREE.Vector3(0, -1, 0),
+                    kind: 'debris',
+                    color: '#4fa02a'
+                  });
+                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  anyFloraHit = true;
+                  continue;
+                }
+
                 // Radius/Scale Logic to determine health
                 const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
                 const scale = 0.8 + Math.abs(seed % 0.4);
@@ -539,7 +563,8 @@ export function useTerrainInteraction(
                 destIdx += 5;
               }
 
-              const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+              // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
+              const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current?.set(key, updatedChunk);
               chunkDataManager.replaceChunk(key, updatedChunk);
               chunkDataManager.markDirty(key);

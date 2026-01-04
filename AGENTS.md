@@ -129,6 +129,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Known Pitfalls (keep this list small)
 
+- **Item Geometry Centralization**: All item visuals (sticks, stones, shards, flora, tools) MUST use geometry factories and colors from `src/core/items/ItemGeometry.ts`. Never define item geometry, colors, or materials inline. This ensures visual consistency across held items, ground clutter, crafting UI, and physics items. Shard geometry is octahedron-based (blade-like), not cone-based.
 - **Shared references from `Array(n).fill(obj)`**: Use `Array.from({ length: n }, () => new Obj())` for per-particle/per-instance objects (common particle bug class).
 - **React StrictMode timer bugs**: Effects can mount/unmount twice in dev; store timeout IDs in refs and clear them before setting new ones (see `src/features/flora/components/RootHollow.tsx`).
 - **InstancedMesh scaling can “shrink your shader space”**: If instance matrices scale, shader-driven offsets may also scale; size particles via geometry radius when offsets must stay in world units (see `src/features/flora/components/LumaSwarm.tsx`).
@@ -210,6 +211,23 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-04: **Item Geometry Centralization**.
+  - **Goal**: Eliminate duplicate item geometry/color definitions across UniversalTool, GroundItemsLayer, and future physics items. Ensure visual consistency.
+  - **Implementation**:
+    1. Created `src/core/items/ItemGeometry.ts` as single source of truth:
+       - Unified color palette (ITEM_COLORS) matching terrain materials.
+       - Material variant system (obsidian, basalt, sandstone, clay stones; flint, volcanic shards).
+       - Geometry factories with caching: createStickGeometry(), createStoneGeometry(), createShardGeometry(), createLargeRockGeometry(), createLashingGeometry().
+       - Canonical dimensions (ITEM_DIMENSIONS) for all item types.
+    2. **Shard Geometry Change**: Replaced cone geometry with stretched octahedron (scaleX=0.6, scaleY=1.8, scaleZ=0.3) for blade-like appearance.
+    3. **Lashing Geometry**: Procedural helix curves for tool bindings (wraps, radius, tube params).
+    4. Updated UniversalTool.tsx to use shared factories for all mesh components (StoneMesh, ShardMesh, StickMesh, LashingMesh).
+    5. Updated GroundItemsLayer.tsx to use ITEM_COLORS and geometry factories for terrain clutter.
+    6. Added SHARD_SHADER to GroundItemShaders.ts for blade displacement on octahedron.
+    7. Enhanced CraftingInterface.tsx with ToolStatsPanel (live capability preview) and LashingMesh support.
+  - **Architecture**: ItemGeometry.ts consumed by UniversalTool (held/crafting), GroundItemsLayer (instanced), PhysicsItem (thrown), ItemThumbnail (inventory).
+  - **Files**: `ItemGeometry.ts` (new), `UniversalTool.tsx`, `GroundItemsLayer.tsx`, `GroundItemShaders.ts`, `CraftingInterface.tsx`.
 
 - 2026-01-04: **Fog System Investigation**.
   - **Goal**: Identify all variables and systems producing the current fog state.
@@ -362,5 +380,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - Merged branch `biome-enhancement` into `main` using `--no-ff`.
     - Verified build via `npm run build` and tests via `npm run test:unit`.
   - **Result**: Main branch is now up to date with feature developments.
+
+- 2026-01-04: **Removed ChunkMesh Reconstruction Logs**.
+  - **Goal**: Final silence of the high-frequency "[ChunkMesh] Recreating geometry" log which was missed in previous cleanups.
+  - **Changes**: Commented out the `console.log` on line 133 of `ChunkMesh.tsx`.
+  - **Result**: Console is now free of terrain-reconstruction spam during digging/modification.
 
 [diff_block_end]
