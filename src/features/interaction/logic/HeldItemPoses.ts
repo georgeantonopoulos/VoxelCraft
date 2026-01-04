@@ -49,7 +49,7 @@ export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>>
     rot: {
       x: THREE.MathUtils.degToRad(-18.0),
       y: THREE.MathUtils.degToRad(89.0),
-      z: THREE.MathUtils.degToRad(-18.0)
+      z: THREE.MathUtils.degToRad(162.0) // flipped 180° from -18° so custom tool attachments face correctly
     }
   },
   [ItemType.STONE]: {
