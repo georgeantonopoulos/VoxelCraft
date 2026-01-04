@@ -30,6 +30,7 @@ import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import { getTreeName, TreeType } from '@features/terrain/logic/VegetationConfig';
 import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -1380,6 +1381,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           terrainRuntime.registerChunk(key, cx, cz, density, material);
           chunkDataRef.current.set(key, newChunk);
 
+          // Phase 1: Also track in ChunkDataManager for future persistence/LRU
+          chunkDataManager.addChunk(key, newChunk);
+
           if (!initialLoadTriggered.current) {
             // During initial load, use queueVersionAdd directly for new chunks
             // versionUpdates is only for increments - new chunks need Add, not Increment
@@ -1426,6 +1430,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           };
           chunkDataRef.current.set(key, updatedChunk);
           versionUpdates.add(key);
+
+          // Phase 1: Also update in ChunkDataManager
+          chunkDataManager.addChunk(key, updatedChunk);
         }
       }
     }
@@ -1523,6 +1530,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           terrainRuntime.unregisterChunk(key);
           chunkDataRef.current.delete(key);
           queueVersionRemoval(key);
+
+          // Phase 1: Notify ChunkDataManager chunk is no longer visible
+          // Note: ChunkDataManager keeps data in LRU cache, doesn't delete immediately
+          chunkDataManager.hideChunk(key);
           removedCount++;
         }
       }
@@ -1652,6 +1663,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
         const updatedChunk = { ...chunk, floraPositions: next };
         chunkDataRef.current.set(key, updatedChunk);
+        chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
         queueVersionIncrement(key);
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
       };
@@ -1694,6 +1706,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         next[hit.index + 1] = -10000;
         const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
         chunkDataRef.current.set(hit.key, updatedChunk);
+        chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
         queueVersionIncrement(hit.key);
 
         if (hit.array === 'stickPositions') {
@@ -1880,6 +1893,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
                 const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current.set(chunkKey, updatedChunk);
+                chunkDataManager.markDirty(chunkKey); // Phase 2: Track tree removal
                 queueVersionIncrement(chunkKey);
 
                 // Spawn Falling Tree
@@ -2015,6 +2029,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 next[hit.index + 1] = -10000;
                 const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
                 chunkDataRef.current.set(hit.key, updatedChunk);
+                chunkDataManager.markDirty(hit.key); // Phase 2: Track natural rock smash
                 queueVersionIncrement(hit.key);
                 useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
               };
@@ -2209,6 +2224,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
               const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current.set(key, updatedChunk);
+              chunkDataManager.markDirty(key); // Phase 2: Track tree removal (terrain raycast)
               queueVersionIncrement(key);
             }
           }
@@ -2283,6 +2299,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               // VegetationLayer updates purely on the 'vegetationData' prop reference change.
               const updatedChunk = { ...chunk, vegetationData: newVegData };
               chunkDataRef.current.set(key, updatedChunk);
+              chunkDataManager.markDirty(key); // Phase 2: Track vegetation removal
               queueVersionIncrement(key);
             }
           }
@@ -2396,6 +2413,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       if (anyModified && poolRef.current) {
+        // Phase 2: Mark chunks as dirty in ChunkDataManager (for future persistence)
+        affectedChunks.forEach(key => chunkDataManager.markDirty(key));
+
         // Trigger version updates for all affected chunks to re-render
         affectedChunks.forEach(key => queueVersionIncrement(key));
         // Play Dig Sound
