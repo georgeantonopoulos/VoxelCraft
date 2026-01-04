@@ -7,6 +7,7 @@ import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
 import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
+import { generateLightGrid, extractLuminaLights, getSkyLightConfig } from '@core/lighting/lightPropagation';
 
 const ctx: Worker = self as any;
 
@@ -193,6 +194,10 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (isEmpty) {
                 const water = generateWaterSurfaceMesh(density, material);
                 const stickData = buildStickData(stickPositions, cx, cz), rockData = buildRockData(rockPositions, cx, cz), treeInstanceData = buildTreeInstanceData(treePositions);
+                // Generate light grid even for empty chunks (sky light still applies)
+                const emptyLuminaLights = extractLuminaLights(floraPositions);
+                const emptySkyLight = getSkyLightConfig(0.5);
+                const emptyLightGrid = generateLightGrid(density, emptyLuminaLights, emptySkyLight);
                 const emptyResponse = {
                     key: `${cx},${cz}`, cx, cz, density, material, terrainVersion: 0, visualVersion: 0, metadata,
                     floraPositions, treePositions, treeInstanceBatches: treeInstanceData.treeInstanceBatches, stickPositions, rockPositions, drySticks: stickData.drySticks, jungleSticks: stickData.jungleSticks,
@@ -200,10 +205,11 @@ ctx.onmessage = async (e: MessageEvent) => {
                     stickHotspots: stickData.stickHotspots, rockHotspots: rockData.rockHotspots, vegetationData: {}, meshPositions: new Float32Array(0), meshIndices: new Uint32Array(0),
                     meshMatWeightsA: new Float32Array(0), meshMatWeightsB: new Float32Array(0), meshMatWeightsC: new Float32Array(0), meshMatWeightsD: new Float32Array(0),
                     meshNormals: new Float32Array(0), meshWetness: new Float32Array(0), meshMossiness: new Float32Array(0), meshCavity: new Float32Array(0),
-                    meshWaterPositions: water.positions, meshWaterIndices: water.indices, meshWaterNormals: water.normals, meshWaterShoreMask: water.indices.length > 0 ? water.shoreMask : new Uint8Array(0)
+                    meshWaterPositions: water.positions, meshWaterIndices: water.indices, meshWaterNormals: water.normals, meshWaterShoreMask: water.indices.length > 0 ? water.shoreMask : new Uint8Array(0),
+                    lightGrid: emptyLightGrid
                 };
                 ctx.postMessage({ type: 'GENERATED', payload: emptyResponse }, [
-                    ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, stickPositions.buffer, rockPositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, water.positions.buffer, water.indices.buffer, water.normals.buffer, emptyResponse.meshWaterShoreMask.buffer, emptyResponse.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer
+                    ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, stickPositions.buffer, rockPositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, water.positions.buffer, water.indices.buffer, water.normals.buffer, emptyResponse.meshWaterShoreMask.buffer, emptyResponse.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, emptyLightGrid.buffer
                 ]);
                 return;
             }
@@ -240,17 +246,26 @@ ctx.onmessage = async (e: MessageEvent) => {
                     }
                 }
             }
-            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness) as MeshData;
+            // Generate voxel-based light grid for GI (must be before mesh generation)
+            const luminaLights = extractLuminaLights(floraPositions);
+            // Use default daylight sky - the main thread can update this dynamically if needed
+            const skyLight = getSkyLightConfig(0.5); // 0.5 = midday sun
+            const lightGrid = generateLightGrid(density, luminaLights, skyLight);
+
+            // Generate mesh with light grid for per-vertex GI baking
+            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness, lightGrid) as MeshData;
+
             const vegetationData: Record<number, Float32Array> = {}, vegetationBuffers: ArrayBuffer[] = [];
             for (const [vKey, points] of Object.entries(vegetationBuckets)) { const f32 = new Float32Array(points); vegetationData[parseInt(vKey)] = f32; vegetationBuffers.push(f32.buffer); }
             const stickData = buildStickData(stickPositions, cx, cz), rockData = buildRockData(rockPositions, cx, cz), treeInstanceData = buildTreeInstanceData(treePositions);
             const response = {
                 key: `${cx},${cz}`, cx, cz, density, material, metadata, terrainVersion: 0, visualVersion: 0, vegetationData, floraPositions, treePositions, treeInstanceBatches: treeInstanceData.treeInstanceBatches, rootHollowPositions, stickPositions, rockPositions, drySticks: stickData.drySticks, jungleSticks: stickData.jungleSticks, rockDataBuckets: rockData.rockDataBuckets, largeRockPositions, fireflyPositions, floraHotspots: buildFloraHotspotsPacked(floraPositions), stickHotspots: stickData.stickHotspots, rockHotspots: rockData.rockHotspots,
-                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
-                colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
+                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshLightColors: mesh.lightColors, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield,
+                lightGrid
             };
             const transfers: any[] = [
-                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
+                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer, lightGrid.buffer
             ];
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'GENERATED', payload: response }, transfers);

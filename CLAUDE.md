@@ -26,7 +26,8 @@ Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
     → If miss: Check IndexedDB for player modifications (WorldDB)
     → If miss: Worker generates chunk via 3D Simplex noise
     → Apply persisted modifications if they exist
-    → Surface Nets meshing produces smooth geometry
+    → Generate voxel light grid (8×32×8 cells, sky + point lights)
+    → Surface Nets meshing produces smooth geometry with baked GI
     → Trimesh colliders created (throttled via colliderEnableQueue)
     → ChunkMesh mounted with TriplanarMaterial
     → Player modifications tracked as dirty in ChunkDataManager
@@ -35,7 +36,7 @@ Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
 
 ### Key Directories
 
-- `src/core/` - Shared engine: materials, shaders, worker pools, math utilities
+- `src/core/` - Shared engine: materials, shaders, worker pools, math utilities, lighting
 - `src/features/terrain/` - Chunk generation, meshing, streaming (VoxelTerrain.tsx, mesher.ts)
 - `src/features/flora/` - Trees, vegetation, particle systems
 - `src/features/player/` - Movement, input, camera
@@ -47,11 +48,23 @@ Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
 ### Worker Architecture
 
 Workers handle expensive operations via `WorkerPool` (src/core/workers/WorkerPool.ts):
-- `terrain.worker.ts` - Chunk generation + meshing
+- `terrain.worker.ts` - Chunk generation, light grid, meshing
 - `simulation.worker.ts` - Flora updates
 - `fractal.worker.ts` - Tree geometry generation
 
 Message format: `{ type: string, payload: {...} }`. Use transferables for Float32Arrays.
+
+### Lighting System
+
+**Voxel-based Global Illumination** (src/core/lighting/lightPropagation.ts):
+- Low-res 3D light grid (8×32×8 cells, LIGHT_CELL_SIZE=4 voxels per cell)
+- Sky light traces down from above, attenuates through solid voxels
+- Point lights (torches, Lumina) seed grid with colored light
+- 6-iteration flood-fill propagation spreads light through space
+- Per-vertex light colors baked into mesh (aLightColor attribute)
+- Zero runtime cost - light is fully baked during meshing
+
+Ambient light reduced to minimal levels (surface: 0.08, cave: 0.04). GI provides all indirect lighting.
 
 ### State Management
 
@@ -74,6 +87,7 @@ Message format: `{ type: string, payload: {...} }`. Use transferables for Float3
 TriplanarMaterial uses custom shaders with:
 - Sharp triplanar blending (power 8) across 16 materials
 - Material weight channels (matWeightsA-D, 4 materials each)
+- Per-vertex GI light (aLightColor attribute) from voxel light grid
 - Shared uniforms updated once per frame in VoxelTerrain.tsx
 
 ## Critical Constants (src/constants.ts)
@@ -83,13 +97,19 @@ CHUNK_SIZE_XZ = 32, CHUNK_SIZE_Y = 128, PAD = 2
 ISO_LEVEL = 0.5 (density threshold)
 RENDER_DISTANCE = 3 (49 chunks max)
 WATER_LEVEL = 4.5
+
+Light Grid (GI):
+LIGHT_CELL_SIZE = 4 (each cell = 4×4×4 voxels)
+LIGHT_GRID_SIZE_XZ = 8, LIGHT_GRID_SIZE_Y = 32 (2048 cells/chunk)
+LIGHT_PROPAGATION_ITERATIONS = 6
+LIGHT_FALLOFF = 0.82, SKY_LIGHT_ATTENUATION = 0.7
 ```
 
-Changing these breaks mesher output dimensions and worker communication.
+Changing these breaks mesher output dimensions and worker communication. Light grid dimensions must divide evenly into chunk size.
 
 ## Debug Flags
 
-- `?debug` - Enable Leva debug panels (sun, shadows, fog controls)
+- `?debug` - Enable Leva debug panels (sun, shadows, fog controls, GI toggle)
 - `?mode=map` - Biome/map debug view
 - `?normals` - Normal material for geometry inspection
 - `?profile` or `localStorage.vcProfiler = "1"` - Enable FrameProfiler with spike detection
@@ -98,6 +118,8 @@ Changing these breaks mesher output dimensions and worker communication.
 - `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
 - `window.__chunkDataManager.getStats()` - View chunk cache stats (total, dirty, pending persistence, memory MB)
+
+**GI Tuning**: uGIEnabled (0/1 toggle), uGIIntensity (multiplier, default 1.2) accessible via debug panel.
 
 ## Key Invariants
 
@@ -109,6 +131,7 @@ See `AGENTS.md` for the complete list. Most critical:
 4. **Material channels**: Mesher outputs matWeightsA-D bound in ChunkMesh.tsx. Shader expects this structure.
 5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
+7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 
 ## Common Pitfalls
 
@@ -134,3 +157,4 @@ See `AGENTS.md` for:
 - Debug workflows and verification checklists
 - Performance optimization details
 - Worklog of recent changes
+- If you notice important refactoring opportunities while doing other changes, make a note of them here for the future. 

@@ -1,4 +1,4 @@
-import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL } from '@/constants';
+import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL, LIGHT_CELL_SIZE, LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
 
 const SIZE_X = TOTAL_SIZE_XZ;
@@ -61,6 +61,43 @@ const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
 };
 
 const isLiquidMaterial = (mat: number) => mat === MaterialType.WATER || mat === MaterialType.ICE;
+
+/**
+ * Sample the light grid at a given local chunk position.
+ * Returns RGB values as floats (0-1 range).
+ */
+function sampleLightGrid(
+  lightGrid: Uint8Array | undefined,
+  localX: number,
+  localY: number,
+  localZ: number
+): [number, number, number] {
+  if (!lightGrid || lightGrid.length === 0) {
+    // Fallback ambient when no light grid
+    return [0.35, 0.35, 0.35];
+  }
+
+  // Convert local position to grid cell (accounting for MESH_Y_OFFSET)
+  const worldY = localY - MESH_Y_OFFSET;
+  const cellX = Math.floor(localX / LIGHT_CELL_SIZE);
+  const cellY = Math.floor((worldY + 35) / LIGHT_CELL_SIZE); // +35 to undo offset
+  const cellZ = Math.floor(localZ / LIGHT_CELL_SIZE);
+
+  // Clamp to grid bounds
+  const cx = Math.max(0, Math.min(LIGHT_GRID_SIZE_XZ - 1, cellX));
+  const cy = Math.max(0, Math.min(LIGHT_GRID_SIZE_Y - 1, cellY));
+  const cz = Math.max(0, Math.min(LIGHT_GRID_SIZE_XZ - 1, cellZ));
+
+  // Calculate grid index (RGBA stride of 4)
+  const idx = (cx + cy * LIGHT_GRID_SIZE_XZ + cz * LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y) * 4;
+
+  // Read RGB and convert from 0-255 to 0-1
+  const r = lightGrid[idx + 0] / 255;
+  const g = lightGrid[idx + 1] / 255;
+  const b = lightGrid[idx + 2] / 255;
+
+  return [r, g, b];
+}
 
 export type WaterSurfaceMeshData = {
   positions: Float32Array;
@@ -246,7 +283,8 @@ export function generateMesh(
   density: Float32Array,
   material: Uint8Array,
   wetness?: Uint8Array,
-  mossiness?: Uint8Array
+  mossiness?: Uint8Array,
+  lightGrid?: Uint8Array
 ): MeshData {
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
@@ -262,6 +300,7 @@ export function generateMesh(
   const tWets: number[] = [];
   const tMoss: number[] = [];
   const tCavity: number[] = [];
+  const tLightColors: number[] = []; // Per-vertex GI light
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
@@ -409,6 +448,11 @@ export function generateMesh(
             tWets.push(bestWet / 255.0); tMoss.push(bestMoss / 255.0);
             const solidFrac = occTotalW > 0.0001 ? occSolidW / occTotalW : 0.5;
             tCavity.push(Math.max(0, Math.min(1, (solidFrac - 0.55) / (0.9 - 0.55))));
+
+            // Sample GI light at vertex position
+            const [lr, lg, lb] = sampleLightGrid(lightGrid, px, py, pz);
+            tLightColors.push(lr, lg, lb);
+
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -464,6 +508,7 @@ export function generateMesh(
     wetness: new Float32Array(tWets),
     mossiness: new Float32Array(tMoss),
     cavity: new Float32Array(tCavity),
+    lightColors: new Float32Array(tLightColors),
     waterPositions: water.positions,
     waterIndices: water.indices,
     waterNormals: water.normals,

@@ -51,6 +51,9 @@ const getSharedTerrainMaterial = () => {
     uFogDensity: { value: 0.01 },
     uWaterLevel: { value: 4.5 },
     uWeightsView: { value: 0 },
+    // GI uniforms
+    uGIEnabled: { value: 1.0 },
+    uGIIntensity: { value: 1.2 },
     uTriplanarDetail: sharedUniforms.uTriplanarDetail,
     uShaderFogEnabled: sharedUniforms.uShaderFogEnabled,
     uShaderFogStrength: sharedUniforms.uShaderFogStrength,

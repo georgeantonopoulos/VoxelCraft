@@ -6,6 +6,7 @@ export const triplanarVertexShader = `
   attribute float aVoxelWetness;
   attribute float aVoxelMossiness;
   attribute float aVoxelCavity;
+  attribute vec3 aLightColor;  // Per-vertex GI light from light grid
 
   uniform vec2 uWindDirXZ;
   uniform float uNormalStrength;
@@ -22,6 +23,7 @@ export const triplanarVertexShader = `
   varying vec3 vWorldNormal;
   varying float vDominantChannel;
   varying float vDominantWeight;
+  varying vec3 vLightColor;  // Pass GI light to fragment shader
 
   vec2 safeNormalize2(vec2 v) {
     float len = length(v);
@@ -104,6 +106,7 @@ export const triplanarVertexShader = `
     vWetness = aVoxelWetness;
     vMossiness = aVoxelMossiness;
     vCavity = aVoxelCavity;
+    vLightColor = aLightColor;  // Pass GI light to fragment
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     float wMax = vWa.x; float ch = 0.0;
@@ -174,6 +177,10 @@ export const triplanarFragmentShader = `
   uniform vec3 uSunDirection;
   uniform float uWaterLevel;
 
+  // Voxel GI - received as per-vertex attribute (baked from light grid)
+  uniform float uGIEnabled;       // Toggle for GI (0 = off, 1 = on)
+  uniform float uGIIntensity;     // GI strength multiplier
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -185,6 +192,7 @@ export const triplanarFragmentShader = `
   varying vec3 vWorldNormal;
   varying float vDominantChannel;
   varying float vDominantWeight;
+  varying vec3 vLightColor;  // GI light interpolated from vertices
 
   vec3 safeNormalize(vec3 v) {
       float len = length(v);
@@ -208,6 +216,16 @@ export const triplanarFragmentShader = `
       float len = length(v);
       if (len < 0.0001) return vec2(1.0, 0.0);
       return v / len;
+  }
+
+  // Get GI light from per-vertex attribute (baked from light grid in mesher)
+  vec3 getGILight() {
+      if (uGIEnabled < 0.5) {
+          // Fallback to simple ambient when GI is disabled
+          return vec3(0.35);
+      }
+      // vLightColor comes from the vertex attribute, already interpolated
+      return vLightColor * uGIIntensity;
   }
 
   float sampleCausticPattern(vec2 uv, float ang, float tz1, float tz2) {
@@ -375,6 +393,11 @@ export const triplanarFragmentShader = `
     else if (dom == 4 || dom == 13) col *= 1.0 + (nMacro.g * 2.0 - 1.0) * 0.03;
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
+
+    // Apply voxel-based global illumination
+    vec3 giLight = getGILight();
+    col *= giLight;
+
     col = clamp(col, 0.0, 5.0); col += accEmission * accColor; 
     if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;

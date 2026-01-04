@@ -170,6 +170,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     ensureAttribute(chunk.meshWetness, 'aVoxelWetness', 1);
     ensureAttribute(chunk.meshMossiness, 'aVoxelMossiness', 1);
     ensureAttribute(chunk.meshCavity, 'aVoxelCavity', 1);
+    ensureAttribute(chunk.meshLightColors, 'aLightColor', 3);  // Per-vertex GI light
 
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
     geom.computeBoundingSphere();

@@ -22,6 +22,16 @@ export function setSnapEpsilon(v: number): void {
 }
 export const VOXEL_SCALE = 1.0;
 
+// Light Grid Settings (for voxel-based global illumination)
+// Each cell covers LIGHT_CELL_SIZE^3 voxels
+export const LIGHT_CELL_SIZE = 4;
+export const LIGHT_GRID_SIZE_XZ = CHUNK_SIZE_XZ / LIGHT_CELL_SIZE; // 8 cells
+export const LIGHT_GRID_SIZE_Y = CHUNK_SIZE_Y / LIGHT_CELL_SIZE;   // 32 cells
+export const LIGHT_GRID_TOTAL_CELLS = LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y * LIGHT_GRID_SIZE_XZ; // 2048 cells
+export const LIGHT_PROPAGATION_ITERATIONS = 6; // Number of flood-fill passes
+export const LIGHT_FALLOFF = 0.82; // Light retention per propagation step (higher = further reach)
+export const SKY_LIGHT_ATTENUATION = 0.7; // Light retention through solid voxels vertically
+
 // World Generation
 export const RENDER_DISTANCE = 3;
 // LOD Distances (in chunks from player)

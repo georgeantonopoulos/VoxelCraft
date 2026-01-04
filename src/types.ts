@@ -64,6 +64,7 @@ export interface MeshData {
   wetness: Float32Array; // Attribute for wetness
   mossiness: Float32Array; // Attribute for mossiness
   cavity: Float32Array; // Attribute for baked micro-occlusion (creases/cavities)
+  lightColors: Float32Array; // Per-vertex GI light color (RGB, stride 3)
 
   // Water Mesh Data
   waterPositions: Float32Array;
@@ -113,6 +114,7 @@ export interface ChunkState {
   meshWetness: Float32Array;
   meshMossiness: Float32Array;
   meshCavity: Float32Array;
+  meshLightColors?: Float32Array;  // Per-vertex GI light (RGB, stride 3)
 
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
@@ -144,6 +146,11 @@ export interface ChunkState {
 
   lightPositions?: Float32Array;
   lodLevel?: number; // Distance in chunks from player (continuous, quantized)
+
+  // Voxel-based Global Illumination light grid
+  // RGBA Uint8Array of size LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y * LIGHT_GRID_SIZE_XZ * 4
+  // Stores indirect light color (RGB) and intensity (A) per cell
+  lightGrid?: Uint8Array;
 }
 
 export interface CustomTool {

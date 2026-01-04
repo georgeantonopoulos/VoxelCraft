@@ -55,12 +55,20 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Density > ISO_LEVEL (0.5)** = Solid.
   - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
   - **Caverns**: Stateless "Noodle" Algorithm using domain-warped 3D ridged noise (`abs(noise) < threshold`) in `TerrainService.ts`. Configured per-biome via `BiomeManager.ts`.
+- **Lighting**: `src/core/lighting/lightPropagation.ts` generates a voxel-based GI light grid (8×32×8 cells per chunk).
+  - **Light Grid**: Low-resolution 3D grid (LIGHT_CELL_SIZE=4, each cell = 4×4×4 voxels).
+  - **Sky Light**: Traces down from above, attenuates through solid voxels (SKY_LIGHT_ATTENUATION=0.7).
+  - **Point Lights**: Torches and Lumina flora seed the grid with colored light (inverse-square falloff).
+  - **Propagation**: 6-iteration flood-fill spreads light through 6-connected neighbors (LIGHT_FALLOFF=0.82).
+  - **Critical Order**: Light grid MUST be generated before meshing (worker calls `generateLightGrid()` then `generateMesh()`).
 - **Meshing**: `src/features/terrain/logic/mesher.ts` implements a Surface Nets-style algorithm (Dual Contouring variant) to generate smooth meshes from density data.
   - **Seam Fix**: Optimized loop logic explicitly handles boundary faces (X/Y/Z) with correct limits (`endX`, `endY`) to prevent disappearing textures at chunk edges.
+  - **GI Baking**: Mesher samples the light grid to compute per-vertex RGB light colors (aLightColor attribute). Trilinear interpolation from 8 surrounding light cells.
   - **Physics**: Uses the full-resolution visual mesh for `trimesh` collision in Rapier. Throttled mounting (`mountQueue`) and worker-based generation are used to prevent main-thread spikes instead of mesh simplification.
 - **Materials**: `TriplanarMaterial` uses custom shaders with sharp triplanar blending (pow 8) and projected noise sampling to avoid muddy transitions.
   - **Shader Stability**: Implements `safeNormalize` to prevent NaNs on degenerate geometry (e.g., sharp concave features from digging) which prevents flashing artifacts.
   - **Modular Shaders**: Shader code is extracted into `src/core/graphics/TriplanarShader.ts` for better maintainability.
+  - **GI Integration**: Fragment shader reads `vLightColor` (interpolated from vertices) and applies it as ambient/indirect lighting. Replaces flat ambient light (now reduced to 0.08 surface / 0.04 cave).
 
 ## Testing Strategy
 - **Headless Tests**: Run via `npm test` (Vitest).
@@ -141,6 +149,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **React Reconciliation Batching**: Multiple `setChunkVersions` calls per frame (e.g., from worker messages, LOD updates, chunk mounts) trigger multiple React reconciliation passes (60-90ms spikes). Solution: Queue updates in refs (`pendingVersionAdds`, `pendingVersionUpdates`, `pendingVersionRemovals`) and flush once at end of `useFrame` via `flushVersionUpdates()`. Use `startTransition` for post-initial-load flushes. See `VoxelTerrain.tsx` keyword: `BATCHED VERSION UPDATES`.
 - **Version Add vs Increment Distinction**: `queueVersionAdd(key)` adds new chunks with version 1. `queueVersionIncrement(key)` increments existing entries. Using increment for new chunks does nothing (the `if (next[k] !== undefined)` guard fails). During initial load, new chunks MUST use `queueVersionAdd`, not `queueVersionIncrement`.
 - **Initial Load vs Post-Load Code Paths**: `initialLoadTriggered.current` gates two different streaming behaviors. During initial load (`false`): chunks go directly to version state for immediate rendering. After initial load (`true`): chunks go through `mountQueue` for throttled addition. Mixing these paths causes spawn chunk to not appear.
+- **Light Grid Dimensions**: `LIGHT_CELL_SIZE` MUST divide evenly into both `CHUNK_SIZE_XZ` and `CHUNK_SIZE_Y`. Current: 4 divides into 32 and 128 cleanly (8×32×8 grid). Changing to non-divisible values causes index out-of-bounds in `getCellOcclusion()` and mesher light sampling. See `src/core/lighting/lightPropagation.ts` and `src/constants.ts`.
 
 ---
 
@@ -193,6 +202,34 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-04: **Voxel-based Global Illumination System**.
+  - **Goal**: Replace flat ambient lighting with dynamic, environment-aware indirect lighting that responds to sky, caves, and point lights.
+  - **Implementation**:
+    1. **Light Grid Generation** (`src/core/lighting/lightPropagation.ts`):
+       - Low-res 3D grid (8×32×8 = 2048 cells per chunk, LIGHT_CELL_SIZE=4 voxels).
+       - Sky light traces vertically, attenuates through solid voxels (SKY_LIGHT_ATTENUATION=0.7).
+       - Point lights (torches, Lumina) seed grid with inverse-square falloff.
+       - 6-iteration flood-fill propagation (LIGHT_FALLOFF=0.82).
+       - Reinhard tone mapping to Uint8 RGBA output.
+    2. **Worker Integration** (`terrain.worker.ts`):
+       - `generateLightGrid()` called BEFORE `generateMesh()`.
+       - Lumina flora extracted from `floraPositions` via `extractLuminaLights()`.
+       - Sky light config derived from sun height via `getSkyLightConfig()`.
+    3. **Mesher GI Baking** (`mesher.ts`):
+       - Per-vertex light colors sampled from grid via trilinear interpolation.
+       - New `aLightColor` attribute (vec3) added to mesh geometry.
+    4. **Shader Integration** (`TriplanarShader.ts`):
+       - `aLightColor` attribute → `vLightColor` varying.
+       - `getGILight()` replaces flat ambient lookup.
+       - `uGIEnabled` (0/1 toggle), `uGIIntensity` (default 1.2) for runtime control.
+    5. **Ambient Reduction** (`AtmosphereManager.tsx`):
+       - Surface ambient: 0.30 → 0.08 (73% reduction).
+       - Cave ambient: 0.14 → 0.04 (71% reduction).
+       - GI now provides all indirect/ambient lighting.
+  - **Performance**: Zero runtime cost. Light is fully baked during mesh generation in worker.
+  - **Files**: `lightPropagation.ts` (new), `constants.ts` (light grid constants), `terrain.worker.ts` (integration), `mesher.ts` (vertex baking), `TriplanarShader.ts` (shader), `AtmosphereManager.tsx` (ambient reduction), `ChunkMesh.tsx` (attribute binding).
+  - **Debug**: `uGIEnabled` = 0 falls back to 0.35 flat ambient. `uGIIntensity` scales GI contribution.
 
 - 2026-01-04: **ChunkDataManager Integration (6-phase)**.
   - **Goal**: Centralize chunk data ownership, implement LRU cache, and add dirty tracking for player modifications.

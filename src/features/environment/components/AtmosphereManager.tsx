@@ -109,12 +109,14 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
             return;
         }
         lastBlend.current = undergroundBlend;
-        ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend) * intensityMul;
+        // With voxel-based GI, ambient light is greatly reduced (GI handles indirect lighting)
+        // Surface: 0.08 (was 0.3), Cave: 0.04 (was 0.14)
+        ambientRef.current.intensity = THREE.MathUtils.lerp(0.08, 0.04, undergroundBlend) * intensityMul;
         ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
         frameProfiler.end('ambient-controller');
     });
 
-    return <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />;
+    return <ambientLight ref={ambientRef} intensity={0.08} color="#ccccff" />;
 };
 
 export const SkyDomeRefLink: React.FC<{
