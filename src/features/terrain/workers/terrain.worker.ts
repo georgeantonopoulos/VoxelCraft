@@ -125,9 +125,18 @@ ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
     try {
         if (type === 'CONFIGURE') {
-            const { worldType } = payload;
-            BiomeManager.setWorldType(worldType);
-            (self as any).worldType = worldType;
+            const { worldType, seed } = payload;
+            if (seed !== undefined) {
+                BiomeManager.reinitialize(seed);
+                // Also reinitialize Perlin noise for terrain generation
+                const { initializeNoise } = await import('@core/math/noise');
+                initializeNoise(seed);
+                (self as any).worldSeed = seed;
+            }
+            if (worldType !== undefined) {
+                BiomeManager.setWorldType(worldType);
+                (self as any).worldType = worldType;
+            }
         } else if (type === 'GENERATE') {
             const { cx, cz } = payload;
             let modifications: any[] = [];

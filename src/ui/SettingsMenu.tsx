@@ -1,7 +1,13 @@
 import React from 'react';
 import { useSettingsStore, QualityPreset } from '@/state/SettingsStore';
+import { WorldSeed } from '@core/WorldSeed';
+import { BiomeManager } from '@features/terrain/logic/BiomeManager';
 
-export const SettingsMenu: React.FC = () => {
+interface SettingsMenuProps {
+  onRestartWorld?: () => void;
+}
+
+export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) => {
   const isOpen = useSettingsStore(s => s.isSettingsOpen);
   const toggle = useSettingsStore(s => s.toggleSettings);
 
@@ -16,10 +22,39 @@ export const SettingsMenu: React.FC = () => {
 
   if (!isOpen) return null;
 
+  const handleRestartWorld = () => {
+    toggle(); // Close settings first
+    onRestartWorld?.();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
       <div className="bg-slate-900 border border-slate-700 p-6 rounded-lg shadow-2xl max-w-md w-full text-white m-4">
         <h2 className="text-2xl font-bold mb-6 text-emerald-400">Settings</h2>
+
+        {/* World Info */}
+        <div className="mb-6 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
+          <div className="flex justify-between items-center">
+            <div>
+              <p className="text-xs text-slate-400 uppercase tracking-wide">Current World</p>
+              <p className="text-sm font-mono text-slate-300">
+                Seed: <span className="text-emerald-400">{WorldSeed.get()}</span>
+              </p>
+              <p className="text-xs text-slate-500">
+                Type: {BiomeManager.getWorldType()}
+              </p>
+            </div>
+            {onRestartWorld && (
+              <button
+                onClick={handleRestartWorld}
+                className="px-3 py-1.5 text-xs bg-amber-600/80 hover:bg-amber-500 rounded transition-colors"
+                title="Return to world selection"
+              >
+                New World
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Quality Preset */}
         <div className="mb-6">

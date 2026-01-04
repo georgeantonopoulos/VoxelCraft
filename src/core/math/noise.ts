@@ -4,29 +4,55 @@
 const PERM = new Uint8Array(512);
 const p = new Uint8Array(256);
 
-// seededRandom allows us to have a deterministic shuffle
-let seedVal = 1337;
-function seededRandom() {
-    const x = Math.sin(seedVal++) * 10000;
-    return x - Math.floor(x);
+// Current seed value - can be reinitialized
+let currentSeed = 1337;
+
+// Seeded random number generator
+function seededRandom(seed: { val: number }) {
+  const x = Math.sin(seed.val++) * 10000;
+  return x - Math.floor(x);
 }
 
-// Initialize with a deterministic sequence
-for (let i = 0; i < 256; i++) {
-  p[i] = i;
+/**
+ * Initialize or reinitialize the Perlin noise permutation table with a new seed.
+ * Must be called before any noise generation for deterministic results.
+ *
+ * @param seed - The seed value (positive integer)
+ */
+export function initializeNoise(seed: number): void {
+  currentSeed = seed;
+  const seedState = { val: seed };
+
+  // Initialize with sequential values
+  for (let i = 0; i < 256; i++) {
+    p[i] = i;
+  }
+
+  // Shuffle deterministically using the seed
+  for (let i = 255; i > 0; i--) {
+    const n = Math.floor(seededRandom(seedState) * (i + 1));
+    const q = p[i];
+    p[i] = p[n];
+    p[n] = q;
+  }
+
+  // Double the permutation table for overflow handling
+  for (let i = 0; i < 512; i++) {
+    PERM[i] = p[i & 255];
+  }
+
+  console.log(`[Noise] Perlin noise initialized with seed: ${seed}`);
 }
 
-// Shuffle deterministically
-for (let i = 255; i > 0; i--) {
-  const n = Math.floor(seededRandom() * (i + 1));
-  const q = p[i];
-  p[i] = p[n];
-  p[n] = q;
+/**
+ * Get the current noise seed.
+ */
+export function getNoiseSeed(): number {
+  return currentSeed;
 }
 
-for (let i = 0; i < 512; i++) {
-  PERM[i] = p[i & 255];
-}
+// Initialize with default seed on module load
+initializeNoise(1337);
 
 function fade(t: number) {
   return t * t * t * (t * (t * 6 - 15) + 10);

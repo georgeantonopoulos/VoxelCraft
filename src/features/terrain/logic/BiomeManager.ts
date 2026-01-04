@@ -182,9 +182,41 @@ const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
 export class BiomeManager {
-  // Using a fixed seed for now, could be passed in
+  // World seed - configurable for different world generation
   private static seed = 1337;
   private static currentWorldType: WorldType = WorldType.DEFAULT;
+
+  /**
+   * Get the current seed value.
+   */
+  static getSeed(): number {
+    return this.seed;
+  }
+
+  /**
+   * Reinitialize all noise generators with a new seed.
+   * Call this when starting a new world or changing seeds.
+   *
+   * @param newSeed - The new seed value (positive integer)
+   */
+  static reinitialize(newSeed: number): void {
+    const normalizedSeed = Math.abs(Math.floor(newSeed)) || 1;
+
+    if (this.seed === normalizedSeed) {
+      console.log('[BiomeManager] Seed unchanged, skipping reinitialization');
+      return;
+    }
+
+    this.seed = normalizedSeed;
+
+    // Recreate all noise functions with the new seed
+    this.tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
+    this.humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
+    this.continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
+    this.erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+
+    console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
+  }
 
   static setWorldType(type: WorldType) {
     if (this.currentWorldType === type) return; // Avoid duplicate calls from StrictMode
@@ -192,11 +224,18 @@ export class BiomeManager {
     console.log('[BiomeManager] World Type set to:', type);
   }
 
+  /**
+   * Get the current world type.
+   */
+  static getWorldType(): WorldType {
+    return this.currentWorldType;
+  }
+
   // 2D Noise functions for macro-climate
   private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
   private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
 
-  // NEW: Physical Reality noise layers
+  // Physical Reality noise layers
   // ContinentalNoise: Low frequency, defines Ocean vs Land.
   private static continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
   // ErosionNoise: Defines "Flatness" vs "Mountainous".

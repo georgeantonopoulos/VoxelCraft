@@ -339,6 +339,8 @@ interface VoxelTerrainProps {
   terrainWeightsView?: string;
   onInitialLoad?: () => void;
   worldType: string;
+  /** World seed for terrain generation. If not provided, uses default (1337). */
+  seed?: number;
   heightFogEnabled?: boolean;
   heightFogStrength?: number;
   heightFogRange?: number;
@@ -392,7 +394,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   sunDirection,
   initialSpawnPos,
   triplanarDetail = 1.0,
-  terrainShaderFogEnabled = true,
+  terrainShaderFogEnabled = false,
   terrainShaderFogStrength = 0.9,
   terrainThreeFogEnabled = true,
   terrainFadeEnabled = true,
@@ -407,6 +409,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   terrainWeightsView = 'off',
   onInitialLoad,
   worldType,
+  seed,
   heightFogEnabled = true,
   heightFogStrength = 0.35,
   heightFogRange = 50.0,
@@ -524,8 +527,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // Throttled to 10Hz (100ms) to reduce React reconciliation overhead
   const flushVersionUpdates = (forceImmediate = false) => {
     if (pendingVersionUpdates.current.size === 0 &&
-        pendingVersionRemovals.current.size === 0 &&
-        pendingVersionAdds.current.size === 0) {
+      pendingVersionRemovals.current.size === 0 &&
+      pendingVersionAdds.current.size === 0) {
       return;
     }
 
@@ -763,8 +766,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), 4);
     poolRef.current = pool;
 
-    // Send configuration to all workers
-    pool.postToAll({ type: 'CONFIGURE', payload: { worldType } });
+    // Send configuration to all workers (including seed for deterministic generation)
+    pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed } });
 
     // Handle messages from any worker in the pool
     pool.addMessageListener((e) => {

@@ -12,7 +12,7 @@ export const sharedUniforms = {
     uFogNear: { value: 20 },
     uFogFar: { value: 250 },
     uShaderFogStrength: { value: 0.9 },
-    uShaderFogEnabled: { value: 1.0 },
+    uShaderFogEnabled: { value: 0.0 },
     uHeightFogEnabled: { value: 1.0 },
     uHeightFogStrength: { value: 0.35 },
     uHeightFogRange: { value: 50.0 },

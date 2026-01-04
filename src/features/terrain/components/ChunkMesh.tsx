@@ -98,7 +98,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   terrainVersion,
   sunDirection,
   triplanarDetail = 1.0,
-  terrainShaderFogEnabled = true,
+  terrainShaderFogEnabled = false,
   terrainShaderFogStrength = 0.9,
   terrainThreeFogEnabled = true,
   terrainFadeEnabled = true,

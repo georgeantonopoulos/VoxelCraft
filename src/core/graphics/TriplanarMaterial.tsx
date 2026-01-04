@@ -113,7 +113,7 @@ export interface TriplanarMaterialProps {
 export const TriplanarMaterial: React.FC<TriplanarMaterialProps> = React.memo(({
   sunDirection,
   triplanarDetail = 1.0,
-  shaderFogEnabled = true,
+  shaderFogEnabled = false,
   shaderFogStrength = 0.8,
   threeFogEnabled = true,
   wetnessEnabled = true,

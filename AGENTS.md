@@ -334,3 +334,15 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
     - **Dirt/Clay**: High-contrast lumpy/grid bumps (Channels 3, 7, 11).
     - **Snow/Ice**: Large, smooth static drifts (Channels 6, 12).
     - **Sand/Red Sand**: Preserved existing wind ripples (Channels 5, 10).
+- 2026-01-04: **Ambient Lighting Adjustment**.
+  - **Goal**: Increase indirect lighting slightly to avoid harsh blacks in shadows while maintaining contrast.
+  - **Changes**:
+    - `AtmosphereManager.tsx`: Surface ambient `0.08` → `0.10`, Cave `0.04` → `0.05`.
+    - `TriplanarMaterial.tsx`: `uGIIntensity` `1.2` → `1.35`.
+  - **Result**: Softens deep shadows without washing out directional contrast.
+- 2026-01-04: **Disabled Shader Fog**.
+  - **Goal**: Disable the custom exponential shader fog and height fog system as it was found to negatively impact visual clarity (e.g., causing "blue beach" syndrome).
+  - **Changes**:
+    - `SharedUniforms.ts`: Set default `uShaderFogEnabled` to `0.0`.
+    - `TriplanarMaterial.tsx`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`: Set default `shaderFogEnabled` / `terrainShaderFogEnabled` props to `false`.
+  - **Result**: Visual clarity improved; atmospheric blue tinting now depends solely on sky/ambient light and standard Three.js distance fog.

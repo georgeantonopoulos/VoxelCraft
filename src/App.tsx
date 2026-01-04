@@ -45,6 +45,10 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 
 // Logic
 import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/BiomeManager';
+import { WorldSeed } from '@core/WorldSeed';
+import { initializeNoise } from '@core/math/noise';
+import { chunkDataManager } from '@core/terrain/ChunkDataManager';
+import { useWorldStore } from '@state/WorldStore';
 
 // Keyboard Map
 const keyboardMap = [
@@ -62,6 +66,24 @@ const App: React.FC = () => {
   const [collidersReady, setCollidersReady] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
+  const [worldSeed, setWorldSeed] = useState<number>(() => WorldSeed.fromURLOrRandom());
+
+  // Handler for restarting with a new world (returns to world selection)
+  const handleRestartWorld = useCallback(() => {
+    // Clear all cached data from singletons FIRST, before resetting React state
+    // This ensures the new world doesn't spawn on stale terrain
+    chunkDataManager.clear();
+    useWorldStore.getState().resetAll();
+
+    // Reset all React state to return to world selection
+    setGameStarted(false);
+    setTerrainLoaded(false);
+    setCollidersReady(false);
+    setSpawnPos(null);
+    setWorldType(null);
+    // Generate a fresh seed for the next world
+    setWorldSeed(WorldSeed.generateRandom());
+  }, []);
 
   // Wait for colliders to be created after terrain loads
   // Initial load chunks now create colliders immediately (spawnedAt === 0 in ChunkMesh),
@@ -174,7 +196,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!worldType) return;
+
+    // Initialize seed for main thread (BiomeManager + Perlin noise)
+    WorldSeed.set(worldSeed);
+    BiomeManager.reinitialize(worldSeed);
+    initializeNoise(worldSeed);
     BiomeManager.setWorldType(worldType);
+
+    console.log(`[App] World initialized: type=${worldType}, seed=${worldSeed}`);
+
     const params = new URLSearchParams(window.location.search);
     const requestedBiome = params.get('vcSpawnBiome') as BiomeType | null;
 
@@ -188,7 +218,7 @@ const App: React.FC = () => {
     const worldY = TerrainService.getHeightAt(targetX, targetZ);
     setSpawnPos([targetX, worldY + 2.5, targetZ]);
     if (autoStart) setGameStarted(true);
-  }, [worldType, findSpawnForBiome, autoStart]);
+  }, [worldType, worldSeed, findSpawnForBiome, autoStart]);
 
   useEffect(() => {
     document.documentElement.style.setProperty('--vc-leva-scale', String(levaScale));
@@ -281,7 +311,10 @@ const App: React.FC = () => {
       )}
 
       {!worldType ? (
-        <WorldSelectionScreen onSelect={setWorldType} />
+        <WorldSelectionScreen onSelect={(type, seed) => {
+          setWorldSeed(seed);
+          setWorldType(type);
+        }} />
       ) : (
         !gameStarted && (
           <StartupScreen
@@ -359,6 +392,7 @@ const App: React.FC = () => {
                   initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}
+                  seed={worldSeed}
                 />
               )}
               <FloraPlacer />
@@ -401,7 +435,7 @@ const App: React.FC = () => {
       {gameStarted && <CraftingInterface />}
 
       <TouchControls />
-      <SettingsMenu />
+      <SettingsMenu onRestartWorld={handleRestartWorld} />
     </div>
   );
 };

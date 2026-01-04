@@ -33,12 +33,12 @@ export class TerrainWorkers {
     this.mode = canUseSharedArrayBuffer() ? 'pipeline' : 'legacy';
   }
 
-  start(worldType: string) {
+  start(worldType: string, seed?: number) {
     if (this.mode === 'pipeline') {
       this.terrainGen = new Worker(new URL('./terrainGen.worker.ts', import.meta.url), { type: 'module' });
       this.mesher = new Worker(new URL('./mesher.worker.ts', import.meta.url), { type: 'module' });
 
-      this.terrainGen.postMessage({ type: 'CONFIGURE', payload: { worldType } });
+      this.terrainGen.postMessage({ type: 'CONFIGURE', payload: { worldType, seed } });
 
       this.terrainGen.onmessage = (e) => {
         const { type, payload } = e.data;
@@ -55,7 +55,7 @@ export class TerrainWorkers {
 
     // Legacy fallback (existing combined worker).
     this.legacy = new Worker(new URL('./terrain.worker.ts', import.meta.url), { type: 'module' });
-    this.legacy.postMessage({ type: 'CONFIGURE', payload: { worldType } });
+    this.legacy.postMessage({ type: 'CONFIGURE', payload: { worldType, seed } });
     this.legacy.onmessage = (e) => {
       const { type, payload } = e.data;
       if (type === 'GENERATED') this.events.onLegacyGenerated?.(payload);
