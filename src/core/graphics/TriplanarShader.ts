@@ -9,6 +9,7 @@ export const triplanarVertexShader = `
 
   uniform vec2 uWindDirXZ;
   uniform float uNormalStrength;
+  uniform float uTime;
 
   varying vec4 vWa;
   varying vec4 vWb;
@@ -32,8 +33,11 @@ export const triplanarVertexShader = `
     vec3 nn = normalize(n);
     vec2 wind = safeNormalize2(uWindDirXZ);
     float w = clamp(weight, 0.0, 1.0);
-    float base = uNormalStrength * (0.35 + 0.65 * w);
+    // Base strength boost to ensure visibility
+    float base = uNormalStrength * (0.6 + 0.4 * w);
 
+    // --- 1. SAND & RED SAND (Ripples) ---
+    // Keep existing wind-aligned ripples as they are static logic-wise
     if (channel == 5.0 || channel == 10.0) {
       float flatness = pow(clamp(nn.y, 0.0, 1.0), 2.4);
       float freq = 2.8;
@@ -42,38 +46,52 @@ export const triplanarVertexShader = `
       float c = cos(phase);
       vec3 g = vec3(wind.x, 0.0, wind.y);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * flatness * 0.35));
+      nn = normalize(nn + g * (c * base * flatness * 0.4));
     }
-    else if (channel == 2.0 || channel == 1.0 || channel == 15.0) {
-      float freq = 1.4;
-      float phase = worldPos.y * freq + sin(dot(worldPos.xz, vec2(0.04, 0.05))) * 0.65;
-      float c = cos(phase);
+    // --- 2. ROCK, BEDROCK, OBSIDIAN (Stratified Layers) ---
+    // Sharp horizontal ridges to simulate sedimentary rock layers.
+    else if (channel == 2.0 || channel == 1.0 || channel == 15.0 || channel == 9.0) {
+      float freq = 3.5;
+      float warp = sin(worldPos.x * 0.15 + worldPos.z * 0.1) * 0.8;
+      float phase = worldPos.y * freq + warp;
+      float folded = abs(mod(phase, 2.0) - 1.0); // Triangle wave
+      float ridge = smoothstep(0.3, 0.7, folded); // Contrast boost
       vec3 g = vec3(0.0, 1.0, 0.0);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.18));
+      nn = normalize(nn + g * ((ridge - 0.5) * base * 0.7)); // Strong bump
     }
+    // --- 3. DIRT, CLAY, TERRACOTTA (Lumpy Noise) ---
     else if (channel == 3.0 || channel == 7.0 || channel == 11.0) {
-      float fx = 1.05;
-      float fz = 0.95;
-      float sx = sin(worldPos.x * fx);
-      float sz = sin(worldPos.z * fz);
-      vec3 g = vec3(cos(worldPos.x * fx) * sz, 0.0, sx * cos(worldPos.z * fz));
+      float f = 3.5;
+      float n = sin(worldPos.x * f) * sin(worldPos.z * f); // Grid bumps
+      float n2 = sin(worldPos.x * f * 2.0 + worldPos.z) * 0.5; // Detail
+      float bump = n + n2;
+      vec3 g = vec3(1.0, 0.0, 1.0); // Diagonal displacement
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (base * 0.06));
+      nn = normalize(nn + g * (bump * base * 0.4));
     }
+    // --- 4. GRASS & JUNGLE GRASS (Mown/Directional Ridges) ---
+    // STATIC now - removed time animation. 
+    // Uses parallel ridges to simulate mowed grass or directional growth.
     else if (channel == 4.0 || channel == 13.0) {
-      float phase = dot(worldPos.xz, wind.yx) * 2.2 + worldPos.y * 0.4;
-      float c = cos(phase);
-      vec3 g = vec3(wind.y, 0.0, wind.x);
+      float freq = 2.0;
+      // Fixed phase based on world position only
+      float phase = (worldPos.x + worldPos.z * 0.5) * freq; 
+      float ridge = sin(phase);
+      // Sharpen tops
+      ridge = sign(ridge) * pow(abs(ridge), 0.6);
+      
+      vec3 g = vec3(1.0, 0.0, 0.5); // Fixed direction
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.05));
+      nn = normalize(nn + g * (ridge * base * 0.5)); // Strong visible ridges
     }
+    // --- 5. SNOW & ICE (Drifts) ---
     else if (channel == 6.0 || channel == 12.0) {
-      float phase = worldPos.x * 1.8 + worldPos.z * 2.0;
-      float c = cos(phase);
+      float freq = 0.5;
+      float drift = sin(worldPos.x * freq + sin(worldPos.z * freq));
       vec3 g = vec3(1.0, 0.0, 1.0);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * 0.02));
+      nn = normalize(nn + g * (drift * base * 0.4));
     }
     return nn;
   }
@@ -135,6 +153,11 @@ export const triplanarFragmentShader = `
   uniform vec3 uFogColor;
   uniform float uFogNear;
   uniform float uFogFar;
+  uniform float uFogDensity; // For Exp2
+  uniform float uHeightFogEnabled;
+  uniform float uHeightFogStrength;
+  uniform float uHeightFogRange;
+  uniform float uHeightFogOffset;
   uniform float uOpacity;
   uniform float uTriplanarDetail;
   uniform float uShaderFogEnabled;
@@ -189,18 +212,12 @@ export const triplanarFragmentShader = `
 
   float sampleCausticPattern(vec2 uv, float ang, float tz1, float tz2) {
       vec2 flow1 = vec2(cos(ang), sin(ang)) * 0.5;
-      vec2 flow2 = vec2(cos(ang * 2.0 + 1.0), sin(ang * 2.0 + 1.0)) * 0.3;
       vec3 p1a = vec3(uv * 0.7 + flow1, tz1);
       vec3 p1b = vec3(uv * 0.7 - flow1, tz2);
       float n1a = texture(uNoiseTexture, p1a).r;
       float n1b = texture(uNoiseTexture, p1b).r;
       float r1 = pow(1.0 - abs(min(n1a, n1b) - 0.5) * 2.0, 10.0);
-      vec3 p2a = vec3(uv * 2.5 + flow2, tz2);
-      vec3 p2b = vec3(uv * 2.5 - flow2, tz1);
-      float n2a = texture(uNoiseTexture, p2a).r;
-      float n2b = texture(uNoiseTexture, p2b).r;
-      float r2 = pow(1.0 - abs(min(n2a, n2b) - 0.5) * 2.0, 12.0);
-      return r1 * 0.4 + r2 * 0.05;
+      return r1;
   }
 
   vec3 getRealisticCaustics(vec3 pos, vec3 sunDir, float t) {
@@ -213,14 +230,14 @@ export const triplanarFragmentShader = `
       vec2 uv = (pos.xz - lightDir.xz * (distToSurface / max(0.2, lightDir.y))) * 0.45;
       float tz1 = 0.5 + 0.5 * sin(ang);
       float tz2 = 0.5 + 0.5 * cos(ang);
-      float disp = 0.012; 
+      float disp = 0.006; // AAA FIX: Reduced from 0.012 to avoid rainbow noise
       float r = sampleCausticPattern(uv * (1.0 + disp), ang, tz1, tz2);
       float g = sampleCausticPattern(uv, ang, tz1, tz2);
       float b = sampleCausticPattern(uv * (1.0 - disp), ang, tz1, tz2);
       vec3 finalC = vec3(r, g, b);
       float overlap = min(r, min(g, b));
-      finalC += overlap * 1.5;
-      finalC *= 6.0; 
+      finalC += overlap * 0.8; // AAA FIX: Slightly reduced overlap boost
+      finalC *= 4.5; // AAA FIX: Reduced from 6.0 to prevent blowout
       float depthFade = exp(-distToSurface * 0.18); 
       return finalC * depthFade;
   }
@@ -237,11 +254,11 @@ export const triplanarFragmentShader = `
       float roughness = 0.8;
       float noiseFactor = 0.0;
       float emission = 0.0;
-      if (channel == 1) { baseCol = uColorBedrock; noiseFactor = nMid.r; }
-      else if (channel == 2) { baseCol = uColorStone; float cracks = nHigh.g; noiseFactor = mix(nMid.r, cracks, 0.5); }
+      if (channel == 1) { baseCol = uColorBedrock; noiseFactor = nMid.r * 0.7 + nHigh.r * 0.3; }
+      else if (channel == 2) { baseCol = uColorStone; float cracks = nHigh.g; noiseFactor = mix(nMid.r, cracks, 0.4); }
       else if (channel == 3) { baseCol = uColorDirt; noiseFactor = nMid.g; }
       else if (channel == 4) { baseCol = uColorGrass; float bladeNoise = nHigh.a; float patchNoise = nMid.r; noiseFactor = mix(bladeNoise, patchNoise, 0.3); baseCol *= vec3(1.0, 1.1, 1.0); }
-      else if (channel == 5) { baseCol = uColorSand; noiseFactor = nHigh.a; }
+      else if (channel == 5) { baseCol = uColorSand; noiseFactor = nMid.g * 0.6 + nHigh.b * 0.4; } // AAA FIX: Use lower freq channels for sand texture
       else if (channel == 6) { baseCol = uColorSnow; noiseFactor = nMid.r * 0.5 + 0.5; }
       else if (channel == 7) { baseCol = uColorClay; noiseFactor = nMid.g; }
       else if (channel == 8) { baseCol = uColorWater; roughness = 0.1; }
@@ -274,9 +291,12 @@ export const triplanarFragmentShader = `
 
   void main() {
     vec3 N = safeNormalize(vWorldNormal);
+    float distSq = dot(vWorldPosition - cameraPosition, vWorldPosition - cameraPosition);
+    bool lowDetail = distSq > 1024.0; // Beyond 32 units (1 chunk)
+
     vec4 nMid = getTriplanarNoise(N, 0.15);
     float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
-    vec4 nHigh = getTriplanarNoise(N, highScale);
+    vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
     vec3 accColor = vec3(0.0);
@@ -356,9 +376,9 @@ export const triplanarFragmentShader = `
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
     col = clamp(col, 0.0, 5.0); col += accEmission * accColor; 
-    if (vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
+    if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
-        float depthMask = smoothstep(60.0, 0.0, waterDepth);
+        float depthMask = smoothstep(16.0, 0.0, waterDepth); // AAA FIX: Tighter depth mask (16m)
         float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);
         float openMask = 1.0 - smoothstep(0.0, 0.3, vCavity);
         float floorMask = smoothstep(0.25, 0.65, N.y);
@@ -372,8 +392,29 @@ export const triplanarFragmentShader = `
     } 
     if (uShaderFogEnabled > 0.5) {
       float fogDist = length(vWorldPosition - cameraPosition);
-      float fogAmt = clamp((fogDist - uFogNear) / max(uFogFar - uFogNear, 0.0001), 0.0, 1.0);
-      fogAmt = pow(fogAmt, 1.1);
+      
+      // Exponential Squared Fog (Tip 1)
+      // d = 4.0 / fogRange ensures near-full opacity at the far distance
+      float fogRange = max(uFogFar - uFogNear, 1.0);
+      float density = 4.0 / fogRange; 
+      float distFactor = max(0.0, fogDist - uFogNear);
+      float baseFog = 1.0 - exp(-pow(distFactor * density, 2.0));
+      
+      float fogAmt = baseFog;
+
+      // Height Fog logic (Tip 3/4)
+      if (uHeightFogEnabled > 0.5) {
+          // Height factor: 1.0 at floor, 0.0 at ceiling
+          float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPosition.y);
+          
+          // Distance factor: Don't fog the player's feet. 
+          // Fade in height fog from 5m to 25m.
+          float hDistFactor = smoothstep(5.0, 25.0, fogDist);
+          
+          float heightFog = heightFactor * uHeightFogStrength * hDistFactor;
+          fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);
+      }
+
       col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));

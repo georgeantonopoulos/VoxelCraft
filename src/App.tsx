@@ -22,6 +22,8 @@ import { InteractionHandler } from '@features/interaction/logic/InteractionHandl
 import { InventoryInput } from '@features/interaction/components/InventoryInput';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
+import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
+import { useCraftingStore } from '@state/CraftingStore';
 
 // Environment Features (Refactored)
 import { AtmosphereManager } from '@features/environment/components/AtmosphereManager';
@@ -31,6 +33,7 @@ import { CinematicCamera } from '@features/environment/components/CinematicCamer
 
 // UI
 import { HUD as UI } from '@ui/HUD';
+import { SceneWarmup } from '@features/environment/components/SceneWarmup';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { SettingsMenu } from '@/ui/SettingsMenu';
@@ -56,8 +59,6 @@ const keyboardMap = [
 const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
   const [terrainLoaded, setTerrainLoaded] = useState(false);
-  const [action, setAction] = useState<'DIG' | 'BUILD' | null>(null);
-  const [isInteracting, setIsInteracting] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
 
@@ -72,12 +73,15 @@ const App: React.FC = () => {
   const setBloomEnabled = useSettingsStore(s => s.setBloom);
   const viewDistance = useSettingsStore(s => s.viewDistance);
 
+  // Crafting State
+  const isCraftingOpen = useCraftingStore(s => s.isOpen);
+
   // Debug Local State (Leva managed)
   const [triplanarDetail, setTriplanarDetail] = useState(1.0);
   const [postProcessingEnabled, setPostProcessingEnabled] = useState(true);
   const [aoIntensity, setAoIntensity] = useState(2.0);
   const [terrainShaderFogEnabled, setTerrainShaderFogEnabled] = useState(true);
-  const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.9);
+  const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.8);
   const [terrainThreeFogEnabled, setTerrainThreeFogEnabled] = useState(true);
   const [terrainFadeEnabled, setTerrainFadeEnabled] = useState(true);
   const [terrainWetnessEnabled, setTerrainWetnessEnabled] = useState(true);
@@ -95,8 +99,10 @@ const App: React.FC = () => {
   const [caOffset, setCaOffset] = useState(0.00001);
   const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
 
-  const [fogNear, setFogNear] = useState(20);
-  const [fogFar, setFogFar] = useState(160);
+  const [fogNear, setFogNear] = useState(40);
+  const [fogFar, setFogFar] = useState(220);
+  const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
+  const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
   const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
@@ -107,6 +113,11 @@ const App: React.FC = () => {
   const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
+
+  const [heightFogEnabled, setHeightFogEnabled] = useState(true);
+  const [heightFogStrength, setHeightFogStrength] = useState(0.35);
+  const [heightFogRange, setHeightFogRange] = useState(50.0);
+  const [heightFogOffset, setHeightFogOffset] = useState(4.0);
 
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
@@ -160,8 +171,8 @@ const App: React.FC = () => {
     }
 
     // Instant surface scan
-    const y = TerrainService.getHeightAt(targetX, targetZ);
-    setSpawnPos([targetX, y + 2.5, targetZ]);
+    const worldY = TerrainService.getHeightAt(targetX, targetZ);
+    setSpawnPos([targetX, worldY + 2.5, targetZ]);
     if (autoStart) setGameStarted(true);
   }, [worldType, findSpawnForBiome, autoStart]);
 
@@ -202,6 +213,8 @@ const App: React.FC = () => {
           setExposureUnderwater={setExposureUnderwater}
           setFogNear={setFogNear}
           setFogFar={setFogFar}
+          setAtmosphereHaze={setAtmosphereHaze}
+          setAtmosphereBrightness={setAtmosphereBrightness}
           setSunIntensityMul={setSunIntensityMul}
           setAmbientIntensityMul={setAmbientIntensityMul}
           setMoonIntensityMul={setMoonIntensityMul}
@@ -235,15 +248,20 @@ const App: React.FC = () => {
           values={{
             debugShadowsEnabled, triplanarDetail, postProcessingEnabled, aoEnabled, bloomEnabled, aoIntensity,
             bloomIntensity, bloomThreshold, exposureSurface, exposureCaveMax, exposureUnderwater,
-            fogNear, fogFar, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
+            fogNear, fogFar, atmosphereHaze, atmosphereBrightness, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
             iblEnabled, iblIntensity, terrainShaderFogEnabled, terrainShaderFogStrength,
             terrainThreeFogEnabled, terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
             terrainRoughnessMin, bedrockPlaneEnabled, terrainPolygonOffsetEnabled,
             terrainPolygonOffsetFactor, terrainPolygonOffsetUnits, levaScale, levaWidth,
             terrainChunkTintEnabled, terrainWireframeEnabled, terrainWeightsView,
             caOffset, vignetteDarkness, sunShadowBias, sunShadowNormalBias,
-            sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset
+            sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset,
+            heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset
           }}
+          setHeightFogEnabled={setHeightFogEnabled}
+          setHeightFogStrength={setHeightFogStrength}
+          setHeightFogRange={setHeightFogRange}
+          setHeightFogOffset={setHeightFogOffset}
         />
       )}
 
@@ -265,11 +283,13 @@ const App: React.FC = () => {
           gl={{
             antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
-            toneMapping: THREE.NoToneMapping
+            toneMapping: THREE.NoToneMapping,
+            logarithmicDepthBuffer: true
           }}
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
-          <PerformanceMonitor />
+          <SceneWarmup />
+          <PerformanceMonitor visible={debugMode} />
 
           <AtmosphereManager
             sunDirection={sunDirection}
@@ -282,6 +302,8 @@ const App: React.FC = () => {
             moonIntensityMul={moonIntensityMul}
             fogNear={fogNear}
             fogFar={fogFar}
+            hazeAmount={atmosphereHaze}
+            brightness={atmosphereBrightness}
             viewDistance={viewDistance}
             orbitConfig={orbitConfig}
           />
@@ -297,8 +319,6 @@ const App: React.FC = () => {
               <AmbientLife enabled={gameStarted} />
               {worldType && (
                 <VoxelTerrain
-                  action={action}
-                  isInteracting={isInteracting}
                   sunDirection={sunDirection}
                   triplanarDetail={triplanarDetail}
                   terrainShaderFogEnabled={terrainShaderFogEnabled}
@@ -314,6 +334,12 @@ const App: React.FC = () => {
                   terrainChunkTintEnabled={terrainChunkTintEnabled}
                   terrainWireframeEnabled={terrainWireframeEnabled}
                   terrainWeightsView={terrainWeightsView}
+                  fogNear={fogNear}
+                  fogFar={fogFar * viewDistance}
+                  heightFogEnabled={heightFogEnabled}
+                  heightFogStrength={heightFogStrength}
+                  heightFogRange={heightFogRange}
+                  heightFogOffset={heightFogOffset}
                   initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}
@@ -322,7 +348,7 @@ const App: React.FC = () => {
               <FloraPlacer />
               {bedrockPlaneEnabled && <BedrockPlane />}
               <PhysicsItemRenderer />
-              <InteractionHandler setInteracting={setIsInteracting} setAction={setAction} />
+              <InteractionHandler />
             </Physics>
             <FirstPersonTools />
           </Suspense>
@@ -341,7 +367,7 @@ const App: React.FC = () => {
             skipPost={skipPost || !postProcessingEnabled}
           />
 
-          {gameStarted && inputMode === 'mouse' && <PointerLockControls onUnlock={handleUnlock} />}
+          {gameStarted && inputMode === 'mouse' && !isCraftingOpen && <PointerLockControls onUnlock={handleUnlock} />}
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
           <SparkSystem />
@@ -355,6 +381,9 @@ const App: React.FC = () => {
           </>
         )}
       </KeyboardControls>
+
+      {gameStarted && <CraftingInterface />}
+
       <TouchControls />
       <SettingsMenu />
     </div>

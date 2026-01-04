@@ -101,3 +101,36 @@ export async function getChunkModifications(cx: number, cz: number): Promise<Chu
   const chunkId = `${cx},${cz}`;
   return await worldDB.modifications.where('chunkId').equals(chunkId).toArray();
 }
+
+/**
+ * Bulk save modifications for a chunk.
+ * More efficient than individual saves when persisting many changes.
+ */
+export async function saveChunkModificationsBulk(
+  cx: number,
+  cz: number,
+  modifications: Array<{ voxelIndex: number; material: MaterialType; density: number }>
+): Promise<void> {
+  await worldDBReady;
+
+  const chunkId = `${cx},${cz}`;
+  const entries = modifications.map(mod => ({
+    chunkId,
+    voxelIndex: mod.voxelIndex,
+    material: mod.material,
+    density: mod.density
+  }));
+
+  // Use bulkPut for efficiency
+  await worldDB.modifications.bulkPut(entries);
+}
+
+/**
+ * Clear all modifications for a chunk.
+ */
+export async function clearChunkModifications(cx: number, cz: number): Promise<void> {
+  await worldDBReady;
+
+  const chunkId = `${cx},${cz}`;
+  await worldDB.modifications.where('chunkId').equals(chunkId).delete();
+}

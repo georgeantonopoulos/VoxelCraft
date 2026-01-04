@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { calculateOrbitAngle as calculateOrbitAngleCore, getOrbitOffset } from '@core/graphics/celestial';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 /**
  * Shared Helper Functions for Celestial Rendering
@@ -94,11 +95,23 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
     const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
     const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
     const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
+    const lastBlend = useRef(-1);
 
     useFrame(() => {
-        if (!ambientRef.current) return;
+        frameProfiler.begin('ambient-controller');
+        if (!ambientRef.current) {
+            frameProfiler.end('ambient-controller');
+            return;
+        }
+        // Skip update if blend hasn't changed significantly (reduces per-frame work)
+        if (Math.abs(undergroundBlend - lastBlend.current) < 0.01) {
+            frameProfiler.end('ambient-controller');
+            return;
+        }
+        lastBlend.current = undergroundBlend;
         ambientRef.current.intensity = THREE.MathUtils.lerp(0.3, 0.14, undergroundBlend) * intensityMul;
         ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
+        frameProfiler.end('ambient-controller');
     });
 
     return <ambientLight ref={ambientRef} intensity={0.3} color="#ccccff" />;
@@ -118,6 +131,7 @@ export const SkyDomeRefLink: React.FC<{
     }), []);
 
     useFrame((state) => {
+        frameProfiler.begin('sky-dome');
         if (meshRef.current) {
             meshRef.current.position.copy(state.camera.position);
             uniforms.uTopColor.value.copy(gradientRef.current.top);
@@ -127,6 +141,7 @@ export const SkyDomeRefLink: React.FC<{
             const sunHeight = Math.cos(angle);
             uniforms.uNightMix.value = 1.0 - THREE.MathUtils.smoothstep(sunHeight, -0.4, -0.1);
         }
+        frameProfiler.end('sky-dome');
     });
 
     return (
@@ -278,6 +293,7 @@ export const SunFollower: React.FC<{
         }, [camera]);
 
         useFrame(({ clock }) => {
+            frameProfiler.begin('sun-follower');
             if (lightRef.current) {
                 const t = clock.getElapsedTime();
                 const { radius, speed, offset } = orbitConfig;
@@ -322,7 +338,10 @@ export const SunFollower: React.FC<{
                 else baseIntensity = 1.0;
 
                 const skyOpen = THREE.MathUtils.smoothstep(skyVisibility, 0.08, 0.45);
-                const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.35);
+                // AAA FIX: Don't turn off sun light completely underwater.
+                // Terrain shader needs direct light for MeshStandardMaterial to work.
+                // We dim it significantly to simulate absorption, but keep it active for caustics and visibility.
+                const waterBlock = THREE.MathUtils.smoothstep(underwaterBlend, 0.05, 0.5) * 0.65; // Max 65% reduction
                 const directVis = skyOpen * (1.0 - waterBlock);
                 const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
                 const sunDimming = THREE.MathUtils.lerp(1.0, 0.55, depthFade);
@@ -368,6 +387,7 @@ export const SunFollower: React.FC<{
                     }
                 }
             }
+            frameProfiler.end('sun-follower');
         });
 
         return (
@@ -481,7 +501,11 @@ export const MoonFollower: React.FC<{
         const tmpVisualOffset = useRef(new THREE.Vector3());
 
         useFrame(({ clock }) => {
-            if (!moonMeshRef.current || !lightRef.current) return;
+            frameProfiler.begin('moon-follower');
+            if (!moonMeshRef.current || !lightRef.current) {
+                frameProfiler.end('moon-follower');
+                return;
+            }
             const t = clock.getElapsedTime();
             const { radius, speed, offset } = orbitConfig;
             const angle = calculateOrbitAngle(t, speed, offset + Math.PI);
@@ -513,6 +537,7 @@ export const MoonFollower: React.FC<{
             const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
             lightRef.current.intensity = (lPy > -50) ? 0.2 * moonDimming * directVis * intensityMul : 0;
             if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
+            frameProfiler.end('moon-follower');
         });
 
         return (
@@ -566,22 +591,43 @@ export const MoonFollower: React.FC<{
 
 export const AtmosphereController: React.FC<{
     orbitConfig: { speed: number; offset: number };
-}> = ({ orbitConfig }) => {
+    hazeAmount: number;
+    brightness: number;
+}> = ({ orbitConfig, hazeAmount, brightness }) => {
     const { scene } = useThree();
     const gradientRef = useRef({ top: new THREE.Color(), bottom: new THREE.Color() });
+    const tunedTop = useRef(new THREE.Color());
+    const tunedBottom = useRef(new THREE.Color());
+    const hazeBlend = useRef(new THREE.Color());
 
     useFrame(({ clock }) => {
+        frameProfiler.begin('atmosphere-controller');
         const t = clock.getElapsedTime();
         const angle = calculateOrbitAngle(t, orbitConfig.speed, orbitConfig.offset);
         const radius = 300;
         const sunY = Math.cos(angle) * radius;
         const grads = getSkyGradient(sunY, radius);
-        gradientRef.current.top.copy(grads.top);
-        gradientRef.current.bottom.copy(grads.bottom);
+        const clampedBrightness = Math.max(0, brightness ?? 1.0);
+        const clampedHaze = THREE.MathUtils.clamp(hazeAmount ?? 0.0, 0.0, 1.0);
+
+        tunedTop.current.copy(grads.top).multiplyScalar(clampedBrightness);
+        tunedBottom.current.copy(grads.bottom).multiplyScalar(clampedBrightness);
+
+        if (clampedHaze > 0) {
+            hazeBlend.current.copy(tunedBottom.current).lerp(tunedTop.current, 0.25);
+            tunedBottom.current.lerp(hazeBlend.current, clampedHaze);
+        }
+
+        gradientRef.current.top.copy(tunedTop.current);
+        gradientRef.current.bottom.copy(tunedBottom.current);
 
         if (scene.fog) {
-            scene.fog.color.copy(grads.bottom);
+            scene.fog.color.copy(tunedBottom.current);
         }
+        if (scene.background instanceof THREE.Color) {
+            scene.background.copy(tunedBottom.current);
+        }
+        frameProfiler.end('atmosphere-controller');
     });
 
     return (
@@ -602,6 +648,8 @@ export const AtmosphereManager: React.FC<{
     moonIntensityMul: number;
     fogNear: number;
     fogFar: number;
+    hazeAmount: number;
+    brightness: number;
     viewDistance: number;
     orbitConfig: { radius: number; speed: number; offset: number };
 }> = (props) => {
@@ -612,6 +660,8 @@ export const AtmosphereManager: React.FC<{
             <AmbientController intensityMul={props.ambientIntensityMul} />
             <AtmosphereController
                 orbitConfig={props.orbitConfig}
+                hazeAmount={props.hazeAmount}
+                brightness={props.brightness}
             />
             <SunFollower
                 sunDirection={props.sunDirection}

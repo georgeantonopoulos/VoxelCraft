@@ -76,6 +76,8 @@ export interface MeshData {
   // Simplified Physics Collider (Optional, used if trimesh is too heavy)
   colliderPositions?: Float32Array;
   colliderIndices?: Uint32Array;
+  colliderHeightfield?: Float32Array;
+  isHeightfield?: boolean;
 }
 
 export enum ToolMode {
@@ -116,7 +118,7 @@ export interface ChunkState {
   treePositions?: Float32Array;
   // Pre-computed instance matrices (worker-computed to avoid main-thread loops).
   // Key is "type:variant", value contains count and pre-built 4x4 matrices.
-  treeInstanceBatches?: Record<string, { type: number; variant: number; count: number; matrices: Float32Array }>;
+  treeInstanceBatches?: Record<string, { type: number; variant: number; count: number; matrices: Float32Array; originalIndices: Int32Array }>;
   rootHollowPositions?: Float32Array;
   fireflyPositions?: Float32Array; // stride 4: x, y, z, seed (WORLD SPACE)
   // Small ground pickups (chunk-local XZ, world-space Y). Stride is documented in `GroundItemsLayer.tsx`.
@@ -137,8 +139,17 @@ export interface ChunkState {
 
   colliderPositions?: Float32Array;
   colliderIndices?: Uint32Array;
+  colliderHeightfield?: Float32Array;
+  isHeightfield?: boolean;
 
   lightPositions?: Float32Array;
+  lodLevel?: number; // Distance in chunks from player (continuous, quantized)
+}
+
+export interface CustomTool {
+  id: string;
+  baseType: ItemType;
+  attachments: Record<string, ItemType>; // slotId -> itemType
 }
 
 export enum ItemType {
@@ -155,6 +166,7 @@ export enum ItemType {
 export interface ActivePhysicsItem {
   id: string;
   type: ItemType;
+  customToolData?: CustomTool; // Full tool data for custom tools in the world
   position: [number, number, number];
   velocity: [number, number, number];
   isPlanted?: boolean; // For sticks

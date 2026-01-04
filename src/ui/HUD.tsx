@@ -1,16 +1,18 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Vector3 } from 'three';
+import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
 import { useInventoryStore as useGameStore } from '@/state/InventoryStore';
-import { useWorldStore } from '@/state/WorldStore';
+import { subscribeThrottled, PlayerPosition } from '@core/player/PlayerState';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
+import { TargetHealthBar } from '@/ui/TargetHealthBar';
 
 // --- Minimap Configuration ---
-const MAP_SIZE = 128; // Pixel width/height of the map
-const MAP_SCALE = 2; // World units per pixel (Higher = zoomed out)
-const REFRESH_RATE = 10; // Throttled to every 10 frames (was 5)
-const SAMPLING_STEP = 4; // Sample every 4th pixel for biomes (BIG perf gain)
+const MAP_SIZE = 64; // Reduced from 128 for better performance
+const MAP_SCALE = 4; // World units per pixel (Higher = zoomed out, was 2)
+const SAMPLING_STEP = 8; // Sample every 8th pixel (was 4) - only 64 samples now vs 1024
+
+// Debug flag to disable minimap - use ?nominimap URL param
+const minimapDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nominimap');
 
 const BIOME_COLORS: Record<BiomeType, string> = {
   'PLAINS': '#4ade80',      // green-400
@@ -26,42 +28,37 @@ const BIOME_COLORS: Record<BiomeType, string> = {
   'BEACH': '#fde68a',       // amber-200
 };
 
+// Cache for biome texture - only regenerate when player moves significantly
+let cachedBiomeImageData: ImageData | null = null;
+let cachedBiomeCenter = { x: -99999, z: -99999 };
+const CACHE_DISTANCE_THRESHOLD = 32; // Regenerate when player moves 32 units
+
 const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, z: pz, rotation }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameCount = useRef(0);
+  const rotatingRef = useRef<HTMLDivElement>(null);
 
-  // Ground pickup signatures (sticks/rocks). Flora signatures are intentionally disabled.
-  const getStickHotspotsNearby = useWorldStore(s => s.getStickHotspotsNearby);
-  const getRockHotspotsNearby = useWorldStore(s => s.getRockHotspotsNearby);
-
-  const visibleStickHotspots = useMemo(() => {
-    const range = (MAP_SIZE / 2) * MAP_SCALE + 20;
-    return getStickHotspotsNearby(new Vector3(px, 0, pz), range);
-  }, [getStickHotspotsNearby, px, pz]);
-
-  const visibleRockHotspots = useMemo(() => {
-    const range = (MAP_SIZE / 2) * MAP_SCALE + 20;
-    return getRockHotspotsNearby(new Vector3(px, 0, pz), range);
-  }, [getRockHotspotsNearby, px, pz]);
-
+  // Only redraw biome texture when player moves significantly (not every frame)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false }); // Alpha false for performance
+    const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
     if (!ctx) return;
 
-    // Optimization: Throttle the draw calls
-    frameCount.current++;
-    if (frameCount.current % REFRESH_RATE !== 0) return;
+    // Check if we need to regenerate the biome texture
+    const dx = px - cachedBiomeCenter.x;
+    const dz = pz - cachedBiomeCenter.z;
+    const distSq = dx * dx + dz * dz;
 
-    const drawStart = performance.now();
+    if (distSq < CACHE_DISTANCE_THRESHOLD * CACHE_DISTANCE_THRESHOLD && cachedBiomeImageData) {
+      // Use cached texture, just redraw
+      ctx.putImageData(cachedBiomeImageData, 0, 0);
+      return;
+    }
 
-    // Center of the map
+    // Regenerate biome texture (only 64 samples now: 8x8 grid)
     const cx = MAP_SIZE / 2;
     const cy = MAP_SIZE / 2;
 
-    // Optimization 2: Low-resolution biome sampling
-    // We sample every SAMPLING_STEP pixels to avoid 16,000+ noise calls.
     for (let py = 0; py < MAP_SIZE; py += SAMPLING_STEP) {
       for (let pxLocal = 0; pxLocal < MAP_SIZE; pxLocal += SAMPLING_STEP) {
         const worldX = px + (pxLocal - cx) * MAP_SCALE;
@@ -70,55 +67,28 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
         const biome = BiomeManager.getBiomeAt(worldX, worldZ);
         const hex = BIOME_COLORS[biome] || '#000000';
         ctx.fillStyle = hex;
-        // Draw a block of pixels instead of manipulating imagedata for the low-res look
         ctx.fillRect(pxLocal, py, SAMPLING_STEP, SAMPLING_STEP);
       }
     }
 
-    // Draw Ground Pickup Hotspots (sticks + stones)
-    const time = Date.now() / 1000;
-    const pulse = (Math.sin(time * 5) * 0.5 + 0.5); // 0 to 1
-    const rSmall = 1.8 + pulse * 0.9;
-    const rLarge = 2.3 + pulse * 1.1;
+    // Cache the result
+    cachedBiomeImageData = ctx.getImageData(0, 0, MAP_SIZE, MAP_SIZE);
+    cachedBiomeCenter = { x: px, z: pz };
+  }, [px, pz]);
 
-    // Sticks: brown dots
-    ctx.fillStyle = '#b45309';
-    ctx.globalAlpha = 0.65 + pulse * 0.25;
-    visibleStickHotspots.forEach((spot) => {
-      const mapX = cx + (spot.x - px) / MAP_SCALE;
-      const mapY = cy + (spot.z - pz) / MAP_SCALE;
-      ctx.beginPath();
-      ctx.arc(mapX, mapY, rSmall, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    // Stones: grey dots
-    ctx.fillStyle = '#9ca3af';
-    ctx.globalAlpha = 0.70 + pulse * 0.25;
-    visibleRockHotspots.forEach((spot) => {
-      const mapX = cx + (spot.x - px) / MAP_SCALE;
-      const mapY = cy + (spot.z - pz) / MAP_SCALE;
-      ctx.beginPath();
-      ctx.arc(mapX, mapY, rLarge, 0, Math.PI * 2);
-      ctx.fill();
-    });
-
-    ctx.globalAlpha = 1.0;
-
-    if (typeof window !== 'undefined') {
-      const diag = (window as any).__vcDiagnostics;
-      if (diag) {
-        diag.minimapDrawTime = Math.max(diag.minimapDrawTime || 0, performance.now() - drawStart);
-      }
+  // Update rotation via DOM manipulation to avoid React re-renders
+  useLayoutEffect(() => {
+    if (rotatingRef.current) {
+      rotatingRef.current.style.transform = `rotate(${rotation}rad)`;
     }
-  }, [px, pz, visibleStickHotspots, visibleRockHotspots]); // Re-run when player moves or pickup hotspots change
+  }, [rotation]);
 
   return (
     <div className="relative rounded-full border-4 border-slate-800/50 shadow-2xl overflow-hidden bg-slate-900 w-32 h-32 flex items-center justify-center">
       {/* Rotating Container for Map and Cardinal Directions */}
       <div
+        ref={rotatingRef}
         className="relative w-full h-full"
-        style={{ transform: `rotate(${rotation}rad)` }}
       >
         <canvas
           ref={canvasRef}
@@ -127,8 +97,7 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
           className="w-full h-full object-cover rendering-pixelated"
         />
 
-        {/* Cardinal Directions (Attached to the map, so they rotate with it) */}
-        {/* N is at -Z (Top of map), S is at +Z (Bottom), E is at +X (Right), W is at -X (Left) */}
+        {/* Cardinal Directions */}
         <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white drop-shadow-md">N</div>
         <div className="absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-bold text-white/70 drop-shadow-md">S</div>
         <div className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-white/70 drop-shadow-md">E</div>
@@ -137,7 +106,6 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 
       {/* Static Player Marker (Always points UP) */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {/* Arrow pointing UP */}
         <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[8px] border-b-red-500 filter drop-shadow-lg" />
       </div>
     </div>
@@ -148,30 +116,27 @@ export const HUD: React.FC = () => {
   const inventoryCount = useGameStore((state) => state.inventoryCount);
   const stickCount = useGameStore((state) => state.stickCount);
   const stoneCount = useGameStore((state) => state.stoneCount);
+  const isSharedArrayBufferEnabled = useGameStore((state) => state.isSharedArrayBufferEnabled);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
 
-  // Use store for player coordinates instead of event listener
-  // Use local state to avoid full HUD re-renders every frame.
-  // We'll update this state at a slower cadence or only on significant movement.
+  // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
+  // This keeps the UI responsive without constant re-renders.
   const [coords, setCoords] = useState({ x: 0, y: 0, z: 0, rotation: 0 });
   const lastStateUpdatePos = useRef({ x: 0, z: 0 });
 
   useEffect(() => {
-    // Subscribe to store for coordinates but with a throttled local state update.
-    // This keeps the UI Snappy (60FPS for crosshair/inventory) without 
-    // the heavy Minimap/Text updates every single frame.
-    const unsub = useWorldStore.subscribe((state) => {
-      const p = state.playerParams;
-      const dx = p.x - lastStateUpdatePos.current.x;
-      const dz = p.z - lastStateUpdatePos.current.z;
+    // Subscribe to throttled player position updates (already 10Hz limited)
+    // Additional distance check to reduce state updates further
+    return subscribeThrottled((state: PlayerPosition) => {
+      const dx = state.x - lastStateUpdatePos.current.x;
+      const dz = state.z - lastStateUpdatePos.current.z;
 
-      // Update local state if we moved > 0.1m or rotation changed significantly
+      // Update local state if we moved > 0.1m
       if (dx * dx + dz * dz > 0.01) {
-        setCoords({ ...p });
-        lastStateUpdatePos.current = { x: p.x, z: p.z };
+        setCoords({ x: state.x, y: state.y, z: state.z, rotation: state.rotation });
+        lastStateUpdatePos.current = { x: state.x, z: state.z };
       }
     });
-    return unsub;
   }, []);
 
   const [crosshairHit, setCrosshairHit] = useState(false);
@@ -240,9 +205,18 @@ export const HUD: React.FC = () => {
         style={{ ['--crosshair-color' as any]: crosshairColor }}
       />
 
+      <TargetHealthBar />
+
       {/* Top Left: Controls Info */}
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
-        <h1 className="font-semibold text-base text-emerald-700 mb-1">Organic Voxel Engine</h1>
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="font-semibold text-sm text-emerald-700">Organic Voxel Engine</h1>
+          {!isSharedArrayBufferEnabled && (
+            <span className="px-1.5 py-0.5 bg-red-500 text-[9px] font-bold text-white rounded animate-pulse">
+              LEGACY MODE
+            </span>
+          )}
+        </div>
         <div className="space-y-0.5 text-xs font-medium leading-tight">
           <p>WASD + Space to move</p>
           <p>Left Click: <span className="text-red-500 font-semibold">DIG</span> (pickaxe selected)</p>
@@ -266,12 +240,14 @@ export const HUD: React.FC = () => {
       <InventoryBar />
 
       {/* Bottom Right: Minimap */}
-      <div className="absolute bottom-6 right-6 pointer-events-auto">
-        <Minimap x={coords.x} z={coords.z} rotation={coords.rotation} />
-        <div className="text-center mt-1 text-[10px] text-white font-mono bg-black/50 rounded px-1 backdrop-blur-sm">
-          Biome: {BiomeManager.getBiomeAt(coords.x, coords.z)}
+      {!minimapDisabled && (
+        <div className="absolute bottom-6 right-6 pointer-events-auto">
+          <Minimap x={coords.x} z={coords.z} rotation={coords.rotation} />
+          <div className="text-center mt-1 text-[10px] text-white font-mono bg-black/50 rounded px-1 backdrop-blur-sm">
+            Biome: {BiomeManager.getBiomeAt(coords.x, coords.z)}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Top Right: Settings */}
       <div className="absolute top-4 right-4 pointer-events-auto">

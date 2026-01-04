@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { noiseTexture } from '@core/memory/sharedResources';
+import { getNoiseTexture } from '@core/memory/sharedResources';
 
 interface FractalTreeProps {
     seed: number;
@@ -225,7 +225,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
             uGrowthProgress: { value: 0 },
             uColorBase: { value: new THREE.Color(base) },
             uColorTip: { value: new THREE.Color(tip) },
-            uNoiseTexture: { value: noiseTexture },
+            uNoiseTexture: { value: getNoiseTexture() },
             uTime: { value: 0 }
         };
     }, [type]);

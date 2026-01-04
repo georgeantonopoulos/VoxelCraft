@@ -3,9 +3,10 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
-import { useWorldStore } from '@/state/WorldStore';
-import { FogDeer } from '@features/creatures/FogDeer';
+import { playerState } from '@core/player/PlayerState';
+// import { FogDeer } from '@features/creatures/FogDeer'; // Disabled for performance investigation
 import { forEachChunkFireflies, getFireflyRegistryVersion } from '@features/environment/fireflyRegistry';
+import { frameProfiler } from '@core/utils/FrameProfiler';
 
 export type PlayerMovedRef = {
   x: number;
@@ -144,9 +145,16 @@ const FirefliesField: React.FC<{
   }, []);
 
   useFrame((state) => {
+    frameProfiler.begin('fireflies');
     const mesh = meshRef.current;
-    if (!enabled || !mesh) return;
-    if (!playerRef.current.hasSignal) return;
+    if (!enabled || !mesh) {
+      frameProfiler.end('fireflies');
+      return;
+    }
+    if (!playerRef.current.hasSignal) {
+      frameProfiler.end('fireflies');
+      return;
+    }
 
     // Global intensity gates (cheap, avoids doing extra work underwater/underground).
     const biomeAtPlayer = BiomeManager.getBiomeAt(playerRef.current.x, playerRef.current.z);
@@ -207,6 +215,7 @@ const FirefliesField: React.FC<{
     const t = state.clock.elapsedTime;
     material.uniforms.uTime.value = t;
     material.uniforms.uIntensity.value = THREE.MathUtils.clamp(globalIntensity, 0, 1);
+    frameProfiler.end('fireflies');
   });
 
   return (
@@ -223,37 +232,35 @@ const FirefliesField: React.FC<{
  * Entry point for cheap, always-on "early life" ambience: fireflies + distant fog creatures.
  *
  * IMPORTANT:
- * - Uses the global WorldStore `playerParams` to avoid tight coupling to Player via events.
+ * - Reads directly from the playerState singleton for high-frequency position data.
+ * - No Zustand subscriptions needed - singleton is updated every frame by Player.tsx.
  * - Avoids React state updates inside `useFrame()` to keep GC and rerenders low.
  */
 export const AmbientLife: React.FC<{ enabled?: boolean }> = ({ enabled = true }) => {
   const playerRef = useRef<PlayerMovedRef>({ x: 0, y: 0, z: 0, rotation: 0, hasSignal: false });
 
-  // Connect to the store but via a transient subscriber if possible, or just standard selector.
-  // Since we want to update the ref without re-rendering this component, we can use `useWorldStore.getState()` in useFrame
-  // OR just subscribe via effect.
-  // However, since `useFrame` runs every frame, we can just poll the store state there,
-  // BUT `useWorldStore` is a hook.
-
-  // A transient update pattern:
-  useEffect(() => {
-    if (!enabled) return;
-    const unsub = useWorldStore.subscribe((state) => {
-      playerRef.current.x = state.playerParams.x;
-      playerRef.current.y = state.playerParams.y;
-      playerRef.current.z = state.playerParams.z;
-      playerRef.current.rotation = state.playerParams.rotation;
-      playerRef.current.hasSignal = true;
-    });
-    return () => unsub();
-  }, [enabled]);
+  // Sync from playerState singleton every frame - no subscription overhead
+  useFrame(() => {
+    frameProfiler.begin('ambient-life');
+    if (!enabled) {
+      frameProfiler.end('ambient-life');
+      return;
+    }
+    playerRef.current.x = playerState.x;
+    playerRef.current.y = playerState.y;
+    playerRef.current.z = playerState.z;
+    playerRef.current.rotation = playerState.rotation;
+    playerRef.current.hasSignal = playerState.version > 0;
+    frameProfiler.end('ambient-life');
+  });
 
   if (!enabled) return null;
 
   return (
     <>
       <FirefliesField enabled={enabled} playerRef={playerRef} />
-      <FogDeer enabled={enabled} playerRef={playerRef} />
+      {/* FogDeer disabled for performance investigation */}
+      {/* <FogDeer enabled={enabled} playerRef={playerRef} /> */}
     </>
   );
 };
