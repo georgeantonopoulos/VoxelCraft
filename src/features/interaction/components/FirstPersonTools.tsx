@@ -341,7 +341,9 @@ export const FirstPersonTools: React.FC = () => {
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
                             }
                         })
-                    : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.pickaxe : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
+                    : (activeCustomTool
+                        ? (RIGHT_HAND_HELD_ITEM_POSES[activeCustomTool.baseType] ?? RIGHT_HAND_HELD_ITEM_POSES.stick)
+                        : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
                 : null;
             if (pose && rightHandShown) {
                 const animOffsetY = positionY - (debugPos.current.y + swayY);

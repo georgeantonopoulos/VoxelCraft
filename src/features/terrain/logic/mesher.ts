@@ -304,6 +304,11 @@ export function generateMesh(
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
+  // Pre-allocated buffer for material weights - reused per vertex to avoid GC pressure.
+  // Previously allocated inside the vertex loop (new Float32Array(16) per vertex),
+  // causing thousands of small allocations per chunk mesh generation.
+  const localWeights = new Float32Array(16);
+
   // Snap epsilon is used to close seams by snapping vertices near chunk borders.
   // IMPORTANT: Do NOT clamp vertices to the chunk interior. Surface-Nets-style vertices can land
   // slightly outside the chunk due to averaging edge intersections. We only snap very-near-boundary
@@ -407,7 +412,8 @@ export function generateMesh(
 
             // Reduced blend radius from 3 to 2: samples 5x5x5=125 voxels instead of 7x7x7=343 (2.7x faster)
             const BLEND_RADIUS = 2;
-            const localWeights = new Float32Array(16);
+            // Reset the pre-allocated weight buffer (faster than allocating new Float32Array per vertex)
+            localWeights.fill(0);
             let bestWet = 0, bestMoss = 0, bestVal = -Infinity;
             let totalWeight = 0, occTotalW = 0, occSolidW = 0;
             let nearestSolidMat = MaterialType.AIR, minSolidDistSq = Infinity;

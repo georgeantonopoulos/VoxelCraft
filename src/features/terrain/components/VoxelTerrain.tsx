@@ -531,8 +531,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const pendingVersionAdds = useRef<Map<string, number>>(new Map());
   const lastFlushTime = useRef(0);
 
-  // Flush all pending version updates in a single React state update
-  // Throttled to 10Hz (100ms) to reduce React reconciliation overhead
+  // Flush pending version updates in batches to prevent massive React reconciliations.
+  // Previously flushed ALL queued updates every 100ms, causing 50-120ms render spikes
+  // when many chunks updated together (e.g., during streaming).
+  //
+  // Now limits batch size: max 4 adds + 4 updates per flush (plus unlimited removals).
+  // Remaining items stay queued for next flush, spreading load across frames.
   const flushVersionUpdates = (forceImmediate = false) => {
     if (pendingVersionUpdates.current.size === 0 &&
       pendingVersionRemovals.current.size === 0 &&
@@ -540,22 +544,47 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       return;
     }
 
-    // Throttle to 10Hz unless forced (e.g., during initial load or critical updates)
+    // Throttle to ~15Hz (66ms) for more frequent, smaller batches
     const now = performance.now();
-    if (!forceImmediate && now - lastFlushTime.current < 100) {
+    if (!forceImmediate && now - lastFlushTime.current < 66) {
       return; // Skip this flush, will catch up on next tick
     }
     lastFlushTime.current = now;
 
-    const updates = new Set(pendingVersionUpdates.current);
+    // Limit batch sizes to keep React reconciliation under ~16ms
+    // Adds are more expensive (new components) so limit more aggressively
+    const MAX_ADDS_PER_FLUSH = 4;
+    const MAX_UPDATES_PER_FLUSH = 6;
+    // Removals are cheap (just deleting from state) - process all
     const removals = new Set(pendingVersionRemovals.current);
-    const adds = new Map(pendingVersionAdds.current);
-
-    pendingVersionUpdates.current.clear();
     pendingVersionRemovals.current.clear();
-    pendingVersionAdds.current.clear();
 
-    frameProfiler.trackOperation(`version-flush-${updates.size + removals.size + adds.size}`);
+    // Take limited subset of adds
+    const adds = new Map<string, number>();
+    let addCount = 0;
+    for (const [k, v] of pendingVersionAdds.current) {
+      if (addCount >= MAX_ADDS_PER_FLUSH) break;
+      adds.set(k, v);
+      addCount++;
+    }
+    // Remove processed adds from pending
+    adds.forEach((_, k) => pendingVersionAdds.current.delete(k));
+
+    // Take limited subset of updates
+    const updates = new Set<string>();
+    let updateCount = 0;
+    for (const k of pendingVersionUpdates.current) {
+      if (updateCount >= MAX_UPDATES_PER_FLUSH) break;
+      updates.add(k);
+      updateCount++;
+    }
+    // Remove processed updates from pending
+    updates.forEach(k => pendingVersionUpdates.current.delete(k));
+
+    const totalOps = updates.size + removals.size + adds.size;
+    if (totalOps === 0) return;
+
+    frameProfiler.trackOperation(`version-flush-${totalOps}`);
 
     // Safety: Don't remove chunks that are being added in the same flush
     adds.forEach((_, k) => removals.delete(k));

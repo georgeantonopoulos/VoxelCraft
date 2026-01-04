@@ -39,7 +39,7 @@ const getSunColor = (sunY: number, radius: number): THREE.Color => {
 const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE.Color => {
     const glowColor = sunColor.clone();
     const nightGlow = new THREE.Color(0x4a5a7a);
-    const warmGlow = new THREE.Color(0xff9b4a);
+    const warmGlow = new THREE.Color(0xffb070); // Less saturated orange
     const dayHighlight = new THREE.Color(0xfff4d6);
 
     if (normalizedHeight < -0.15) {
@@ -51,8 +51,16 @@ const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE
         glowColor.lerp(nightGlow, 1 - t).multiplyScalar(0.5 + 0.4 * t);
         return glowColor;
     }
+    // Sunset warm glow - reduced intensity and narrower range
+    if (normalizedHeight < 0.15) {
+        // Fade out warm glow as sun rises (0.0 -> 0.15)
+        const warmFade = 1.0 - THREE.MathUtils.smoothstep(normalizedHeight, 0.0, 0.15);
+        glowColor.lerp(warmGlow, 0.2 * warmFade).multiplyScalar(1.0 + 0.1 * warmFade);
+        return glowColor;
+    }
     if (normalizedHeight < 0.3) {
-        glowColor.lerp(warmGlow, 0.35).multiplyScalar(1.15);
+        // Transition zone - minimal warm tint
+        glowColor.lerp(dayHighlight, 0.15).multiplyScalar(1.02);
         return glowColor;
     }
     return glowColor.lerp(dayHighlight, 0.2).multiplyScalar(1.05);
@@ -374,10 +382,11 @@ export const SunFollower: React.FC<{
                         glowMeshRef.current.lookAt(camera.position);
                         glowMeshRef.current.visible = directVis > 0.02;
 
-                        const sunsetBoost = normalizedHeight >= 0.0 ? THREE.MathUtils.clamp(1.0 - THREE.MathUtils.smoothstep(normalizedHeight, 0.22, 0.35), 0, 1) : 0.0;
-                        const glowScale = THREE.MathUtils.lerp(3.5, 5.0, sunsetBoost);
-                        const baseGlowOpacity = (normalizedHeight < -0.15 ? 0.2 : 0.5);
-                        const glowOpacityBase = THREE.MathUtils.lerp(baseGlowOpacity, 0.9, sunsetBoost);
+                        // Sunset boost - narrower window and reduced intensity to avoid harsh orange halo
+                        const sunsetBoost = normalizedHeight >= 0.0 ? THREE.MathUtils.clamp(1.0 - THREE.MathUtils.smoothstep(normalizedHeight, 0.08, 0.2), 0, 1) : 0.0;
+                        const glowScale = THREE.MathUtils.lerp(3.5, 4.2, sunsetBoost); // Reduced max scale (was 5.0)
+                        const baseGlowOpacity = (normalizedHeight < -0.15 ? 0.2 : 0.45);
+                        const glowOpacityBase = THREE.MathUtils.lerp(baseGlowOpacity, 0.7, sunsetBoost); // Reduced max opacity (was 0.9)
                         const depthFade3 = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
                         const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3) * THREE.MathUtils.clamp(directVis, 0, 1);
 
@@ -537,7 +546,10 @@ export const MoonFollower: React.FC<{
             moonMeshRef.current.visible = isAboveHorizon && directVis > 0.02;
             const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
             const moonDimming = THREE.MathUtils.lerp(1.0, 0.35, depthFade);
-            lightRef.current.intensity = (lPy > -50) ? 0.2 * moonDimming * directVis * intensityMul : 0;
+            // Smooth moon intensity transition instead of hard threshold pop-in
+            // Moon fades in/out smoothly as it rises/sets between Y=-100 and Y=0
+            const moonHeightFactor = THREE.MathUtils.smoothstep(lPy, -100, 0);
+            lightRef.current.intensity = 0.2 * moonHeightFactor * moonDimming * directVis * intensityMul;
             if (undergroundBlend > 0.85) moonMeshRef.current.visible = false;
             frameProfiler.end('moon-follower');
         });
