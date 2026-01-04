@@ -6,7 +6,7 @@ export type InputMode = 'mouse' | 'touch';
 
 interface SettingsState {
   // Graphics
-  resolutionScale: number; // 0.5 to 1.0
+  resolutionScale: number; // 0.25 to 2.0 (DPR - device pixel ratio)
   qualityPreset: QualityPreset;
   shadows: boolean;
   ao: boolean;
@@ -47,7 +47,7 @@ const getInitialInputMode = (): InputMode => {
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
-      resolutionScale: 0.75, // Default to 75% for better performance on high-DPI displays
+      resolutionScale: 1.0, // DPR 1.0 = CSS pixel resolution (good balance for most displays)
       qualityPreset: 'high',
       shadows: true,
       ao: false,

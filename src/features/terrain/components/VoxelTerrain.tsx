@@ -1739,13 +1739,23 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         let updatedVisuals: Partial<ChunkState> = {};
         const variant = next[hit.index + 6];
         const seed = next[hit.index + 7];
+        // Also store the local position for more reliable matching
+        const hitX = next[hit.index + 0];
+        const hitY = next[hit.index + 1];
+        const hitZ = next[hit.index + 2];
 
         const updateBuffer = (buf: Float32Array | undefined) => {
           if (!buf) return undefined;
           const nb = new Float32Array(buf);
+          // Visual buffer has stride 7: x, y, z, nx, ny, nz, seed
           for (let i = 0; i < nb.length; i += 7) {
-            // Find by seed and approximate position
-            if (Math.abs(nb[i + 6] - seed) < 0.001) {
+            // Match by both seed AND position for reliability
+            // (seed alone may have floating-point issues or duplicates)
+            const seedMatch = Math.abs(nb[i + 6] - seed) < 0.001;
+            const posMatch = Math.abs(nb[i] - hitX) < 0.1 &&
+                             Math.abs(nb[i + 1] - hitY) < 0.1 &&
+                             Math.abs(nb[i + 2] - hitZ) < 0.1;
+            if (seedMatch && posMatch) {
               nb[i + 1] = -10000;
               break;
             }

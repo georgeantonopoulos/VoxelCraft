@@ -224,12 +224,16 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
         setDeferredColliderEnabled(true);
         return;
       }
-      // Stagger collider creation heavily to avoid BVH construction stutters
-      // Use longer delays - BVH takes 50-200ms, so we need significant gaps between colliders
-      // LOD 0 = 500ms base delay, +200ms per distance level
-      const baseDelay = 500 + lodLevel * 200;
-      // Add random jitter to prevent multiple colliders from all firing at once
-      const jitter = Math.random() * 300;
+      // LOD 0 chunks (player is standing in them) need colliders ASAP to prevent falling through
+      // LOD 1 chunks can have a small delay since player isn't there yet
+      if (lodLevel === 0) {
+        // Player chunk - enable immediately
+        setDeferredColliderEnabled(true);
+        return;
+      }
+      // Adjacent chunks: short delay to stagger BVH construction but not so long player falls through
+      const baseDelay = 100 + lodLevel * 100;
+      const jitter = Math.random() * 100;
       const handle = setTimeout(() => setDeferredColliderEnabled(true), baseDelay + jitter);
       return () => clearTimeout(handle);
     } else {

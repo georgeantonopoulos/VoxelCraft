@@ -11,8 +11,9 @@ const MAP_SIZE = 64; // Reduced from 128 for better performance
 const MAP_SCALE = 4; // World units per pixel (Higher = zoomed out, was 2)
 const SAMPLING_STEP = 8; // Sample every 8th pixel (was 4) - only 64 samples now vs 1024
 
-// Debug flag to disable minimap - use ?nominimap URL param
-const minimapDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nominimap');
+// Minimap disabled by default due to performance impact (causes stuttering)
+// Use ?minimap URL param to enable it
+const minimapEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('minimap');
 
 const BIOME_COLORS: Record<BiomeType, string> = {
   'PLAINS': '#4ade80',      // green-400
@@ -239,8 +240,8 @@ export const HUD: React.FC = () => {
       {/* Bottom Left: Inventory Bar */}
       <InventoryBar />
 
-      {/* Bottom Right: Minimap */}
-      {!minimapDisabled && (
+      {/* Bottom Right: Minimap (disabled by default, use ?minimap to enable) */}
+      {minimapEnabled && (
         <div className="absolute bottom-6 right-6 pointer-events-auto">
           <Minimap x={coords.x} z={coords.z} rotation={coords.rotation} />
           <div className="text-center mt-1 text-[10px] text-white font-mono bg-black/50 rounded px-1 backdrop-blur-sm">

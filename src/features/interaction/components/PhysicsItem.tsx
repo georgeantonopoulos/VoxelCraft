@@ -80,12 +80,13 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           // Shatter!
           const t = rigidBody.current!.translation();
 
-          // Spawn 3 Shards
+          // Spawn 3 Shards - spawn higher up (0.5 units above stone center) to prevent
+          // shards from spawning inside terrain when stone is partially embedded
           for (let i = 0; i < 3; i++) {
             const vx = (Math.random() - 0.5) * 4;
             const vy = (Math.random() * 3) + 2;
             const vz = (Math.random() - 0.5) * 4;
-            spawnItem(ItemType.SHARD, [t.x, t.y + 0.2, t.z], [vx, vy, vz]);
+            spawnItem(ItemType.SHARD, [t.x, t.y + 0.5, t.z], [vx, vy, vz]);
           }
 
           // Play Sound using shared pool

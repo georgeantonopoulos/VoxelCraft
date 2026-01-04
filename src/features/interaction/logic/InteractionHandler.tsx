@@ -145,7 +145,6 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
             const hitPoint = origin.clone().add(direction.clone().multiplyScalar(hit.timeOfImpact));
 
             if (rigidBody && (rigidBody.userData as any)?.type === ItemType.STONE) {
-              emitSpark(hitPoint);
               const state = usePhysicsItemStore.getState();
               const targetItem = state.items.find(i => i.id === (rigidBody.userData as any).id);
 
@@ -176,6 +175,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                 // FIX: Only proceed with fire logic if there are enough sticks nearby
                 // If not enough sticks, fall through to normal SMASH behavior
                 if (nearbySticks.length >= 4) {
+                  // Only emit spark for fire-starting (knapping sparks are in useTerrainInteraction)
+                  emitSpark(hitPoint);
                   if (!targetItem.isAnchored) {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { isAnchored: true });
                   }
@@ -199,6 +200,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                   // FIX: Return early WITHOUT setting SMASH action - prevents damage to target rock
                   return;
                 }
+                // Not enough sticks for fire - set SMASH action to trigger knapping in useTerrainInteraction
+                // The spark and audio will be handled there to avoid duplicate effects
               }
               // No sticks nearby - fall through to SMASH action below
             }

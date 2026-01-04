@@ -39,7 +39,6 @@ import {
   isTerrainCollider,
   rayHitsGeneratedGroundPickup,
   buildChunkLocalHotspots,
-  GroundPickupArrayKey,
 } from '@features/terrain/logic/raycastUtils';
 
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ } from '@/constants';
@@ -88,7 +87,7 @@ export interface FallingTreeData {
 
 export interface InteractionCallbacks {
   /** Called to trigger particle effects */
-  onParticle: (state: Partial<ParticleState> & { burstId?: 'increment' }) => void;
+  onParticle: (state: Partial<ParticleState> & { burstId?: number | 'increment' }) => void;
   /** Called when a tree is felled */
   onTreeFall: (tree: FallingTreeData) => void;
   /** Called when a leaf is hit (for pickup effect) */
@@ -167,7 +166,12 @@ export function useTerrainInteraction(
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-      const physicsHit = world.castRay(ray, maxRayDistance, true);
+      // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
+      const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
+        const userData = collider.parent()?.userData as any;
+        // Include physics items and flora trees, exclude terrain
+        return userData?.type !== 'terrain';
+      });
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
         const userData = parent?.userData as any;
@@ -313,7 +317,9 @@ export function useTerrainInteraction(
                 physicsStore.removeItem(stoneId);
                 const count = 2 + Math.floor(Math.random() * 2);
                 for (let i = 0; i < count; i++) {
-                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                  // Spawn shards higher up (0.4 units above hit point) to prevent
+                  // them from falling through terrain when stone is on ground
+                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
                     (Math.random() - 0.5) * 3,
                     2 + Math.random() * 2,
                     (Math.random() - 0.5) * 3
@@ -365,12 +371,22 @@ export function useTerrainInteraction(
                 let updatedVisuals: Partial<ChunkState> = {};
                 const variant = next[hit.index + 6];
                 const seed = next[hit.index + 7];
+                // Also store the local position for more reliable matching
+                const hitX = next[hit.index + 0];
+                const hitY = next[hit.index + 1];
+                const hitZ = next[hit.index + 2];
 
                 const updateBuffer = (buf: Float32Array | undefined) => {
                   if (!buf) return undefined;
                   const nb = new Float32Array(buf);
+                  // Visual buffer has stride 7: x, y, z, nx, ny, nz, seed
                   for (let i = 0; i < nb.length; i += 7) {
-                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                    // Match by both seed AND position for reliability
+                    const seedMatch = Math.abs(nb[i + 6] - seed) < 0.001;
+                    const posMatch = Math.abs(nb[i] - hitX) < 0.1 &&
+                                     Math.abs(nb[i + 1] - hitY) < 0.1 &&
+                                     Math.abs(nb[i + 2] - hitZ) < 0.1;
+                    if (seedMatch && posMatch) {
                       nb[i + 1] = -10000;
                       break;
                     }
@@ -400,7 +416,9 @@ export function useTerrainInteraction(
               const physicsStore = usePhysicsItemStore.getState();
               const count = 2 + Math.floor(Math.random() * 2);
               for (let i = 0; i < count; i++) {
-                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                // Spawn shards higher up (0.4 units above hit point) to prevent
+                // them from falling through terrain
+                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
                   (Math.random() - 0.5) * 3,
                   2 + Math.random() * 2,
                   (Math.random() - 0.5) * 3

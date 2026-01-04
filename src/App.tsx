@@ -327,7 +327,7 @@ const App: React.FC = () => {
       <KeyboardControls map={keyboardMap}>
         <Canvas
           shadows={debugShadowsEnabled}
-          dpr={resolutionScale * (typeof window !== 'undefined' ? window.devicePixelRatio : 1)}
+          dpr={resolutionScale}
           gl={{
             antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,

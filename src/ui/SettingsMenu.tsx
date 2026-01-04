@@ -79,18 +79,27 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
         {/* Resolution Slider */}
         <div className="mb-6">
           <div className="flex justify-between mb-2">
-            <label className="text-sm font-medium text-slate-400">Resolution Scale</label>
-            <span className="text-sm font-mono text-emerald-400">{Math.round(resolutionScale * 100)}%</span>
+            <label className="text-sm font-medium text-slate-400">Resolution</label>
+            <span className="text-sm font-mono text-emerald-400">
+              {resolutionScale.toFixed(2)}x
+              <span className="text-slate-500 ml-1">
+                ({Math.round(window.innerWidth * resolutionScale)}×{Math.round(window.innerHeight * resolutionScale)})
+              </span>
+            </span>
           </div>
           <input
             type="range"
-            min="0.5"
-            max="1.0"
-            step="0.05"
+            min="0.25"
+            max="2.0"
+            step="0.25"
             value={resolutionScale}
             onChange={(e) => setResolutionScale(parseFloat(e.target.value))}
             className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
           />
+          <div className="flex justify-between text-xs text-slate-500 mt-1">
+            <span>Performance</span>
+            <span>Quality</span>
+          </div>
         </div>
 
         {/* Input Mode */}
