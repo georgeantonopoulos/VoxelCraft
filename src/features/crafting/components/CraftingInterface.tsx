@@ -1,14 +1,121 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import { Vector2 } from 'three';
 
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useInventoryStore } from '@/state/InventoryStore';
-import { STICK_SLOTS } from '../CraftingData';
-import { ItemType } from '@/types';
+import { STICK_SLOTS, RECIPES } from '../CraftingData';
+import { ItemType, CustomTool } from '@/types';
+import { getToolCapabilities } from '@/features/interaction/logic/ToolCapabilities';
 
-import { StickMesh, StoneMesh, ShardMesh, FloraMesh } from '@/features/interaction/components/UniversalTool';
+import { StickMesh, StoneMesh, ShardMesh, FloraMesh, LashingMesh } from '@/features/interaction/components/UniversalTool';
+
+/**
+ * ToolStatsPanel - Shows preview of tool capabilities before crafting is complete.
+ * Helps players understand what they're building.
+ */
+const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({ attachedItems }) => {
+  // Create a mock tool to compute capabilities
+  const previewTool: CustomTool = useMemo(() => ({
+    id: 'preview',
+    baseType: ItemType.STICK,
+    attachments: attachedItems
+  }), [attachedItems]);
+
+  const caps = useMemo(() => getToolCapabilities(previewTool), [previewTool]);
+  const attachmentCount = Object.keys(attachedItems).length;
+
+  // Check for matching recipes
+  const matchedRecipe = useMemo(() => {
+    const filledSlots = Object.keys(attachedItems).sort();
+    for (const recipe of RECIPES) {
+      const recipeSlots = [...recipe.ingredients].sort();
+      if (filledSlots.length === recipeSlots.length &&
+          filledSlots.every((slot, i) => slot === recipeSlots[i])) {
+        // Check if all ingredients are shards (for pickaxe/axe recognition)
+        const allShards = Object.values(attachedItems).every(t => t === ItemType.SHARD);
+        if (allShards) return recipe.result;
+      }
+    }
+    return null;
+  }, [attachedItems]);
+
+  if (attachmentCount === 0) {
+    return (
+      <div className="absolute left-8 top-1/2 -translate-y-1/2 bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 pointer-events-none">
+        <p className="text-white/50 text-sm italic">Drag items to attachment slots</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute left-8 top-1/2 -translate-y-1/2 bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 pointer-events-none min-w-[180px]">
+      {/* Recipe Recognition */}
+      {matchedRecipe && (
+        <div className="mb-3 pb-3 border-b border-white/10">
+          <span className="text-xs uppercase tracking-wider text-emerald-400 font-bold">Recipe Matched</span>
+          <p className="text-white font-bold text-lg">{matchedRecipe}</p>
+        </div>
+      )}
+
+      <h3 className="text-xs uppercase tracking-wider text-white/60 mb-2 font-bold">Tool Stats</h3>
+
+      {/* Capabilities */}
+      <div className="space-y-2 text-sm">
+        {caps.canDig && (
+          <div className="flex items-center gap-2">
+            <span className="text-amber-400">⛏</span>
+            <span className="text-white">Mining</span>
+            <span className="ml-auto text-amber-300 font-mono">{caps.digPower.toFixed(1)}</span>
+          </div>
+        )}
+        {caps.canChop && (
+          <div className="flex items-center gap-2">
+            <span className="text-green-400">🪓</span>
+            <span className="text-white">Chopping</span>
+            <span className="ml-auto text-green-300 font-mono">{caps.woodDamage.toFixed(1)}</span>
+          </div>
+        )}
+        {caps.canSmash && (
+          <div className="flex items-center gap-2">
+            <span className="text-orange-400">💥</span>
+            <span className="text-white">Smashing</span>
+            <span className="ml-auto text-orange-300 font-mono">{caps.shatterForce.toFixed(1)}</span>
+          </div>
+        )}
+        {caps.isLuminaTool && (
+          <div className="flex items-center gap-2">
+            <span className="text-cyan-400">✨</span>
+            <span className="text-white">Lumina</span>
+            <span className="ml-auto text-cyan-300 font-mono">×{caps.luminaCount}</span>
+          </div>
+        )}
+
+        {/* Show damage stats if no special capabilities */}
+        {!caps.canDig && !caps.canChop && !caps.canSmash && (
+          <>
+            <div className="flex items-center gap-2 text-white/70">
+              <span>Wood Dmg</span>
+              <span className="ml-auto font-mono">{caps.woodDamage.toFixed(1)}</span>
+            </div>
+            <div className="flex items-center gap-2 text-white/70">
+              <span>Stone Dmg</span>
+              <span className="ml-auto font-mono">{caps.stoneDamage.toFixed(1)}</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Tip for unlocking capabilities */}
+      {!caps.canDig && !caps.canChop && attachmentCount < 2 && (
+        <p className="mt-3 text-xs text-white/40 italic">
+          Add more shards to unlock abilities
+        </p>
+      )}
+    </div>
+  );
+};
 
 
 // The "Ghost" Slot
@@ -153,6 +260,9 @@ export const CraftingInterface: React.FC = () => {
         <p className="text-emerald-400 font-bold text-sm uppercase tracking-widest mt-1">Combine materials into a unique tool</p>
       </div>
 
+      {/* Tool Stats Panel */}
+      <ToolStatsPanel attachedItems={attachedItems} />
+
       {/* 3D Scene */}
       <div className="w-full h-full pointer-events-auto">
         <Canvas shadows camera={{ position: [0, 0, 2], fov: 45 }}>
@@ -174,6 +284,15 @@ export const CraftingInterface: React.FC = () => {
           <group position={[0, -0.2, 0]}>
             {/* Base Item */}
             <StickMesh />
+
+            {/* Lashings - rendered before attachments so they appear underneath */}
+            {Object.entries(attachedItems).map(([slotId, itemType]) => (
+              <LashingMesh
+                key={`lashing-${slotId}`}
+                slotId={slotId}
+                attachmentType={itemType}
+              />
+            ))}
 
             {/* Slots & Attachments */}
             {STICK_SLOTS.map(slot => (

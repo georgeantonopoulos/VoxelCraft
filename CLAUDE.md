@@ -201,12 +201,14 @@ Claude Code has access to specialized subagents for different tasks. **Use these
 4. **Resume agents** using their ID for follow-up work in the same domain
 5. **Use appropriate thoroughness** for Explore: "quick" for simple lookups, "very thorough" for architecture questions
 
+6. **Shader debugger** - GLSL-specific debugging and optimization
+
 ### Missing Agents (Request These)
 
 If you find yourself repeatedly doing similar complex tasks, consider requesting these specialized agents:
 - **Performance profiler** - Systematic performance investigation
 - **Test writer** - Generate tests for new functionality
-- **Shader debugger** - GLSL-specific debugging and optimization
+
 - **Worker debugger** - Web Worker message flow analysis
 
 ## Detailed Engineering Guidance
@@ -216,4 +218,26 @@ See `AGENTS.md` for:
 - Debug workflows and verification checklists
 - Performance optimization details
 - Worklog of recent changes
-- If you notice important refactoring opportunities while doing other changes, make a note of them here for the future. 
+- If you notice important refactoring opportunities while doing other changes, make a note of them here for the future.
+
+## Refactoring Opportunities
+
+### Crafting System Enhancements (Identified 2026-01-04)
+
+1. **Ground Item Shader Consistency**: The `ROCK_SHADER` and `SHARD_SHADER` in `GroundItemShaders.ts` now support noise displacement, but ground items rendered via instanced rendering (terrain clutter) don't pass `uDisplacementStrength`. Consider adding this uniform to the instanced rendering path in `GroundItems.tsx` for visual consistency between picked-up and ground items.
+
+2. **Material Variant Persistence**: `StoneMesh` and `ShardMesh` now accept `variant` and `seed` props for material variety (obsidian, basalt, sandstone, clay), but item instances don't store this data. To make harvested items retain their biome-specific appearance:
+   - Extend `ItemType` or create item metadata in `InventoryStore`
+   - Store variant/seed when item is picked up
+   - Pass stored values to mesh components
+
+3. **GI Light Query System**: Tools currently use standard Three.js lighting. To integrate with the voxel GI system:
+   - Expose `lightGrid` data from `ChunkDataManager` at runtime
+   - Create a `sampleLightAtPosition(worldPos)` utility
+   - Pass sampled light color to tool shaders
+   - This would make tools respond to cave/surface lighting like terrain does
+
+4. **Recipe System Formalization**: Recipes in `CraftingData.ts` are defined but loosely enforced. Consider:
+   - Adding a `validateRecipe(attachments)` function
+   - Showing recipe hints before all ingredients are attached
+   - Supporting partial recipe matching for guidance 

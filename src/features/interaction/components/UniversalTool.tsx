@@ -1,11 +1,70 @@
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
+import { STICK_SHADER, ROCK_SHADER, SHARD_SHADER } from '@core/graphics/GroundItemShaders';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { ItemType, CustomTool } from '@/types';
 import { getItemColor } from '../logic/ItemRegistry';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
+
+// Color constants matching terrain palette
+const LASHING_COLOR = '#755339'; // uColorDirt - leather/vine appearance
+const LASHING_COLOR_ALT = '#4a6b2f'; // uColorMoss - plant fiber variant
+
+/**
+ * Material variants for stones and shards.
+ * These map to the terrain color palette from TriplanarMaterial.tsx
+ * for visual coherence with the world.
+ */
+export type MaterialVariant = 'stone' | 'obsidian' | 'basalt' | 'sandstone' | 'clay';
+
+interface MaterialProperties {
+    color: string;
+    roughness: number;
+    metalness: number;
+    emissive?: string;
+    emissiveIntensity?: number;
+}
+
+const MATERIAL_VARIANTS: Record<MaterialVariant, MaterialProperties> = {
+    stone: {
+        color: '#888c8d',   // uColorStone - default gray stone
+        roughness: 0.92,
+        metalness: 0.0,
+    },
+    obsidian: {
+        color: '#0a0814',   // uColorObsidian - volcanic glass, very dark
+        roughness: 0.1,
+        metalness: 0.95,
+        emissive: '#1a0828',
+        emissiveIntensity: 0.1,
+    },
+    basalt: {
+        color: '#2a2a2a',   // uColorBedrock - dark volcanic rock
+        roughness: 0.6,
+        metalness: 0.4,
+    },
+    sandstone: {
+        color: '#ebd89f',   // uColorSand - warm desert stone
+        roughness: 0.95,
+        metalness: 0.0,
+    },
+    clay: {
+        color: '#a67b5b',   // uColorClay - terracotta-like
+        roughness: 0.85,
+        metalness: 0.0,
+    },
+};
+
+/**
+ * Get material variant from a seed value.
+ * Provides deterministic variety based on item identity.
+ */
+export function getMaterialVariant(seed: number): MaterialVariant {
+    const variants: MaterialVariant[] = ['stone', 'obsidian', 'basalt', 'sandstone', 'clay'];
+    const index = Math.floor(Math.abs(seed * 43758.5453) % variants.length);
+    return variants[index];
+}
 
 // Reusable Meshes for individual components
 export const StickMesh = ({ scale = 1, height = 0.95, isThumbnail = false }: { scale?: number, height?: number, isThumbnail?: boolean }) => {
@@ -36,12 +95,27 @@ export const StickMesh = ({ scale = 1, height = 0.95, isThumbnail = false }: { s
     );
 };
 
-export const StoneMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => {
+interface StoneMeshProps {
+    scale?: number;
+    isThumbnail?: boolean;
+    variant?: MaterialVariant;
+    seed?: number;
+}
+
+export const StoneMesh = ({ scale = 1, isThumbnail = false, variant = 'stone', seed = 67.89 }: StoneMeshProps) => {
+    const mat = MATERIAL_VARIANTS[variant];
+
     if (isThumbnail) {
         return (
             <mesh scale={scale}>
                 <dodecahedronGeometry args={[0.22, 0]} />
-                <meshStandardMaterial color={getItemColor(ItemType.STONE)} roughness={0.9} />
+                <meshStandardMaterial
+                    color={mat.color}
+                    roughness={mat.roughness}
+                    metalness={mat.metalness}
+                    emissive={mat.emissive || '#000000'}
+                    emissiveIntensity={mat.emissiveIntensity || 0}
+                />
             </mesh>
         );
     }
@@ -54,28 +128,71 @@ export const StoneMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, 
                 uniforms={{
                     uInstancing: { value: false },
                     uNoiseTexture: { value: getNoiseTexture() },
-                    uSeed: { value: 67.89 }
+                    uSeed: { value: seed },
+                    uDisplacementStrength: { value: 0.15 }
                 }}
-                color={getItemColor(ItemType.STONE)}
-                roughness={0.92}
-                metalness={0.0}
+                color={mat.color}
+                roughness={mat.roughness}
+                metalness={mat.metalness}
+                emissive={mat.emissive ? new THREE.Color(mat.emissive) : undefined}
+                emissiveIntensity={mat.emissiveIntensity || 0}
             />
         </mesh>
     );
 };
 
-export const ShardMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => (
-    <mesh scale={scale} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-        <coneGeometry args={[0.1, 0.4, isThumbnail ? 3 : 4]} />
-        <meshStandardMaterial
-            color="#aaaaaa"
-            emissive="#000000"
-            emissiveIntensity={0}
-            roughness={0.2}
-            metalness={1.0}
-        />
-    </mesh>
-);
+interface ShardMeshProps {
+    scale?: number;
+    isThumbnail?: boolean;
+    variant?: MaterialVariant;
+    seed?: number;
+}
+
+export const ShardMesh = ({ scale = 1, isThumbnail = false, variant = 'obsidian', seed = 42.17 }: ShardMeshProps) => {
+    // Shards default to obsidian for a glassy, sharp blade appearance
+    // but can use other variants for variety
+    const mat = MATERIAL_VARIANTS[variant];
+
+    // For shards, boost metalness slightly for that "blade" look
+    const shardMetalness = Math.min(mat.metalness + 0.3, 1.0);
+    const shardRoughness = Math.max(mat.roughness * 0.5, 0.1);
+
+    if (isThumbnail) {
+        return (
+            <mesh scale={scale}>
+                <coneGeometry args={[0.1, 0.4, 3]} />
+                <meshStandardMaterial
+                    color={mat.color}
+                    roughness={shardRoughness}
+                    metalness={shardMetalness}
+                    emissive={mat.emissive || '#000000'}
+                    emissiveIntensity={mat.emissiveIntensity || 0}
+                />
+            </mesh>
+        );
+    }
+    return (
+        <mesh scale={scale} castShadow receiveShadow>
+            {/* Higher segment count for smoother displacement */}
+            <coneGeometry args={[0.1, 0.4, 6, 4]} />
+            <CustomShaderMaterial
+                baseMaterial={THREE.MeshStandardMaterial}
+                vertexShader={SHARD_SHADER.vertex}
+                uniforms={{
+                    uInstancing: { value: false },
+                    uNoiseTexture: { value: getNoiseTexture() },
+                    uSeed: { value: seed },
+                    uDisplacementStrength: { value: 0.06 }
+                }}
+                color={mat.color}
+                roughness={shardRoughness}
+                metalness={shardMetalness}
+                emissive={mat.emissive ? new THREE.Color(mat.emissive) : undefined}
+                emissiveIntensity={mat.emissiveIntensity || 0}
+            />
+        </mesh>
+    );
+};
  
 export const FloraMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, isThumbnail?: boolean }) => (
     <group scale={scale}>
@@ -93,6 +210,76 @@ export const FloraMesh = ({ scale = 1, isThumbnail = false }: { scale?: number, 
         </mesh>
     </group>
 );
+
+/**
+ * LashingMesh - Procedural binding wraps that connect attachments to the handle.
+ * Creates a helix of wrapped "cord" using TubeGeometry with a CatmullRomCurve3.
+ * Visually communicates that the tool is assembled, not magically fused.
+ */
+interface LashingMeshProps {
+    slotId: string;
+    attachmentType: ItemType;
+    isThumbnail?: boolean;
+}
+
+export const LashingMesh: React.FC<LashingMeshProps> = ({ slotId, attachmentType, isThumbnail = false }) => {
+    const geometry = useMemo(() => {
+        // Generate helix points wrapping around the junction
+        const points: THREE.Vector3[] = [];
+        const wraps = 3; // Number of full wraps
+        const segments = isThumbnail ? 12 : 24;
+        const radius = 0.055; // Slightly larger than stick radius (0.045)
+        const heightSpan = 0.12; // Vertical extent of the lashing
+
+        // Determine wrap direction based on slot (left wraps one way, right the other)
+        const direction = slotId === 'side_right' ? -1 : 1;
+
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const angle = t * Math.PI * 2 * wraps * direction;
+            const y = (t - 0.5) * heightSpan;
+            const x = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            points.push(new THREE.Vector3(x, y, z));
+        }
+
+        const curve = new THREE.CatmullRomCurve3(points);
+        const tubeRadius = 0.008; // Thin cord
+        const tubularSegments = isThumbnail ? 16 : 32;
+        const radialSegments = isThumbnail ? 4 : 6;
+
+        return new THREE.TubeGeometry(curve, tubularSegments, tubeRadius, radialSegments, false);
+    }, [slotId, isThumbnail]);
+
+    // Use moss color for flora attachments, dirt color for everything else
+    const color = attachmentType === ItemType.FLORA ? LASHING_COLOR_ALT : LASHING_COLOR;
+
+    // Position the lashing at the junction point (where attachment meets handle)
+    // The slot positions are relative to the stick center, so we need to offset
+    // to place lashing at the base of where the attachment connects
+    const slot = STICK_SLOTS.find(s => s.id === slotId);
+    if (!slot) return null;
+
+    // Lashing sits where the attachment base meets the stick
+    // For side slots, this is slightly below the slot position
+    // For tip_center, it's at the very top of the stick
+    const lashingY = slotId === 'tip_center' ? 0.42 : slot.position[1] - 0.08;
+
+    return (
+        <mesh
+            geometry={geometry}
+            position={[0, lashingY, 0]}
+            castShadow={!isThumbnail}
+            receiveShadow={!isThumbnail}
+        >
+            <meshStandardMaterial
+                color={color}
+                roughness={0.85}
+                metalness={0.0}
+            />
+        </mesh>
+    );
+};
 
 export const AxeHeadMesh = () => (
     <group>
@@ -209,6 +396,16 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
             {/* Base Item */}
             {tool.baseType === ItemType.STICK && <StickMesh isThumbnail={isThumbnail} />}
 
+            {/* Lashings - rendered first so they appear behind attachments */}
+            {Object.entries(tool.attachments).map(([slotId, attachmentType]) => (
+                <LashingMesh
+                    key={`lashing-${slotId}`}
+                    slotId={slotId}
+                    attachmentType={attachmentType}
+                    isThumbnail={isThumbnail}
+                />
+            ))}
+
             {/* Attachments */}
             {Object.entries(tool.attachments).map(([slotId, attachmentType]) => {
                 const slot = STICK_SLOTS.find(s => s.id === slotId);
@@ -222,7 +419,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                         {attachmentType === ItemType.FLORA && (
                             <group scale={0.4}>
                                 <FloraMesh isThumbnail={isThumbnail} />
-                                {/* Only add individual attachment light if not a thumbnail and not first person? 
+                                {/* Only add individual attachment light if not a thumbnail and not first person?
                                     Actually, for now, strictly NO lights in thumbnails. */}
                                 {!isThumbnail && (
                                     <pointLight intensity={0.5} color="#00FFFF" distance={1.0} />
