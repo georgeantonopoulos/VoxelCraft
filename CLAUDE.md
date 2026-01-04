@@ -37,6 +37,7 @@ Player moves → Calculate visible chunks (RENDER_DISTANCE=3)
 ### Key Directories
 
 - `src/core/` - Shared engine: materials, shaders, worker pools, math utilities, lighting
+  - `items/ItemGeometry.ts` - Single source of truth for all item visuals, geometry, colors
 - `src/features/terrain/` - Chunk generation, meshing, streaming
   - `components/VoxelTerrain.tsx` - Chunk streaming and rendering orchestration
   - `hooks/useTerrainInteraction.ts` - Dig, build, chop, smash interaction logic
@@ -93,6 +94,17 @@ TriplanarMaterial uses custom shaders with:
 - Per-vertex GI light (aLightColor attribute) from voxel light grid
 - Shared uniforms updated once per frame in VoxelTerrain.tsx
 
+### Item System
+
+**ItemGeometry.ts** (src/core/items/ItemGeometry.ts) is the single source of truth for all item visuals:
+- Unified color palette matching terrain materials for world coherence
+- Geometry factories: createStickGeometry(), createStoneGeometry(), createShardGeometry(), createLargeRockGeometry(), createLashingGeometry()
+- Material variant system (obsidian, basalt, sandstone, clay stones; flint, volcanic shards)
+- Geometry caching for performance (geometries created once and reused)
+- Used by: UniversalTool (held/crafting), GroundItemsLayer (terrain clutter), PhysicsItem (thrown), ItemThumbnail (inventory)
+
+Shard geometry is a stretched octahedron (not cone) for blade-like appearance. Lashing geometry uses helix curves for realistic tool bindings.
+
 ## Critical Constants (src/constants.ts)
 
 ```
@@ -135,6 +147,7 @@ See `AGENTS.md` for the complete list. Most critical:
 5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
+8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
 
 ## Common Pitfalls
 
