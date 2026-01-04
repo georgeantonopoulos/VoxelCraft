@@ -1,9 +1,7 @@
-import React, { useEffect, useRef, useState, useMemo, startTransition, useLayoutEffect } from 'react';
+import React, { useEffect, useRef, useState, useMemo, startTransition, useLayoutEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
-import type { Collider } from '@dimforge/rapier3d-compat';
-import { TerrainService } from '@features/terrain/logic/terrainService';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
@@ -11,26 +9,38 @@ import { useInventoryStore, useInventoryStore as useGameStore } from '@state/Inv
 import { useInputStore } from '@/state/InputStore';
 import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
-import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ, RENDER_DISTANCE, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, MESH_Y_OFFSET } from '@/constants';
+import { CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
-import { VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
-import { getToolCapabilities } from '../../interaction/logic/ToolCapabilities';
-import { emitSpark } from '../../interaction/components/SparkSystem';
-import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
-import { getTreeName, TreeType } from '@features/terrain/logic/VegetationConfig';
 import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
+
+// Extracted modules
+import {
+  rayHitsFlora,
+  rayHitsTorch,
+  rayHitsGeneratedLuminaFlora,
+  rayHitsGeneratedGroundPickup,
+  buildFloraHotspots,
+  buildChunkLocalHotspots,
+  isPhysicsItemCollider,
+} from '@features/terrain/logic/raycastUtils';
+import {
+  useTerrainInteraction,
+  ParticleState,
+  ParticleKind,
+  FallingTreeData,
+} from '@features/terrain/hooks/useTerrainInteraction';
 
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
@@ -38,274 +48,8 @@ import dig2Url from '@/assets/sounds/Dig_2.wav?url';
 import dig3Url from '@/assets/sounds/Dig_3.wav?url';
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
 
-const getMaterialColor = (matId: number) => {
-  switch (matId) {
-    case MaterialType.SNOW: return '#ffffff';
-    case MaterialType.STONE: return '#666670';
-    case MaterialType.BEDROCK: return '#222222';
-    case MaterialType.SAND: return '#dcd0a0';
-    case MaterialType.DIRT: return '#5d4037';
-    case MaterialType.GRASS: return '#55aa33';
-    case MaterialType.CLAY: return '#a67b5b';
-    case MaterialType.WATER: return '#6ec2f7';
-    case MaterialType.MOSSY_STONE: return '#5c8a3c';
-    default: return '#888888';
-  }
-};
-
-// Sample the terrain voxel material at a world-space point.
-// This is used for "material-aware" feedback (particles + smart build).
-const sampleMaterialAtWorldPoint = (
-  chunks: Map<string, ChunkState>,
-  worldPoint: THREE.Vector3
-): MaterialType => {
-  const cx = Math.floor(worldPoint.x / CHUNK_SIZE_XZ);
-  const cz = Math.floor(worldPoint.z / CHUNK_SIZE_XZ);
-  const key = `${cx},${cz}`;
-  const chunk = chunks.get(key);
-  if (!chunk) return MaterialType.DIRT;
-
-  const localX = worldPoint.x - cx * CHUNK_SIZE_XZ;
-  const localY = worldPoint.y;
-  const localZ = worldPoint.z - cz * CHUNK_SIZE_XZ;
-
-  // TerrainService grid mapping:
-  // hx = localX + PAD
-  // hy = localY - MESH_Y_OFFSET + PAD
-  // hz = localZ + PAD
-  const ix = THREE.MathUtils.clamp(Math.floor(localX) + PAD, 0, TOTAL_SIZE_XZ - 1);
-  const iy = THREE.MathUtils.clamp(Math.floor(localY - MESH_Y_OFFSET) + PAD, 0, TOTAL_SIZE_Y - 1);
-  const iz = THREE.MathUtils.clamp(Math.floor(localZ) + PAD, 0, TOTAL_SIZE_XZ - 1);
-
-  const idx = ix + iy * TOTAL_SIZE_XZ + iz * TOTAL_SIZE_XZ * TOTAL_SIZE_Y;
-  const mat = chunk.material[idx] ?? MaterialType.DIRT;
-  return mat as MaterialType;
-};
-
-const isTerrainCollider = (collider: Collider): boolean => {
-  const parent = collider.parent();
-  const userData = parent?.userData as { type?: string } | undefined;
-  return userData?.type === 'terrain';
-};
-
-const isPhysicsItemCollider = (collider: Collider): boolean => {
-  const parent = collider.parent();
-  const userData = parent?.userData as { type?: string } | undefined;
-  // PhysicsItems have ItemType enum values in userData.type
-  return Object.values(ItemType).includes(userData?.type as ItemType);
-};
-
-// Small helper to test ray vs placed flora without relying on physics colliders
-const rayHitsFlora = (
-  origin: THREE.Vector3,
-  dir: THREE.Vector3,
-  maxDist: number,
-  floraRadius = 0.6
-): string | null => {
-  const state = useWorldStore.getState();
-  let closestId: string | null = null;
-  let closestT = maxDist + 1;
-  const tmp = new THREE.Vector3();
-  const proj = new THREE.Vector3();
-
-  // Iterate over placed flora
-  for (const flora of state.entities.values()) {
-    if (flora.type !== ItemType.FLORA) continue;
-
-    // Use the live physics position if available, otherwise fall back to initial spawn position
-    const currentPos = flora.bodyRef?.current
-      ? flora.bodyRef.current.translation()
-      : flora.position;
-
-    // Rapier translation returns {x,y,z}, ensure it's Vector3-like
-    tmp.set(currentPos.x, currentPos.y, currentPos.z).sub(origin);
-
-    const t = tmp.dot(dir);
-    if (t < 0 || t > maxDist) continue; // Behind camera or too far
-    proj.copy(dir).multiplyScalar(t);
-    tmp.sub(proj);
-    const distSq = tmp.lengthSq();
-    if (distSq <= floraRadius * floraRadius && t < closestT) {
-      closestT = t;
-      closestId = flora.id;
-    }
-  }
-
-  return closestId;
-};
-
-// Small helper to test ray vs placed torches (world entities)
-const rayHitsTorch = (
-  origin: THREE.Vector3,
-  dir: THREE.Vector3,
-  maxDist: number,
-  torchRadius = 0.55
-): { id: string; t: number; position: THREE.Vector3 } | null => {
-  const state = useWorldStore.getState();
-  let closest: { id: string; t: number; position: THREE.Vector3 } | null = null;
-  let closestT = maxDist + 1;
-  const tmp = new THREE.Vector3();
-  const proj = new THREE.Vector3();
-  const p = new THREE.Vector3();
-
-  for (const ent of state.entities.values()) {
-    if (ent.type !== ItemType.TORCH) continue;
-    p.copy(ent.position);
-    tmp.copy(p).sub(origin);
-    const t = tmp.dot(dir);
-    if (t < 0 || t > maxDist) continue;
-    if (t >= closestT) continue;
-    proj.copy(dir).multiplyScalar(t);
-    tmp.sub(proj);
-    const distSq = tmp.lengthSq();
-    if (distSq <= torchRadius * torchRadius) {
-      closestT = t;
-      closest = { id: ent.id, t, position: p.clone() };
-    }
-  }
-
-  return closest;
-};
-
-/**
- * Ray-hit test against generated lumina flora (chunk `floraPositions`).
- * Returns the closest hit along the ray (single-target pickup).
- */
-const rayHitsGeneratedLuminaFlora = (
-  chunks: Map<string, ChunkState>,
-  origin: THREE.Vector3,
-  dir: THREE.Vector3,
-  maxDist: number,
-  floraRadius = 0.55
-): { key: string; index: number; t: number; position: THREE.Vector3 } | null => {
-  const tmp = new THREE.Vector3();
-  const proj = new THREE.Vector3();
-  const hitPos = new THREE.Vector3();
-
-  const minCx = Math.floor((origin.x - maxDist) / CHUNK_SIZE_XZ);
-  const maxCx = Math.floor((origin.x + maxDist) / CHUNK_SIZE_XZ);
-  const minCz = Math.floor((origin.z - maxDist) / CHUNK_SIZE_XZ);
-  const maxCz = Math.floor((origin.z + maxDist) / CHUNK_SIZE_XZ);
-
-  let best: { key: string; index: number; t: number; position: THREE.Vector3 } | null = null;
-  let bestT = maxDist + 1;
-
-  for (let cx = minCx; cx <= maxCx; cx++) {
-    for (let cz = minCz; cz <= maxCz; cz++) {
-      const key = `${cx},${cz}`;
-      const chunk = chunks.get(key);
-      if (!chunk?.floraPositions || chunk.floraPositions.length === 0) continue;
-
-      const positions = chunk.floraPositions;
-      for (let i = 0; i < positions.length; i += 4) {
-        // Positions are already world space; do not add chunk origin again.
-        if (positions[i + 1] < -9999) continue;
-        hitPos.set(positions[i], positions[i + 1], positions[i + 2]);
-        tmp.copy(hitPos).sub(origin);
-        const t = tmp.dot(dir);
-        if (t < 0 || t > maxDist) continue;
-        if (t >= bestT) continue;
-        proj.copy(dir).multiplyScalar(t);
-        tmp.sub(proj);
-        const distSq = tmp.lengthSq();
-        if (distSq <= floraRadius * floraRadius) {
-          bestT = t;
-          best = { key, index: i, t, position: hitPos.clone() };
-        }
-      }
-    }
-  }
-
-  return best;
-};
-
+// Type alias for backwards compatibility
 type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
-
-/**
- * Ray-hit test against generated ground pickups (sticks + stones).
- * Data is chunk-local in XZ (chunk group space) but world-space in Y.
- */
-const rayHitsGeneratedGroundPickup = (
-  chunks: Map<string, ChunkState>,
-  origin: THREE.Vector3,
-  dir: THREE.Vector3,
-  maxDist: number,
-  radius = 0.55
-): { key: string; array: GroundPickupArrayKey; index: number; t: number; position: THREE.Vector3 } | null => {
-  const tmp = new THREE.Vector3();
-  const proj = new THREE.Vector3();
-  const hitPos = new THREE.Vector3();
-
-  const minCx = Math.floor((origin.x - maxDist) / CHUNK_SIZE_XZ);
-  const maxCx = Math.floor((origin.x + maxDist) / CHUNK_SIZE_XZ);
-  const minCz = Math.floor((origin.z - maxDist) / CHUNK_SIZE_XZ);
-  const maxCz = Math.floor((origin.z + maxDist) / CHUNK_SIZE_XZ);
-
-  let best: { key: string; array: GroundPickupArrayKey; index: number; t: number; position: THREE.Vector3 } | null = null;
-  let bestT = maxDist + 1;
-
-  const consider = (key: string, array: GroundPickupArrayKey, data: Float32Array) => {
-    const chunk = chunks.get(key);
-    if (!chunk) return;
-    const originX = chunk.cx * CHUNK_SIZE_XZ;
-    const originZ = chunk.cz * CHUNK_SIZE_XZ;
-
-    // stride 8: x, y, z, nx, ny, nz, variant, seed
-    for (let i = 0; i < data.length; i += 8) {
-      const wy = data[i + 1];
-      if (wy < -9999) continue;
-      const wx = originX + data[i + 0];
-      const wz = originZ + data[i + 2];
-      hitPos.set(wx, wy, wz);
-      tmp.copy(hitPos).sub(origin);
-      const t = tmp.dot(dir);
-      if (t < 0 || t > maxDist) continue;
-      if (t >= bestT) continue;
-      proj.copy(dir).multiplyScalar(t);
-      tmp.sub(proj);
-      const distSq = tmp.lengthSq();
-      if (distSq <= radius * radius) {
-        bestT = t;
-        best = { key, array, index: i, t, position: hitPos.clone() };
-      }
-    }
-  };
-
-  for (let cx = minCx; cx <= maxCx; cx++) {
-    for (let cz = minCz; cz <= maxCz; cz++) {
-      const key = `${cx},${cz}`;
-      const chunk = chunks.get(key);
-      if (!chunk) continue;
-      if (chunk.stickPositions && chunk.stickPositions.length > 0) consider(key, 'stickPositions', chunk.stickPositions);
-      if (chunk.rockPositions && chunk.rockPositions.length > 0) consider(key, 'rockPositions', chunk.rockPositions);
-    }
-  }
-
-  return best;
-};
-
-const buildFloraHotspots = (positions: Float32Array | undefined): FloraHotspot[] => {
-  if (!positions || positions.length === 0) return [];
-  const hotspots: FloraHotspot[] = [];
-  for (let i = 0; i < positions.length; i += 4) {
-    if (positions[i + 1] < -9999) continue;
-    hotspots.push({ x: positions[i], z: positions[i + 2] });
-  }
-  return hotspots;
-};
-
-const buildChunkLocalHotspots = (cx: number, cz: number, positions: Float32Array | undefined): GroundHotspot[] => {
-  if (!positions || positions.length === 0) return [];
-  const originX = cx * CHUNK_SIZE_XZ;
-  const originZ = cz * CHUNK_SIZE_XZ;
-  const hotspots: GroundHotspot[] = [];
-  for (let i = 0; i < positions.length; i += 8) {
-    if (positions[i + 1] < -9999) continue;
-    hotspots.push({ x: originX + positions[i], z: originZ + positions[i + 2] });
-  }
-  return hotspots;
-};
-
 
 const LeafPickupEffect = ({
   start,
@@ -406,8 +150,6 @@ const LeafPickupEffect = ({
     </group>
   );
 };
-
-type ParticleKind = 'debris' | 'spark';
 
 const Particles = ({
   burstId,
@@ -946,6 +688,41 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
+
+  // Callbacks for terrain interaction hook
+  const handleParticle = useCallback((state: Partial<ParticleState> & { burstId?: number }) => {
+    setParticleState(prev => ({
+      ...prev,
+      ...state,
+      burstId: state.burstId ?? prev.burstId,
+    }));
+  }, []);
+
+  const handleTreeFall = useCallback((tree: FallingTreeData) => {
+    setFallingTrees(prev => [...prev, tree]);
+  }, []);
+
+  const handleLeafHit = useCallback((position: THREE.Vector3) => {
+    setLeafPickup(position);
+  }, []);
+
+  // Use extracted terrain interaction hook
+  useTerrainInteraction(
+    {
+      onParticle: handleParticle,
+      onTreeFall: handleTreeFall,
+      onLeafHit: handleLeafHit,
+      queueVersionIncrement,
+      queueRemesh: (key: string) => remeshQueue.current.add(key),
+      chunkDataRef,
+      audioPool,
+    },
+    {
+      buildMat,
+      setBuildMat,
+      manualBuildMatUntilMs,
+    }
+  );
 
   const lastProcessedPlayerChunk = useRef({ px: -999, pz: -999 });
 
@@ -1893,696 +1670,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [camera]);
 
-  useEffect(() => {
-    if (!isInteracting || !action) return;
-
-    const origin = camera.position.clone();
-    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-    const maxRayDistance = 16.0;
-
-    const ray = new rapier.Ray(origin, direction);
-
-    // NOTE: Flora pickup is handled by the Q hotkey (single-target ray pickup).
-    // DIG should not "vacuum" multiple flora items into inventory.
-
-    const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
-
-    // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
-    if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-      const physicsHit = world.castRay(ray, maxRayDistance, true);
-      if (physicsHit && physicsHit.collider) {
-        const parent = physicsHit.collider.parent();
-        const userData = parent?.userData as any;
-
-        if (parent && userData) {
-          // --- FLORA TREE ---
-          if (userData.type === 'flora_tree') {
-            if (userData.part === 'leaf') {
-              const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-              setLeafPickup(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
-              return;
-            }
-
-            // Tree Damage Logic (from physics hit)
-            const { chunkKey, treeIndex } = userData;
-            const chunk = chunkDataManager.getChunk(chunkKey);
-            if (chunk && chunk.treePositions) {
-              const posIdx = treeIndex;
-              const x = chunk.treePositions[posIdx] + chunk.cx * CHUNK_SIZE_XZ;
-              const y = chunk.treePositions[posIdx + 1];
-              const z = chunk.treePositions[posIdx + 2] + chunk.cz * CHUNK_SIZE_XZ;
-              const type = chunk.treePositions[posIdx + 3];
-
-              const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
-              const selectedItem = inventorySlots[selectedSlotIndex];
-              const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
-                ? customTools[selectedItem as string]
-                : (selectedItem as ItemType);
-              const capabilities = getToolCapabilities(currentTool);
-
-              // Seed/Scale Logic (same as terrain-hit path)
-              const seed = chunk.treePositions[posIdx] * 12.9898 + chunk.treePositions[posIdx + 2] * 78.233;
-              const scale = 0.8 + Math.abs(seed % 0.4);
-              const radius = scale * 0.35;
-              const maxHealth = Math.floor(radius * 60);
-              const woodDamage = capabilities.woodDamage;
-              const treeLabel = getTreeName(type as TreeType);
-
-              const treeId = `${chunkKey}-${posIdx}`;
-              const damageStore = useEntityHistoryStore.getState();
-              const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
-
-              // Visuals
-              const woodPos = new THREE.Vector3(x, y + 1.5, z);
-              const woodDir = origin.clone().sub(woodPos).normalize();
-              setParticleState(prev => ({
-                burstId: prev.burstId + 1,
-                active: true,
-                pos: woodPos,
-                dir: woodDir,
-                kind: 'debris',
-                color: '#8B4513'
-              }));
-              audioPool.play(clunkUrl, 0.4, 0.5);
-
-              if (currentHealth <= 0) {
-                // Remove tree
-                const positions = chunk.treePositions;
-                const newCount = (positions.length / 5) - 1;
-                const newPositions = new Float32Array(newCount * 5);
-                let destIdx = 0;
-                for (let j = 0; j < positions.length; j += 5) {
-                  if (j === posIdx) continue;
-                  newPositions[destIdx++] = positions[j];
-                  newPositions[destIdx++] = positions[j + 1];
-                  newPositions[destIdx++] = positions[j + 2];
-                  newPositions[destIdx++] = positions[j + 3];
-                  newPositions[destIdx++] = positions[j + 4];
-                }
-
-                const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
-                chunkDataRef.current.set(chunkKey, updatedChunk);
-                chunkDataManager.replaceChunk(chunkKey, updatedChunk); // Replace entirely (don't merge)
-                chunkDataManager.markDirty(chunkKey); // Phase 2: Track tree removal
-                queueVersionIncrement(chunkKey);
-
-                // Spawn Falling Tree
-                setFallingTrees(prev => [...prev, {
-                  id: `${chunkKey}-${posIdx}-${Date.now()}`,
-                  position: new THREE.Vector3(x, y, z),
-                  type,
-                  seed
-                }]);
-              }
-            }
-            return;
-          }
-
-          // --- STONE PHYSICS ITEM ---
-          if (userData.type === ItemType.STONE) {
-            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
-            const selectedItem = inventorySlots[selectedSlotIndex];
-            const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
-              ? customTools[selectedItem as string]
-              : (selectedItem as ItemType);
-            const capabilities = getToolCapabilities(currentTool);
-
-            const hitPointRaw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-            const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
-
-            // Logic: All interaction has logic
-            // Sharp tools (shards) break stone into shards. 
-            // Blunt tools (stones) generate sparks.
-            const damage = capabilities.stoneDamage > 0 ? capabilities.stoneDamage : (selectedItem === ItemType.STONE ? 2.5 : 0);
-
-            if (damage > 0) {
-              const damageStore = useEntityHistoryStore.getState();
-              const stoneId = userData.id;
-              const h = damageStore.damageEntity(stoneId, damage, 10, 'Hard Stone');
-
-              // Visuals
-              if (capabilities.canSmash || selectedItem === ItemType.STONE) {
-                emitSpark(hitPoint);
-              }
-
-              setParticleState(prev => ({
-                burstId: prev.burstId + 1,
-                active: true,
-                pos: hitPoint,
-                dir: direction.clone().multiplyScalar(-1),
-                kind: 'debris',
-                color: '#888888'
-              }));
-              audioPool.play(clunkUrl, 0.5, 1.2);
-
-              if (h <= 0) {
-                // Break!
-                const physicsStore = usePhysicsItemStore.getState();
-                physicsStore.removeItem(stoneId);
-                const count = 2 + Math.floor(Math.random() * 2);
-                for (let i = 0; i < count; i++) {
-                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
-                    (Math.random() - 0.5) * 3,
-                    2 + Math.random() * 2,
-                    (Math.random() - 0.5) * 3
-                  ]);
-                }
-              }
-            }
-            return;
-          }
-        }
-      }
-
-      // 0.7 CHECK FOR NATURAL ROCK INTERACTION (GENERATED GROUND PICKUPS)
-      if (action === 'SMASH' || action === 'DIG') {
-        const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current, origin, direction, maxRayDistance, 0.55);
-        if (groundHit && groundHit.array === 'rockPositions') {
-          const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
-          const selectedItem = inventorySlots[selectedSlotIndex];
-          const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
-            ? customTools[selectedItem as string]
-            : (selectedItem as ItemType);
-          const capabilities = getToolCapabilities(currentTool);
-
-          if (capabilities.stoneDamage > 0) {
-            const rockId = `natural-rock-${groundHit.key}-${groundHit.index}`;
-            const damageStore = useEntityHistoryStore.getState();
-            const h = damageStore.damageEntity(rockId, capabilities.stoneDamage, 10, 'Natural Rock');
-
-            const hitPoint = groundHit.position;
-            emitSpark(hitPoint);
-
-            setParticleState(prev => ({
-              burstId: prev.burstId + 1,
-              active: true,
-              pos: hitPoint,
-              dir: direction.clone().multiplyScalar(-1),
-              kind: 'debris',
-              color: '#888888'
-            }));
-            audioPool.play(clunkUrl, 0.5, 1.2);
-
-            if (h <= 0) {
-              // Break Natural Rock!
-              const removeGround = (hit: NonNullable<typeof groundHit>) => {
-                const chunk = chunkDataManager.getChunk(hit.key);
-                const positions = chunk?.[hit.array];
-                if (!chunk || !positions || positions.length < 8) return;
-                const next = new Float32Array(positions);
-
-                // Synchronize visuals for optimized layers
-                let updatedVisuals: Partial<ChunkState> = {};
-                const variant = next[hit.index + 6];
-                const seed = next[hit.index + 7];
-
-                const updateBuffer = (buf: Float32Array | undefined) => {
-                  if (!buf) return undefined;
-                  const nb = new Float32Array(buf);
-                  for (let i = 0; i < nb.length; i += 7) {
-                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
-                      nb[i + 1] = -10000;
-                      break;
-                    }
-                  }
-                  return nb;
-                };
-
-                if (variant as RockVariant !== undefined && chunk.rockDataBuckets) {
-                  const v = variant as RockVariant;
-                  updatedVisuals.rockDataBuckets = {
-                    ...chunk.rockDataBuckets,
-                    [v]: updateBuffer(chunk.rockDataBuckets[v])!
-                  };
-                }
-
-                next[hit.index + 1] = -10000;
-                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
-                chunkDataRef.current.set(hit.key, updatedChunk);
-                chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
-                chunkDataManager.markDirty(hit.key); // Phase 2: Track natural rock smash
-                queueVersionIncrement(hit.key);
-                useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
-              };
-
-              removeGround(groundHit);
-
-              const physicsStore = usePhysicsItemStore.getState();
-              const count = 2 + Math.floor(Math.random() * 2);
-              for (let i = 0; i < count; i++) {
-                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
-                  (Math.random() - 0.5) * 3,
-                  2 + Math.random() * 2,
-                  (Math.random() - 0.5) * 3
-                ]);
-              }
-            }
-            return;
-          }
-        }
-      }
-    }
-
-    if (terrainHit) {
-      const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);
-      const impactPoint = new THREE.Vector3(rapierHitPoint.x, rapierHitPoint.y, rapierHitPoint.z);
-      // Sample slightly inside the surface so particles/build reflect what we actually hit.
-      const samplePoint = impactPoint.clone().addScaledVector(direction, 0.2);
-      const sampledMat = sampleMaterialAtWorldPoint(chunkDataRef.current, samplePoint);
-
-      let isNearTree = false;
-
-      // Check for Tree/Vegetation Interaction BEFORE modifying terrain
-      if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-        const hitX = impactPoint.x;
-        const hitZ = impactPoint.z;
-        const cx = Math.floor(hitX / CHUNK_SIZE_XZ);
-        const cz = Math.floor(hitZ / CHUNK_SIZE_XZ);
-
-        // Check current and neighbor chunks (in case we hit near border)
-        const checkKeys = [
-          `${cx},${cz}`,
-          `${cx + 1},${cz}`, `${cx - 1},${cz}`,
-          `${cx},${cz + 1}`, `${cx},${cz - 1}`
-        ];
-
-        let anyFloraHit = false;
-
-        for (const key of checkKeys) {
-          const chunk = chunkDataManager.getChunk(key);
-          if (!chunk) continue;
-
-          const chunkOriginX = chunk.cx * CHUNK_SIZE_XZ;
-          const chunkOriginZ = chunk.cz * CHUNK_SIZE_XZ;
-
-          // Use a slightly larger radius for trees to ensure we catch them
-          // DIG_RADIUS is typically 2-3 units.
-          const dist = origin.distanceTo(impactPoint);
-          const digRadius = (dist < 3.0) ? 1.5 : DIG_RADIUS;
-
-          // 1. Generated lumina flora pickup uses Q (single-target ray pickup).
-          // Keeping DIG from deleting it avoids "vacuum" pickup and accidental multi-removals.
-
-          // 2. Check Trees
-          if (chunk.treePositions) {
-            const positions = chunk.treePositions;
-            const hitIndices: number[] = [];
-
-            for (let i = 0; i < positions.length; i += 5) {
-              const x = positions[i] + chunkOriginX;
-              const y = positions[i + 1];
-              const z = positions[i + 2] + chunkOriginZ;
-              const type = positions[i + 3];
-
-              // Check distance from impact point to tree base
-              const dx = impactPoint.x - x;
-              const dz = impactPoint.z - z;
-              const dy = impactPoint.y - y;
-
-              // If tree is within dig radius OR if we hit the trunk directly
-              // Tree trunk radius ~0.5, Dig Radius ~2.5
-              const distSq = dx * dx + dz * dz + (dy > 0 && dy < 4.0 ? 0 : dy * dy); // Ignore Y diff if within trunk height
-
-              if (distSq < (digRadius + 0.5) ** 2) {
-                // AAA FIX: ROOT ANCHORING
-                // Prevent digging the ground directly under/near a tree
-                if (distSq < 2.5 * 2.5) {
-                  // We are close to a tree. 
-                  // If we are aiming at the TREE (trunk), we chop it (handled below).
-                  // If we are aiming at the GROUND (terrainHit), we should BLOCK digging if too close.
-                  // But "distSq" here is distance from impact point to tree base.
-                  // If impact point is on ground within radius of tree, block.
-                  // However, we are inside "if (distSq < (digRadius + 0.5) ** 2)".
-                  // We need to flag this to the outer scope to block terraforming.
-                  // Let's use written variable.
-                  isNearTree = true;
-                }
-
-                // AAA FIX: Tree Cutting Logic (All interaction has logic)
-                const treeId = `${key}-${i}`;
-                const { hasAxe, inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
-                const selectedItem = inventorySlots[selectedSlotIndex];
-
-                // Check capabilities
-                const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
-                  ? customTools[selectedItem as string]
-                  : (selectedItem as ItemType);
-                const capabilities = getToolCapabilities(currentTool);
-
-                // Radius/Scale Logic to determine health
-                const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
-                const scale = 0.8 + Math.abs(seed % 0.4);
-                const radius = scale * 0.35;
-                const maxHealth = Math.floor(radius * 60); // e.g. 20-40 health
-                const woodDamage = capabilities.woodDamage;
-                const treeLabel = getTreeName(type as TreeType);
-
-                const damageStore = useEntityHistoryStore.getState();
-                const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
-
-                // Check if felled
-                if (currentHealth <= 0) {
-                  hitIndices.push(i);
-
-                  // Spawn Falling Tree
-                  setFallingTrees(prev => [...prev, {
-                    id: `${key}-${i}-${Date.now()}`,
-                    position: new THREE.Vector3(x, y, z),
-                    type,
-                    seed
-                  }]);
-                  continue;
-                }
-
-                // Not dead yet: Shake or Hit?
-                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop;
-
-                if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
-                  // SMASH/SHAKE Animation
-                  const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
-                  setLeafPickup(leafPos);
-                  setParticleState(prev => ({
-                    burstId: prev.burstId + 1,
-                    active: true,
-                    pos: leafPos,
-                    dir: new THREE.Vector3(0, -1, 0),
-                    kind: 'debris',
-                    color: '#4fa02a'
-                  }));
-                  audioPool.play(clunkUrl, 0.4, 0.85);
-                  anyFloraHit = true;
-                } else {
-                  // CHOP Animation
-                  const woodPos = new THREE.Vector3(x, y + 1, z);
-                  const woodDir = origin.clone().sub(woodPos).normalize();
-                  setParticleState(prev => ({
-                    burstId: prev.burstId + 1,
-                    active: true,
-                    pos: woodPos,
-                    dir: woodDir,
-                    kind: 'debris',
-                    color: '#8B4513'
-                  }));
-                  setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 120);
-                  audioPool.play(clunkUrl, 0.4, 0.5);
-                  anyFloraHit = true;
-                }
-              }
-            }
-
-            if (hitIndices.length > 0) {
-              anyFloraHit = true;
-              // Remove trees from chunk (filter out hit indices)
-              // We need to reconstruct the array
-              const newCount = (positions.length / 5) - hitIndices.length;
-              const newPositions = new Float32Array(newCount * 5);
-              let destIdx = 0;
-              let currentHitIdx = 0;
-              hitIndices.sort((a, b) => a - b); // Ensure sorted
-
-              for (let i = 0; i < positions.length; i += 5) {
-                if (currentHitIdx < hitIndices.length && i === hitIndices[currentHitIdx]) {
-                  currentHitIdx++;
-                  continue;
-                }
-                newPositions[destIdx] = positions[i];
-                newPositions[destIdx + 1] = positions[i + 1];
-                newPositions[destIdx + 2] = positions[i + 2];
-                newPositions[destIdx + 3] = positions[i + 3];
-                newPositions[destIdx + 4] = positions[i + 4];
-                destIdx += 5;
-              }
-
-              const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
-              chunkDataRef.current.set(key, updatedChunk);
-              chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
-              chunkDataManager.markDirty(key); // Phase 2: Track tree removal (terrain raycast)
-              queueVersionIncrement(key);
-            }
-          }
-
-          // 2. Check Vegetation
-          if (chunk.vegetationData) {
-            let chunkModified = false;
-            const newVegData = { ...chunk.vegetationData };
-
-            for (const [typeStr, positions] of Object.entries(chunk.vegetationData)) {
-              const typeId = parseInt(typeStr);
-              const hitIndices: number[] = [];
-
-              // AAA FIX: Stride is 6!
-              for (let i = 0; i < positions.length; i += 6) {
-                const x = positions[i] + chunkOriginX;
-                const y = positions[i + 1];
-                const z = positions[i + 2] + chunkOriginZ;
-
-                const distSq = (impactPoint.x - x) ** 2 + (impactPoint.y - y) ** 2 + (impactPoint.z - z) ** 2;
-
-                // AAA FIX: Tighter Vegetation Removal
-                // Only remove vegetation that is strictly inside the dig sphere?
-                // Or even smaller? User wants "directly where action is taking place".
-                // AAA FIX: Tighter Vegetation Removal
-                // Only remove vegetation that is strictly inside the dig sphere?
-                // Or even smaller? User wants "directly where action is taking place".
-                // digRadius is ~1.1 to 2.5. 
-                // Let's use 0.3 * digRadius (approx 0.9 units or 1 block).
-                const removalRadius = digRadius * 0.3;
-
-                if (distSq < removalRadius ** 2) {
-                  hitIndices.push(i);
-
-                  // Particles
-                  const asset = VEGETATION_ASSETS[typeId];
-                  const vegPos = new THREE.Vector3(x, y + 0.5, z);
-                  const vegDir = origin.clone().sub(vegPos).normalize();
-                  setParticleState(prev => ({
-                    burstId: prev.burstId + 1,
-                    active: true,
-                    pos: vegPos,
-                    dir: vegDir,
-                    kind: 'debris',
-                    color: asset ? asset.color : '#00ff00'
-                  }));
-                }
-              }
-
-              if (hitIndices.length > 0) {
-                chunkModified = true;
-                anyFloraHit = true;
-
-                // AAA FIX: Stride is 6, not 3! (x,y,z,nx,ny,nz)
-                // AAA FIX: Flicker Prevention - "Hide" instead of "Delete"
-                // To avoid reconstructing the InstancedMesh (which causes flicker),
-                // we keep the array length same and just move destroyed items to infinity.
-                const newArr = new Float32Array(positions); // Clone
-
-                for (const idx of hitIndices) {
-                  // Move Y to -10000 (Subterranean Oblivion)
-                  // Index is start of stride. y is idx + 1.
-                  newArr[idx + 1] = -10000;
-                }
-                newVegData[typeId] = newArr;
-              }
-            }
-
-            if (chunkModified) {
-              // AAA FIX: Do NOT increment visualVersion for vegetation updates!
-              // This prevents the expensive terrain mesh reconstruction (flicker).
-              // VegetationLayer updates purely on the 'vegetationData' prop reference change.
-              const updatedChunk = { ...chunk, vegetationData: newVegData };
-              chunkDataRef.current.set(key, updatedChunk);
-              chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
-              chunkDataManager.markDirty(key); // Phase 2: Track vegetation removal
-              queueVersionIncrement(key);
-            }
-          }
-        }
-
-        if (anyFloraHit) {
-          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 100);
-          return; // Stop processing (don't dig ground if we hit flora)
-        }
-      }
-
-      const dist = origin.distanceTo(impactPoint);
-
-      // AAA FIX: Interaction Distance limit
-      if (dist > 4.5) return;
-
-      // AAA FIX: Root Anchoring Block
-      if (isNearTree && action === 'DIG') {
-        // Play a "thud" to indicate blocking
-        audioPool.play(clunkUrl, 0.4, 0.5);
-        window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
-        return;
-      }
-
-      // AAA FIX: Raycast Offset for Accuracy
-      // Center the subtraction sphere deeper to ensure it "bites"
-      // Use DIG_RADIUS * 0.5 (approx 0.6)
-      const digOffset = 0.6;
-      // BUILD needs positive offset to push sphere INTO terrain so added voxels extend outward
-      const buildOffset = 0.3;
-      const offset = action === 'DIG' ? digOffset : (action === 'BUILD' ? buildOffset : -0.1);
-
-      // IMPORTANT: keep impactPoint as the *surface* point (don't mutate it).
-      const hitPoint = impactPoint.clone().addScaledVector(direction, offset);
-      // Particles should spawn on/just above the visible surface (not at the brush center which may be inside terrain).
-      const particlePos = impactPoint.clone().addScaledVector(direction, -0.08);
-      const particleDir = direction.clone().multiplyScalar(-1);
-      const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
-      const selectedItem = inventorySlots[selectedSlotIndex];
-      const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
-        ? customTools[selectedItem as string]
-        : (selectedItem as ItemType);
-      const capabilities = getToolCapabilities(currentTool);
-
-      const delta = (action === 'DIG' || action === 'CHOP' || action === 'SMASH') ? -DIG_STRENGTH * capabilities.digPower : (action === 'BUILD' ? DIG_STRENGTH : 0);
-      const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
-
-      const minWx = hitPoint.x - (radius + 2);
-      const maxWx = hitPoint.x + (radius + 2);
-      const minWz = hitPoint.z - (radius + 2);
-      const maxWz = hitPoint.z + (radius + 2);
-
-      const minCx = Math.floor(minWx / CHUNK_SIZE_XZ);
-      const maxCx = Math.floor(maxWx / CHUNK_SIZE_XZ);
-      const minCz = Math.floor(minWz / CHUNK_SIZE_XZ);
-      const maxCz = Math.floor(maxWz / CHUNK_SIZE_XZ);
-
-      let anyModified = false;
-      let primaryMat = MaterialType.DIRT;
-      const affectedChunks: string[] = [];
-      // Smart build: if user hasn't manually selected a material recently, build what you're looking at.
-      const nowMs = Date.now();
-      const allowAutoMat = nowMs > manualBuildMatUntilMs.current;
-      const effectiveBuildMat =
-        action === 'BUILD' && allowAutoMat && buildMat === MaterialType.STONE && sampledMat !== MaterialType.AIR && sampledMat !== MaterialType.WATER
-          ? sampledMat
-          : buildMat;
-
-      for (let cx = minCx; cx <= maxCx; cx++) {
-        for (let cz = minCz; cz <= maxCz; cz++) {
-          const key = `${cx},${cz}`;
-          const chunk = chunkDataManager.getChunk(key);
-          if (chunk) {
-            const localX = hitPoint.x - (cx * CHUNK_SIZE_XZ);
-            const localY = hitPoint.y;
-            const localZ = hitPoint.z - (cz * CHUNK_SIZE_XZ);
-
-            const metadata = metadataDB.getChunk(key);
-            const isPlacingWater = action === 'BUILD' && effectiveBuildMat === MaterialType.WATER;
-
-            const modified = isPlacingWater
-              ? TerrainService.paintLiquid(
-                chunk.density,
-                chunk.material,
-                metadata?.wetness,
-                { x: localX, y: localY, z: localZ },
-                radius,
-                MaterialType.WATER
-              )
-              : TerrainService.modifyChunk(
-                chunk.density,
-                chunk.material,
-                metadata?.wetness,
-                { x: localX, y: localY, z: localZ },
-                radius,
-                delta,
-                effectiveBuildMat,
-                cx, // Pass World Coords
-                cz
-              );
-
-            if (modified) {
-              anyModified = true;
-              affectedChunks.push(key);
-
-              // DEBUG: Check if density was actually modified
-              const testIdx = Math.floor(localX + 2) + Math.floor(localY - (-64) + 2) * 36 + Math.floor(localZ + 2) * 36 * 132;
-              console.log(`[DIG-MOD] ${key} modified density at test idx ${testIdx}: ${chunk.density[testIdx]?.toFixed(2)}`);
-
-              if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
-                Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {
-                if (action === 'BUILD') primaryMat = effectiveBuildMat;
-                else primaryMat = sampledMat;
-              }
-            }
-          }
-        }
-      }
-
-      if (anyModified && poolRef.current) {
-        // Phase 2: Mark chunks as dirty in ChunkDataManager (for future persistence)
-        affectedChunks.forEach(key => chunkDataManager.markDirty(key));
-
-        // Trigger version updates for all affected chunks to re-render
-        affectedChunks.forEach(key => queueVersionIncrement(key));
-        // Play Dig Sound
-        if (action === 'DIG') {
-          const sounds = [dig1Url, dig2Url, dig3Url];
-          const selected = sounds[Math.floor(Math.random() * sounds.length)];
-          audioPool.play(selected, 0.3, 0.1);
-        } else {
-          // Building sound - Use Dig_1 pitched down
-          audioPool.play(dig1Url, 0.3, 0.0);
-        }
-
-        affectedChunks.forEach(key => {
-          const chunk = chunkDataManager.getChunk(key);
-          const metadata = metadataDB.getChunk(key);
-          if (chunk && metadata) {
-            // Increment terrainVersion BEFORE queueing remesh so the version check works
-            // This ensures stale REMESHED responses (from earlier simulation remeshes) are rejected
-            chunk.terrainVersion = (chunk.terrainVersion ?? 0) + 1;
-
-            simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
-            remeshQueue.current.add(key);
-          }
-        });
-
-        // Auto-switch build material to whatever we just dug (unless user manually picked recently).
-        // This makes BUILD feel context-sensitive without taking away manual hotkeys.
-        if (action === 'DIG' && allowAutoMat && sampledMat !== MaterialType.AIR && sampledMat !== MaterialType.WATER) {
-          setBuildMat(sampledMat);
-        }
-
-        setParticleState(prev => ({
-          burstId: prev.burstId + 1,
-          active: true,
-          pos: particlePos,
-          dir: particleDir,
-          kind: action === 'DIG' ? 'debris' : 'debris',
-          color: getMaterialColor(primaryMat)
-        }));
-        // Let the burst breathe a bit longer so it actually reads as impact.
-        setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
-        window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true, color: getMaterialColor(primaryMat) } }));
-      } else if (!anyModified && action === 'DIG') {
-        // Tried to dig but nothing changed -> Indestructible (Bedrock)
-        // Only play if we actually hit something (terrainHit exists)
-        if (terrainHit) {
-          const audio = new Audio(clunkUrl);
-          audio.volume = 0.4;
-          audio.playbackRate = 0.9 + Math.random() * 0.2;
-          audio.play().catch(() => { });
-
-          // AAA FIX: Visual Feedback for Invincible Blocks
-          setParticleState(prev => ({
-            burstId: prev.burstId + 1,
-            active: true,
-            pos: particlePos,
-            dir: particleDir,
-            kind: 'spark',
-            color: '#bbbbbb' // Bright sparks
-          }));
-          setTimeout(() => setParticleState(prev => ({ ...prev, active: false })), 140);
-          window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
-        }
-      }
-    }
-  }, [isInteracting, action, camera, world, rapier, buildMat]);
-
+  // NOTE: Terrain interaction (dig, build, chop, smash) is now handled by
+  // the useTerrainInteraction hook called earlier in this component.
+  // This reduces component complexity by ~690 lines.
+  // See: src/features/terrain/hooks/useTerrainInteraction.ts
   // Track React render phase timing - this runs during the render,
   // so we can see when React itself is taking too long
   const renderStartTime = useRef(0);

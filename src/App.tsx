@@ -59,8 +59,19 @@ const keyboardMap = [
 const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
   const [terrainLoaded, setTerrainLoaded] = useState(false);
+  const [collidersReady, setCollidersReady] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   const [worldType, setWorldType] = useState<WorldType | null>(null);
+
+  // Wait for colliders to be created after terrain loads
+  // ChunkMesh defers collider creation by 500-800ms to avoid BVH stutter,
+  // so we need to wait before spawning the player to prevent falling through
+  useEffect(() => {
+    if (terrainLoaded && !collidersReady) {
+      const handle = setTimeout(() => setCollidersReady(true), 700);
+      return () => clearTimeout(handle);
+    }
+  }, [terrainLoaded, collidersReady]);
 
   // Graphics & Input Settings (Zustand)
   const resolutionScale = useSettingsStore(s => s.resolutionScale);
@@ -314,7 +325,7 @@ const App: React.FC = () => {
 
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
-              {gameStarted && spawnPos && <Player position={spawnPos} />}
+              {gameStarted && spawnPos && collidersReady && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
               <AmbientLife enabled={gameStarted} />
               {worldType && (

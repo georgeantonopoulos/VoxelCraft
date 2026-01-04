@@ -176,8 +176,12 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     geom.computeBoundingSphere();
 
     if (geom.boundingSphere) {
-      geom.boundingSphere.center.set(16, 0, 16);
-      geom.boundingSphere.radius = 45;
+      // Center at middle of chunk volume: XZ center is 16, Y center is (MESH_Y_OFFSET + CHUNK_SIZE_Y/2)
+      // With MESH_Y_OFFSET=-35 and CHUNK_SIZE_Y=128: Y center = -35 + 64 = 29
+      // Radius must reach from center (16, 29, 16) to farthest corner (0, 93, 0) or (0, -35, 0)
+      // Distance to (0, 93, 0): √(16² + 64² + 16²) ≈ 68, so use 70 with margin
+      geom.boundingSphere.center.set(16, 29, 16);
+      geom.boundingSphere.radius = 70;
     }
 
     const duration = performance.now() - start;
