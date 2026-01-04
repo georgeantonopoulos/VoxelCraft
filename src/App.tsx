@@ -130,6 +130,9 @@ const App: React.FC = () => {
   const [heightFogRange, setHeightFogRange] = useState(50.0);
   const [heightFogOffset, setHeightFogOffset] = useState(4.0);
 
+  // Biome Fog - atmosphere varies by biome (desert haze, jungle mist, mountain clarity)
+  const [biomeFogEnabled, setBiomeFogEnabled] = useState(true);
+
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
   const [sunShadowNormalBias, setSunShadowNormalBias] = useState(0.02);
@@ -273,6 +276,7 @@ const App: React.FC = () => {
           setHeightFogStrength={setHeightFogStrength}
           setHeightFogRange={setHeightFogRange}
           setHeightFogOffset={setHeightFogOffset}
+          setBiomeFogEnabled={setBiomeFogEnabled}
         />
       )}
 
@@ -351,6 +355,7 @@ const App: React.FC = () => {
                   heightFogStrength={heightFogStrength}
                   heightFogRange={heightFogRange}
                   heightFogOffset={heightFogOffset}
+                  biomeFogEnabled={biomeFogEnabled}
                   initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}

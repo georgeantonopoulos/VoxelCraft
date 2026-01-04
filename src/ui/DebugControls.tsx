@@ -45,6 +45,8 @@ export const DebugControls: React.FC<{
     setHeightFogStrength: (v: number) => void;
     setHeightFogRange: (v: number) => void;
     setHeightFogOffset: (v: number) => void;
+    // Biome Fog
+    setBiomeFogEnabled: (v: boolean) => void;
     // Sun Shadow Params
     setSunShadowBias: (v: number) => void;
     setSunShadowNormalBias: (v: number) => void;
@@ -98,6 +100,7 @@ export const DebugControls: React.FC<{
                         hFogStrength: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: props.setHeightFogStrength, label: 'Strength' },
                         hFogRange: { value: 24.0, min: 5.0, max: 100.0, step: 1.0, onChange: props.setHeightFogRange, label: 'Range' },
                         hFogOffset: { value: 12.0, min: -20.0, max: 60.0, step: 1.0, onChange: props.setHeightFogOffset, label: 'Offset' },
+                        biomeFog: { value: true, onChange: (v) => props.setBiomeFogEnabled(!!v), label: 'Biome Fog' },
                     }, { collapsed: true })
                 }),
                 Atmosphere: folder({

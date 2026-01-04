@@ -65,6 +65,12 @@ const getSharedTerrainMaterial = () => {
     uHeightFogRange: sharedUniforms.uHeightFogRange,
     uHeightFogOffset: sharedUniforms.uHeightFogOffset,
     uSunDirection: sharedUniforms.uSunDirection,
+    // Biome fog uniforms
+    uBiomeFogDensityMul: sharedUniforms.uBiomeFogDensityMul,
+    uBiomeFogHeightMul: sharedUniforms.uBiomeFogHeightMul,
+    uBiomeFogTint: sharedUniforms.uBiomeFogTint,
+    uBiomeFogAerial: sharedUniforms.uBiomeFogAerial,
+    uBiomeFogEnabled: sharedUniforms.uBiomeFogEnabled,
   };
 
   sharedTerrainMaterial = new (CustomShaderMaterial as any)({

@@ -30,6 +30,23 @@ export interface BiomeCaveSettings {
   surfaceBreachChance: number; // 0..1 chance of caves breaking surface (modulated by noise)
 }
 
+/**
+ * Fog settings per biome for atmospheric rendering.
+ * These create distinct visual identities for different environments.
+ */
+export interface BiomeFogSettings {
+  /** Density multiplier (0.5 = half fog, 2.0 = double). Higher humidity = more fog. */
+  densityMul: number;
+  /** Height fog multiplier. Jungles pool fog in valleys, mountains have clear air. */
+  heightFogMul: number;
+  /** RGB tint added to fog color (normalized -0.2 to 0.2). Desert = warm, snow = cool. */
+  tintR: number;
+  tintG: number;
+  tintB: number;
+  /** How much fog absorbs color saturation at distance (0 = none, 1 = full desaturation). */
+  aerialPerspective: number;
+}
+
 export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
   // Archetypes
   GRASSLANDS: { scale: 0.035, threshold: 0.15, frequency: 1.0, surfaceBreachChance: 0.25 }, // Wider, more breaches
@@ -60,6 +77,102 @@ export const BIOME_CAVE_SETTINGS: Record<string, BiomeCaveSettings> = {
 
 export function getCaveSettings(biomeId: string): BiomeCaveSettings {
   return BIOME_CAVE_SETTINGS[biomeId] || BIOME_CAVE_SETTINGS.DEFAULT;
+}
+
+/**
+ * Biome-specific fog settings for atmospheric rendering.
+ * Each biome has distinct fog characteristics that enhance its identity.
+ */
+export const BIOME_FOG_SETTINGS: Record<string, BiomeFogSettings> = {
+  // --- Arid Biomes (Low humidity = distant haze, warm tint) ---
+  DESERT: {
+    densityMul: 0.6,        // Less fog overall
+    heightFogMul: 0.3,      // Minimal ground fog
+    tintR: 0.08, tintG: 0.04, tintB: -0.04,  // Warm sandy haze
+    aerialPerspective: 0.7  // Strong desaturation at distance
+  },
+  RED_DESERT: {
+    densityMul: 0.7,
+    heightFogMul: 0.4,
+    tintR: 0.12, tintG: 0.02, tintB: -0.06,  // Reddish dust
+    aerialPerspective: 0.75
+  },
+  SAVANNA: {
+    densityMul: 0.8,
+    heightFogMul: 0.5,
+    tintR: 0.06, tintG: 0.04, tintB: -0.02,  // Subtle warm
+    aerialPerspective: 0.5
+  },
+
+  // --- Humid Biomes (High humidity = thick mist, lush tint) ---
+  JUNGLE: {
+    densityMul: 1.4,        // Thick jungle mist
+    heightFogMul: 1.6,      // Heavy ground fog pooling
+    tintR: -0.02, tintG: 0.04, tintB: 0.0,   // Slight green tint
+    aerialPerspective: 0.3  // Maintains color vibrancy
+  },
+  THE_GROVE: {
+    densityMul: 1.1,
+    heightFogMul: 1.2,
+    tintR: 0.0, tintG: 0.02, tintB: 0.02,    // Neutral with slight cool
+    aerialPerspective: 0.4
+  },
+
+  // --- Cold Biomes (Crisp air, blue tint) ---
+  SNOW: {
+    densityMul: 0.7,        // Clear cold air
+    heightFogMul: 0.8,
+    tintR: -0.04, tintG: -0.02, tintB: 0.06, // Blue-white
+    aerialPerspective: 0.6
+  },
+  ICE_SPIKES: {
+    densityMul: 0.5,        // Very clear
+    heightFogMul: 0.6,
+    tintR: -0.06, tintG: 0.0, tintB: 0.1,    // Icy blue
+    aerialPerspective: 0.65
+  },
+
+  // --- Mountain Biomes (Very clear, slight blue) ---
+  MOUNTAINS: {
+    densityMul: 0.4,        // Crystal clear mountain air
+    heightFogMul: 0.3,      // Minimal ground fog at elevation
+    tintR: -0.02, tintG: 0.0, tintB: 0.04,   // Slight atmospheric blue
+    aerialPerspective: 0.8  // Strong aerial perspective (distant peaks fade)
+  },
+
+  // --- Neutral Biomes ---
+  PLAINS: {
+    densityMul: 1.0,
+    heightFogMul: 1.0,
+    tintR: 0.0, tintG: 0.0, tintB: 0.0,
+    aerialPerspective: 0.45
+  },
+  BEACH: {
+    densityMul: 1.1,        // Sea mist
+    heightFogMul: 1.3,      // Pools near water
+    tintR: 0.02, tintG: 0.02, tintB: 0.04,   // Salty blue
+    aerialPerspective: 0.4
+  },
+
+  // --- Special ---
+  SKY_ISLANDS: {
+    densityMul: 1.2,
+    heightFogMul: 2.0,      // Heavy cloud banks below islands
+    tintR: 0.0, tintG: 0.0, tintB: 0.02,
+    aerialPerspective: 0.35
+  },
+
+  // Default fallback
+  DEFAULT: {
+    densityMul: 1.0,
+    heightFogMul: 1.0,
+    tintR: 0.0, tintG: 0.0, tintB: 0.0,
+    aerialPerspective: 0.45
+  }
+};
+
+export function getFogSettings(biomeId: string): BiomeFogSettings {
+  return BIOME_FOG_SETTINGS[biomeId] || BIOME_FOG_SETTINGS.DEFAULT;
 }
 
 // Helper function for linear interpolation

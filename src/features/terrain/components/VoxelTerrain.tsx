@@ -25,6 +25,7 @@ import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { saveGroundPickup, getGroundPickups, GroundItemType } from '@state/WorldDB';
+import { BiomeManager, getFogSettings, BiomeFogSettings } from '@features/terrain/logic/BiomeManager';
 
 // Extracted modules
 import {
@@ -344,6 +345,8 @@ interface VoxelTerrainProps {
   heightFogOffset?: number;
   fogNear?: number;
   fogFar?: number;
+  // Biome fog
+  biomeFogEnabled?: boolean;
 }
 
 // --- Audio Pool Helper ---
@@ -409,7 +412,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   heightFogRange = 50.0,
   heightFogOffset = 4.0,
   fogNear = 40,
-  fogFar = 220
+  fogFar = 220,
+  biomeFogEnabled = true
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;
@@ -452,6 +456,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const audioPool = useMemo(() => {
     return new AudioPool([dig1Url, dig2Url, dig3Url, clunkUrl], 4);
   }, []);
+
+  // === BIOME FOG STATE ===
+  // Track current biome fog settings with smooth interpolation.
+  // We sample the biome at camera position each frame and lerp toward target values.
+  const biomeFogState = useRef({
+    densityMul: 1.0,
+    heightMul: 1.0,
+    tintR: 0.0,
+    tintG: 0.0,
+    tintB: 0.0,
+    aerial: 0.45,
+  });
+  const biomeFogTintVec = useRef(new THREE.Vector3(0, 0, 0));
 
   const [buildMat, setBuildMat] = useState<MaterialType>(MaterialType.STONE);
   // Track if the user manually picked a build material; when active, we don't auto-switch.
@@ -1543,6 +1560,29 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Update central uniforms for instanced layers
     frameProfiler.begin('terrain-uniforms');
+
+    // === BIOME FOG CALCULATION ===
+    // Sample biome at camera position and smoothly interpolate fog parameters.
+    // This creates smooth transitions as player moves between biomes.
+    if (biomeFogEnabled) {
+      const camPos = camera.position;
+      const biome = BiomeManager.getBiomeAt(camPos.x, camPos.z);
+      const targetFog = getFogSettings(biome);
+
+      // Smooth interpolation speed (lower = smoother, higher = more responsive)
+      const lerpSpeed = 0.015; // ~4 seconds to fully transition
+      const fog = biomeFogState.current;
+
+      fog.densityMul += (targetFog.densityMul - fog.densityMul) * lerpSpeed;
+      fog.heightMul += (targetFog.heightFogMul - fog.heightMul) * lerpSpeed;
+      fog.tintR += (targetFog.tintR - fog.tintR) * lerpSpeed;
+      fog.tintG += (targetFog.tintG - fog.tintG) * lerpSpeed;
+      fog.tintB += (targetFog.tintB - fog.tintB) * lerpSpeed;
+      fog.aerial += (targetFog.aerialPerspective - fog.aerial) * lerpSpeed;
+
+      biomeFogTintVec.current.set(fog.tintR, fog.tintG, fog.tintB);
+    }
+
     updateSharedUniforms(state, {
       sunDir: sunDirection,
       fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
@@ -1553,7 +1593,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       heightFogStrength,
       heightFogRange,
       heightFogOffset,
-      triplanarDetail
+      triplanarDetail,
+      // Biome fog parameters
+      biomeFogEnabled,
+      biomeFogDensityMul: biomeFogState.current.densityMul,
+      biomeFogHeightMul: biomeFogState.current.heightMul,
+      biomeFogTint: biomeFogTintVec.current,
+      biomeFogAerial: biomeFogState.current.aerial,
     });
     frameProfiler.end('terrain-uniforms');
 

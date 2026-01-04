@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * Shared uniforms that can be accessed by any material to avoid 
+ * Shared uniforms that can be accessed by any material to avoid
  * hundreds of redundant useFrame calls for time/lighting.
  */
 export const sharedUniforms = {
@@ -21,6 +21,13 @@ export const sharedUniforms = {
     uWetnessEnabled: { value: 1.0 },
     uMossEnabled: { value: 1.0 },
     uRoughnessMin: { value: 0.0 },
+
+    // Biome-aware fog uniforms (interpolated from camera position)
+    uBiomeFogDensityMul: { value: 1.0 },      // Multiplier for fog density
+    uBiomeFogHeightMul: { value: 1.0 },       // Multiplier for height fog
+    uBiomeFogTint: { value: new THREE.Vector3(0, 0, 0) },  // RGB tint offset
+    uBiomeFogAerial: { value: 0.45 },         // Aerial perspective strength
+    uBiomeFogEnabled: { value: 1.0 },         // Toggle for biome fog effects
 };
 
 export interface SharedUniformUpdateParams {
@@ -34,6 +41,12 @@ export interface SharedUniformUpdateParams {
     heightFogRange?: number;
     heightFogOffset?: number;
     triplanarDetail?: number;
+    // Biome fog parameters
+    biomeFogDensityMul?: number;
+    biomeFogHeightMul?: number;
+    biomeFogTint?: THREE.Vector3;
+    biomeFogAerial?: number;
+    biomeFogEnabled?: boolean;
 }
 
 /**
@@ -56,4 +69,11 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
     if (params.heightFogRange !== undefined) sharedUniforms.uHeightFogRange.value = params.heightFogRange;
     if (params.heightFogOffset !== undefined) sharedUniforms.uHeightFogOffset.value = params.heightFogOffset;
     if (params.triplanarDetail !== undefined) sharedUniforms.uTriplanarDetail.value = params.triplanarDetail;
+
+    // Biome fog parameters
+    if (params.biomeFogDensityMul !== undefined) sharedUniforms.uBiomeFogDensityMul.value = params.biomeFogDensityMul;
+    if (params.biomeFogHeightMul !== undefined) sharedUniforms.uBiomeFogHeightMul.value = params.biomeFogHeightMul;
+    if (params.biomeFogTint) sharedUniforms.uBiomeFogTint.value.copy(params.biomeFogTint);
+    if (params.biomeFogAerial !== undefined) sharedUniforms.uBiomeFogAerial.value = params.biomeFogAerial;
+    if (params.biomeFogEnabled !== undefined) sharedUniforms.uBiomeFogEnabled.value = params.biomeFogEnabled ? 1.0 : 0.0;
 };
