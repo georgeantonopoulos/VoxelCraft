@@ -356,5 +356,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Goal**: Silenced high-frequency console logs (noise initialization, seed setting, LOD updates, worker loop status, etc.) to improve development console experience.
   - **Changes**: Commented out `console.log` and `console.warn` calls in `noise.ts`, `WorldSeed.ts`, `BiomeManager.ts`, `simulation.worker.ts`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`, and `App.tsx`.
   - **Result**: A much cleaner game console, focusing only on critical system events.
- 
+- 2026-01-04: **Merged biome-enhancement to main**.
+  - **Goal**: Merge the latest biome improvements and logging cleanups into the main branch.
+  - **Changes**: 
+    - Merged branch `biome-enhancement` into `main` using `--no-ff`.
+    - Verified build via `npm run build` and tests via `npm run test:unit`.
+  - **Result**: Main branch is now up to date with feature developments.
+
 [diff_block_end]
