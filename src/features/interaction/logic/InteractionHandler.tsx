@@ -9,6 +9,11 @@ import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 import { getToolCapabilities } from './ToolCapabilities';
+import { frameProfiler } from '@core/utils/FrameProfiler';
+
+const debugLog = (msg: string) => {
+  if (frameProfiler.isEnabled()) console.log(msg);
+};
 
 interface InteractionHandlerProps {
 }
@@ -128,17 +133,22 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         }
 
         // 1. Tool Interaction (Standard or Custom Tool)
+        debugLog(`[DIG DEBUG] InteractionHandler: capabilities check - canChop=${capabilities?.canChop}, canSmash=${capabilities?.canSmash}, canDig=${capabilities?.canDig}, digPower=${capabilities?.digPower}`);
         if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
           if (capabilities.canChop) {
+            debugLog('[DIG DEBUG] InteractionHandler: setting CHOP action');
             setInteractionAction('CHOP');
           } else if (capabilities.canSmash) {
+            debugLog('[DIG DEBUG] InteractionHandler: setting SMASH action');
             setInteractionAction('SMASH');
           } else if (capabilities.canDig) {
+            debugLog('[DIG DEBUG] InteractionHandler: setting DIG action via canDig capability');
             setInteractionAction('DIG');
           }
         }
 
         if (pickaxeSelected) {
+          debugLog('[DIG DEBUG] InteractionHandler: pickaxe selected, setting DIG action');
           setInteractionAction('DIG');
         }
 

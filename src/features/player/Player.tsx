@@ -11,7 +11,7 @@ import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { updatePlayerState, notifyListeners } from '@core/player/PlayerState';
 
-const FLY_SPEED = 8;
+const FLY_SPEED = 24; // Increased for faster testing
 const DOUBLE_TAP_TIME = 300;
 const SWIM_SPEED = 4.0;
 const SWIM_VERTICAL_SPEED = 4.5;
@@ -158,7 +158,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     scratchMoveDir.addScaledVector(scratchForward, -move.z);
     scratchMoveDir.addScaledVector(scratchSide, -move.x);
 
-    const baseSpeed = (inWater && !isFlying) ? SWIM_SPEED : PLAYER_SPEED;
+    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED);
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
     if (scratchMoveDir.lengthSq() > 1.0) scratchMoveDir.normalize();

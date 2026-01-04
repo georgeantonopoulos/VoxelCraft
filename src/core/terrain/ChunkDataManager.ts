@@ -118,6 +118,31 @@ class ChunkDataManager {
   }
 
   /**
+   * Replace a chunk entirely, preserving dirty state.
+   * Use this when making player modifications (pickup, tree removal, etc.)
+   * that should NOT be merged but directly replace the chunk data.
+   */
+  replaceChunk(key: string, chunk: ChunkState): void {
+    const existing = this.chunks.get(key);
+    const now = performance.now();
+
+    if (existing) {
+      existing.chunk = chunk;
+      existing.lastAccess = now;
+      this.emit('chunk-updated', { key, chunk });
+    } else {
+      this.chunks.set(key, {
+        chunk,
+        lastAccess: now,
+        isDirty: false,
+        modifiedVoxels: new Set(),
+      });
+      this.emit('chunk-ready', { key, chunk });
+      this.evictIfNeeded();
+    }
+  }
+
+  /**
    * Get a chunk if it exists in memory.
    * Updates LRU access time.
    */
@@ -496,9 +521,9 @@ class ChunkDataManager {
     existing.floraPositions = incoming.floraPositions;
     existing.lightPositions = incoming.lightPositions;
     existing.rootHollowPositions = incoming.rootHollowPositions;
-    existing.drySticks = incoming.drySticks;
-    existing.jungleSticks = incoming.jungleSticks;
-    existing.rockDataBuckets = incoming.rockDataBuckets;
+    // NOTE: Do NOT overwrite ground item arrays (drySticks, jungleSticks, rockDataBuckets)
+    // These ARE player modifications (pickup removes items by setting y=-10000)
+    // Overwriting them would restore "removed" items when chunk is remeshed
     existing.largeRockPositions = incoming.largeRockPositions;
 
     // Firefly registry

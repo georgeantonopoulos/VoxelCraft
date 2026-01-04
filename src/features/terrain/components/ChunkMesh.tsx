@@ -174,7 +174,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     }
 
     return geom;
-  }, [chunk]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chunk, chunk.visualVersion, chunk.terrainVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;

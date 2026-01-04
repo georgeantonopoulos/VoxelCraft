@@ -32,6 +32,10 @@ import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 
+const debugLog = (msg: string) => {
+  if (frameProfiler.isEnabled()) console.log(msg);
+};
+
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
 import dig2Url from '@/assets/sounds/Dig_2.wav?url';
@@ -1473,6 +1477,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       } else if (type === 'REMESHED') {
         const { key } = payload;
         const current = chunkDataManager.getChunk(key);
+        debugLog(`[DIG DEBUG] REMESHED received for ${key}, isDirty=${chunkDataManager.isDirty(key)}, hasPositions=${!!payload.meshPositions?.length}`);
         if (current) {
           const updatedChunk = {
             ...current,
@@ -1607,6 +1612,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const chunk = chunkDataManager.getChunk(key);
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {
+          debugLog(`[DIG DEBUG] Dispatching REMESH for ${key}, isDirty=${chunkDataManager.isDirty(key)}`);
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
             type: 'REMESH',
             payload: {
@@ -1720,7 +1726,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
         const updatedChunk = { ...chunk, floraPositions: next };
         chunkDataRef.current.set(key, updatedChunk);
-        chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
+        chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
         queueVersionIncrement(key);
         useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
@@ -1764,7 +1770,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         next[hit.index + 1] = -10000;
         const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
         chunkDataRef.current.set(hit.key, updatedChunk);
-        chunkDataManager.addChunk(hit.key, updatedChunk); // Sync to manager
+        chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
         queueVersionIncrement(hit.key);
 
@@ -1864,7 +1870,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, [camera]);
 
   useEffect(() => {
+    debugLog(`[DIG DEBUG] Terrain useEffect triggered: isInteracting=${isInteracting}, action=${action}`);
     if (!isInteracting || !action) return;
+    debugLog(`[DIG DEBUG] Passed early return, proceeding with action=${action}`);
 
     const origin = camera.position.clone();
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -1876,6 +1884,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // DIG should not "vacuum" multiple flora items into inventory.
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+    debugLog(`[DIG DEBUG] Raycast result: terrainHit=${!!terrainHit}, timeOfImpact=${terrainHit?.timeOfImpact}`);
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
@@ -1952,7 +1961,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
                 const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current.set(chunkKey, updatedChunk);
-                chunkDataManager.addChunk(chunkKey, updatedChunk); // Sync to manager
+                chunkDataManager.replaceChunk(chunkKey, updatedChunk); // Replace entirely (don't merge)
                 chunkDataManager.markDirty(chunkKey); // Phase 2: Track tree removal
                 queueVersionIncrement(chunkKey);
 
@@ -2089,7 +2098,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
                 next[hit.index + 1] = -10000;
                 const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
                 chunkDataRef.current.set(hit.key, updatedChunk);
-                chunkDataManager.addChunk(hit.key, updatedChunk); // Sync to manager
+                chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
                 chunkDataManager.markDirty(hit.key); // Phase 2: Track natural rock smash
                 queueVersionIncrement(hit.key);
                 useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
@@ -2285,7 +2294,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
               const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current.set(key, updatedChunk);
-              chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
+              chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
               chunkDataManager.markDirty(key); // Phase 2: Track tree removal (terrain raycast)
               queueVersionIncrement(key);
             }
@@ -2361,7 +2370,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               // VegetationLayer updates purely on the 'vegetationData' prop reference change.
               const updatedChunk = { ...chunk, vegetationData: newVegData };
               chunkDataRef.current.set(key, updatedChunk);
-              chunkDataManager.addChunk(key, updatedChunk); // Sync to manager
+              chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
               chunkDataManager.markDirty(key); // Phase 2: Track vegetation removal
               queueVersionIncrement(key);
             }
@@ -2391,7 +2400,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       // Center the subtraction sphere deeper to ensure it "bites"
       // Use DIG_RADIUS * 0.5 (approx 0.6)
       const digOffset = 0.6;
-      const offset = action === 'DIG' ? digOffset : -0.1;
+      // BUILD needs positive offset to push sphere INTO terrain so added voxels extend outward
+      const buildOffset = 0.3;
+      const offset = action === 'DIG' ? digOffset : (action === 'BUILD' ? buildOffset : -0.1);
 
       // IMPORTANT: keep impactPoint as the *surface* point (don't mutate it).
       const hitPoint = impactPoint.clone().addScaledVector(direction, offset);
@@ -2406,6 +2417,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const capabilities = getToolCapabilities(currentTool);
 
       const delta = (action === 'DIG' || action === 'CHOP' || action === 'SMASH') ? -DIG_STRENGTH * capabilities.digPower : (action === 'BUILD' ? DIG_STRENGTH : 0);
+      debugLog(`[DIG DEBUG] Dig calculation: action=${action}, digPower=${capabilities.digPower}, delta=${delta}, selectedItem=${selectedItem}`);
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
       const minWx = hitPoint.x - (radius + 2);
@@ -2476,6 +2488,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       if (anyModified && poolRef.current) {
+        debugLog(`[DIG DEBUG] Terrain modified! action=${action}, delta=${delta}, affectedChunks=${affectedChunks.join(', ')}`);
+
         // Phase 2: Mark chunks as dirty in ChunkDataManager (for future persistence)
         affectedChunks.forEach(key => chunkDataManager.markDirty(key));
 
@@ -2497,6 +2511,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           if (chunk && metadata) {
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
             remeshQueue.current.add(key);
+            debugLog(`[DIG DEBUG] Added ${key} to remeshQueue, queue size now: ${remeshQueue.current.size}`);
           }
         });
 
