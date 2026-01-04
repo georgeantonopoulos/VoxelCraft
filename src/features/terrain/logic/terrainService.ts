@@ -155,7 +155,14 @@ export class TerrainService {
                     const DITHER_AMP = 0.05;
                     const ditherNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
 
-                    const ditheredTemp = climate.temp + ditherNoise * DITHER_AMP;
+                    // Altitude Temperature Falloff (atmospheric lapse rate)
+                    // Real-world: ~6.5°C per 1000m. Here: 0.02 temp units per block above Y=30
+                    // This creates snow-capped mountains and alpine transitions
+                    const ALTITUDE_FALLOFF_RATE = 0.02;
+                    const ALTITUDE_REFERENCE = 30; // Sea level / base terrain height
+                    const altitudePenalty = Math.max(0, (wy - ALTITUDE_REFERENCE) * ALTITUDE_FALLOFF_RATE);
+
+                    const ditheredTemp = climate.temp + ditherNoise * DITHER_AMP - altitudePenalty;
                     const ditheredHumid = climate.humid + ditherNoise * DITHER_AMP;
 
                     // IMPORTANT:
@@ -585,8 +592,9 @@ export class TerrainService {
                     treeThreshold = 0.7;
                     patchThreshold = 0.2;
                 } else if (biome === 'MOUNTAINS') {
-                    treeThreshold = 0.8;
-                    patchThreshold = 0.4;
+                    // Sparse alpine forest - scattered pines on rocky slopes
+                    treeThreshold = 0.65;
+                    patchThreshold = 0.2;
                 } else if (biome === 'BEACH' || biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
                     treeThreshold = 0.95;
                     patchThreshold = 0.8;
@@ -647,7 +655,11 @@ export class TerrainService {
 
                     // Constraints
                     if (wy <= WATER_LEVEL + 0.5) continue; // Further from water
-                    if (normalY < 0.75) continue; // Stricter slope (> ~40 deg)
+
+                    // Slope constraint: pine trees can grow on steeper mountain slopes
+                    // Default: 0.75 (~40°), Mountains: 0.5 (~60°) - alpine conifers are hardy
+                    const slopeThreshold = biome === 'MOUNTAINS' ? 0.5 : 0.75;
+                    if (normalY < slopeThreshold) continue;
 
                     if (groundMaterial === MaterialType.BEDROCK || groundMaterial === MaterialType.WATER) continue;
                     if (biome !== 'MOUNTAINS' && groundMaterial === MaterialType.STONE && cellHash < 0.8) continue;

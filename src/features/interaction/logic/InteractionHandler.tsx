@@ -181,18 +181,18 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                   }
                   const currentHeat = targetItem.heat || 0;
                   if (currentHeat >= 10) {
-                    const removeItem = usePhysicsItemStore.getState().removeItem;
-                    for (let i = 0; i < 4; i++) {
-                      removeItem(nearbySticks[i].id);
-                    }
+                    // Use bulk removal to avoid 5+ separate React reconciliation cycles
+                    // This prevents the 3-second freeze when fire starts
+                    const idsToRemove = nearbySticks.slice(0, 4).map(s => s.id);
+                    idsToRemove.push(targetItem.id); // Also remove the rock
+                    usePhysicsItemStore.getState().bulkRemoveItems(idsToRemove);
+
                     // FIX: Use live position for fire spawn location
                     spawnPhysicsItem(
                       ItemType.FIRE,
                       [livePosition.x, livePosition.y + 0.3, livePosition.z],
                       [0, 0, 0]
                     );
-                    // Remove the rock that started the fire
-                    removeItem(targetItem.id);
                   } else {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { heat: currentHeat + 1 });
                   }

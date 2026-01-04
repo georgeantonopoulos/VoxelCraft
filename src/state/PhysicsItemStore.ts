@@ -5,6 +5,7 @@ interface PhysicsItemState {
   items: ActivePhysicsItem[];
   spawnItem: (type: ItemType, pos: [number, number, number], velocity: [number, number, number], customToolData?: CustomTool) => void;
   removeItem: (id: string) => void;
+  bulkRemoveItems: (ids: string[]) => void;
   updateItem: (id: string, updates: Partial<ActivePhysicsItem>) => void;
 }
 
@@ -25,6 +26,10 @@ export const usePhysicsItemStore = create<PhysicsItemState>((set) => ({
   removeItem: (id) => set((state) => ({
     items: state.items.filter((item) => item.id !== id)
   })),
+  bulkRemoveItems: (ids) => set((state) => {
+    const idSet = new Set(ids);
+    return { items: state.items.filter((item) => !idSet.has(item.id)) };
+  }),
   updateItem: (id, updates) => set((state) => ({
     items: state.items.map((item) =>
       item.id === id ? { ...item, ...updates } : item

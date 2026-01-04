@@ -121,6 +121,11 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Input Logic**: `src/features/player/usePlayerInput.ts` abstracts input sources (`useKeyboardControls` vs `InputStore`).
 - **Touch Camera**: `src/features/player/TouchCameraControls.tsx` handles look rotation for touch mode, bypassing `PointerLockControls`.
 - **Fire Mechanics**: `InteractionHandler.tsx` manages Raycast detection for Stone-on-Stone (sparks) and Stick-on-Fire (torch) events.
+- **Fog & Atmosphere**: `AtmosphereManager.tsx` and `TriplanarShader.ts` handle fog.
+  - **Three.js Fog**: Standard `THREE.Fog` attached to `scene.fog`. Color follows sky gradient.
+  - **Shader Fog**: Custom exponential squared fog in terrain shader (`uShaderFogStrength`, `uFogNear`, `uFogFar`).
+  - **Height Fog**: Ground-level fog layer controlled by `uHeightFogStrength`, `uHeightFogRange`, and `uHeightFogOffset`.
+  - **Scaling**: Fog far distance is dynamically scaled by `viewDistance` setting.
 
 ## Known Pitfalls (keep this list small)
 
@@ -206,7 +211,10 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Worklog (last 5 entries)
 
-- 2026-01-04: **Crafting Interface Visual Fix**.
+- 2026-01-04: **Fog System Investigation**.
+  - **Goal**: Identify all variables and systems producing the current fog state.
+  - **Findings**: Fog is a hybrid of native `THREE.Fog` (for objects/sky) and custom `TriplanarShader.ts` GLSL (for terrain). Key variables: `fogNear` (40), `fogFar` (220 * viewDistance), `atmosphereHaze` (0.25), `heightFogStrength` (0.35).
+  - **Files**: `AtmosphereManager.tsx`, `TriplanarShader.ts`, `App.tsx`, `SharedUniforms.ts`.
   - **Issue**: Attaching `ItemType.FLORA` (Lumina flora) to a tool in the crafting menu did not render the model, making it appear invisible/disconnected.
   - **Fix**: 
     1. Extracted `FloraMesh` as a reusable component in `UniversalTool.tsx`.

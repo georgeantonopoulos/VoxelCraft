@@ -209,6 +209,19 @@ export class BiomeManager {
     }
     // --------------------------
 
+    // --- Mountain Biome ---
+    // High erosion indicates rugged, mountainous terrain.
+    // Use the same erosion01 threshold (0.75) that already boosts terrain amplitude.
+    // Must not override BEACH (coastal takes priority) or frozen biomes (keeps ICE_SPIKES).
+    const isMountainous = erosion01 > 0.75;
+    const isNotCoastal = !isCoastal;
+    const isNotFrozenBiome = baseBiome !== 'ICE_SPIKES'; // Allow SNOW->MOUNTAINS, keep ICE_SPIKES distinct
+
+    if (isMountainous && isNotCoastal && isNotFrozenBiome) {
+      return 'MOUNTAINS';
+    }
+    // ----------------------
+
     return baseBiome;
   }
 
