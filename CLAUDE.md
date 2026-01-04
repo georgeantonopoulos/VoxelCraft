@@ -153,6 +153,62 @@ Tests focus on math kernels (mesher, noise) and state logic. Located in `src/tes
 npm run test:unit    # Run all tests
 ```
 
+## Subagent Usage Guide
+
+Claude Code has access to specialized subagents for different tasks. **Use these proactively** - they reduce context usage and provide better results for their specialized domains.
+
+### Available Subagents
+
+| Agent | When to Use | Example Triggers |
+|-------|-------------|------------------|
+| **Explore** | Codebase exploration, finding files, understanding architecture | "Where is X handled?", "How does Y work?", "Find all files that..." |
+| **Plan** | Designing implementation strategies for new features or refactors | "Add crafting system", "Refactor terrain pipeline", multi-file changes |
+| **root-cause-analyst** | Debugging errors, stack traces, unexpected behavior | Error messages, "X is broken", "doesn't work", crashes |
+| **docs-sync** | Updating CLAUDE.md/AGENTS.md after completing changes | After refactors, new features, architecture changes |
+| **claude-code-guide** | Questions about Claude Code itself, hooks, MCP servers | "Can Claude do...", "How do I configure..." |
+
+### When to Use Each Agent
+
+**Explore Agent** - Use for ANY open-ended codebase questions:
+```
+❌ Direct Glob/Grep for "where are errors handled?"
+✅ Task(Explore): "Find where client errors are handled and explain the error handling pattern"
+```
+
+**Plan Agent** - Use BEFORE implementing non-trivial features:
+```
+❌ Start coding a new feature immediately
+✅ Task(Plan): "Design implementation for player crafting system with inventory integration"
+```
+
+**Root Cause Analyst** - Use when user reports issues:
+```
+❌ Immediately try to fix based on error message
+✅ Task(root-cause-analyst): "Investigate why terrain chunks aren't loading - user reports [error]"
+```
+
+**Docs Sync** - Use AFTER completing significant changes:
+```
+❌ Forget to update documentation
+✅ Task(docs-sync): "Update CLAUDE.md and AGENTS.md after GI lighting system implementation"
+```
+
+### Agent Usage Rules
+
+1. **Prefer agents over direct tool calls** for complex searches - they explore more thoroughly
+2. **Launch agents in parallel** when investigating multiple independent questions
+3. **Always summarize agent results** back to the user - agent output is not visible to them
+4. **Resume agents** using their ID for follow-up work in the same domain
+5. **Use appropriate thoroughness** for Explore: "quick" for simple lookups, "very thorough" for architecture questions
+
+### Missing Agents (Request These)
+
+If you find yourself repeatedly doing similar complex tasks, consider requesting these specialized agents:
+- **Performance profiler** - Systematic performance investigation
+- **Test writer** - Generate tests for new functionality
+- **Shader debugger** - GLSL-specific debugging and optimization
+- **Worker debugger** - Web Worker message flow analysis
+
 ## Detailed Engineering Guidance
 
 See `AGENTS.md` for:
