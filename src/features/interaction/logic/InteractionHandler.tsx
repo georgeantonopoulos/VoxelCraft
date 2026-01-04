@@ -127,22 +127,9 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
           }
         }
 
-        // 1. Tool Interaction (Standard or Custom Tool)
-        if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
-          if (capabilities.canChop) {
-            setInteractionAction('CHOP');
-          } else if (capabilities.canSmash) {
-            setInteractionAction('SMASH');
-          } else if (capabilities.canDig) {
-            setInteractionAction('DIG');
-          }
-        }
-
-        if (pickaxeSelected) {
-          setInteractionAction('DIG');
-        }
-
-        // 2. Fire Creation (Holding Stone)
+        // 1. Fire Creation (Holding Stone) - Check FIRST to prevent SMASH action when fire-starting
+        // FIX: Fire creation must be checked before setting SMASH action to prevent damage
+        // from being applied to the target rock during fire-starting attempts
         if (selectedItem === ItemType.STONE) {
           const origin = camera.position;
           const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -163,8 +150,13 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
               const targetItem = state.items.find(i => i.id === (rigidBody.userData as any).id);
 
               if (targetItem) {
+                // FIX: Use live rigidBody position instead of stale store position
+                // The store position is only updated when items are planted, not during physics simulation
+                const rbTranslation = rigidBody.translation();
+                const livePosition = { x: rbTranslation.x, y: rbTranslation.y, z: rbTranslation.z };
+
                 const nearbySticks: any[] = [];
-                const spherePos = { x: targetItem.position[0], y: targetItem.position[1], z: targetItem.position[2] };
+                const spherePos = livePosition;
                 const sphereRadius = 1.5;
 
                 world.intersectionsWithShape(
@@ -181,6 +173,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                   }
                 );
 
+                // FIX: Only proceed with fire logic if there are enough sticks nearby
+                // If not enough sticks, fall through to normal SMASH behavior
                 if (nearbySticks.length >= 4) {
                   if (!targetItem.isAnchored) {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { isAnchored: true });
@@ -191,20 +185,40 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                     for (let i = 0; i < 4; i++) {
                       removeItem(nearbySticks[i].id);
                     }
+                    // FIX: Use live position for fire spawn location
                     spawnPhysicsItem(
                       ItemType.FIRE,
-                      [targetItem.position[0], targetItem.position[1] + 0.3, targetItem.position[2]],
+                      [livePosition.x, livePosition.y + 0.3, livePosition.z],
                       [0, 0, 0]
                     );
+                    // Remove the rock that started the fire
+                    removeItem(targetItem.id);
                   } else {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { heat: currentHeat + 1 });
                   }
+                  // FIX: Return early WITHOUT setting SMASH action - prevents damage to target rock
+                  return;
                 }
               }
-              return;
+              // No sticks nearby - fall through to SMASH action below
             }
           }
-          return;
+          // No stone hit - fall through to SMASH action below
+        }
+
+        // 2. Tool Interaction (Standard or Custom Tool)
+        if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
+          if (capabilities.canChop) {
+            setInteractionAction('CHOP');
+          } else if (capabilities.canSmash) {
+            setInteractionAction('SMASH');
+          } else if (capabilities.canDig) {
+            setInteractionAction('DIG');
+          }
+        }
+
+        if (pickaxeSelected) {
+          setInteractionAction('DIG');
         }
 
         // 3. Torch Collection (Holding Stick)
