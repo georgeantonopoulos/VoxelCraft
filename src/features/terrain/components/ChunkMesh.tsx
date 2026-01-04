@@ -68,6 +68,7 @@ const ProfiledRigidBody: React.FC<{
 
 export interface ChunkMeshProps {
   chunk: ChunkState;
+  terrainVersion: number; // Passed as primitive to bypass object reference mutation issues
   sunDirection?: THREE.Vector3;
   triplanarDetail?: number;
   terrainShaderFogEnabled?: boolean;
@@ -94,6 +95,7 @@ export interface ChunkMeshProps {
 
 export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   chunk,
+  terrainVersion,
   sunDirection,
   triplanarDetail = 1.0,
   terrainShaderFogEnabled = true,
@@ -137,9 +139,18 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     void terrainFadeEnabled;
   }, [terrainFadeEnabled]);
 
+  // Track if this is an update (for debug logging)
+  const prevVersion = useRef(chunk.terrainVersion);
+  prevVersion.current = chunk.terrainVersion;
+
   const terrainGeometry = useMemo(() => {
     if (!chunk.meshPositions?.length || !chunk.meshIndices?.length) return null;
     const start = performance.now();
+
+    // DEBUG: Log when geometry is recreated due to terrain modification
+    if (chunk.terrainVersion && chunk.terrainVersion > 1) {
+      console.log(`[ChunkMesh] Recreating geometry for ${chunk.key}: ${chunk.meshPositions.length / 3} verts, ver=${chunk.terrainVersion}`);
+    }
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
@@ -175,7 +186,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
     return geom;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, chunk.visualVersion, chunk.terrainVersion]);
+  }, [chunk, chunk.visualVersion, terrainVersion]);
 
   const waterGeometry = useMemo(() => {
     if (!chunk.meshWaterPositions?.length || !chunk.meshWaterIndices?.length) return null;
@@ -361,4 +372,25 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
       )}
     </group>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison for React.memo
+  // Must return true if props are EQUAL (skip re-render), false if DIFFERENT (re-render)
+
+  // Always re-render if terrain version changed (terrain modification)
+  // CRITICAL: Compare the PRIMITIVE terrainVersion prop, not chunk.terrainVersion!
+  // When chunk objects are mutated in-place, prevProps.chunk and nextProps.chunk
+  // point to the same memory location, so chunk.terrainVersion would compare equal.
+  // The primitive prop captures the value at render time, avoiding this issue.
+  if (prevProps.terrainVersion !== nextProps.terrainVersion) return false;
+  if (prevProps.chunk.visualVersion !== nextProps.chunk.visualVersion) return false;
+
+  // Check other important props
+  if (prevProps.lodLevel !== nextProps.lodLevel) return false;
+  if (prevProps.chunk.key !== nextProps.chunk.key) return false;
+
+  // For all other props, use shallow equality (they rarely change)
+  return prevProps.triplanarDetail === nextProps.triplanarDetail &&
+    prevProps.terrainShaderFogEnabled === nextProps.terrainShaderFogEnabled &&
+    prevProps.terrainWireframeEnabled === nextProps.terrainWireframeEnabled &&
+    prevProps.terrainChunkTintEnabled === nextProps.terrainChunkTintEnabled;
 });

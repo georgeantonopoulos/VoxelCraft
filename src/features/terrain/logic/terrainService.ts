@@ -927,17 +927,30 @@ export class TerrainService {
             const biome = BiomeManager.getBiomeAt(txWorld, tzWorld);
 
             let biomeFactor = 0.0;
-            if (biome === 'JUNGLE') biomeFactor = 1.0;
-            else if (biome === 'THE_GROVE') biomeFactor = 0.45;
-            else if (biome === 'PLAINS') biomeFactor = 0.25;
-            else biomeFactor = 0.0;
+            let attempts = 2;
+            if (biome === 'JUNGLE') {
+                biomeFactor = 1.0;
+                attempts = 3;
+            } else if (biome === 'THE_GROVE') {
+                biomeFactor = 0.85; // Grove is player starting area - abundant sticks
+                attempts = 3;
+            } else if (biome === 'PLAINS') {
+                biomeFactor = 0.25;
+                attempts = 2;
+            } else {
+                biomeFactor = 0.0;
+            }
             if (biomeFactor <= 0) continue;
 
             const spawnP = hash01p(txWorld, tyWorld, tzWorld, 3101);
             if (spawnP > biomeFactor * 0.65) continue;
 
-            const attempts = biome === 'JUNGLE' ? 3 : 2;
             const centerYIdx = clampi(Math.floor((tyWorld + 0.2 - MESH_Y_OFFSET) + PAD), 2, sizeY - 3);
+
+            // Tree trunk base radius is ~0.6 units. Ensure sticks spawn outside trunk
+            // with a safety margin to avoid visual occlusion.
+            const MIN_STICK_RADIUS = 1.0; // minimum distance from tree center
+            const MAX_STICK_RADIUS = 2.5; // maximum scatter radius
 
             for (let a = 0; a < attempts && stickCandidates.length / 8 < MAX_STICKS; a++) {
                 const u = hash01p(txWorld, tyWorld, tzWorld, 3120 + a * 7);
@@ -945,7 +958,7 @@ export class TerrainService {
                 const w = hash01p(txWorld, tyWorld, tzWorld, 3122 + a * 7);
 
                 const angle = u * Math.PI * 2;
-                const r = 0.25 + v * 1.15;
+                const r = MIN_STICK_RADIUS + v * (MAX_STICK_RADIUS - MIN_STICK_RADIUS);
                 const lx = txLocal + Math.cos(angle) * r;
                 const lz = tzLocal + Math.sin(angle) * r;
 

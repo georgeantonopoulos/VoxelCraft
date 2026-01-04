@@ -32,10 +32,6 @@ import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 
-const debugLog = (msg: string) => {
-  if (frameProfiler.isEnabled()) console.log(msg);
-};
-
 // Sounds
 import dig1Url from '@/assets/sounds/Dig_1.wav?url';
 import dig2Url from '@/assets/sounds/Dig_2.wav?url';
@@ -1475,10 +1471,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           }
         }
       } else if (type === 'REMESHED') {
-        const { key } = payload;
+        const { key, version: payloadVersion } = payload;
         const current = chunkDataManager.getChunk(key);
-        debugLog(`[DIG DEBUG] REMESHED received for ${key}, isDirty=${chunkDataManager.isDirty(key)}, hasPositions=${!!payload.meshPositions?.length}`);
+        const currentVersion = current?.terrainVersion ?? 0;
+
+        // Skip stale REMESHED responses - if the chunk's terrainVersion is higher
+        // than the version this REMESH was based on, another modification happened
+        // since this REMESH was dispatched, so this mesh data is stale.
+        if (current && payloadVersion !== undefined && payloadVersion < currentVersion) {
+          continue;
+        }
+
         if (current) {
+          const isDirty = chunkDataManager.isDirty(key);
           const updatedChunk = {
             ...current,
             ...payload,
@@ -1489,11 +1494,18 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             terrainVersion: (current.terrainVersion ?? 0) + 1,
             visualVersion: (current.visualVersion ?? 0) + 1
           };
+
           chunkDataRef.current.set(key, updatedChunk);
           versionUpdates.add(key);
 
-          // Phase 1: Also update in ChunkDataManager
+          // Update ChunkDataManager (merges for dirty chunks)
           chunkDataManager.addChunk(key, updatedChunk);
+
+          // DEBUG: Only log for dirty chunks (player digs)
+          if (isDirty) {
+            const mgr = chunkDataManager.getChunk(key);
+            console.log(`[DIG] ${key} remeshed: ${mgr?.meshPositions?.length / 3}v, ver=${mgr?.terrainVersion}`);
+          }
         }
       }
     }
@@ -1612,7 +1624,19 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const chunk = chunkDataManager.getChunk(key);
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {
-          debugLog(`[DIG DEBUG] Dispatching REMESH for ${key}, isDirty=${chunkDataManager.isDirty(key)}`);
+          const isDirty = chunkDataManager.isDirty(key);
+          if (isDirty) {
+            // DEBUG: Log density values being sent to worker
+            let minD = Infinity, maxD = -Infinity, negCount = 0;
+            for (let j = 0; j < chunk.density.length; j++) {
+              const d = chunk.density[j];
+              if (d < minD) minD = d;
+              if (d > maxD) maxD = d;
+              if (d < 0.5) negCount++;
+            }
+            console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
+          }
+
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
             type: 'REMESH',
             payload: {
@@ -1870,9 +1894,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, [camera]);
 
   useEffect(() => {
-    debugLog(`[DIG DEBUG] Terrain useEffect triggered: isInteracting=${isInteracting}, action=${action}`);
     if (!isInteracting || !action) return;
-    debugLog(`[DIG DEBUG] Passed early return, proceeding with action=${action}`);
 
     const origin = camera.position.clone();
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -1884,7 +1906,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // DIG should not "vacuum" multiple flora items into inventory.
 
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
-    debugLog(`[DIG DEBUG] Raycast result: terrainHit=${!!terrainHit}, timeOfImpact=${terrainHit?.timeOfImpact}`);
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
@@ -2417,7 +2438,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const capabilities = getToolCapabilities(currentTool);
 
       const delta = (action === 'DIG' || action === 'CHOP' || action === 'SMASH') ? -DIG_STRENGTH * capabilities.digPower : (action === 'BUILD' ? DIG_STRENGTH : 0);
-      debugLog(`[DIG DEBUG] Dig calculation: action=${action}, digPower=${capabilities.digPower}, delta=${delta}, selectedItem=${selectedItem}`);
       const radius = (dist < 3.0) ? 1.1 : DIG_RADIUS;
 
       const minWx = hitPoint.x - (radius + 2);
@@ -2477,6 +2497,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             if (modified) {
               anyModified = true;
               affectedChunks.push(key);
+
+              // DEBUG: Check if density was actually modified
+              const testIdx = Math.floor(localX + 2) + Math.floor(localY - (-64) + 2) * 36 + Math.floor(localZ + 2) * 36 * 132;
+              console.log(`[DIG-MOD] ${key} modified density at test idx ${testIdx}: ${chunk.density[testIdx]?.toFixed(2)}`);
+
               if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {
                 if (action === 'BUILD') primaryMat = effectiveBuildMat;
@@ -2488,8 +2513,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       if (anyModified && poolRef.current) {
-        debugLog(`[DIG DEBUG] Terrain modified! action=${action}, delta=${delta}, affectedChunks=${affectedChunks.join(', ')}`);
-
         // Phase 2: Mark chunks as dirty in ChunkDataManager (for future persistence)
         affectedChunks.forEach(key => chunkDataManager.markDirty(key));
 
@@ -2509,9 +2532,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           const chunk = chunkDataManager.getChunk(key);
           const metadata = metadataDB.getChunk(key);
           if (chunk && metadata) {
+            // Increment terrainVersion BEFORE queueing remesh so the version check works
+            // This ensures stale REMESHED responses (from earlier simulation remeshes) are rejected
+            chunk.terrainVersion = (chunk.terrainVersion ?? 0) + 1;
+
             simulationManager.addChunk(key, chunk.cx, chunk.cz, chunk.material, metadata.wetness, metadata.mossiness);
             remeshQueue.current.add(key);
-            debugLog(`[DIG DEBUG] Added ${key} to remeshQueue, queue size now: ${remeshQueue.current.size}`);
           }
         });
 
@@ -2577,7 +2603,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   return (
     <group>
       {Object.keys(chunkVersions).map(key => {
-        const chunk = chunkDataManager.getChunk(key);
+        // Use chunkDataRef instead of chunkDataManager to get NEW object references
+        // This ensures React.memo can properly detect changes via reference comparison
+        const chunk = chunkDataRef.current.get(key);
         if (!chunk) return null;
 
         return (
@@ -2585,6 +2613,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             <ChunkMesh
               key={chunk.key}
               chunk={chunk}
+              terrainVersion={chunk.terrainVersion ?? 0}
               lodLevel={chunk.lodLevel}
               sunDirection={sunDirection}
               triplanarDetail={triplanarDetail}

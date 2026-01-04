@@ -531,6 +531,15 @@ class ChunkDataManager {
 
     // Update LOD
     existing.lodLevel = incoming.lodLevel;
+
+    // Update version numbers to trigger React re-renders
+    // These are bumped by the caller when creating the incoming chunk
+    if (incoming.terrainVersion !== undefined) {
+      existing.terrainVersion = incoming.terrainVersion;
+    }
+    if (incoming.visualVersion !== undefined) {
+      existing.visualVersion = incoming.visualVersion;
+    }
   }
 
   // === DEBUG ===
