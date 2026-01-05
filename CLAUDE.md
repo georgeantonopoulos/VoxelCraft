@@ -253,4 +253,29 @@ See `AGENTS.md` for:
 4. **Recipe System Formalization**: Recipes in `CraftingData.ts` are defined but loosely enforced. Consider:
    - Adding a `validateRecipe(attachments)` function
    - Showing recipe hints before all ingredients are attached
-   - Supporting partial recipe matching for guidance 
+   - Supporting partial recipe matching for guidance
+
+## Known Bugs
+
+### FractalTree Not Growing (Identified 2026-01-05)
+**Status**: Active bug - FractalTree component does not visually grow when RootHollow transitions to GROWING state.
+**Location**: `src/features/flora/components/FractalTree.tsx`, `src/features/flora/components/RootHollow.tsx`
+**Symptoms**: RootHollow absorbs flora item, swarm particles appear, but tree never becomes visible.
+**Investigation needed**: Check if worker is generating geometry, verify `active`/`visible` props are triggering correctly.
+
+### Root Hollow / FractalTree Persistence (Identified 2026-01-05)
+**Status**: Needs investigation - Root Hollows and grown FractalTrees may not persist correctly to IndexedDB.
+**Location**: `src/state/WorldDB.ts`, `src/features/flora/components/RootHollow.tsx`
+**Investigation needed**:
+- Verify Root Hollow positions are saved/loaded with chunk data
+- Verify FractalTree growth state persists across chunk unload/reload
+- Check if ChunkDataManager dirty tracking includes flora state changes
+
+## Future Features (TODO)
+
+### Sacred Grove Ecosystem (Planned)
+Root Hollows are terraforming seeds that transform the landscape:
+1. **Barren Zone**: Area around dormant Root Hollow is desert-like (RED_DESERT material)
+2. **Tree Growth**: When FractalTree grows, it begins spreading life (NOT YET IMPLEMENTED)
+3. **Humidity Spreading**: Gradual biome transformation from barren to lush (NOT YET IMPLEMENTED)
+4. **Vegetation Spawning**: Trees and flora spawn in transformed areas (NOT YET IMPLEMENTED) 

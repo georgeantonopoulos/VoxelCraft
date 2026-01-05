@@ -112,10 +112,10 @@ export const BIOME_FOG_SETTINGS: Record<string, BiomeFogSettings> = {
     aerialPerspective: 0.3  // Maintains color vibrancy
   },
   THE_GROVE: {
-    densityMul: 1.1,
-    heightFogMul: 1.2,
-    tintR: 0.0, tintG: 0.02, tintB: 0.02,    // Neutral with slight cool
-    aerialPerspective: 0.4
+    densityMul: 0.7,        // Less fog - let the green show through
+    heightFogMul: 0.8,      // Light morning mist, not heavy fog
+    tintR: -0.04, tintG: 0.08, tintB: -0.06, // Strong green shift, remove blue
+    aerialPerspective: 0.25 // Maintain color vibrancy at distance
   },
 
   // --- Cold Biomes (Crisp air, blue tint) ---
@@ -214,6 +214,7 @@ export class BiomeManager {
     this.humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
     this.continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
     this.erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+    this.sacredGroveNoise = makeNoise2D(() => this.hash(this.seed + 5));
 
     // console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
   }
@@ -240,6 +241,8 @@ export class BiomeManager {
   private static continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
   // ErosionNoise: Defines "Flatness" vs "Mountainous".
   private static erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+  // SacredGroveNoise: Creates isolated pocket clearings for Root Hollows
+  private static sacredGroveNoise = makeNoise2D(() => this.hash(this.seed + 5));
 
   // Scales - Adjusted for larger, more realistic features
   static readonly TEMP_SCALE = 0.0008; // (Was 0.0013)
@@ -247,6 +250,10 @@ export class BiomeManager {
   static readonly CONT_SCALE = 0.0005; // Continents are huge
   static readonly EROSION_SCALE = 0.001; // Mountain ranges are large
   static readonly LATITUDE_SCALE = 0.0002; // 1 unit temp change every 5000 blocks
+  // Sacred Grove noise scale: lower = larger clearings, more spaced out
+  // 0.008 creates ~125 block wavelength features (substantial clearings)
+  static readonly SACRED_GROVE_SCALE = 0.008;
+  static readonly SACRED_GROVE_RADIUS = 32; // Radius of barren zone around Root Hollow center
 
   // Simple pseudo-random for seeding
   private static hash(n: number): number {
@@ -612,10 +619,222 @@ export class BiomeManager {
 
     return dCold * wCold + dTemp * wTemperate + dHot * wHot;
   }
+
+  // --- 5. Sacred Grove System ---
+  // Sacred Groves are isolated barren clearings that spawn Root Hollows.
+  // When a FractalTree grows, the area gradually transforms from barren to lush.
+  //
+  // TODO: Implement dynamic humidity spreading when FractalTree grows:
+  // 1. Track active Root Hollows with grown trees in WorldStore
+  // 2. Query active tree positions in getSacredGroveInfo()
+  // 3. If tree is grown, invert the logic: lush at center, barren at edges
+  // 4. Spread radius over time (requires chunk regeneration or dynamic material updates)
+  // 5. Eventually spawn new trees/flora in the transformed zone
+
+  /**
+   * Detects if a world position is within a Sacred Grove pocket.
+   * Returns: { inGrove: boolean, intensity: number (0-1), centerDistance: number }
+   *
+   * Sacred Groves appear as circular clearings in temperate zones (THE_GROVE biome region).
+   * The terrain is flattened and barren (RED_DESERT material) until a tree grows.
+   */
+  static getSacredGroveInfo(x: number, z: number): {
+    inGrove: boolean;
+    intensity: number;
+    isCenter: boolean;
+  } {
+    // Only create Sacred Groves in temperate, mid-humidity regions (THE_GROVE climate)
+    const { temp, humid, continent } = this.getClimate(x, z);
+
+    // Must be on land (not coastal/ocean)
+    if (continent < 0.15) {
+      return { inGrove: false, intensity: 0, isCenter: false };
+    }
+
+    // Must be temperate climate (where THE_GROVE would spawn)
+    const isTemperate = temp > -0.4 && temp < 0.4;
+    const isMidHumid = humid > -0.4 && humid < 0.4;
+
+    if (!isTemperate || !isMidHumid) {
+      return { inGrove: false, intensity: 0, isCenter: false };
+    }
+
+    // Sample Sacred Grove noise - creates isolated peaks
+    const groveNoise = this.sacredGroveNoise(
+      x * this.SACRED_GROVE_SCALE,
+      z * this.SACRED_GROVE_SCALE
+    );
+
+    // Secondary noise for variation in pocket shapes
+    const shapeNoise = this.sacredGroveNoise(
+      x * this.SACRED_GROVE_SCALE * 2.5 + 100,
+      z * this.SACRED_GROVE_SCALE * 2.5 + 100
+    );
+
+    // Grove thresholds - tuned for distinct, visible clearings
+    // GROVE_THRESHOLD: 0.45 creates ~25% coverage - noticeable but not overwhelming
+    // CENTER_THRESHOLD: 0.65 ensures Root Hollows only at the true center of each clearing
+    // These values create roughly 1 clearing per 100-150 block area in THE_GROVE
+    const GROVE_THRESHOLD = 0.45;
+    const CENTER_THRESHOLD = 0.65;
+
+    // Combine noises for organic shapes
+    const combinedNoise = groveNoise * 0.7 + shapeNoise * 0.3;
+
+    if (combinedNoise < GROVE_THRESHOLD) {
+      return { inGrove: false, intensity: 0, isCenter: false };
+    }
+
+    // Calculate intensity (0 at edge, 1 at center)
+    const intensity = (combinedNoise - GROVE_THRESHOLD) / (1.0 - GROVE_THRESHOLD);
+    const isCenter = combinedNoise > CENTER_THRESHOLD;
+
+    return { inGrove: true, intensity, isCenter };
+  }
+
+  /**
+   * Returns terrain modification factors for Sacred Grove zones.
+   * Used by TerrainService to flatten terrain and modify materials.
+   */
+  static getSacredGroveTerrainMod(x: number, z: number): {
+    ampMultiplier: number;      // Reduce amplitude for flat clearing
+    warpMultiplier: number;     // Reduce domain warping
+    overhangMultiplier: number; // Reduce cliff/overhang noise
+    useBarrenMaterial: boolean; // Apply RED_DESERT instead of GRASS
+  } {
+    const groveInfo = this.getSacredGroveInfo(x, z);
+
+    if (!groveInfo.inGrove) {
+      return {
+        ampMultiplier: 1.0,
+        warpMultiplier: 1.0,
+        overhangMultiplier: 1.0,
+        useBarrenMaterial: false
+      };
+    }
+
+    // Stronger flattening toward center
+    const flattenStrength = groveInfo.intensity;
+
+    return {
+      ampMultiplier: lerp(1.0, 0.15, flattenStrength),      // Very flat at center
+      warpMultiplier: lerp(1.0, 0.2, flattenStrength),      // Minimal warping
+      overhangMultiplier: lerp(1.0, 0.1, flattenStrength),  // No overhangs
+      useBarrenMaterial: true  // Always barren within grove bounds
+    };
+  }
 }
 
 // Helper for smoothstep (standard GLSL implementation)
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+// --- Debug Utilities ---
+// Expose globally for console debugging: window.__findSacredGrove(playerX, playerZ)
+
+/**
+ * Find the nearest Sacred Grove center from a given position.
+ * Usage in console: window.__findSacredGrove(x, z, searchRadius)
+ * Returns direction and distance to nearest grove center.
+ */
+export function findNearestSacredGrove(
+  fromX: number,
+  fromZ: number,
+  searchRadius: number = 500
+): { found: boolean; x: number; z: number; distance: number; direction: string } | null {
+  const step = 8; // Sample every 8 blocks for speed
+  let nearest: { x: number; z: number; dist: number } | null = null;
+
+  for (let dz = -searchRadius; dz <= searchRadius; dz += step) {
+    for (let dx = -searchRadius; dx <= searchRadius; dx += step) {
+      const wx = fromX + dx;
+      const wz = fromZ + dz;
+
+      const info = BiomeManager.getSacredGroveInfo(wx, wz);
+      if (info.isCenter) {
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (!nearest || dist < nearest.dist) {
+          nearest = { x: wx, z: wz, dist };
+        }
+      }
+    }
+  }
+
+  if (!nearest) {
+    console.log(`No Sacred Grove centers found within ${searchRadius} blocks.`);
+    console.log(`Try: window.__findSacredGrove(${fromX}, ${fromZ}, 1000)`);
+    return null;
+  }
+
+  // Calculate cardinal direction
+  const dx = nearest.x - fromX;
+  const dz = nearest.z - fromZ;
+  const angle = Math.atan2(dz, dx) * 180 / Math.PI;
+
+  let direction = '';
+  if (angle >= -22.5 && angle < 22.5) direction = 'East (+X)';
+  else if (angle >= 22.5 && angle < 67.5) direction = 'Southeast (+X, +Z)';
+  else if (angle >= 67.5 && angle < 112.5) direction = 'South (+Z)';
+  else if (angle >= 112.5 && angle < 157.5) direction = 'Southwest (-X, +Z)';
+  else if (angle >= 157.5 || angle < -157.5) direction = 'West (-X)';
+  else if (angle >= -157.5 && angle < -112.5) direction = 'Northwest (-X, -Z)';
+  else if (angle >= -112.5 && angle < -67.5) direction = 'North (-Z)';
+  else direction = 'Northeast (+X, -Z)';
+
+  const result = {
+    found: true,
+    x: nearest.x,
+    z: nearest.z,
+    distance: Math.round(nearest.dist),
+    direction
+  };
+
+  console.log(`\n=== SACRED GROVE FOUND ===`);
+  console.log(`Location: (${nearest.x}, ${nearest.z})`);
+  console.log(`Distance: ${Math.round(nearest.dist)} blocks`);
+  console.log(`Direction: ${direction}`);
+  console.log(`\nWalk ${direction.toLowerCase()} for ~${Math.round(nearest.dist)} blocks.`);
+  console.log(`========================\n`);
+
+  return result;
+}
+
+// Debug: Sample Sacred Grove coverage in an area
+export function debugSacredGroveCoverage(centerX: number, centerZ: number, radius: number = 200): void {
+  const step = 4;
+  let totalSamples = 0;
+  let inGroveCount = 0;
+  let isCenterCount = 0;
+  let hasBarrenMaterial = 0;
+
+  for (let dz = -radius; dz <= radius; dz += step) {
+    for (let dx = -radius; dx <= radius; dx += step) {
+      const wx = centerX + dx;
+      const wz = centerZ + dz;
+      totalSamples++;
+
+      const info = BiomeManager.getSacredGroveInfo(wx, wz);
+      const mod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
+
+      if (info.inGrove) inGroveCount++;
+      if (info.isCenter) isCenterCount++;
+      if (mod.useBarrenMaterial) hasBarrenMaterial++;
+    }
+  }
+
+  console.log(`\n=== SACRED GROVE DEBUG (${radius * 2}x${radius * 2} area) ===`);
+  console.log(`Total samples: ${totalSamples}`);
+  console.log(`In Grove: ${inGroveCount} (${(inGroveCount / totalSamples * 100).toFixed(1)}%)`);
+  console.log(`Is Center: ${isCenterCount} (${(isCenterCount / totalSamples * 100).toFixed(1)}%)`);
+  console.log(`Barren Material: ${hasBarrenMaterial} (${(hasBarrenMaterial / totalSamples * 100).toFixed(1)}%)`);
+  console.log(`==========================================\n`);
+}
+
+// Expose to window for console access
+if (typeof window !== 'undefined') {
+  (window as any).__findSacredGrove = findNearestSacredGrove;
+  (window as any).__debugSacredGrove = debugSacredGroveCoverage;
+  (window as any).__BiomeManager = BiomeManager;
 }

@@ -74,6 +74,11 @@ ctx.onmessage = async (e: MessageEvent) => {
           const worldZ = cz * CHUNK_SIZE_XZ + z;
 
           const biome = BiomeManager.getBiomeAt(worldX, worldZ);
+
+          // Sacred Grove Check: No vegetation in barren zones (Root Hollows spawn there)
+          const sacredGroveInfo = BiomeManager.getSacredGroveInfo(worldX, worldZ);
+          if (sacredGroveInfo.inGrove) continue;
+
           let biomeDensity = BiomeManager.getVegetationDensity(worldX, worldZ);
           // Beaches should read as clean shoreline; reduce ambient ground clutter and avoid
           // paying for unnecessary surface scans in the worker.

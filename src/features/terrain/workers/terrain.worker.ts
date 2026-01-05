@@ -245,6 +245,9 @@ ctx.onmessage = async (e: MessageEvent) => {
             for (let z = 0; z < CHUNK_SIZE_XZ; z++) {
                 for (let x = 0; x < CHUNK_SIZE_XZ; x++) {
                     const worldX = cx * CHUNK_SIZE_XZ + x, worldZ = cz * CHUNK_SIZE_XZ + z;
+                    // Sacred Grove Check: No vegetation in barren zones (Root Hollows spawn there)
+                    const sacredGroveInfo = BiomeManager.getSacredGroveInfo(worldX, worldZ);
+                    if (sacredGroveInfo.inGrove) continue;
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
                     let bDensity = BiomeManager.getVegetationDensity(worldX, worldZ); if (biome === 'BEACH') bDensity *= 0.1;
                     if ((noise(worldX * 0.15, 0, worldZ * 0.15) + 1) * 0.5 + noise(worldX * 0.8, 0, worldZ * 0.8) * 0.3 > 1.0 - bDensity) {

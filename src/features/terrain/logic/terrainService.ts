@@ -139,12 +139,21 @@ export class TerrainService {
                 const climate = BiomeManager.getClimate(wx, wz);
 
                 // Use new metrics-based params (includes Continentalness/Erosion logic)
-                const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromMetrics(
+                let { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromMetrics(
                     climate.temp,
                     climate.humid,
                     climate.continent,
                     climate.erosion
                 );
+
+                // --- Sacred Grove Terrain Modification ---
+                // Sacred Groves are flat, barren clearings where Root Hollows spawn
+                const sacredGroveMod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
+                const sacredGroveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
+
+                // Apply flattening multipliers for Sacred Grove zones
+                amp *= sacredGroveMod.ampMultiplier;
+                warp *= sacredGroveMod.warpMultiplier;
 
                 for (let y = 0; y < sizeY; y++) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
@@ -226,7 +235,8 @@ export class TerrainService {
 
                         // Cliff/Overhang noise
                         const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
-                        overhang = cliffNoise * 6; // Assign to outer variable
+                        // Apply Sacred Grove flattening to overhangs
+                        overhang = cliffNoise * 6 * sacredGroveMod.overhangMultiplier;
 
                         d = surfaceHeight - wy + overhang;
 
@@ -270,30 +280,8 @@ export class TerrainService {
 
                     density[idx] = d;
 
-                    // --- Root Hollow Scanning (Skip for Sky Islands) ---
-                    // AAA FIX: Only spawn in THE_GROVE, on flat terrain, and near surface (not caves)
-                    if (!isSkyIsland && y > 0 && y < sizeY - 1 && biome === 'THE_GROVE') {
-                        const idxBelow = idx - sizeX; // Note: idx formula assumes consistent iteration structure, but here we just subtract sizeX (X-stride).
-                        // Wait! idx = x + y*SizeX + ...
-                        // If y decreases by 1, idx decreases by SizeX. Correct.
-                        const dBelow = density[idxBelow];
-
-                        if (d <= ISO_LEVEL && dBelow > ISO_LEVEL) {
-                            // 1. Surface Check
-                            if (Math.abs(wy - surfaceHeight) > 4.0) continue;
-
-                            // 2. Flatness Check
-                            if (Math.abs(overhang) > 1.5) continue;
-
-                            const sparsity = noise3D(wx * 0.5, wy * 0.5, wz * 0.5);
-                            if (sparsity > 0.8 && wy > MESH_Y_OFFSET + 5) {
-                                const localX = (x - PAD) + 0.5;
-                                const localY = wy - 0.8;
-                                const localZ = (z - PAD) + 0.5;
-                                rootHollowCandidates.push(localX, localY, localZ, 0, 1, 0);
-                            }
-                        }
-                    }
+                    // NOTE: Root Hollow placement moved to post-pass (Section 3.65)
+                    // to ensure only 1 per Sacred Grove and proper surface detection
 
                     // --- 3. Material Generation ---
 
@@ -323,7 +311,10 @@ export class TerrainService {
                             if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
                         } else {
                             // --- Standard Surface & Cavern Materials ---
-                            const biomeMat = BiomeManager.getSurfaceMaterial(biome);
+                            // Sacred Grove Override: Use barren RED_SAND material
+                            const biomeMat = sacredGroveMod.useBarrenMaterial
+                                ? MaterialType.RED_SAND
+                                : BiomeManager.getSurfaceMaterial(biome);
 
                             const soilNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
                             const soilDepth = 6.0 + soilNoise * 3.0; // depth of surface soil
@@ -343,7 +334,12 @@ export class TerrainService {
 
                             } else {
                                 // --- SURFACE SOIL ---
-                                if (biome === 'BEACH') {
+                                if (sacredGroveMod.useBarrenMaterial) {
+                                    // Sacred Grove: Barren desert-like surface
+                                    // Deeper layers use terracotta for visual variety
+                                    material[idx] = MaterialType.RED_SAND;
+                                    if (depth > 2.5) material[idx] = MaterialType.TERRACOTTA;
+                                } else if (biome === 'BEACH') {
                                     // Beaches need a thicker sand cap than deserts for smooth meshing:
                                     // material weights are neighborhood-splatted, so a 1-2 voxel cap often
                                     // blends away into dirt/stone and becomes visually "green" at the shore.
@@ -612,6 +608,10 @@ export class TerrainService {
                 const wx = (localX - PAD) + worldOffsetX;
                 const wz = (localZ - PAD) + worldOffsetZ;
 
+                // Sacred Grove Check: No trees in barren zones (Root Hollows grow there instead)
+                const treeSacredGroveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
+                if (treeSacredGroveInfo.inGrove) continue;
+
                 // 3. Find Surface and Check Constraints (Slope, Material, Water)
                 let surfaceY = -1;
                 let normalY = 1.0;
@@ -694,6 +694,174 @@ export class TerrainService {
                     treesPlaced++;
                 }
             }
+        }
+
+        // --- Helper Functions for Surface Detection ---
+        // These are used by Root Hollow, Stick, and Rock placement
+        const clampi = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+        const idx3 = (ix: number, iy: number, iz: number) => ix + iy * sizeX + iz * sizeX * sizeY;
+
+        const normalAt = (ix: number, iy: number, iz: number): [number, number, number] => {
+            const x0 = clampi(ix - 1, 0, sizeX - 1);
+            const x1 = clampi(ix + 1, 0, sizeX - 1);
+            const y0 = clampi(iy - 1, 0, sizeY - 1);
+            const y1 = clampi(iy + 1, 0, sizeY - 1);
+            const z0 = clampi(iz - 1, 0, sizeZ - 1);
+            const z1 = clampi(iz + 1, 0, sizeZ - 1);
+
+            const dx = density[idx3(x1, iy, iz)] - density[idx3(x0, iy, iz)];
+            const dy = density[idx3(ix, y1, iz)] - density[idx3(ix, y0, iz)];
+            const dz = density[idx3(ix, iy, z1)] - density[idx3(ix, iy, z0)];
+
+            let nx = dx;
+            let ny = dy;
+            let nz = dz;
+            const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+            if (len < 1e-6) return [0, 1, 0];
+            nx /= len; ny /= len; nz /= len;
+            // Prefer "upward" normals for ground alignment.
+            if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+            return [nx, ny, nz];
+        };
+
+        // Surface Nets mesh uses edge averaging which shifts vertices downward on slopes.
+        // Pure vertical interpolation overestimates height on slopes.
+        // This sink factor compensates: steeper slopes (lower ny) need more sink.
+        const slopeSinkFactor = (ny: number): number => {
+            // On flat ground (ny=1): sink = 0
+            // On 45° slope (ny≈0.707): sink ≈ 0.22
+            // On steep slope (ny=0.5): sink ≈ 0.38
+            const slopeFactor = 1.0 - ny;
+            return slopeFactor * 0.75;
+        };
+
+        const findTopSurfaceAtLocalXZ = (localX: number, localZ: number): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
+            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
+            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
+            for (let y = sizeY - 2; y >= 1; y--) {
+                const idx = idx3(ix, y, iz);
+                if (density[idx] > ISO_LEVEL) {
+                    const idxAbove = idx3(ix, y + 1, iz);
+                    // Ensure we are at a solid->air boundary (actual exposed surface),
+                    // otherwise we can "hit" interior solids under overhangs and place items inside rock.
+                    if (density[idxAbove] > ISO_LEVEL) continue;
+                    const dSolid = density[idx];
+                    const dAir = density[idxAbove];
+                    const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                    const n = normalAt(ix, y, iz);
+                    // Apply slope-aware sink to match Surface Nets mesh positioning
+                    const sink = slopeSinkFactor(n[1]);
+                    const worldY = (y - PAD + t) + MESH_Y_OFFSET - sink;
+                    const matBelow = material[idx] ?? MaterialType.DIRT;
+                    return { worldY, normal: n, matBelow };
+                }
+            }
+            return null;
+        };
+
+        const findGroundNear = (
+            localX: number,
+            localZ: number,
+            centerYIndex: number,
+            searchRange: number,
+            requireHeadroomCells: number
+        ): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
+            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
+            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
+            const startY = clampi(centerYIndex + searchRange, 2, sizeY - 3);
+            const endY = clampi(centerYIndex - searchRange, 1, sizeY - 4);
+
+            for (let fy = startY; fy >= endY; fy--) {
+                const idxAir = idx3(ix, fy, iz);
+                const idxBelow = idx3(ix, fy - 1, iz);
+                if (density[idxAir] > ISO_LEVEL) continue;
+                if (density[idxBelow] <= ISO_LEVEL) continue;
+
+                let headroomOk = true;
+                for (let k = 0; k < requireHeadroomCells; k++) {
+                    const iy = fy + k;
+                    if (iy >= sizeY) { headroomOk = false; break; }
+                    const idxHr = idx3(ix, iy, iz);
+                    if (density[idxHr] > ISO_LEVEL) { headroomOk = false; break; }
+                }
+                if (!headroomOk) continue;
+
+                const dAir = density[idxAir];
+                const dSolid = density[idxBelow];
+                const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
+                const n = normalAt(ix, fy - 1, iz);
+                // Apply slope-aware sink to match Surface Nets mesh positioning
+                const sink = slopeSinkFactor(n[1]);
+                const worldY = (fy - PAD - 1 + t) + MESH_Y_OFFSET - sink;
+                const matBelow = material[idxBelow] ?? MaterialType.DIRT;
+                return { worldY, normal: n, matBelow };
+            }
+
+            return null;
+        };
+
+        // --- 3.65 Root Hollow Generation (Sacred Grove Centers) ---
+        // Root Hollows spawn at the center of Sacred Grove clearings.
+        // Use a finer grid (8x8) with multiple sample points to catch Sacred Grove centers.
+        // Sacred Groves are flat, barren zones - Root Hollows mark their heart.
+        const ROOT_HOLLOW_GRID = 8; // Sample every 8 blocks for better coverage
+        const MAX_ROOT_HOLLOWS_PER_CHUNK = 1; // Only 1 per chunk to keep them special
+        let rootHollowsPlaced = 0;
+        let bestCandidate: { x: number; y: number; z: number; nx: number; ny: number; nz: number; intensity: number } | null = null;
+
+        // Scan the chunk for Sacred Grove centers, keeping the best candidate
+        for (let gz = PAD; gz < sizeZ - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gz += ROOT_HOLLOW_GRID) {
+            for (let gx = PAD; gx < sizeX - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gx += ROOT_HOLLOW_GRID) {
+                const wx = (gx - PAD) + worldOffsetX;
+                const wz = (gz - PAD) + worldOffsetZ;
+
+                // Check if this location is in a Sacred Grove (relaxed check - just inGrove, not isCenter)
+                const groveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
+                if (!groveInfo.inGrove) continue;
+
+                // Find the surface at this position
+                const surface = findTopSurfaceAtLocalXZ(gx - PAD, gz - PAD);
+                if (!surface) continue;
+
+                // Must be above water
+                if (surface.worldY <= WATER_LEVEL + 1.0) continue;
+
+                // Relaxed flatness check: ny > 0.7 (~45 degrees) - Sacred Groves flatten terrain
+                const [nx, ny, nz] = surface.normal;
+                if (ny < 0.7) continue;
+
+                // Must be on appropriate material
+                const mat = surface.matBelow;
+                const validMat = mat === MaterialType.RED_SAND ||
+                                 mat === MaterialType.TERRACOTTA ||
+                                 mat === MaterialType.GRASS ||
+                                 mat === MaterialType.DIRT;
+                if (!validMat) continue;
+
+                // Track the best candidate (highest intensity = closest to grove center)
+                if (!bestCandidate || groveInfo.intensity > bestCandidate.intensity) {
+                    bestCandidate = {
+                        x: gx - PAD,
+                        y: surface.worldY - 0.15,
+                        z: gz - PAD,
+                        nx, ny, nz,
+                        intensity: groveInfo.intensity
+                    };
+                }
+            }
+        }
+
+        // Place the best candidate found (if any)
+        if (bestCandidate) {
+            rootHollowCandidates.push(
+                bestCandidate.x,
+                bestCandidate.y,
+                bestCandidate.z,
+                bestCandidate.nx,
+                bestCandidate.ny,
+                bestCandidate.nz
+            );
+            rootHollowsPlaced++;
         }
 
         // --- 3.7 Firefly Generation (Surface Pass) ---
@@ -826,110 +994,9 @@ export class TerrainService {
         // - stickPositions: stride 8: x, y, z, nx, ny, nz, variant, seed
         // - rockPositions:  stride 8: x, y, z, nx, ny, nz, variant, seed
         // - largeRockPositions: stride 6: x, y, z, radius, variant, seed
-        const clampi = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-        const idx3 = (ix: number, iy: number, iz: number) => ix + iy * sizeX + iz * sizeX * sizeY;
         const hash01p = (x: number, y: number, z: number, salt: number) => {
             const n = noise3D(x * 0.011 + salt * 0.17, y * 0.017 + salt * 0.31, z * 0.013 + salt * 0.23);
             return (n + 1) * 0.5;
-        };
-
-        const normalAt = (ix: number, iy: number, iz: number): [number, number, number] => {
-            const x0 = clampi(ix - 1, 0, sizeX - 1);
-            const x1 = clampi(ix + 1, 0, sizeX - 1);
-            const y0 = clampi(iy - 1, 0, sizeY - 1);
-            const y1 = clampi(iy + 1, 0, sizeY - 1);
-            const z0 = clampi(iz - 1, 0, sizeZ - 1);
-            const z1 = clampi(iz + 1, 0, sizeZ - 1);
-
-            const dx = density[idx3(x1, iy, iz)] - density[idx3(x0, iy, iz)];
-            const dy = density[idx3(ix, y1, iz)] - density[idx3(ix, y0, iz)];
-            const dz = density[idx3(ix, iy, z1)] - density[idx3(ix, iy, z0)];
-
-            let nx = dx;
-            let ny = dy;
-            let nz = dz;
-            const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-            if (len < 1e-6) return [0, 1, 0];
-            nx /= len; ny /= len; nz /= len;
-            // Prefer "upward" normals for ground alignment.
-            if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
-            return [nx, ny, nz];
-        };
-
-        // Surface Nets mesh uses edge averaging which shifts vertices downward on slopes.
-        // Pure vertical interpolation overestimates height on slopes.
-        // This sink factor compensates: steeper slopes (lower ny) need more sink.
-        const slopeSinkFactor = (ny: number): number => {
-            // On flat ground (ny=1): sink = 0
-            // On 45° slope (ny≈0.707): sink ≈ 0.22
-            // On steep slope (ny=0.5): sink ≈ 0.38
-            const slopeFactor = 1.0 - ny;
-            return slopeFactor * 0.75;
-        };
-
-        const findTopSurfaceAtLocalXZ = (localX: number, localZ: number): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
-            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
-            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
-            for (let y = sizeY - 2; y >= 1; y--) {
-                const idx = idx3(ix, y, iz);
-                if (density[idx] > ISO_LEVEL) {
-                    const idxAbove = idx3(ix, y + 1, iz);
-                    // Ensure we are at a solid->air boundary (actual exposed surface),
-                    // otherwise we can "hit" interior solids under overhangs and place items inside rock.
-                    if (density[idxAbove] > ISO_LEVEL) continue;
-                    const dSolid = density[idx];
-                    const dAir = density[idxAbove];
-                    const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                    const n = normalAt(ix, y, iz);
-                    // Apply slope-aware sink to match Surface Nets mesh positioning
-                    const sink = slopeSinkFactor(n[1]);
-                    const worldY = (y - PAD + t) + MESH_Y_OFFSET - sink;
-                    const matBelow = material[idx] ?? MaterialType.DIRT;
-                    return { worldY, normal: n, matBelow };
-                }
-            }
-            return null;
-        };
-
-        const findGroundNear = (
-            localX: number,
-            localZ: number,
-            centerYIndex: number,
-            searchRange: number,
-            requireHeadroomCells: number
-        ): { worldY: number; normal: [number, number, number]; matBelow: number } | null => {
-            const ix = clampi(Math.floor(localX) + PAD, 0, sizeX - 1);
-            const iz = clampi(Math.floor(localZ) + PAD, 0, sizeZ - 1);
-            const startY = clampi(centerYIndex + searchRange, 2, sizeY - 3);
-            const endY = clampi(centerYIndex - searchRange, 1, sizeY - 4);
-
-            for (let fy = startY; fy >= endY; fy--) {
-                const idxAir = idx3(ix, fy, iz);
-                const idxBelow = idx3(ix, fy - 1, iz);
-                if (density[idxAir] > ISO_LEVEL) continue;
-                if (density[idxBelow] <= ISO_LEVEL) continue;
-
-                let headroomOk = true;
-                for (let k = 0; k < requireHeadroomCells; k++) {
-                    const iy = fy + k;
-                    if (iy >= sizeY) { headroomOk = false; break; }
-                    const idxHr = idx3(ix, iy, iz);
-                    if (density[idxHr] > ISO_LEVEL) { headroomOk = false; break; }
-                }
-                if (!headroomOk) continue;
-
-                const dAir = density[idxAir];
-                const dSolid = density[idxBelow];
-                const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
-                const n = normalAt(ix, fy - 1, iz);
-                // Apply slope-aware sink to match Surface Nets mesh positioning
-                const sink = slopeSinkFactor(n[1]);
-                const worldY = (fy - PAD - 1 + t) + MESH_Y_OFFSET - sink;
-                const matBelow = material[idxBelow] ?? MaterialType.DIRT;
-                return { worldY, normal: n, matBelow };
-            }
-
-            return null;
         };
 
         const isRockyMaterial = (m: number): boolean => (
@@ -1020,6 +1087,10 @@ export class TerrainService {
             const top = findTopSurfaceAtLocalXZ(lx, lz);
             if (!top) continue;
             if (top.worldY <= WATER_LEVEL + 0.15) continue;
+
+            // Sacred Grove Check: No ground items in barren zones
+            const rockSacredGroveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
+            if (rockSacredGroveInfo.inGrove) continue;
 
             const matBelow = top.matBelow;
 
