@@ -44,94 +44,6 @@ const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.l
 const clampSampleCoord = (v: number, max: number) => Math.min(Math.max(v, 1), max - 2);
 const MIN_NORMAL_LEN_SQ = 0.0001;
 
-/**
- * Minimum triangle area threshold for degenerate filtering.
- * Triangles with area below this are removed to prevent visual artifacts
- * from sliver triangles on steep slopes and cave openings.
- */
-const MIN_TRIANGLE_AREA_SQ = 0.001; // Area² threshold - increased to catch more slivers
-
-/**
- * Maximum aspect ratio for triangles before they're considered degenerate.
- * Aspect ratio = longest edge / shortest altitude.
- * High aspect ratios indicate thin "sliver" triangles that cause shading artifacts.
- */
-const MAX_TRIANGLE_ASPECT_RATIO = 8.0;
-
-/**
- * Filters out degenerate (sliver) triangles that can cause visual artifacts.
- * These occur on steep slopes and cave openings where Surface Nets creates
- * nearly-coplanar quads that split into thin triangles.
- *
- * Checks both:
- * 1. Minimum area - removes very small triangles
- * 2. Aspect ratio - removes thin slivers even if they have decent area
- *
- * Returns a new index array with degenerate triangles removed, plus a mapping
- * from old vertex indices to new (compacted) indices for attribute remapping.
- */
-function filterDegenerateTriangles(
-  positions: number[],
-  indices: number[]
-): { filteredIndices: number[]; usedVertices: Set<number> } {
-  const filtered: number[] = [];
-  const usedVertices = new Set<number>();
-
-  for (let i = 0; i < indices.length; i += 3) {
-    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
-
-    // Get vertex positions
-    const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
-    const bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2];
-    const cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2];
-
-    // Edge vectors
-    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
-    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
-    const e3x = cx - bx, e3y = cy - by, e3z = cz - bz;
-
-    // Edge lengths squared
-    const len1Sq = e1x * e1x + e1y * e1y + e1z * e1z;
-    const len2Sq = e2x * e2x + e2y * e2y + e2z * e2z;
-    const len3Sq = e3x * e3x + e3y * e3y + e3z * e3z;
-
-    // Cross product = 2× triangle area vector
-    const crossX = e1y * e2z - e1z * e2y;
-    const crossY = e1z * e2x - e1x * e2z;
-    const crossZ = e1x * e2y - e1y * e2x;
-
-    // Area² = |cross|² / 4
-    const crossLenSq = crossX * crossX + crossY * crossY + crossZ * crossZ;
-    const areaSq4 = crossLenSq;
-
-    // Check 1: Minimum area
-    if (areaSq4 < MIN_TRIANGLE_AREA_SQ * 4) {
-      continue; // Too small
-    }
-
-    // Check 2: Aspect ratio (longest edge² / (4 * area² / longest edge²) = longest edge⁴ / (4 * area²))
-    // Simplified: aspect ratio ≈ longestEdge² * longestEdge² / crossLenSq
-    // We want: longestEdge / shortestAltitude < MAX_ASPECT_RATIO
-    // shortestAltitude = 2 * area / longestEdge = |cross| / longestEdge
-    // aspect = longestEdge / (|cross| / longestEdge) = longestEdge² / |cross|
-    const longestEdgeSq = Math.max(len1Sq, len2Sq, len3Sq);
-    const crossLen = Math.sqrt(crossLenSq);
-
-    if (crossLen > 0.0001) {
-      const aspectRatio = longestEdgeSq / crossLen; // longestEdge² / (2 * area)
-      if (aspectRatio > MAX_TRIANGLE_ASPECT_RATIO * MAX_TRIANGLE_ASPECT_RATIO) {
-        continue; // Too thin/elongated
-      }
-    }
-
-    filtered.push(i0, i1, i2);
-    usedVertices.add(i0);
-    usedVertices.add(i1);
-    usedVertices.add(i2);
-  }
-
-  return { filteredIndices: filtered, usedVertices };
-}
 
 /**
  * Computes smoothed normals using area-weighted face normal averaging.
@@ -654,16 +566,49 @@ export function generateMesh(
       const p2x = tVerts[c2 * 3], p2y = tVerts[c2 * 3 + 1], p2z = tVerts[c2 * 3 + 2];
       const p3x = tVerts[c3 * 3], p3y = tVerts[c3 * 3 + 1], p3z = tVerts[c3 * 3 + 2];
 
-      // Diagonal c0-c3 length squared
-      const d03x = p3x - p0x, d03y = p3y - p0y, d03z = p3z - p0z;
-      const diag03Sq = d03x * d03x + d03y * d03y + d03z * d03z;
+      // Choose diagonal split that minimizes the angle between resulting triangle normals.
+      // This produces more consistent shading on non-planar quads (saddle shapes at cave openings).
+      //
+      // Quad layout:  c0 --- c1
+      //                |     |
+      //               c2 --- c3
 
-      // Diagonal c1-c2 length squared
-      const d12x = p2x - p1x, d12y = p2y - p1y, d12z = p2z - p1z;
-      const diag12Sq = d12x * d12x + d12y * d12y + d12z * d12z;
+      // Option A: Split along c0-c3 diagonal -> triangles (c0,c1,c3) and (c0,c3,c2)
+      // Triangle A1 normal: (c1-c0) × (c3-c0)
+      const a1e1x = p1x - p0x, a1e1y = p1y - p0y, a1e1z = p1z - p0z;
+      const a1e2x = p3x - p0x, a1e2y = p3y - p0y, a1e2z = p3z - p0z;
+      const a1nx = a1e1y * a1e2z - a1e1z * a1e2y;
+      const a1ny = a1e1z * a1e2x - a1e1x * a1e2z;
+      const a1nz = a1e1x * a1e2y - a1e1y * a1e2x;
 
-      // Choose shorter diagonal for split
-      if (diag03Sq < diag12Sq) {
+      // Triangle A2 normal: (c3-c0) × (c2-c0)
+      const a2e1x = p3x - p0x, a2e1y = p3y - p0y, a2e1z = p3z - p0z;
+      const a2e2x = p2x - p0x, a2e2y = p2y - p0y, a2e2z = p2z - p0z;
+      const a2nx = a2e1y * a2e2z - a2e1z * a2e2y;
+      const a2ny = a2e1z * a2e2x - a2e1x * a2e2z;
+      const a2nz = a2e1x * a2e2y - a2e1y * a2e2x;
+
+      // Option B: Split along c1-c2 diagonal -> triangles (c0,c1,c2) and (c2,c1,c3)
+      // Triangle B1 normal: (c1-c0) × (c2-c0)
+      const b1e1x = p1x - p0x, b1e1y = p1y - p0y, b1e1z = p1z - p0z;
+      const b1e2x = p2x - p0x, b1e2y = p2y - p0y, b1e2z = p2z - p0z;
+      const b1nx = b1e1y * b1e2z - b1e1z * b1e2y;
+      const b1ny = b1e1z * b1e2x - b1e1x * b1e2z;
+      const b1nz = b1e1x * b1e2y - b1e1y * b1e2x;
+
+      // Triangle B2 normal: (c1-c2) × (c3-c2)
+      const b2e1x = p1x - p2x, b2e1y = p1y - p2y, b2e1z = p1z - p2z;
+      const b2e2x = p3x - p2x, b2e2y = p3y - p2y, b2e2z = p3z - p2z;
+      const b2nx = b2e1y * b2e2z - b2e1z * b2e2y;
+      const b2ny = b2e1z * b2e2x - b2e1x * b2e2z;
+      const b2nz = b2e1x * b2e2y - b2e1y * b2e2x;
+
+      // Dot products of normals (higher = more aligned = flatter split)
+      const dotA = a1nx * a2nx + a1ny * a2ny + a1nz * a2nz;
+      const dotB = b1nx * b2nx + b1ny * b2ny + b1nz * b2nz;
+
+      // Choose the split where triangles are more coplanar (higher dot product)
+      if (dotA > dotB) {
         // Split along c0-c3 diagonal
         if (!flipped) {
           tInds.push(c0, c1, c3, c0, c3, c2);
@@ -671,7 +616,7 @@ export function generateMesh(
           tInds.push(c3, c1, c0, c2, c3, c0);
         }
       } else {
-        // Split along c1-c2 diagonal (original behavior)
+        // Split along c1-c2 diagonal
         if (!flipped) {
           tInds.push(c0, c1, c2, c2, c1, c3);
         } else {
@@ -706,21 +651,20 @@ export function generateMesh(
     }
   }
 
-  // === Post-processing: Filter degenerate triangles and smooth normals ===
+  // === Post-processing: Smooth normals ===
+  // NOTE: Vertex welding and degenerate triangle filtering have been removed
+  // as they caused issues with chunk boundaries. The cave size filtering in
+  // terrainService.ts is the proper fix for mesh artifacts at cave openings.
 
-  // Step 1: Filter out degenerate (sliver) triangles
-  const { filteredIndices } = filterDegenerateTriangles(tVerts, tInds);
-
-  // Step 2: Compute area-weighted smoothed normals using filtered triangles
-  // This improves shading on steep slopes and cave openings
-  const smoothedNormals = computeAreaWeightedNormals(tVerts, filteredIndices, tNorms);
+  // Compute area-weighted smoothed normals to improve shading on steep slopes
+  const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms);
 
   const water = generateWaterSurfaceMesh(density, material);
   const collider = generateColliderData(density);
 
   return {
     positions: new Float32Array(tVerts),
-    indices: new Uint32Array(filteredIndices),
+    indices: new Uint32Array(tInds),
     normals: new Float32Array(smoothedNormals),
     matWeightsA: new Float32Array(tWa),
     matWeightsB: new Float32Array(tWb),

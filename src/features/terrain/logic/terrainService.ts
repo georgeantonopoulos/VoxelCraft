@@ -260,7 +260,17 @@ export class TerrainService {
                         }
 
                         // SDF BLENDING:
-                        if (d > crustThickness) {
+                        // Only allow caves to affect the density if we're below the crust threshold.
+                        // For surface breaches (thin crust), also require the cave to be large enough
+                        // to create a player-sized opening. This prevents tiny "pinhole" cave openings
+                        // that cause mesh artifacts and look unnatural.
+                        const MIN_SURFACE_CAVE_SIZE = -12; // Cave SDF must be this negative (~1.2 voxels into cave)
+                        const isBelowCrust = d > crustThickness;
+                        const isLargeCave = caveMod < MIN_SURFACE_CAVE_SIZE;
+                        const isNearSurface = d < 3.0; // Within 3 voxels of surface
+
+                        // Apply cave if: below crust AND (either deep enough OR cave is large)
+                        if (isBelowCrust && (!isNearSurface || isLargeCave)) {
                             d = Math.min(d, caveMod);
                         }
 
