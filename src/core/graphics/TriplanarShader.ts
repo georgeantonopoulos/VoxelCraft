@@ -31,70 +31,129 @@ export const triplanarVertexShader = `
     return v / len;
   }
 
+  // === PHASE 2: Optimized procedural noise for vertex normals ===
+  // Single hash - extremely cheap
+  float hash31(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+  }
+
+  // Cheap pseudo-random based on position (no loops, no texture lookups)
+  float cheapNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f); // Smoothstep
+    // Just 4 hash samples instead of 8 - interpolate XZ, use Y directly
+    float a = hash31(i);
+    float b = hash31(i + vec3(1.0, 0.0, 0.0));
+    float c = hash31(i + vec3(0.0, 0.0, 1.0));
+    float d = hash31(i + vec3(1.0, 0.0, 1.0));
+    float xz = mix(mix(a, b, f.x), mix(c, d, f.x), f.z);
+    // Blend with Y-offset sample for 3D variation
+    float yOff = hash31(i + vec3(0.0, 1.0, 0.0));
+    return mix(xz, yOff, f.y * 0.5);
+  }
+
   vec3 applyDominantNormal(vec3 n, vec3 worldPos, float channel, float weight) {
     vec3 nn = normalize(n);
     vec2 wind = safeNormalize2(uWindDirXZ);
     float w = clamp(weight, 0.0, 1.0);
-    // Base strength boost to ensure visibility
     float base = uNormalStrength * (0.6 + 0.4 * w);
 
-    // --- 1. SAND & RED SAND (Ripples) ---
-    // Keep existing wind-aligned ripples as they are static logic-wise
+    // Slope factors
+    float flatness = clamp(nn.y, 0.0, 1.0);
+    float steepness = 1.0 - flatness;
+    float flatnessPow = flatness * flatness;
+
+    // --- 1. SAND & RED SAND (Wind Ripples) ---
     if (channel == 5.0 || channel == 10.0) {
-      float flatness = pow(clamp(nn.y, 0.0, 1.0), 2.4);
-      float freq = 2.8;
-      float warp = sin(worldPos.x * 0.06 + worldPos.z * 0.05) * 0.55;
-      float phase = dot(worldPos.xz, wind) * freq + warp;
-      float c = cos(phase);
+      // Simple ripples with cheap warp
+      float warp = cheapNoise(worldPos * 0.08) * 1.5;
+      float phase = dot(worldPos.xz, wind) * 3.2 + warp;
+      float ripple = sin(phase) * 0.7 + sin(phase * 2.0 + 0.5) * 0.3;
+
+      // Cross-ripples (pure sine, no noise)
+      vec2 crossWind = vec2(-wind.y, wind.x);
+      float crossRipple = sin(dot(worldPos.xz, crossWind) * 5.0) * 0.15;
+
       vec3 g = vec3(wind.x, 0.0, wind.y);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (c * base * flatness * 0.4));
+      nn = normalize(nn + g * ((ripple + crossRipple) * base * flatnessPow * 0.35));
     }
+
     // --- 2. ROCK, BEDROCK, OBSIDIAN (Stratified Layers) ---
-    // Sharp horizontal ridges to simulate sedimentary rock layers.
     else if (channel == 2.0 || channel == 1.0 || channel == 15.0 || channel == 9.0) {
-      float freq = 3.5;
-      float warp = sin(worldPos.x * 0.15 + worldPos.z * 0.1) * 0.8;
-      float phase = worldPos.y * freq + warp;
-      float folded = abs(mod(phase, 2.0) - 1.0); // Triangle wave
-      float ridge = smoothstep(0.3, 0.7, folded); // Contrast boost
-      vec3 g = vec3(0.0, 1.0, 0.0);
-      g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * ((ridge - 0.5) * base * 0.7)); // Strong bump
+      // Simple strata with cheap warp
+      float strataWarp = cheapNoise(worldPos * 0.12) * 1.5;
+      float strataPhase = worldPos.y * 2.8 + strataWarp;
+      float strata = abs(mod(strataPhase, 2.0) - 1.0);
+      strata = smoothstep(0.25, 0.75, strata);
+
+      // Simple weathering (single noise sample)
+      float weathering = cheapNoise(worldPos * 0.4) * 2.0 - 1.0;
+
+      float strataContrib = (strata - 0.5) * steepness * 0.6;
+      float weatherContrib = weathering * 0.2;
+
+      vec3 strataDir = vec3(0.0, 1.0, 0.0);
+      strataDir = strataDir - nn * dot(strataDir, nn);
+
+      // Simplified weathering direction (derived from position, no extra noise)
+      vec3 weatherDir = normalize(vec3(sin(worldPos.x * 0.3), 0.0, cos(worldPos.z * 0.3)));
+      weatherDir = weatherDir - nn * dot(weatherDir, nn);
+
+      nn = normalize(nn + strataDir * strataContrib * base + weatherDir * weatherContrib * base);
     }
-    // --- 3. DIRT, CLAY, TERRACOTTA (Lumpy Noise) ---
+
+    // --- 3. DIRT, CLAY, TERRACOTTA (Clumpy) ---
     else if (channel == 3.0 || channel == 7.0 || channel == 11.0) {
-      float f = 3.5;
-      float n = sin(worldPos.x * f) * sin(worldPos.z * f); // Grid bumps
-      float n2 = sin(worldPos.x * f * 2.0 + worldPos.z) * 0.5; // Detail
-      float bump = n + n2;
-      vec3 g = vec3(1.0, 0.0, 1.0); // Diagonal displacement
+      // Single noise sample for clumps
+      float clumps = cheapNoise(worldPos * 0.6) * 2.0 - 1.0;
+
+      // Direction derived from position (no extra noise calls)
+      vec3 g = normalize(vec3(
+        sin(worldPos.x * 0.7 + 50.0),
+        sin(worldPos.y * 0.7 + 25.0) * 0.5,
+        cos(worldPos.z * 0.7 + 50.0)
+      ));
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (bump * base * 0.4));
+      nn = normalize(nn + g * (clumps * base * 0.25));
     }
-    // --- 4. GRASS & JUNGLE GRASS (Mown/Directional Ridges) ---
-    // STATIC now - removed time animation. 
-    // Uses parallel ridges to simulate mowed grass or directional growth.
+
+    // --- 4. GRASS & JUNGLE GRASS (Gentle swells) ---
     else if (channel == 4.0 || channel == 13.0) {
-      float freq = 2.0;
-      // Fixed phase based on world position only
-      float phase = (worldPos.x + worldPos.z * 0.5) * freq; 
-      float ridge = sin(phase);
-      // Sharpen tops
-      ridge = sign(ridge) * pow(abs(ridge), 0.6);
-      
-      vec3 g = vec3(1.0, 0.0, 0.5); // Fixed direction
+      // Single low-freq noise + sine wave
+      float swell = cheapNoise(worldPos * 0.15) * 2.0 - 1.0;
+      float bladeHint = sin(worldPos.x * 1.5 + worldPos.z * 0.8) * 0.3;
+      float combined = swell * 0.7 + bladeHint * 0.3;
+
+      vec3 g = vec3(1.0, 0.0, 0.5);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (ridge * base * 0.5)); // Strong visible ridges
+      nn = normalize(nn + g * (combined * base * flatnessPow * 0.15));
     }
-    // --- 5. SNOW & ICE (Drifts) ---
-    else if (channel == 6.0 || channel == 12.0) {
-      float freq = 0.5;
-      float drift = sin(worldPos.x * freq + sin(worldPos.z * freq));
-      vec3 g = vec3(1.0, 0.0, 1.0);
+
+    // --- 5. SNOW (Soft Drifts) ---
+    else if (channel == 6.0) {
+      // Single low-freq noise for drift shape
+      float drift = cheapNoise(worldPos * 0.08);
+      float windDrift = sin(dot(worldPos.xz, wind) * 0.3 + drift * 4.0);
+
+      vec3 g = vec3(wind.x * 0.5, 0.0, wind.y * 0.5 + 0.5);
       g = g - nn * dot(g, nn);
-      nn = normalize(nn + g * (drift * base * 0.4));
+      nn = normalize(nn + g * ((drift + windDrift) * 0.5 * base * 0.2));
     }
+
+    // --- 6. ICE (Subtle variation) ---
+    else if (channel == 12.0) {
+      // Single noise sample
+      float surface = cheapNoise(worldPos * 0.3) * 2.0 - 1.0;
+
+      vec3 g = normalize(vec3(sin(worldPos.x * 0.8), 0.0, cos(worldPos.z * 0.8)));
+      g = g - nn * dot(g, nn);
+      nn = normalize(nn + g * (surface * base * 0.1));
+    }
+
     return nn;
   }
 
@@ -188,6 +247,10 @@ export const triplanarFragmentShader = `
   uniform float uBiomeFogAerial;      // Aerial perspective strength
   uniform float uBiomeFogEnabled;     // Toggle for biome fog effects
 
+  // Fragment normal perturbation (Phase 1 AAA improvement)
+  uniform float uFragmentNormalStrength; // 0.0 = off, 0.3-0.5 = subtle, 1.0 = strong
+  uniform float uFragmentNormalScale;    // Base frequency (0.2-0.5 typical)
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -217,6 +280,48 @@ export const triplanarFragmentShader = `
       vec4 yN = texture(uNoiseTexture, p.xzy + vec3(100.0));
       vec4 zN = texture(uNoiseTexture, p.xyz + vec3(200.0));
       return xN * blend.x + yN * blend.y + zN * blend.z;
+  }
+
+  // === PHASE 1: Fragment-level normal perturbation from 3D noise ===
+  // This creates micro-detail that the vertex shader can't provide.
+  // Uses central differences on 3D noise for proper tangent-space normals.
+  vec3 getNoiseNormal(vec3 worldPos, vec3 geometryNormal, float scale, float strength) {
+      float eps = 0.15; // Sample offset - tuned for noise texture resolution
+      vec3 p = worldPos * scale;
+
+      // Sample noise at offset positions for gradient calculation
+      float cx = texture(uNoiseTexture, p + vec3(eps, 0.0, 0.0)).r
+               - texture(uNoiseTexture, p - vec3(eps, 0.0, 0.0)).r;
+      float cy = texture(uNoiseTexture, p + vec3(0.0, eps, 0.0)).r
+               - texture(uNoiseTexture, p - vec3(0.0, eps, 0.0)).r;
+      float cz = texture(uNoiseTexture, p + vec3(0.0, 0.0, eps)).r
+               - texture(uNoiseTexture, p - vec3(0.0, 0.0, eps)).r;
+
+      // Gradient vector (points "uphill" in noise field)
+      vec3 grad = vec3(cx, cy, cz);
+
+      // Project gradient onto tangent plane (perpendicular to geometry normal)
+      vec3 tangentGrad = grad - geometryNormal * dot(grad, geometryNormal);
+
+      // Perturb the normal
+      return normalize(geometryNormal - tangentGrad * strength);
+  }
+
+  // Multi-octave noise normal for richer detail
+  // Combines large bumps with fine detail - key for AAA look
+  vec3 getMultiOctaveNoiseNormal(vec3 worldPos, vec3 geometryNormal, float baseScale, float strength, int octaves) {
+      vec3 perturbedNormal = geometryNormal;
+      float scale = baseScale;
+      float amp = strength;
+
+      for (int i = 0; i < 3; i++) { // Max 3 octaves for performance
+          if (i >= octaves) break;
+          perturbedNormal = getNoiseNormal(worldPos, perturbedNormal, scale, amp);
+          scale *= 2.1; // Lacunarity
+          amp *= 0.45;  // Persistence - each octave contributes less
+      }
+
+      return perturbedNormal;
   }
 
   vec2 safeNormalize2(vec2 v) {
@@ -319,6 +424,19 @@ export const triplanarFragmentShader = `
     float distSq = dot(vWorldPosition - cameraPosition, vWorldPosition - cameraPosition);
     bool lowDetail = distSq > 1024.0; // Beyond 32 units (1 chunk)
 
+    // === PHASE 1: Fragment-level normal perturbation (OPTIMIZED) ===
+    // Single octave only, tighter distance cutoff for performance.
+    // Only apply very close to camera (within 12 units / 144 distSq)
+    if (uFragmentNormalStrength > 0.01 && distSq < 144.0) {
+        float distFade = 1.0 - smoothstep(64.0, 144.0, distSq); // Fade 8-12 units
+        float effectiveStrength = uFragmentNormalStrength * distFade;
+
+        if (effectiveStrength > 0.02) {
+            // Single octave only - much cheaper
+            N = getNoiseNormal(vWorldPosition, N, uFragmentNormalScale, effectiveStrength);
+        }
+    }
+
     vec4 nMid = getTriplanarNoise(N, 0.15);
     float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
     vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
@@ -379,25 +497,129 @@ export const triplanarFragmentShader = `
     }
     if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, vWetness * 0.9);
     col *= (1.0 + macro * 0.06); accRoughness += macro * 0.05;
+    // === PHASE 3: Material-specific contextual rules ===
+    // Slope and height-aware color/texture variation for AAA quality
     int dom = int(floor(vDominantChannel + 0.5));
     vec2 wind = safeNormalize2(uWindDirXZ);
+    float slope = 1.0 - N.y; // 0 = flat, 1 = vertical
+    float slopePow = pow(slope, 1.5); // Emphasize steep areas
+    float heightNorm = clamp(vWorldPosition.y / 80.0, 0.0, 1.0); // Normalize height (0-80)
+
+    // --- SAND & RED_SAND: Slope-aware ripples + grain variation ---
     if (dom == 5 || dom == 10) {
+      // Ripples fade on slopes (sand slides down)
+      float rippleStrength = 1.0 - smoothstep(0.2, 0.6, slope);
       float rip = sin(dot(vWorldPosition.xz, wind) * 2.8 + (nMacro.g * 2.0 - 1.0) * 0.6);
+      // Grain color variation - not just brightness, add warmth in troughs
+      vec3 warmShift = vec3(1.02, 0.98, 0.94); // Slightly warmer
+      vec3 coolShift = vec3(0.98, 1.0, 1.02);  // Slightly cooler
+      col *= mix(warmShift, coolShift, rip * 0.5 + 0.5);
+      col *= 1.0 + rip * 0.04 * rippleStrength;
+      // Mottling - dark mineral grains
       float mott = (nMid.g * 2.0 - 1.0);
-      col *= 1.0 + (rip * 0.03 + mott * 0.02); accRoughness = mix(accRoughness, 0.92, 0.35);
-    } else if (dom == 2 || dom == 1 || dom == 15) {
+      col *= 1.0 + mott * 0.025;
+      accRoughness = mix(accRoughness, 0.92, 0.35);
+    }
+
+    // --- ROCK, BEDROCK, OBSIDIAN: Weathered surfaces + lichen hints ---
+    else if (dom == 2 || dom == 1 || dom == 15 || dom == 9) {
+      // Strata bands - stronger on cliffs
       float bands = sin(vWorldPosition.y * 1.4 + (nMacro.b * 2.0 - 1.0) * 1.2);
+      float bandStrength = slopePow * 0.04; // Only visible on steep faces
+
+      // Weathering - exposed faces lighter, overhangs darker
+      float exposure = smoothstep(-0.3, 0.3, N.y); // 0 = overhang, 1 = exposed
+      vec3 weatherShift = mix(vec3(0.85, 0.87, 0.9), vec3(1.05, 1.03, 1.0), exposure);
+      col *= weatherShift;
+
+      // Cracks - darker lines
       float cracks = pow(1.0 - abs(nHigh.g * 2.0 - 1.0), 3.5);
-      col *= 1.0 + bands * 0.02; col *= 1.0 - cracks * 0.08; accRoughness += cracks * 0.08;
-    } else if (dom == 3 || dom == 7 || dom == 11) {
+      col *= 1.0 - cracks * 0.1;
+      col *= 1.0 + bands * bandStrength;
+
+      // Height-based weathering: higher = more oxidized (slightly warmer)
+      vec3 oxidation = mix(vec3(1.0), vec3(1.02, 0.99, 0.97), heightNorm * 0.5);
+      col *= oxidation;
+
+      accRoughness += cracks * 0.08 + slopePow * 0.05;
+    }
+
+    // --- DIRT, CLAY, TERRACOTTA: Organic clumping + moisture hints ---
+    else if (dom == 3 || dom == 7 || dom == 11) {
       float clump = (nHigh.r * 2.0 - 1.0);
-      col *= 1.0 + clump * 0.03; col *= 1.0 - smoothstep(0.2, 0.9, abs(clump)) * 0.06; accRoughness = mix(accRoughness, 0.95, 0.15);
-    } else if (dom == 6) {
-      col = mix(col, col * vec3(0.92, 0.96, 1.04), 0.22); accRoughness = mix(accRoughness, 0.98, 0.45);
-    } else if (dom == 12) {
-      col = mix(col, col * vec3(0.92, 0.98, 1.06), 0.18); accRoughness = mix(accRoughness, 0.12, 0.35);
-    } else if (dom == 14) col *= 1.0 + (nMacro.a * 2.0 - 1.0) * 0.03;
-    else if (dom == 4 || dom == 13) col *= 1.0 + (nMacro.g * 2.0 - 1.0) * 0.03;
+      // Darker in clump shadows
+      col *= 1.0 + clump * 0.035;
+      col *= 1.0 - smoothstep(0.2, 0.9, abs(clump)) * 0.07;
+
+      // Moisture hints in sheltered areas (slight color shift)
+      float shelter = 1.0 - N.y; // Overhangs more sheltered
+      vec3 moistShift = mix(vec3(1.0), vec3(0.95, 0.93, 0.9), shelter * 0.3);
+      col *= moistShift;
+
+      // Terracotta (11) gets iron oxide variation
+      if (dom == 11) {
+        float oxide = nMacro.r * 0.15;
+        col *= vec3(1.0 + oxide, 1.0 - oxide * 0.5, 1.0 - oxide);
+      }
+
+      accRoughness = mix(accRoughness, 0.95, 0.15);
+    }
+
+    // --- SNOW: Blue shadows + wind-packed variation ---
+    else if (dom == 6) {
+      // Blue tint in shadows (sky reflection)
+      float shadowFactor = 1.0 - clamp(dot(N, uSunDirection), 0.0, 1.0);
+      vec3 shadowTint = mix(vec3(1.0), vec3(0.9, 0.95, 1.08), shadowFactor * 0.4);
+      col *= shadowTint;
+
+      // Wind-packed areas slightly grayer
+      float packed = nMacro.g;
+      col = mix(col, col * vec3(0.95, 0.96, 0.97), packed * 0.25);
+
+      // Sparkle highlights on sun-facing surfaces
+      float sparkle = pow(max(0.0, dot(N, uSunDirection)), 8.0) * nHigh.r;
+      col += vec3(sparkle * 0.15);
+
+      accRoughness = mix(accRoughness, 0.98, 0.45);
+    }
+
+    // --- ICE: Depth color + fresnel hints ---
+    else if (dom == 12) {
+      // Deeper blue where thicker (approximated by cavity/overhang)
+      float depth = vCavity * 0.5 + (1.0 - N.y) * 0.3;
+      vec3 depthTint = mix(vec3(1.0), vec3(0.85, 0.92, 1.1), depth);
+      col *= depthTint;
+
+      // Subtle green-blue shift variation
+      float variation = nMid.b * 0.1;
+      col *= vec3(1.0 - variation * 0.5, 1.0, 1.0 + variation);
+
+      accRoughness = mix(accRoughness, 0.12, 0.35);
+    }
+
+    // --- GLOWSTONE: Pulsing variation ---
+    else if (dom == 14) {
+      float pulse = nMacro.a * 2.0 - 1.0;
+      col *= 1.0 + pulse * 0.04;
+    }
+
+    // --- GRASS & JUNGLE GRASS: Healthy/stressed variation ---
+    else if (dom == 4 || dom == 13) {
+      // Macro color variation - patches of different health
+      float health = nMacro.g;
+      // Healthy = greener, stressed = more yellow-brown
+      vec3 healthyShift = vec3(0.95, 1.05, 0.92);
+      vec3 stressedShift = vec3(1.05, 1.0, 0.88);
+      col *= mix(stressedShift, healthyShift, health);
+
+      // Slight darkening on slopes (self-shadowing)
+      col *= 1.0 - slopePow * 0.08;
+
+      // Jungle grass (13) is darker and more saturated
+      if (dom == 13) {
+        col *= vec3(0.92, 0.98, 0.88);
+      }
+    }
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
 

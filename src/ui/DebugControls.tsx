@@ -56,6 +56,9 @@ export const DebugControls: React.FC<{
     setSunOrbitRadius: (v: number) => void;
     setSunOrbitSpeed: (v: number) => void;
     setSunTimeOffset: (v: number) => void;
+    // Fragment Normal Perturbation (AAA terrain quality)
+    setFragmentNormalStrength: (v: number) => void;
+    setFragmentNormalScale: (v: number) => void;
     // STATE VALUES PROPS (needed for export)
     values: any;
 }> = (props) => {
@@ -129,6 +132,10 @@ export const DebugControls: React.FC<{
                     terrainWetness: { value: true, onChange: (v) => props.setTerrainWetnessEnabled(!!v), label: 'Wetness' },
                     terrainMoss: { value: true, onChange: (v) => props.setTerrainMossEnabled(!!v), label: 'Moss' },
                     terrainRoughnessMin: { value: 0.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTerrainRoughnessMin, label: 'Roughness Min' },
+                    'Surface Detail': folder({
+                        fragNormalStr: { value: 0.4, min: 0.0, max: 1.0, step: 0.05, onChange: props.setFragmentNormalStrength, label: 'Normal Strength' },
+                        fragNormalScale: { value: 0.35, min: 0.1, max: 1.0, step: 0.05, onChange: props.setFragmentNormalScale, label: 'Normal Scale' },
+                    }, { collapsed: true }),
                 }),
                 Rendering: folder({
                     chunkTint: { value: false, onChange: (v) => props.setTerrainChunkTintEnabled(!!v), label: 'Chunk Tint' },

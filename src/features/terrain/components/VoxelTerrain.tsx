@@ -344,6 +344,9 @@ interface VoxelTerrainProps {
   fogNear?: number;
   fogFar?: number;
   biomeFogEnabled?: boolean;
+  // Fragment normal perturbation (AAA terrain quality)
+  fragmentNormalStrength?: number;
+  fragmentNormalScale?: number;
   // Material properties (passed to ChunkMesh → TriplanarMaterial)
   terrainThreeFogEnabled?: boolean;
   terrainPolygonOffsetEnabled?: boolean;
@@ -423,7 +426,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   heightFogOffset = 4.0,
   fogNear = 23,
   fogFar = 85,
-  biomeFogEnabled = true
+  biomeFogEnabled = true,
+  fragmentNormalStrength = 0.4,
+  fragmentNormalScale = 0.35
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;
@@ -1645,6 +1650,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       biomeFogHeightMul: biomeFogState.current.heightMul,
       biomeFogTint: biomeFogTintVec.current,
       biomeFogAerial: biomeFogState.current.aerial,
+      // Fragment normal perturbation (AAA terrain quality)
+      fragmentNormalStrength,
+      fragmentNormalScale,
     });
     frameProfiler.end('terrain-uniforms');
 

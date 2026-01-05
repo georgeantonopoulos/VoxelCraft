@@ -34,6 +34,10 @@ export const sharedUniforms = {
     uBiomeFogTint: { value: new THREE.Vector3(0, 0, 0) },  // RGB tint offset
     uBiomeFogAerial: { value: 0.45 },         // Aerial perspective strength
     uBiomeFogEnabled: { value: 1.0 },         // Toggle for biome fog effects
+
+    // Fragment normal perturbation (Phase 1 AAA terrain improvement)
+    uFragmentNormalStrength: { value: 0.4 },  // 0.0=off, 0.3-0.5=subtle, 1.0=strong
+    uFragmentNormalScale: { value: 0.35 },    // Base frequency (0.2-0.5 typical)
 };
 
 export interface SharedUniformUpdateParams {
@@ -58,6 +62,9 @@ export interface SharedUniformUpdateParams {
     biomeFogTint?: THREE.Vector3;
     biomeFogAerial?: number;
     biomeFogEnabled?: boolean;
+    // Fragment normal perturbation
+    fragmentNormalStrength?: number;
+    fragmentNormalScale?: number;
 }
 
 /**
@@ -92,4 +99,8 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
     if (params.biomeFogTint) sharedUniforms.uBiomeFogTint.value.copy(params.biomeFogTint);
     if (params.biomeFogAerial !== undefined) sharedUniforms.uBiomeFogAerial.value = params.biomeFogAerial;
     if (params.biomeFogEnabled !== undefined) sharedUniforms.uBiomeFogEnabled.value = params.biomeFogEnabled ? 1.0 : 0.0;
+
+    // Fragment normal perturbation
+    if (params.fragmentNormalStrength !== undefined) sharedUniforms.uFragmentNormalStrength.value = params.fragmentNormalStrength;
+    if (params.fragmentNormalScale !== undefined) sharedUniforms.uFragmentNormalScale.value = params.fragmentNormalScale;
 };
