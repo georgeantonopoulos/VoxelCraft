@@ -49,12 +49,23 @@ const MIN_NORMAL_LEN_SQ = 0.0001;
  * Triangles with area below this are removed to prevent visual artifacts
  * from sliver triangles on steep slopes and cave openings.
  */
-const MIN_TRIANGLE_AREA_SQ = 0.0001; // Area² threshold (0.01² = very small triangles)
+const MIN_TRIANGLE_AREA_SQ = 0.001; // Area² threshold - increased to catch more slivers
+
+/**
+ * Maximum aspect ratio for triangles before they're considered degenerate.
+ * Aspect ratio = longest edge / shortest altitude.
+ * High aspect ratios indicate thin "sliver" triangles that cause shading artifacts.
+ */
+const MAX_TRIANGLE_ASPECT_RATIO = 8.0;
 
 /**
  * Filters out degenerate (sliver) triangles that can cause visual artifacts.
  * These occur on steep slopes and cave openings where Surface Nets creates
  * nearly-coplanar quads that split into thin triangles.
+ *
+ * Checks both:
+ * 1. Minimum area - removes very small triangles
+ * 2. Aspect ratio - removes thin slivers even if they have decent area
  *
  * Returns a new index array with degenerate triangles removed, plus a mapping
  * from old vertex indices to new (compacted) indices for attribute remapping.
@@ -77,21 +88,46 @@ function filterDegenerateTriangles(
     // Edge vectors
     const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
     const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+    const e3x = cx - bx, e3y = cy - by, e3z = cz - bz;
+
+    // Edge lengths squared
+    const len1Sq = e1x * e1x + e1y * e1y + e1z * e1z;
+    const len2Sq = e2x * e2x + e2y * e2y + e2z * e2z;
+    const len3Sq = e3x * e3x + e3y * e3y + e3z * e3z;
 
     // Cross product = 2× triangle area vector
     const crossX = e1y * e2z - e1z * e2y;
     const crossY = e1z * e2x - e1x * e2z;
     const crossZ = e1x * e2y - e1y * e2x;
 
-    // Area² = |cross|² / 4, so we compare |cross|² against 4 * MIN_TRIANGLE_AREA_SQ
-    const areaSq4 = crossX * crossX + crossY * crossY + crossZ * crossZ;
+    // Area² = |cross|² / 4
+    const crossLenSq = crossX * crossX + crossY * crossY + crossZ * crossZ;
+    const areaSq4 = crossLenSq;
 
-    if (areaSq4 >= MIN_TRIANGLE_AREA_SQ * 4) {
-      filtered.push(i0, i1, i2);
-      usedVertices.add(i0);
-      usedVertices.add(i1);
-      usedVertices.add(i2);
+    // Check 1: Minimum area
+    if (areaSq4 < MIN_TRIANGLE_AREA_SQ * 4) {
+      continue; // Too small
     }
+
+    // Check 2: Aspect ratio (longest edge² / (4 * area² / longest edge²) = longest edge⁴ / (4 * area²))
+    // Simplified: aspect ratio ≈ longestEdge² * longestEdge² / crossLenSq
+    // We want: longestEdge / shortestAltitude < MAX_ASPECT_RATIO
+    // shortestAltitude = 2 * area / longestEdge = |cross| / longestEdge
+    // aspect = longestEdge / (|cross| / longestEdge) = longestEdge² / |cross|
+    const longestEdgeSq = Math.max(len1Sq, len2Sq, len3Sq);
+    const crossLen = Math.sqrt(crossLenSq);
+
+    if (crossLen > 0.0001) {
+      const aspectRatio = longestEdgeSq / crossLen; // longestEdge² / (2 * area)
+      if (aspectRatio > MAX_TRIANGLE_ASPECT_RATIO * MAX_TRIANGLE_ASPECT_RATIO) {
+        continue; // Too thin/elongated
+      }
+    }
+
+    filtered.push(i0, i1, i2);
+    usedVertices.add(i0);
+    usedVertices.add(i1);
+    usedVertices.add(i2);
   }
 
   return { filteredIndices: filtered, usedVertices };
@@ -594,11 +630,54 @@ export function generateMesh(
   }
 
   const start = PAD, endX = PAD + CHUNK_SIZE_XZ, endY = PAD + CHUNK_SIZE_Y;
+
+  /**
+   * Push a quad as two triangles, choosing the shorter diagonal for splitting.
+   * This minimizes distortion on non-planar quads (common at cave openings and steep slopes).
+   *
+   * Quad vertices:  c0 --- c1
+   *                  |     |
+   *                 c2 --- c3
+   *
+   * Two possible splits:
+   *   - Diagonal c0-c3: triangles (c0,c1,c3) and (c0,c3,c2)
+   *   - Diagonal c1-c2: triangles (c0,c1,c2) and (c2,c1,c3)
+   *
+   * We measure both diagonals and pick the shorter one to minimize triangle distortion.
+   */
   const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
     const c0 = tVertIdx[i0], c1 = tVertIdx[i1], c2 = tVertIdx[i2], c3 = tVertIdx[i3];
     if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
-      if (!flipped) tInds.push(c0, c1, c2, c2, c1, c3);
-      else tInds.push(c2, c1, c0, c3, c1, c2);
+      // Get vertex positions for diagonal length comparison
+      const p0x = tVerts[c0 * 3], p0y = tVerts[c0 * 3 + 1], p0z = tVerts[c0 * 3 + 2];
+      const p1x = tVerts[c1 * 3], p1y = tVerts[c1 * 3 + 1], p1z = tVerts[c1 * 3 + 2];
+      const p2x = tVerts[c2 * 3], p2y = tVerts[c2 * 3 + 1], p2z = tVerts[c2 * 3 + 2];
+      const p3x = tVerts[c3 * 3], p3y = tVerts[c3 * 3 + 1], p3z = tVerts[c3 * 3 + 2];
+
+      // Diagonal c0-c3 length squared
+      const d03x = p3x - p0x, d03y = p3y - p0y, d03z = p3z - p0z;
+      const diag03Sq = d03x * d03x + d03y * d03y + d03z * d03z;
+
+      // Diagonal c1-c2 length squared
+      const d12x = p2x - p1x, d12y = p2y - p1y, d12z = p2z - p1z;
+      const diag12Sq = d12x * d12x + d12y * d12y + d12z * d12z;
+
+      // Choose shorter diagonal for split
+      if (diag03Sq < diag12Sq) {
+        // Split along c0-c3 diagonal
+        if (!flipped) {
+          tInds.push(c0, c1, c3, c0, c3, c2);
+        } else {
+          tInds.push(c3, c1, c0, c2, c3, c0);
+        }
+      } else {
+        // Split along c1-c2 diagonal (original behavior)
+        if (!flipped) {
+          tInds.push(c0, c1, c2, c2, c1, c3);
+        } else {
+          tInds.push(c2, c1, c0, c3, c1, c2);
+        }
+      }
     }
   };
 
