@@ -105,6 +105,33 @@ TriplanarMaterial uses custom shaders with:
 
 Shard geometry is a stretched octahedron (not cone) for blade-like appearance. Lashing geometry uses helix curves for realistic tool bindings.
 
+### Item Shader System
+
+**GroundItemShaders.ts** (src/core/graphics/GroundItemShaders.ts) is the single source of truth for all item shaders:
+
+| Shader | Purpose | Key Effects |
+|--------|---------|-------------|
+| `STICK_SHADER` | Wood/bark materials | Wood grain, bark ridges, knots, weathering, micro fibers |
+| `ROCK_SHADER` | Stone materials | Mineral crystals, mica shimmer, veins, iron staining, moss |
+| `SHARD_SHADER` | Obsidian/flint shards | Conchoidal fractures, iridescence, flow banding, edge highlights |
+| `FLORA_SHADER` | Bioluminescent flora | Cell structure, pulsing veins, subsurface scattering, breathing animation |
+| `TORCH_SHADER` | Torch handle wood | Wood grain with charring gradient toward flame end |
+
+Each shader has both `vertex` and `fragment` properties. **When modifying item visuals, update the shader in GroundItemShaders.ts** - all consumers will inherit the change.
+
+**Consumers of GroundItemShaders** (update ALL when changing shaders):
+- `UniversalTool.tsx` - Held items, crafting preview (StickMesh, StoneMesh, ShardMesh, FloraMesh, Torch)
+- `GroundItemsLayer.tsx` - Terrain clutter (instanced rendering with `uInstancing: true`)
+- `PhysicsItem.tsx` - Thrown items (uses UniversalTool internally)
+- `LuminaFlora.tsx` - World flora (has its own pooled material, may need sync with FLORA_SHADER)
+
+**Uniform requirements by shader**:
+- All shaders: `uSeed`, `uNoiseTexture`, `uColor`
+- STICK: `uInstancing`, `uHeight`
+- ROCK/SHARD: `uInstancing`, `uDisplacementStrength`
+- FLORA: `uTime` (animated)
+- Instanced rendering adds: `aInstancePos`, `aInstanceNormal`, `aSeed` attributes
+
 ## Critical Constants (src/constants.ts)
 
 ```
@@ -148,6 +175,7 @@ See `AGENTS.md` for the complete list. Most critical:
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
+9. **Item shader consistency**: GroundItemShaders.ts defines all item shaders (STICK, ROCK, SHARD, FLORA, TORCH). When adding visual detail to items, update the shader here - never copy shader code to individual components. All consumers (UniversalTool, GroundItemsLayer, LuminaFlora) must use both `vertex` AND `fragment` properties.
 
 ## Logging Best Practices
 
@@ -263,7 +291,7 @@ See `AGENTS.md` for:
 
 ### Crafting System Enhancements (Identified 2026-01-04)
 
-1. **Ground Item Shader Consistency**: The `ROCK_SHADER` and `SHARD_SHADER` in `GroundItemShaders.ts` now support noise displacement, but ground items rendered via instanced rendering (terrain clutter) don't pass `uDisplacementStrength`. Consider adding this uniform to the instanced rendering path in `GroundItems.tsx` for visual consistency between picked-up and ground items.
+1. ~~**Ground Item Shader Consistency**~~: RESOLVED (2026-01-05) - All item shaders now centralized in `GroundItemShaders.ts` with both vertex and fragment shaders. UniversalTool, GroundItemsLayer, and all rendering contexts use the same shaders.
 
 2. **Material Variant Persistence**: `StoneMesh` and `ShardMesh` now accept `variant` and `seed` props for material variety (obsidian, basalt, sandstone, clay), but item instances don't store this data. To make harvested items retain their biome-specific appearance:
    - Extend `ItemType` or create item metadata in `InventoryStore`
