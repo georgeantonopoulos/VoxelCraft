@@ -771,10 +771,6 @@ export function useTerrainInteraction(
               anyModified = true;
               affectedChunks.push(key);
 
-              // DEBUG: Check if density was actually modified
-              const testIdx = Math.floor(localX + 2) + Math.floor(localY - (-64) + 2) * 36 + Math.floor(localZ + 2) * 36 * 132;
-              console.log(`[DIG-MOD] ${key} modified density at test idx ${testIdx}: ${chunk.density[testIdx]?.toFixed(2)}`);
-
               if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {
                 if (action === 'BUILD') primaryMat = effectiveBuildMat;

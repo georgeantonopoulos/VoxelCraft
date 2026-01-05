@@ -11,6 +11,16 @@ import { generateLightGrid, extractLuminaLights, getSkyLightConfig } from '@core
 
 const ctx: Worker = self as any;
 
+// Profile mode - enable via CONFIGURE message with profile: true
+let profileMode = false;
+const profile = (label: string, fn: () => void) => {
+    if (!profileMode) { fn(); return; }
+    const start = performance.now();
+    fn();
+    const duration = performance.now() - start;
+    if (duration > 1) console.log(`[terrain.worker] ${label}: ${duration.toFixed(1)}ms`);
+};
+
 // Instantiate DB connection implicitly by importing it (Singleton in WorldDB.ts)
 // The user requested: "Ensure you instantiate WorldDB outside the onmessage handler."
 // Since `worldDB` is exported as a const instance in `WorldDB.ts`, it is instantiated on module load.
@@ -125,7 +135,8 @@ ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
     try {
         if (type === 'CONFIGURE') {
-            const { worldType, seed } = payload;
+            const { worldType, seed, profile: enableProfile } = payload;
+            if (enableProfile !== undefined) profileMode = enableProfile;
             if (seed !== undefined) {
                 BiomeManager.reinitialize(seed);
                 // Also reinitialize Perlin noise for terrain generation
@@ -136,6 +147,9 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (worldType !== undefined) {
                 BiomeManager.setWorldType(worldType);
                 (self as any).worldType = worldType;
+            }
+            if (profileMode) {
+                console.log(`[terrain.worker] Configured - SAB: false, profile: ${profileMode}`);
             }
         } else if (type === 'GENERATE') {
             const { cx, cz } = payload;

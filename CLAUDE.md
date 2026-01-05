@@ -149,6 +149,32 @@ See `AGENTS.md` for the complete list. Most critical:
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
 
+## Logging Best Practices
+
+**Profile-only logging**: Console logs can cause significant performance overhead, especially in hot paths. Gate all timing/debug logs behind `?profile` URL param:
+
+```typescript
+// In React components - use shouldProfile()
+const shouldProfile = () => typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('profile');
+
+if (shouldProfile()) {
+  console.log(`[Component] Operation took ${duration.toFixed(1)}ms`);
+}
+
+// In workers - check profileMode flag (set via CONFIGURE message)
+let profileMode = false;
+const profile = (label: string, fn: () => void) => {
+  if (!profileMode) { fn(); return; }
+  const start = performance.now();
+  fn();
+  const duration = performance.now() - start;
+  if (duration > 1) console.log(`[worker] ${label}: ${duration.toFixed(1)}ms`);
+};
+```
+
+**Never add console.log calls** that run every frame or on every chunk. Use `?profile` for performance debugging.
+
 ## Common Pitfalls
 
 - `Array(n).fill(obj)` creates shared references - use `Array.from({length:n}, () => new Obj())`

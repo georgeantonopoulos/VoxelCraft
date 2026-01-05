@@ -13,8 +13,11 @@ import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
 
-// Profiling flag - enable via console: window.__vcChunkProfile = true
-const shouldProfile = () => typeof window !== 'undefined' && (window as any).__vcChunkProfile;
+// Profiling flag - enable via ?profile URL param or console: window.__vcChunkProfile = true
+const shouldProfile = () => typeof window !== 'undefined' && (
+  (window as any).__vcChunkProfile ||
+  new URLSearchParams(window.location.search).has('profile')
+);
 
 // Debug flag to completely disable terrain colliders - use ?nocolliders URL param
 const collidersDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nocolliders');
@@ -29,9 +32,10 @@ const ProfiledRigidBody: React.FC<{
   colliderIndices?: Uint32Array;
 }> = React.memo(({ colliderKey, chunkKey, useHeightfield, colliderHeightfield, colliderPositions, colliderIndices }) => {
 
-  // Log creation timing
+  // Log creation timing (only in profile mode)
   const mountStart = useRef(performance.now());
   useEffect(() => {
+    if (!shouldProfile()) return;
     const duration = performance.now() - mountStart.current;
     if (duration > 15) {
       console.warn(`[ChunkMesh] Collider mount took ${duration.toFixed(1)}ms for ${chunkKey} (${useHeightfield ? 'heightfield' : 'trimesh'})`);

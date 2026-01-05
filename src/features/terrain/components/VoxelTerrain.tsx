@@ -21,7 +21,6 @@ import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/f
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
-import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { saveGroundPickup, getGroundPickups, GroundItemType } from '@state/WorldDB';
@@ -637,15 +636,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // If too many are in-flight, pause dispatching new work to prevent memory exhaustion.
   const inFlightGenerations = useRef<Set<string>>(new Set());
 
-  const setSharedArrayBufferEnabled = useGameStore(s => s.setSharedArrayBufferEnabled);
-
-  useEffect(() => {
-    const sab = canUseSharedArrayBuffer();
-    setSharedArrayBufferEnabled(sab);
-    if (!sab) {
-      console.warn('%c⚠️ PERFORMANCE WARNING: SharedArrayBuffer unavailable. Falling back to memory copying. Check COOP/COEP headers.', 'color: #ff0000; font-weight: bold; font-size: 14px;');
-    }
-  }, [setSharedArrayBufferEnabled]);
   // During initial load, use fewer concurrent generations to reduce frame spikes.
   // Post-load, we can be more aggressive since chunks are processed one at a time via mountQueue.
   const MAX_IN_FLIGHT_INITIAL = 4; // Lower limit during initial load
@@ -804,7 +794,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     poolRef.current = pool;
 
     // Send configuration to all workers (including seed for deterministic generation)
-    pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed } });
+    const profileEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('profile');
+    pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed, profile: profileEnabled } });
 
     // Handle messages from any worker in the pool
     pool.addMessageListener((e) => {
