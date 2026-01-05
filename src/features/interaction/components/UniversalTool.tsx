@@ -5,10 +5,11 @@
  * across: held items, crafting preview, inventory thumbnails, physics items.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { STICK_SHADER, ROCK_SHADER, SHARD_SHADER } from '@core/graphics/GroundItemShaders';
+import { STICK_SHADER, ROCK_SHADER, SHARD_SHADER, FLORA_SHADER, TORCH_SHADER } from '@core/graphics/GroundItemShaders';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { ItemType, CustomTool } from '@/types';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
@@ -72,10 +73,13 @@ export const StickMesh: React.FC<StickMeshProps> = ({
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={STICK_SHADER.vertex}
+                fragmentShader={STICK_SHADER.fragment}
                 uniforms={{
                     uInstancing: { value: false },
                     uSeed: { value: seed },
-                    uHeight: { value: height }
+                    uHeight: { value: height },
+                    uNoiseTexture: { value: getNoiseTexture() },
+                    uColor: { value: new THREE.Color(mat.color) }
                 }}
                 color={mat.color}
                 roughness={mat.roughness}
@@ -124,11 +128,13 @@ export const StoneMesh: React.FC<StoneMeshProps> = ({
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={ROCK_SHADER.vertex}
+                fragmentShader={ROCK_SHADER.fragment}
                 uniforms={{
                     uInstancing: { value: false },
                     uNoiseTexture: { value: getNoiseTexture() },
                     uSeed: { value: seed },
-                    uDisplacementStrength: { value: 0.15 }
+                    uDisplacementStrength: { value: 0.15 },
+                    uColor: { value: new THREE.Color(mat.color) }
                 }}
                 color={mat.color}
                 roughness={mat.roughness}
@@ -179,11 +185,13 @@ export const ShardMesh: React.FC<ShardMeshProps> = ({
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={SHARD_SHADER.vertex}
+                fragmentShader={SHARD_SHADER.fragment}
                 uniforms={{
                     uInstancing: { value: false },
                     uNoiseTexture: { value: getNoiseTexture() },
                     uSeed: { value: seed },
-                    uDisplacementStrength: { value: 0.08 }
+                    uDisplacementStrength: { value: 0.08 },
+                    uColor: { value: new THREE.Color(mat.color) }
                 }}
                 color={mat.color}
                 roughness={mat.roughness}
@@ -202,37 +210,100 @@ export const ShardMesh: React.FC<ShardMeshProps> = ({
 interface FloraMeshProps {
     scale?: number;
     isThumbnail?: boolean;
+    seed?: number;
 }
 
-export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = false }) => {
+export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = false, seed = 0 }) => {
     const config = getFloraGeometryConfig(isThumbnail);
+    const materialRef = useRef<any>(null);
+
+    // Update time uniform for pulsing animation
+    useFrame(({ clock }) => {
+        if (materialRef.current?.uniforms && !isThumbnail) {
+            materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
+        }
+    });
+
+    // Thumbnail uses simple material for performance
+    if (isThumbnail) {
+        return (
+            <group scale={scale}>
+                <mesh>
+                    <sphereGeometry args={[config.main.radius, config.main.segments, config.main.segments]} />
+                    <meshStandardMaterial
+                        color={ITEM_COLORS.flora.base}
+                        emissive={ITEM_COLORS.flora.glow}
+                        emissiveIntensity={1.3}
+                        toneMapped={false}
+                    />
+                </mesh>
+                <mesh position={config.secondary.position}>
+                    <sphereGeometry args={[config.secondary.radius, config.secondary.segments, config.secondary.segments]} />
+                    <meshStandardMaterial
+                        color={ITEM_COLORS.flora.base}
+                        emissive={ITEM_COLORS.flora.glow}
+                        emissiveIntensity={0.5}
+                        toneMapped={false}
+                    />
+                </mesh>
+                <mesh position={config.tertiary.position}>
+                    <sphereGeometry args={[config.tertiary.radius, config.tertiary.segments, config.tertiary.segments]} />
+                    <meshStandardMaterial
+                        color={ITEM_COLORS.flora.base}
+                        emissive={ITEM_COLORS.flora.glow}
+                        emissiveIntensity={0.5}
+                        toneMapped={false}
+                    />
+                </mesh>
+            </group>
+        );
+    }
 
     return (
         <group scale={scale}>
-            <mesh castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <mesh castShadow receiveShadow>
                 <sphereGeometry args={[config.main.radius, config.main.segments, config.main.segments]} />
-                <meshStandardMaterial
-                    color={ITEM_COLORS.flora.base}
-                    emissive={ITEM_COLORS.flora.glow}
-                    emissiveIntensity={1.3}
+                <CustomShaderMaterial
+                    ref={materialRef}
+                    baseMaterial={THREE.MeshStandardMaterial}
+                    vertexShader={FLORA_SHADER.vertex}
+                    fragmentShader={FLORA_SHADER.fragment}
+                    uniforms={{
+                        uTime: { value: 0 },
+                        uSeed: { value: seed },
+                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
+                        uNoiseTexture: { value: getNoiseTexture() }
+                    }}
                     toneMapped={false}
                 />
             </mesh>
-            <mesh position={config.secondary.position} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <mesh position={config.secondary.position} castShadow receiveShadow>
                 <sphereGeometry args={[config.secondary.radius, config.secondary.segments, config.secondary.segments]} />
-                <meshStandardMaterial
-                    color={ITEM_COLORS.flora.base}
-                    emissive={ITEM_COLORS.flora.glow}
-                    emissiveIntensity={0.5}
+                <CustomShaderMaterial
+                    baseMaterial={THREE.MeshStandardMaterial}
+                    vertexShader={FLORA_SHADER.vertex}
+                    fragmentShader={FLORA_SHADER.fragment}
+                    uniforms={{
+                        uTime: { value: 0 },
+                        uSeed: { value: seed + 1.5 },
+                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
+                        uNoiseTexture: { value: getNoiseTexture() }
+                    }}
                     toneMapped={false}
                 />
             </mesh>
-            <mesh position={config.tertiary.position} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+            <mesh position={config.tertiary.position} castShadow receiveShadow>
                 <sphereGeometry args={[config.tertiary.radius, config.tertiary.segments, config.tertiary.segments]} />
-                <meshStandardMaterial
-                    color={ITEM_COLORS.flora.base}
-                    emissive={ITEM_COLORS.flora.glow}
-                    emissiveIntensity={0.5}
+                <CustomShaderMaterial
+                    baseMaterial={THREE.MeshStandardMaterial}
+                    vertexShader={FLORA_SHADER.vertex}
+                    fragmentShader={FLORA_SHADER.fragment}
+                    uniforms={{
+                        uTime: { value: 0 },
+                        uSeed: { value: seed + 3.0 },
+                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
+                        uNoiseTexture: { value: getNoiseTexture() }
+                    }}
                     toneMapped={false}
                 />
             </mesh>
@@ -363,13 +434,27 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
             case ItemType.TORCH:
                 return (
                     <group scale={thumbScale}>
-                        {/* Handle */}
-                        <mesh position={[0, -0.1, 0]}>
-                            <cylinderGeometry args={[0.035, 0.045, 0.7, 8]} />
-                            <meshStandardMaterial color="#6b4a2f" roughness={0.9} />
+                        {/* Handle with wood grain shader */}
+                        <mesh position={[0, -0.1, 0]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+                            <cylinderGeometry args={[0.035, 0.045, 0.7, 8, 8]} />
+                            {isThumbnail ? (
+                                <meshStandardMaterial color="#6b4a2f" roughness={0.9} />
+                            ) : (
+                                <CustomShaderMaterial
+                                    baseMaterial={THREE.MeshStandardMaterial}
+                                    vertexShader={TORCH_SHADER.vertex}
+                                    fragmentShader={TORCH_SHADER.fragment}
+                                    uniforms={{
+                                        uSeed: { value: 42.0 },
+                                        uColor: { value: new THREE.Color('#6b4a2f') },
+                                        uNoiseTexture: { value: getNoiseTexture() }
+                                    }}
+                                    roughness={0.9}
+                                />
+                            )}
                         </mesh>
                         {/* Collar */}
-                        <mesh position={[0, 0.3, 0]}>
+                        <mesh position={[0, 0.3, 0]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
                             <cylinderGeometry args={[0.055, 0.055, 0.06, 10]} />
                             <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
                         </mesh>

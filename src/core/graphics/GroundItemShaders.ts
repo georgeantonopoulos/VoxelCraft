@@ -378,3 +378,156 @@ export const ROCK_SHADER = {
     }
   `
 };
+
+/**
+ * FLORA_SHADER - Bioluminescent organic material
+ * Creates cell structure, internal veins, and pulsing glow effects.
+ * Used for Lumina flora items in all contexts.
+ */
+export const FLORA_SHADER = {
+  vertex: `
+    uniform float uTime;
+    uniform float uSeed;
+    varying vec3 vPos;
+    varying vec3 vWorldNormal;
+    varying float vPulse;
+
+    void main() {
+        vPos = position;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+
+        // Breathing pulse
+        float pulse = sin(uTime * 2.0 + uSeed) * 0.35 + 1.15;
+        vPulse = pulse;
+
+        // Subtle vertex displacement for organic feel
+        float breathe = sin(uTime * 1.5 + uSeed + position.y * 3.0) * 0.02;
+        vec3 pos = position;
+        pos += normal * breathe * pulse;
+
+        csm_Position = pos;
+    }
+  `,
+  fragment: `
+    precision highp sampler3D;
+    uniform float uTime;
+    uniform float uSeed;
+    uniform vec3 uColor;
+    uniform sampler3D uNoiseTexture;
+    varying vec3 vPos;
+    varying vec3 vWorldNormal;
+    varying float vPulse;
+
+    void main() {
+        // Multi-scale noise for organic detail
+        vec3 noiseCoord = vPos * 3.0 + vec3(uSeed * 0.1);
+        float nBase = texture(uNoiseTexture, noiseCoord * 0.3).r;
+        float nFine = texture(uNoiseTexture, noiseCoord * 0.8).g;
+        float nMicro = texture(uNoiseTexture, noiseCoord * 2.0).b;
+
+        // Cell structure pattern
+        float cells = smoothstep(0.4, 0.6, nFine);
+        float membranes = smoothstep(0.55, 0.6, nMicro);
+
+        // Internal glow veins - pulsing with time
+        float veinPhase = sin(uTime * 3.0 + vPos.y * 8.0 + uSeed) * 0.5 + 0.5;
+        float veins = smoothstep(0.6, 0.75, nBase + veinPhase * 0.2);
+
+        // Base dark color with subtle variation
+        vec3 baseColor = vec3(0.08, 0.1, 0.12);
+        baseColor *= 0.8 + nFine * 0.4;
+
+        // Color variation in the glow
+        vec3 glowColor = uColor;
+        glowColor.r *= 0.9 + nMicro * 0.2;
+        glowColor.g *= 1.0 + (nFine - 0.5) * 0.1;
+        glowColor.b *= 1.0 + nBase * 0.15;
+
+        // Subsurface scattering simulation
+        float fresnel = 1.0 - abs(dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0)));
+        fresnel = pow(fresnel, 2.0);
+        float subsurface = fresnel * 0.3 + 0.1;
+
+        // Apply membrane darkening
+        baseColor *= 1.0 - membranes * 0.3;
+
+        // Add internal glow through the membrane
+        vec3 internalGlow = glowColor * (cells * 0.4 + veins * 0.6);
+        baseColor += internalGlow * subsurface;
+
+        csm_DiffuseColor = vec4(baseColor, 1.0);
+
+        // Emissive with vein modulation and pulse
+        float glowIntensity = 1.35 * vPulse;
+        glowIntensity *= 0.7 + veins * 0.4 + cells * 0.2;
+        glowIntensity *= 1.0 + fresnel * 0.3;
+        csm_Emissive = glowColor * glowIntensity;
+
+        // Variable roughness - cells are shinier
+        float rough = 0.5 - cells * 0.15 + membranes * 0.1;
+        csm_Roughness = clamp(rough, 0.25, 0.6);
+    }
+  `
+};
+
+/**
+ * TORCH_SHADER - Wooden handle with ember glow
+ * Creates wood grain on the handle portion and warm glow on the ember.
+ */
+export const TORCH_SHADER = {
+  vertex: `
+    uniform float uSeed;
+    varying vec3 vLocalPos;
+    varying float vSeed;
+
+    void main() {
+        vLocalPos = position;
+        vSeed = uSeed;
+    }
+  `,
+  fragment: `
+    precision highp sampler3D;
+    uniform sampler3D uNoiseTexture;
+    uniform vec3 uColor;
+    varying vec3 vLocalPos;
+    varying float vSeed;
+
+    void main() {
+        // Cylindrical UV for wood grain
+        float angle = atan(vLocalPos.x, vLocalPos.z);
+        vec2 woodUV = vec2(angle * 2.0, vLocalPos.y * 6.0);
+
+        // Multi-scale noise
+        vec3 noiseCoord = vLocalPos * 4.0 + vec3(vSeed * 0.1);
+        float nGrain = texture(uNoiseTexture, vec3(woodUV.x, woodUV.y, 0.0) * 0.4).r;
+        float nFine = texture(uNoiseTexture, noiseCoord * 0.8).g;
+        float nMicro = texture(uNoiseTexture, noiseCoord * 2.0).b;
+
+        // Wood grain pattern
+        float grainPattern = sin(woodUV.y * 20.0 + nFine * 3.0);
+        float grain = smoothstep(0.5, 0.8, grainPattern);
+
+        // Base wood color
+        vec3 col = uColor;
+        col *= 0.85 + nGrain * 0.3;
+
+        // Grain darkening
+        col *= 0.9 + grain * 0.15;
+
+        // Knots
+        float knots = smoothstep(0.78, 0.82, nFine) * smoothstep(0.6, 0.65, nMicro);
+        col *= 1.0 - knots * 0.35;
+
+        // Charring near top (y > 0.2)
+        float charFactor = smoothstep(0.15, 0.35, vLocalPos.y);
+        vec3 charColor = vec3(0.15, 0.1, 0.08);
+        col = mix(col, charColor, charFactor * 0.7);
+
+        csm_DiffuseColor = vec4(col, 1.0);
+
+        // Roughness - charred areas are rougher
+        float rough = 0.85 + charFactor * 0.1 - grain * 0.05;
+        csm_Roughness = clamp(rough, 0.75, 0.98);
+    }
+  `
+};
