@@ -44,6 +44,136 @@ const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.l
 const clampSampleCoord = (v: number, max: number) => Math.min(Math.max(v, 1), max - 2);
 const MIN_NORMAL_LEN_SQ = 0.0001;
 
+/**
+ * Minimum triangle area threshold for degenerate filtering.
+ * Triangles with area below this are removed to prevent visual artifacts
+ * from sliver triangles on steep slopes and cave openings.
+ */
+const MIN_TRIANGLE_AREA_SQ = 0.0001; // Area² threshold (0.01² = very small triangles)
+
+/**
+ * Filters out degenerate (sliver) triangles that can cause visual artifacts.
+ * These occur on steep slopes and cave openings where Surface Nets creates
+ * nearly-coplanar quads that split into thin triangles.
+ *
+ * Returns a new index array with degenerate triangles removed, plus a mapping
+ * from old vertex indices to new (compacted) indices for attribute remapping.
+ */
+function filterDegenerateTriangles(
+  positions: number[],
+  indices: number[]
+): { filteredIndices: number[]; usedVertices: Set<number> } {
+  const filtered: number[] = [];
+  const usedVertices = new Set<number>();
+
+  for (let i = 0; i < indices.length; i += 3) {
+    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+
+    // Get vertex positions
+    const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2];
+    const cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2];
+
+    // Edge vectors
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+    // Cross product = 2× triangle area vector
+    const crossX = e1y * e2z - e1z * e2y;
+    const crossY = e1z * e2x - e1x * e2z;
+    const crossZ = e1x * e2y - e1y * e2x;
+
+    // Area² = |cross|² / 4, so we compare |cross|² against 4 * MIN_TRIANGLE_AREA_SQ
+    const areaSq4 = crossX * crossX + crossY * crossY + crossZ * crossZ;
+
+    if (areaSq4 >= MIN_TRIANGLE_AREA_SQ * 4) {
+      filtered.push(i0, i1, i2);
+      usedVertices.add(i0);
+      usedVertices.add(i1);
+      usedVertices.add(i2);
+    }
+  }
+
+  return { filteredIndices: filtered, usedVertices };
+}
+
+/**
+ * Computes smoothed normals using area-weighted face normal averaging.
+ * This produces smoother shading on steep slopes and cave openings by
+ * blending normals from adjacent triangles based on their surface area.
+ *
+ * Larger triangles contribute more to the final normal, which naturally
+ * weights toward the dominant surface orientation and reduces artifacts
+ * from small sliver triangles.
+ */
+function computeAreaWeightedNormals(
+  positions: number[],
+  indices: number[],
+  originalNormals: number[]
+): number[] {
+  const vertexCount = positions.length / 3;
+
+  // Accumulator for weighted normals (initialized to zero)
+  const accumulated = new Float32Array(vertexCount * 3);
+
+  // First pass: accumulate area-weighted face normals
+  for (let i = 0; i < indices.length; i += 3) {
+    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+
+    // Get vertex positions
+    const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2];
+    const cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2];
+
+    // Edge vectors
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+    // Cross product = face normal × 2×area (unnormalized)
+    // We don't normalize here - the magnitude IS the area weight
+    const crossX = e1y * e2z - e1z * e2y;
+    const crossY = e1z * e2x - e1x * e2z;
+    const crossZ = e1x * e2y - e1y * e2x;
+
+    // Add to each vertex of this triangle
+    accumulated[i0 * 3 + 0] += crossX;
+    accumulated[i0 * 3 + 1] += crossY;
+    accumulated[i0 * 3 + 2] += crossZ;
+
+    accumulated[i1 * 3 + 0] += crossX;
+    accumulated[i1 * 3 + 1] += crossY;
+    accumulated[i1 * 3 + 2] += crossZ;
+
+    accumulated[i2 * 3 + 0] += crossX;
+    accumulated[i2 * 3 + 1] += crossY;
+    accumulated[i2 * 3 + 2] += crossZ;
+  }
+
+  // Second pass: normalize accumulated normals, falling back to original if degenerate
+  const result: number[] = new Array(originalNormals.length);
+
+  for (let i = 0; i < vertexCount; i++) {
+    const nx = accumulated[i * 3 + 0];
+    const ny = accumulated[i * 3 + 1];
+    const nz = accumulated[i * 3 + 2];
+    const lenSq = nx * nx + ny * ny + nz * nz;
+
+    if (lenSq >= MIN_NORMAL_LEN_SQ) {
+      const len = Math.sqrt(lenSq);
+      result[i * 3 + 0] = nx / len;
+      result[i * 3 + 1] = ny / len;
+      result[i * 3 + 2] = nz / len;
+    } else {
+      // Fall back to original density-gradient normal
+      result[i * 3 + 0] = originalNormals[i * 3 + 0];
+      result[i * 3 + 1] = originalNormals[i * 3 + 1];
+      result[i * 3 + 2] = originalNormals[i * 3 + 2];
+    }
+  }
+
+  return result;
+}
+
 // Helpers
 const getVal = (density: Float32Array, x: number, y: number, z: number) => {
   if (x < 0 || y < 0 || z < 0 || x >= SIZE_X || y >= SIZE_Y || z >= SIZE_Z) return -1.0;
@@ -497,13 +627,22 @@ export function generateMesh(
     }
   }
 
+  // === Post-processing: Filter degenerate triangles and smooth normals ===
+
+  // Step 1: Filter out degenerate (sliver) triangles
+  const { filteredIndices } = filterDegenerateTriangles(tVerts, tInds);
+
+  // Step 2: Compute area-weighted smoothed normals using filtered triangles
+  // This improves shading on steep slopes and cave openings
+  const smoothedNormals = computeAreaWeightedNormals(tVerts, filteredIndices, tNorms);
+
   const water = generateWaterSurfaceMesh(density, material);
   const collider = generateColliderData(density);
 
   return {
     positions: new Float32Array(tVerts),
-    indices: new Uint32Array(tInds),
-    normals: new Float32Array(tNorms),
+    indices: new Uint32Array(filteredIndices),
+    normals: new Float32Array(smoothedNormals),
     matWeightsA: new Float32Array(tWa),
     matWeightsB: new Float32Array(tWb),
     matWeightsC: new Float32Array(tWc),
