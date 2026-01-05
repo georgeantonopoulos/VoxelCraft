@@ -20,7 +20,8 @@ const getGroundItemMaterial = (shader: any, color: string, roughness: number, is
   const key = `${shader === STICK_SHADER ? 'stick' : 'rock'}-${color}-${roughness}-${isInstanced}`;
   if (groundItemMaterialPool[key]) return groundItemMaterialPool[key];
 
-  groundItemMaterialPool[key] = new (CustomShaderMaterial as any)({
+  // Build material config with both vertex and fragment shaders
+  const config: any = {
     baseMaterial: THREE.MeshStandardMaterial,
     vertexShader: shader.vertex,
     uniforms: {
@@ -28,14 +29,23 @@ const getGroundItemMaterial = (shader: any, color: string, roughness: number, is
       uInstancing: { value: isInstanced },
       uSeed: { value: 0 },
       uHeight: { value: 1.0 },
-      uNoiseTexture: { value: getNoiseTexture() }
+      uNoiseTexture: { value: getNoiseTexture() },
+      uColor: { value: new THREE.Color(color) },
+      uDisplacementStrength: { value: shader === ROCK_SHADER ? 0.15 : 0.0 },
     },
     color: color,
     roughness: roughness,
     metalness: 0.0,
     toneMapped: false,
     side: THREE.DoubleSide,
-  });
+  };
+
+  // Add fragment shader if present for rich material detail
+  if (shader.fragment) {
+    config.fragmentShader = shader.fragment;
+  }
+
+  groundItemMaterialPool[key] = new (CustomShaderMaterial as any)(config);
 
   return groundItemMaterialPool[key];
 };
