@@ -36,8 +36,9 @@ export const sharedUniforms = {
     uBiomeFogEnabled: { value: 1.0 },         // Toggle for biome fog effects
 
     // Fragment normal perturbation (Phase 1 AAA terrain improvement)
-    uFragmentNormalStrength: { value: 0.4 },  // 0.0=off, 0.3-0.5=subtle, 1.0=strong
-    uFragmentNormalScale: { value: 0.35 },    // Base frequency (0.2-0.5 typical)
+    // Now uses cheap triplanar-derived detail (no extra texture samples)
+    uFragmentNormalStrength: { value: 0.6 },  // 0.0=off, 0.4-0.7=good, 1.0=strong
+    uFragmentNormalScale: { value: 0.5 },     // Intensity multiplier (0.3-0.7 typical)
 };
 
 export interface SharedUniformUpdateParams {

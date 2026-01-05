@@ -133,8 +133,8 @@ export const DebugControls: React.FC<{
                     terrainMoss: { value: true, onChange: (v) => props.setTerrainMossEnabled(!!v), label: 'Moss' },
                     terrainRoughnessMin: { value: 0.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTerrainRoughnessMin, label: 'Roughness Min' },
                     'Surface Detail': folder({
-                        fragNormalStr: { value: 0.4, min: 0.0, max: 1.0, step: 0.05, onChange: props.setFragmentNormalStrength, label: 'Normal Strength' },
-                        fragNormalScale: { value: 0.35, min: 0.1, max: 1.0, step: 0.05, onChange: props.setFragmentNormalScale, label: 'Normal Scale' },
+                        fragNormalStr: { value: 0.6, min: 0.0, max: 1.0, step: 0.05, onChange: props.setFragmentNormalStrength, label: 'Normal Strength' },
+                        fragNormalScale: { value: 0.5, min: 0.1, max: 1.0, step: 0.05, onChange: props.setFragmentNormalScale, label: 'Normal Scale' },
                     }, { collapsed: true }),
                 }),
                 Rendering: folder({

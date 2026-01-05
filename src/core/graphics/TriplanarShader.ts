@@ -282,46 +282,55 @@ export const triplanarFragmentShader = `
       return xN * blend.x + yN * blend.y + zN * blend.z;
   }
 
-  // === PHASE 1: Fragment-level normal perturbation from 3D noise ===
-  // This creates micro-detail that the vertex shader can't provide.
-  // Uses central differences on 3D noise for proper tangent-space normals.
-  vec3 getNoiseNormal(vec3 worldPos, vec3 geometryNormal, float scale, float strength) {
-      float eps = 0.15; // Sample offset - tuned for noise texture resolution
-      vec3 p = worldPos * scale;
+  // === PHASE 1: Cheap micro-detail from triplanar noise ===
+  // Instead of expensive extra texture samples, we derive detail from
+  // the noise we already sample for material colors.
+  // This function takes the already-sampled triplanar noise and creates
+  // a perturbed normal from it - essentially FREE since we have the data.
+  vec3 getMicroDetailNormal(vec3 geometryNormal, vec4 noiseData, vec4 noiseDataHigh, vec3 worldPos, float strength, float flatness) {
+      // Use different noise channels for X and Z perturbation
+      // This creates apparent surface detail without extra texture reads
+      float nx = noiseData.r * 2.0 - 1.0;  // Red channel -> X perturbation
+      float nz = noiseData.g * 2.0 - 1.0;  // Green channel -> Z perturbation
 
-      // Sample noise at offset positions for gradient calculation
-      float cx = texture(uNoiseTexture, p + vec3(eps, 0.0, 0.0)).r
-               - texture(uNoiseTexture, p - vec3(eps, 0.0, 0.0)).r;
-      float cy = texture(uNoiseTexture, p + vec3(0.0, eps, 0.0)).r
-               - texture(uNoiseTexture, p - vec3(0.0, eps, 0.0)).r;
-      float cz = texture(uNoiseTexture, p + vec3(0.0, 0.0, eps)).r
-               - texture(uNoiseTexture, p - vec3(0.0, 0.0, eps)).r;
+      // High-frequency detail from nHigh - critical for close-up ground detail
+      float hx = noiseDataHigh.b * 2.0 - 1.0;
+      float hz = noiseDataHigh.a * 2.0 - 1.0;
 
-      // Gradient vector (points "uphill" in noise field)
-      vec3 grad = vec3(cx, cy, cz);
+      // Add ultra-high-frequency variation using position-based hash (very cheap)
+      // This breaks up repetition and adds "grain" to flat surfaces
+      vec3 hp = fract(worldPos * 4.5) * 2.0 - 1.0;  // Higher frequency than before
+      vec3 hp2 = fract(worldPos * 11.0) * 2.0 - 1.0; // Even finer grain
 
-      // Project gradient onto tangent plane (perpendicular to geometry normal)
-      vec3 tangentGrad = grad - geometryNormal * dot(grad, geometryNormal);
+      // Flat surfaces (grass, dirt) need MORE fine detail
+      // Steep surfaces (cliffs) look fine with coarser detail
+      float fineDetailBoost = flatness * flatness; // 1.0 for flat, 0.0 for vertical
 
-      // Perturb the normal
-      return normalize(geometryNormal - tangentGrad * strength);
-  }
+      // Layer the frequencies:
+      // - Low freq (nx, nz): broad undulation
+      // - Mid freq (hx, hz): medium bumps
+      // - High freq (hp): fine texture
+      // - Ultra-high freq (hp2): micro-grain for flat surfaces
+      float perturbX = nx * 0.3
+                     + hx * 0.35
+                     + hp.x * noiseData.b * 0.25
+                     + hp2.x * noiseDataHigh.r * 0.1 * fineDetailBoost;
 
-  // Multi-octave noise normal for richer detail
-  // Combines large bumps with fine detail - key for AAA look
-  vec3 getMultiOctaveNoiseNormal(vec3 worldPos, vec3 geometryNormal, float baseScale, float strength, int octaves) {
-      vec3 perturbedNormal = geometryNormal;
-      float scale = baseScale;
-      float amp = strength;
+      float perturbZ = nz * 0.3
+                     + hz * 0.35
+                     + hp.z * noiseData.a * 0.25
+                     + hp2.z * noiseDataHigh.g * 0.1 * fineDetailBoost;
 
-      for (int i = 0; i < 3; i++) { // Max 3 octaves for performance
-          if (i >= octaves) break;
-          perturbedNormal = getNoiseNormal(worldPos, perturbedNormal, scale, amp);
-          scale *= 2.1; // Lacunarity
-          amp *= 0.45;  // Persistence - each octave contributes less
-      }
+      // Create tangent-space perturbation vector
+      vec3 tangent = normalize(vec3(1.0, 0.0, 0.0) - geometryNormal * geometryNormal.x);
+      vec3 bitangent = normalize(cross(geometryNormal, tangent));
 
-      return perturbedNormal;
+      vec3 perturbation = tangent * perturbX + bitangent * perturbZ;
+
+      // Boost strength slightly for flat surfaces (they need more visible detail)
+      float flatBoost = 1.0 + fineDetailBoost * 0.4;
+
+      return normalize(geometryNormal + perturbation * strength * flatBoost);
   }
 
   vec2 safeNormalize2(vec2 v) {
@@ -423,23 +432,34 @@ export const triplanarFragmentShader = `
     vec3 N = safeNormalize(vWorldNormal);
     float distSq = dot(vWorldPosition - cameraPosition, vWorldPosition - cameraPosition);
     bool lowDetail = distSq > 1024.0; // Beyond 32 units (1 chunk)
+    bool closeUp = distSq < 400.0;    // Within 20 units - fine detail zone
 
-    // === PHASE 1: Fragment-level normal perturbation (OPTIMIZED) ===
-    // Single octave only, tighter distance cutoff for performance.
-    // Only apply very close to camera (within 12 units / 144 distSq)
-    if (uFragmentNormalStrength > 0.01 && distSq < 144.0) {
-        float distFade = 1.0 - smoothstep(64.0, 144.0, distSq); // Fade 8-12 units
-        float effectiveStrength = uFragmentNormalStrength * distFade;
-
-        if (effectiveStrength > 0.02) {
-            // Single octave only - much cheaper
-            N = getNoiseNormal(vWorldPosition, N, uFragmentNormalScale, effectiveStrength);
-        }
-    }
-
+    // Sample triplanar noise FIRST (we need this for colors anyway)
     vec4 nMid = getTriplanarNoise(N, 0.15);
     float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
     vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
+
+    // === FINE DETAIL: Sample at very high scale for close-up ground texture ===
+    // This is the key to AAA terrain - fine grain visible when looking at your feet
+    // Scale of 2.5 gives ~0.4 world unit detail cycles, 5.0 gives ~0.2 world unit
+    vec4 nFine = closeUp ? getTriplanarNoise(N, 2.5) : nHigh;
+    vec4 nUltraFine = (closeUp && distSq < 100.0) ? getTriplanarNoise(N, 6.0) : nFine;
+
+    // === PHASE 1: Multi-frequency normal perturbation ===
+    if (uFragmentNormalStrength > 0.01 && distSq < 4096.0) {
+        float distFade = 1.0 - smoothstep(256.0, 4096.0, distSq);
+        float effectiveStrength = uFragmentNormalStrength * distFade;
+
+        if (effectiveStrength > 0.01) {
+            float flatness = clamp(N.y, 0.0, 1.0);
+
+            // Use fine detail samples for close-up perturbation
+            vec4 detailNoise = closeUp ? nFine : nHigh;
+            vec4 microNoise = (closeUp && distSq < 100.0) ? nUltraFine : detailNoise;
+
+            N = getMicroDetailNormal(N, detailNoise, microNoise, vWorldPosition, effectiveStrength * uFragmentNormalScale, flatness);
+        }
+    }
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
     vec3 accColor = vec3(0.0);
@@ -497,128 +517,332 @@ export const triplanarFragmentShader = `
     }
     if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, vWetness * 0.9);
     col *= (1.0 + macro * 0.06); accRoughness += macro * 0.05;
-    // === PHASE 3: Material-specific contextual rules ===
-    // Slope and height-aware color/texture variation for AAA quality
+
+    // === UNIVERSAL FINE GRAIN: Apply to ALL terrain close-up ===
+    // This gives every surface visible micro-texture when viewed up close
+    if (closeUp) {
+        // Fine-scale brightness variation (soil grain, surface roughness)
+        float fineGrain = nFine.r * 2.0 - 1.0;
+        float microGrain = nUltraFine.g * 2.0 - 1.0;
+
+        // Distance-based intensity: strongest at feet, fades by 20 units
+        float grainFade = 1.0 - smoothstep(25.0, 400.0, distSq);
+
+        // Universal micro-variation in brightness
+        float brightnessVar = 1.0 + fineGrain * 0.08 * grainFade;
+
+        // Ultra-fine grain for very close (within 10 units)
+        if (distSq < 100.0) {
+            brightnessVar += microGrain * 0.05;
+        }
+
+        col *= brightnessVar;
+
+        // Subtle color temperature shifts at micro scale
+        // Slightly warmer in "peaks", cooler in "valleys"
+        float tempShift = nFine.b * 2.0 - 1.0;
+        vec3 warmCool = vec3(1.0 + tempShift * 0.02 * grainFade,
+                             1.0,
+                             1.0 - tempShift * 0.02 * grainFade);
+        col *= warmCool;
+
+        // Micro-shadow in crevices (based on ultra-fine noise)
+        float crevice = smoothstep(0.6, 0.9, nUltraFine.r);
+        col *= mix(1.0, 0.92, crevice * grainFade * 0.7);
+    }
+
+    // === PHASE 3: Material-specific fine detail for AAA quality ===
+    // Each material gets unique micro-texture visible at close range
     int dom = int(floor(vDominantChannel + 0.5));
     vec2 wind = safeNormalize2(uWindDirXZ);
     float slope = 1.0 - N.y; // 0 = flat, 1 = vertical
-    float slopePow = pow(slope, 1.5); // Emphasize steep areas
-    float heightNorm = clamp(vWorldPosition.y / 80.0, 0.0, 1.0); // Normalize height (0-80)
+    float slopePow = pow(slope, 1.5);
+    float heightNorm = clamp(vWorldPosition.y / 80.0, 0.0, 1.0);
+    float grainFade = closeUp ? (1.0 - smoothstep(25.0, 400.0, distSq)) : 0.0;
 
-    // --- SAND & RED_SAND: Slope-aware ripples + grain variation ---
+    // --- SAND & RED_SAND (5, 10): Individual grains + ripples ---
     if (dom == 5 || dom == 10) {
-      // Ripples fade on slopes (sand slides down)
+      // Macro ripples
       float rippleStrength = 1.0 - smoothstep(0.2, 0.6, slope);
       float rip = sin(dot(vWorldPosition.xz, wind) * 2.8 + (nMacro.g * 2.0 - 1.0) * 0.6);
-      // Grain color variation - not just brightness, add warmth in troughs
-      vec3 warmShift = vec3(1.02, 0.98, 0.94); // Slightly warmer
-      vec3 coolShift = vec3(0.98, 1.0, 1.02);  // Slightly cooler
-      col *= mix(warmShift, coolShift, rip * 0.5 + 0.5);
       col *= 1.0 + rip * 0.04 * rippleStrength;
-      // Mottling - dark mineral grains
-      float mott = (nMid.g * 2.0 - 1.0);
-      col *= 1.0 + mott * 0.025;
+
+      // Fine detail: individual sand grains
+      if (closeUp) {
+        // Grain brightness variation - some grains lighter (quartz), some darker (minerals)
+        float grainLight = smoothstep(0.6, 0.8, nFine.r);
+        float grainDark = smoothstep(0.7, 0.9, nUltraFine.g);
+        col *= 1.0 + grainLight * 0.12 * grainFade;
+        col *= 1.0 - grainDark * 0.08 * grainFade;
+
+        // Sparkly quartz grains
+        float sparkle = pow(nUltraFine.b, 4.0) * grainFade;
+        col += vec3(sparkle * 0.06);
+
+        // Color variation - some grains warmer, some cooler
+        float warmGrain = nFine.g * 2.0 - 1.0;
+        col *= vec3(1.0 + warmGrain * 0.03, 1.0, 1.0 - warmGrain * 0.02);
+      }
       accRoughness = mix(accRoughness, 0.92, 0.35);
     }
 
-    // --- ROCK, BEDROCK, OBSIDIAN: Weathered surfaces + lichen hints ---
-    else if (dom == 2 || dom == 1 || dom == 15 || dom == 9) {
-      // Strata bands - stronger on cliffs
+    // --- STONE (2): Mineral crystals + weathering ---
+    else if (dom == 2) {
       float bands = sin(vWorldPosition.y * 1.4 + (nMacro.b * 2.0 - 1.0) * 1.2);
-      float bandStrength = slopePow * 0.04; // Only visible on steep faces
+      col *= 1.0 + bands * slopePow * 0.04;
 
-      // Weathering - exposed faces lighter, overhangs darker
-      float exposure = smoothstep(-0.3, 0.3, N.y); // 0 = overhang, 1 = exposed
-      vec3 weatherShift = mix(vec3(0.85, 0.87, 0.9), vec3(1.05, 1.03, 1.0), exposure);
-      col *= weatherShift;
+      if (closeUp) {
+        // Mineral crystal faces - slight color shifts
+        float crystal = smoothstep(0.5, 0.8, nFine.r);
+        col *= 1.0 + crystal * 0.08 * grainFade;
 
-      // Cracks - darker lines
-      float cracks = pow(1.0 - abs(nHigh.g * 2.0 - 1.0), 3.5);
-      col *= 1.0 - cracks * 0.1;
-      col *= 1.0 + bands * bandStrength;
+        // Mica sparkle
+        float mica = pow(nUltraFine.a, 5.0);
+        col += vec3(mica * 0.04 * grainFade);
 
-      // Height-based weathering: higher = more oxidized (slightly warmer)
-      vec3 oxidation = mix(vec3(1.0), vec3(1.02, 0.99, 0.97), heightNorm * 0.5);
-      col *= oxidation;
+        // Micro-cracks (darker lines)
+        float microCrack = smoothstep(0.75, 0.85, nUltraFine.g);
+        col *= 1.0 - microCrack * 0.15 * grainFade;
 
-      accRoughness += cracks * 0.08 + slopePow * 0.05;
+        // Iron staining variation
+        float iron = nFine.b * 0.06 * grainFade;
+        col *= vec3(1.0 + iron, 1.0 - iron * 0.3, 1.0 - iron * 0.5);
+      }
+      accRoughness += slopePow * 0.05;
     }
 
-    // --- DIRT, CLAY, TERRACOTTA: Organic clumping + moisture hints ---
-    else if (dom == 3 || dom == 7 || dom == 11) {
-      float clump = (nHigh.r * 2.0 - 1.0);
-      // Darker in clump shadows
-      col *= 1.0 + clump * 0.035;
-      col *= 1.0 - smoothstep(0.2, 0.9, abs(clump)) * 0.07;
+    // --- BEDROCK (1): Dense, ancient rock texture ---
+    else if (dom == 1) {
+      float exposure = smoothstep(-0.3, 0.3, N.y);
+      col *= mix(vec3(0.9), vec3(1.05), exposure);
 
-      // Moisture hints in sheltered areas (slight color shift)
-      float shelter = 1.0 - N.y; // Overhangs more sheltered
-      vec3 moistShift = mix(vec3(1.0), vec3(0.95, 0.93, 0.9), shelter * 0.3);
-      col *= moistShift;
+      if (closeUp) {
+        // Very fine crystalline structure
+        float crystalline = nUltraFine.r * 2.0 - 1.0;
+        col *= 1.0 + crystalline * 0.06 * grainFade;
 
-      // Terracotta (11) gets iron oxide variation
-      if (dom == 11) {
-        float oxide = nMacro.r * 0.15;
-        col *= vec3(1.0 + oxide, 1.0 - oxide * 0.5, 1.0 - oxide);
+        // Pressure bands
+        float pressure = sin(vWorldPosition.y * 8.0 + nFine.g * 3.0);
+        col *= 1.0 + pressure * 0.03 * grainFade;
       }
+      accRoughness = mix(accRoughness, 0.85, 0.3);
+    }
 
+    // --- DIRT (3): Soil aggregates + organic matter ---
+    else if (dom == 3) {
+      float clump = (nHigh.r * 2.0 - 1.0);
+      col *= 1.0 + clump * 0.04;
+
+      if (closeUp) {
+        // Visible soil aggregates (clumps)
+        float aggregate = smoothstep(0.4, 0.7, nFine.r);
+        col *= mix(0.92, 1.08, aggregate * grainFade);
+
+        // Small pebbles/stones
+        float pebbles = smoothstep(0.75, 0.88, nUltraFine.b);
+        col = mix(col, col * 1.2, pebbles * 0.4 * grainFade);
+
+        // Organic matter (darker specks)
+        float organic = smoothstep(0.8, 0.95, nUltraFine.r);
+        col *= 1.0 - organic * 0.2 * grainFade;
+
+        // Root fragments (slightly lighter)
+        float roots = smoothstep(0.85, 0.95, nFine.b) * smoothstep(0.5, 0.7, nUltraFine.g);
+        col = mix(col, col * vec3(1.1, 1.05, 0.95), roots * 0.3 * grainFade);
+      }
       accRoughness = mix(accRoughness, 0.95, 0.15);
     }
 
-    // --- SNOW: Blue shadows + wind-packed variation ---
+    // --- GRASS (4): Blade shadows + clover patches ---
+    else if (dom == 4) {
+      float health = nMacro.g;
+      col *= mix(vec3(1.05, 1.0, 0.88), vec3(0.95, 1.05, 0.92), health);
+
+      if (closeUp) {
+        // Blade shadow pattern
+        float bladeShadow = smoothstep(0.3, 0.7, nFine.b);
+        col *= mix(0.88, 1.08, bladeShadow * grainFade);
+
+        // Yellow grass tips
+        float tips = smoothstep(0.7, 0.9, nUltraFine.r);
+        col = mix(col, col * vec3(1.1, 1.05, 0.85), tips * 0.25 * grainFade);
+
+        // Clover/weed patches (slightly different green)
+        float clover = smoothstep(0.8, 0.95, nFine.g);
+        col = mix(col, col * vec3(0.9, 1.1, 0.95), clover * 0.2 * grainFade);
+
+        // Dead grass patches
+        float dead = smoothstep(0.85, 0.98, nUltraFine.a);
+        col = mix(col, col * vec3(1.15, 1.1, 0.8), dead * 0.3 * grainFade);
+      }
+      col *= 1.0 - slopePow * 0.08;
+    }
+
+    // --- SNOW (6): Crystal sparkle + blue shadows ---
     else if (dom == 6) {
-      // Blue tint in shadows (sky reflection)
       float shadowFactor = 1.0 - clamp(dot(N, uSunDirection), 0.0, 1.0);
-      vec3 shadowTint = mix(vec3(1.0), vec3(0.9, 0.95, 1.08), shadowFactor * 0.4);
-      col *= shadowTint;
+      col *= mix(vec3(1.0), vec3(0.9, 0.95, 1.08), shadowFactor * 0.4);
 
-      // Wind-packed areas slightly grayer
-      float packed = nMacro.g;
-      col = mix(col, col * vec3(0.95, 0.96, 0.97), packed * 0.25);
+      if (closeUp) {
+        // Individual ice crystal sparkle
+        float crystalSparkle = pow(nUltraFine.r, 6.0);
+        col += vec3(crystalSparkle * 0.15 * grainFade);
 
-      // Sparkle highlights on sun-facing surfaces
-      float sparkle = pow(max(0.0, dot(N, uSunDirection)), 8.0) * nHigh.r;
-      col += vec3(sparkle * 0.15);
+        // Surface texture variation
+        float snowGrain = nFine.g * 2.0 - 1.0;
+        col *= 1.0 + snowGrain * 0.04 * grainFade;
 
+        // Wind-packed vs fluffy variation
+        float packed = smoothstep(0.6, 0.8, nFine.b);
+        col *= mix(1.0, 0.96, packed * grainFade);
+
+        // Blue ice crystals occasionally visible
+        float blueIce = smoothstep(0.9, 0.98, nUltraFine.b);
+        col = mix(col, col * vec3(0.9, 0.95, 1.15), blueIce * 0.3 * grainFade);
+      }
       accRoughness = mix(accRoughness, 0.98, 0.45);
     }
 
-    // --- ICE: Depth color + fresnel hints ---
+    // --- CLAY (7): Smooth with fine cracks ---
+    else if (dom == 7) {
+      if (closeUp) {
+        // Fine surface cracks
+        float cracks = smoothstep(0.7, 0.85, nFine.r);
+        col *= 1.0 - cracks * 0.12 * grainFade;
+
+        // Slight color mottling
+        float mottle = nUltraFine.g * 2.0 - 1.0;
+        col *= 1.0 + mottle * 0.05 * grainFade;
+
+        // Occasional lighter mineral inclusions
+        float mineral = smoothstep(0.85, 0.95, nUltraFine.b);
+        col = mix(col, col * 1.15, mineral * 0.25 * grainFade);
+      }
+      accRoughness = mix(accRoughness, 0.88, 0.2);
+    }
+
+    // --- RED SAND (10): Like sand but with iron oxide ---
+    else if (dom == 10) {
+      // Already handled with sand above, add iron-specific detail
+      if (closeUp) {
+        // Iron oxide variation - some grains more orange, some more brown
+        float ironVar = nFine.r * 2.0 - 1.0;
+        col *= vec3(1.0 + ironVar * 0.06, 1.0 - ironVar * 0.02, 1.0 - ironVar * 0.08);
+      }
+    }
+
+    // --- TERRACOTTA (11): Fired clay texture ---
+    else if (dom == 11) {
+      float oxide = nMacro.r * 0.15;
+      col *= vec3(1.0 + oxide, 1.0 - oxide * 0.5, 1.0 - oxide);
+
+      if (closeUp) {
+        // Firing variation - subtle color bands
+        float firing = sin(vWorldPosition.y * 12.0 + nFine.g * 5.0);
+        col *= 1.0 + firing * 0.03 * grainFade;
+
+        // Micro-pores from firing
+        float pores = smoothstep(0.75, 0.9, nUltraFine.r);
+        col *= 1.0 - pores * 0.1 * grainFade;
+      }
+      accRoughness = mix(accRoughness, 0.92, 0.25);
+    }
+
+    // --- ICE (12): Subsurface scattering + bubbles ---
     else if (dom == 12) {
-      // Deeper blue where thicker (approximated by cavity/overhang)
       float depth = vCavity * 0.5 + (1.0 - N.y) * 0.3;
-      vec3 depthTint = mix(vec3(1.0), vec3(0.85, 0.92, 1.1), depth);
-      col *= depthTint;
+      col *= mix(vec3(1.0), vec3(0.85, 0.92, 1.1), depth);
 
-      // Subtle green-blue shift variation
-      float variation = nMid.b * 0.1;
-      col *= vec3(1.0 - variation * 0.5, 1.0, 1.0 + variation);
+      if (closeUp) {
+        // Trapped air bubbles
+        float bubbles = smoothstep(0.85, 0.95, nUltraFine.r);
+        col = mix(col, vec3(1.0), bubbles * 0.3 * grainFade);
 
+        // Fracture lines
+        float fractures = smoothstep(0.8, 0.92, nFine.g);
+        col *= 1.0 - fractures * 0.08 * grainFade;
+
+        // Internal blue-green variation
+        float internal = nFine.b * 2.0 - 1.0;
+        col *= vec3(1.0, 1.0 + internal * 0.03, 1.0 + internal * 0.05);
+      }
       accRoughness = mix(accRoughness, 0.12, 0.35);
     }
 
-    // --- GLOWSTONE: Pulsing variation ---
-    else if (dom == 14) {
-      float pulse = nMacro.a * 2.0 - 1.0;
-      col *= 1.0 + pulse * 0.04;
+    // --- JUNGLE GRASS (13): Dense tropical vegetation texture ---
+    else if (dom == 13) {
+      float health = nMacro.g;
+      col *= mix(vec3(1.02, 0.98, 0.9), vec3(0.92, 1.05, 0.95), health);
+
+      if (closeUp) {
+        // Broader leaf shadows
+        float leafShadow = smoothstep(0.25, 0.65, nFine.b);
+        col *= mix(0.85, 1.1, leafShadow * grainFade);
+
+        // Wet leaf sheen
+        float sheen = pow(nUltraFine.g, 3.0);
+        col += vec3(0.0, sheen * 0.04, 0.0) * grainFade;
+
+        // Decaying matter
+        float decay = smoothstep(0.88, 0.98, nUltraFine.a);
+        col = mix(col, col * vec3(0.9, 0.85, 0.7), decay * 0.25 * grainFade);
+      }
+      col *= vec3(0.92, 0.98, 0.88);
     }
 
-    // --- GRASS & JUNGLE GRASS: Healthy/stressed variation ---
-    else if (dom == 4 || dom == 13) {
-      // Macro color variation - patches of different health
-      float health = nMacro.g;
-      // Healthy = greener, stressed = more yellow-brown
-      vec3 healthyShift = vec3(0.95, 1.05, 0.92);
-      vec3 stressedShift = vec3(1.05, 1.0, 0.88);
-      col *= mix(stressedShift, healthyShift, health);
+    // --- GLOWSTONE (14): Pulsing crystals ---
+    else if (dom == 14) {
+      float pulse = sin(uTime * 2.0 + vWorldPosition.x * 0.5 + vWorldPosition.z * 0.5) * 0.5 + 0.5;
+      col *= 1.0 + pulse * 0.08;
 
-      // Slight darkening on slopes (self-shadowing)
-      col *= 1.0 - slopePow * 0.08;
+      if (closeUp) {
+        // Crystal facets
+        float facet = smoothstep(0.5, 0.8, nFine.r);
+        col *= 1.0 + facet * 0.15 * grainFade;
 
-      // Jungle grass (13) is darker and more saturated
-      if (dom == 13) {
-        col *= vec3(0.92, 0.98, 0.88);
+        // Glowing veins
+        float veins = smoothstep(0.7, 0.9, nUltraFine.g);
+        col += vec3(0.0, veins * 0.1, veins * 0.15) * grainFade;
       }
+    }
+
+    // --- OBSIDIAN (15): Volcanic glass ---
+    else if (dom == 15) {
+      float exposure = smoothstep(-0.3, 0.3, N.y);
+      col *= mix(vec3(0.92), vec3(1.05), exposure);
+
+      if (closeUp) {
+        // Conchoidal fracture patterns
+        float fracture = smoothstep(0.6, 0.85, nFine.g);
+        col *= 1.0 + fracture * 0.1 * grainFade;
+
+        // Slight iridescence
+        float irid = nUltraFine.b * 2.0 - 1.0;
+        col *= vec3(1.0 + irid * 0.02, 1.0, 1.0 - irid * 0.02);
+
+        // Flow banding
+        float flow = sin(vWorldPosition.y * 6.0 + nFine.r * 4.0);
+        col *= 1.0 + flow * 0.02 * grainFade;
+      }
+      accRoughness = mix(accRoughness, 0.15, 0.4);
+    }
+
+    // --- MOSS (9): Fuzzy organic texture ---
+    else if (dom == 9) {
+      if (closeUp) {
+        // Individual moss fronds
+        float fronds = smoothstep(0.4, 0.7, nFine.r);
+        col *= mix(0.9, 1.1, fronds * grainFade);
+
+        // Spore capsules (slightly darker dots)
+        float spores = smoothstep(0.88, 0.96, nUltraFine.g);
+        col *= 1.0 - spores * 0.15 * grainFade;
+
+        // Moisture variation
+        float moist = nFine.b;
+        col *= mix(1.0, 0.95, moist * grainFade);
+      }
+      accRoughness = mix(accRoughness, 0.95, 0.3);
     }
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);

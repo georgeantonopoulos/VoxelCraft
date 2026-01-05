@@ -343,56 +343,100 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
                         varying float vDepth;
                         varying vec3 vPos;
                         varying vec3 vWorldNormal;
-                        
+
                         uniform vec3 uColorBase;
                         uniform vec3 uColorTip;
                         uniform sampler3D uNoiseTexture;
 
-                        // Triplanar-ish sampling for bark
+                        // Multi-frequency noise sampling
                         float getNoise(vec3 p, float scale) {
                             return texture(uNoiseTexture, p * scale).r;
                         }
 
+                        // Simple hash for micro detail
+                        float hash21(vec2 p) {
+                            p = fract(p * vec2(233.34, 851.73));
+                            p += dot(p, p + 23.45);
+                            return fract(p.x * p.y);
+                        }
+
                         void main() {
                             // UV Mapping for Cylindrical Bark
-                            // We use local cylindrical coordinates for consistency on branches
                             float angle = atan(vPos.x, vPos.z);
-                            vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0); // Stretch Y for fibers
-                            
-                            // Sample noise
-                            float nBase = texture(uNoiseTexture, vPos * 2.5).r; // 3D lookup
-                            float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r; // Cylindrical lookup approximation
-                            
-                            // Create ridges
+                            vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0);
+
+                            // Multi-scale noise sampling
+                            float nBase = texture(uNoiseTexture, vPos * 2.5).r;
+                            float nBark = texture(uNoiseTexture, vec3(barkUV.x, barkUV.y, 0.0) * 0.5).r;
+                            float nFine = texture(uNoiseTexture, vPos * 8.0).g; // Fine grain
+                            float nMicro = texture(uNoiseTexture, vPos * 16.0).b; // Micro texture
+
+                            // Create ridges with multiple frequencies
                             float ridges = smoothstep(0.3, 0.7, nBark);
                             float crevices = 1.0 - ridges;
 
-                            // Color mixing
+                            // Fine bark fibers running vertically
+                            float fiberDetail = sin(barkUV.y * 40.0 + nFine * 8.0) * 0.5 + 0.5;
+                            fiberDetail *= smoothstep(0.3, 0.6, nFine);
+
+                            // Micro pores and lichens
+                            float pores = smoothstep(0.55, 0.6, nMicro);
+                            float lichens = smoothstep(0.7, 0.75, nFine) * smoothstep(0.5, 0.55, nMicro);
+
+                            // Color mixing with depth gradient
                             vec3 col = mix(uColorBase, uColorTip, pow(vDepth, 3.0));
-                            
+
+                            // Bark color variation based on micro noise
+                            float colorVar = nMicro * 2.0 - 1.0;
+                            col *= 1.0 + colorVar * 0.12;
+
+                            // Warm/cool shift based on fine noise
+                            col.r *= 1.0 + (nFine - 0.5) * 0.08;
+                            col.b *= 1.0 - (nFine - 0.5) * 0.06;
+
                             // Darken crevices
-                            col *= mix(1.0, 0.5, crevices * 0.8);
-                            
-                            // Add "Moss" (noise on top surfaces)
+                            col *= mix(1.0, 0.4, crevices * 0.85);
+
+                            // Fiber highlights on ridges
+                            col += vec3(0.04, 0.035, 0.025) * fiberDetail * ridges;
+
+                            // Micro pore darkening
+                            col *= 1.0 - pores * 0.2;
+
+                            // Lichen patches (greenish-gray)
+                            vec3 lichenColor = vec3(0.35, 0.42, 0.32);
+                            col = mix(col, lichenColor, lichens * 0.6);
+
+                            // Add "Moss" on upward-facing surfaces
                             float mossNoise = texture(uNoiseTexture, vPos * 4.0 + vec3(5.0)).g;
+                            float mossDetail = texture(uNoiseTexture, vPos * 12.0).r;
                             float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
-                            if (upFactor > 0.2 && mossNoise > 0.5) {
-                                col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
+                            if (upFactor > 0.2 && mossNoise > 0.45) {
+                                // Varied moss color
+                                vec3 mossCol = vec3(0.08, 0.45, 0.08);
+                                mossCol *= 0.8 + mossDetail * 0.4;
+                                float mossMix = (mossNoise - 0.45) * 3.0 * upFactor;
+                                col = mix(col, mossCol, mossMix * 0.8);
                             }
+
+                            // Wet sheen in crevices (subtle)
+                            float wetSheen = crevices * nMicro * 0.15;
+                            col += vec3(0.02) * wetSheen;
 
                             csm_DiffuseColor = vec4(col, 1.0);
 
-                            // Normals: Perturb based on ridges
-                            // (Simplified: we use NormalMap logic in StandardMaterial if we had one, 
-                            // here we can adjust roughness)
-                            
-                            // Roughness: Crevices are rougher, ridges smoother or vice versa
-                            float rough = 0.8 + crevices * 0.2;
-                            csm_Roughness = rough;
+                            // Variable roughness: crevices rougher, fibers smooth, lichens rough
+                            float rough = 0.75;
+                            rough += crevices * 0.2;  // Crevices are rougher
+                            rough -= fiberDetail * ridges * 0.15; // Fiber ridges smoother
+                            rough += lichens * 0.1; // Lichens add roughness
+                            rough -= wetSheen * 0.3; // Wet areas shinier
+                            csm_Roughness = clamp(rough, 0.4, 1.0);
 
-                            // Emissive for tips (Magical)
+                            // Emissive for magical tips
                             if (vDepth > 0.8) {
-                                csm_Emissive = uColorTip * 0.5 * ridges;
+                                float tipGlow = ridges * (1.0 - lichens);
+                                csm_Emissive = uColorTip * 0.5 * tipGlow;
                             }
                         }
                     `}
@@ -445,21 +489,49 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
                         uniform float uTime;
 
                         void main() {
-                            // Static Color Variation (using noise)
-                            // We need to use uNoiseTexture here which is available in uniforms
-                            float variation = texture(uNoiseTexture, vPos * 0.5).r;
+                            // Multi-scale noise for leaf detail
+                            float nBase = texture(uNoiseTexture, vPos * 0.5).r;
+                            float nFine = texture(uNoiseTexture, vPos * 2.0).g;
+                            float nMicro = texture(uNoiseTexture, vPos * 6.0).b;
 
-                            // Simple Gradient
-                            float tip = smoothstep(0.0, 0.5, vPos.y); 
-                            
+                            // Simple Gradient from base to tip
+                            float tip = smoothstep(0.0, 0.5, vPos.y);
+
+                            // Base color with variation
                             vec3 col = uColorTip;
-                            col = mix(col * 0.85, col * 1.15, variation);
-                            col = mix(col, col * 1.4, tip); 
-                            
+                            col = mix(col * 0.85, col * 1.15, nBase);
+                            col = mix(col, col * 1.4, tip);
+
+                            // Leaf vein pattern - radial from center
+                            float radial = length(vPos.xz);
+                            float veinPattern = sin(radial * 30.0 + nFine * 5.0);
+                            float veins = smoothstep(0.7, 1.0, veinPattern);
+
+                            // Darken between veins
+                            col *= 0.92 + veins * 0.12;
+
+                            // Cell structure - small bright spots
+                            float cells = smoothstep(0.6, 0.65, nMicro);
+                            col += col * cells * 0.15;
+
+                            // Tip discoloration (slightly different hue at edges)
+                            float edge = smoothstep(0.3, 0.4, radial);
+                            col.r *= 1.0 + edge * 0.08;
+                            col.g *= 1.0 - edge * 0.05;
+
+                            // Subtle translucency effect
+                            float translucent = nFine * 0.1;
+                            col += uColorTip * translucent * 0.3;
+
                             csm_DiffuseColor = vec4(col, 1.0);
-                            // Restore original leaf self-illumination (see history: csm_Emissive = uColorTip * 2.0)
-                            csm_Emissive = uColorTip * 2.0;
-                            csm_Roughness = 0.6;
+
+                            // Emissive with vein modulation
+                            float glowIntensity = 2.0 + veins * 0.5 + cells * 0.3;
+                            csm_Emissive = uColorTip * glowIntensity;
+
+                            // Roughness varies with structure
+                            float rough = 0.55 + veins * 0.1 - cells * 0.1;
+                            csm_Roughness = clamp(rough, 0.4, 0.7);
                         }
                     `}
                     uniforms={uniforms}
