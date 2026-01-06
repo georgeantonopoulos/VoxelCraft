@@ -7,6 +7,7 @@ import { useWorldStore } from '@state/WorldStore';
 import { ItemType } from '@/types';
 import { FractalTree } from '@features/flora/components/FractalTree';
 import { LumaSwarm } from '@features/flora/components/LumaSwarm';
+import { HollowFireflies } from '@features/flora/components/HollowFireflies';
 
 const stumpUrl = "/models/tree_stump.glb";
 
@@ -160,6 +161,18 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 </group>
                 {/* Visual mesh removed from here - rendered by VoxelTerrain->StumpLayer */}
             </RigidBody>
+
+            {/* Blue flora fireflies - visible before tree grows */}
+            {status !== 'GROWING' && (
+                <group position={[0, 0.8, 0]}>
+                    <HollowFireflies
+                        count={3}
+                        radius={1.8}
+                        heightRange={[0.3, 1.5]}
+                        seed={Math.abs(position[0] * 31 + position[2] * 17)}
+                    />
+                </group>
+            )}
 
             {swarmVisible && (
                 <group position={[0, 1.5, 0]}>

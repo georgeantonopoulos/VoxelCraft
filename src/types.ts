@@ -151,6 +151,14 @@ export interface ChunkState {
   // RGBA Uint8Array of size LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y * LIGHT_GRID_SIZE_XZ * 4
   // Stores indirect light color (RGB) and intensity (A) per cell
   lightGrid?: Uint8Array;
+
+  // Procedural grass textures (GPU-friendly replacement for vegetationData)
+  // All are 32x32 textures matching chunk XZ grid
+  grassHeightTex?: Float32Array;   // Surface Y in world space (-999 = no surface)
+  grassMaterialTex?: Uint8Array;   // 255 = grass-friendly material, 0 = no grass
+  grassNormalTex?: Uint8Array;     // RG format (2 bytes): packed XZ normal components
+  grassBiomeTex?: Uint8Array;      // Biome ID (0-15)
+  grassCaveTex?: Uint8Array;       // 255 = solid ground, 0 = cave opening
 }
 
 export interface CustomTool {
