@@ -307,7 +307,7 @@ const App: React.FC = () => {
             caOffset, vignetteDarkness, sunShadowBias, sunShadowNormalBias,
             sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset,
             heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset,
-            giEnabled, giIntensity
+            giEnabled, giIntensity, terrainSaturation
           }}
           setHeightFogEnabled={setHeightFogEnabled}
           setHeightFogStrength={setHeightFogStrength}
@@ -318,6 +318,7 @@ const App: React.FC = () => {
           setFragmentNormalScale={setFragmentNormalScale}
           setGiEnabled={setGiEnabled}
           setGiIntensity={setGiIntensity}
+          setTerrainSaturation={setTerrainSaturation}
         />
       )}
 
