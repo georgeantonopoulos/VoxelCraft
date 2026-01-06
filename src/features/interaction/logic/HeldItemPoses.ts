@@ -25,7 +25,7 @@ export const PICKAXE_POSE: HeldItemPose = {
   rot: { x: 1.15, y: -3.062, z: -1.45 }
 };
 
-// Torch uses the same pose as stick tools (right hand position)
+// Torch uses the same pose as stick tools (right hand position), but flipped so flame points up
 export const TORCH_POSE: HeldItemPose = {
   x: PICKAXE_POSE.x,
   xOffset: 0.27,
@@ -35,7 +35,7 @@ export const TORCH_POSE: HeldItemPose = {
   rot: {
     x: THREE.MathUtils.degToRad(-18.0),
     y: THREE.MathUtils.degToRad(89.0),
-    z: THREE.MathUtils.degToRad(162.0)
+    z: THREE.MathUtils.degToRad(-18.0) // Flipped from 162° to -18° so flame points up
   },
   hiddenYOffset: -0.8
 };
