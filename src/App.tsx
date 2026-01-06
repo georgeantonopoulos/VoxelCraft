@@ -57,6 +57,7 @@ const keyboardMap = [
   { name: 'right', keys: ['ArrowRight', 'd', 'D'] },
   { name: 'jump', keys: ['Space'] },
   { name: 'shift', keys: ['Shift'] },
+  { name: 'crouch', keys: ['ControlLeft', 'ControlRight'] },
 ];
 
 const App: React.FC = () => {

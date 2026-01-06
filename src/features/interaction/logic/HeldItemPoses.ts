@@ -25,15 +25,17 @@ export const PICKAXE_POSE: HeldItemPose = {
   rot: { x: 1.15, y: -3.062, z: -1.45 }
 };
 
+// Torch uses the same pose as stick tools (right hand position)
 export const TORCH_POSE: HeldItemPose = {
-  x: -0.5,
-  y: -0.3,
-  z: -0.4,
-  scale: 0.41,
+  x: PICKAXE_POSE.x,
+  xOffset: 0.27,
+  y: -0.457,
+  z: -0.789,
+  scale: 1.234,
   rot: {
-    x: THREE.MathUtils.degToRad(14),
-    y: THREE.MathUtils.degToRad(-175),
-    z: THREE.MathUtils.degToRad(28)
+    x: THREE.MathUtils.degToRad(-18.0),
+    y: THREE.MathUtils.degToRad(89.0),
+    z: THREE.MathUtils.degToRad(162.0)
   },
   hiddenYOffset: -0.8
 };

@@ -24,14 +24,41 @@ const scratchForward = new THREE.Vector3();
 const scratchSide = new THREE.Vector3();
 const scratchUp = new THREE.Vector3(0, 1, 0);
 const scratchVelocity = new THREE.Vector3();
+const scratchCameraPos = new THREE.Vector3();
+const scratchPushDir = new THREE.Vector3();
+
+// Camera collision constants
+const EYE_HEIGHT = 0.75;
+const EYE_HEIGHT_CROUCHED = 0.25;
+const CAMERA_CLIP_MARGIN = 0.15; // Slightly larger than near plane (0.1) to prevent clipping
+
+// Crouch constants
+const CROUCH_SPEED_MULTIPLIER = 0.5;
+const CAPSULE_HALF_HEIGHT_NORMAL = 0.4;
+const CAPSULE_HALF_HEIGHT_CROUCHED = 0.1;
+const CAMERA_PUSH_DIRECTIONS = [
+  { x: 1, y: 0, z: 0 },   // Right
+  { x: -1, y: 0, z: 0 },  // Left
+  { x: 0, y: 0, z: 1 },   // Forward
+  { x: 0, y: 0, z: -1 },  // Back
+  { x: 0, y: 1, z: 0 },   // Up
+  { x: 0, y: -1, z: 0 },  // Down
+  // Diagonals for corners
+  { x: 0.707, y: 0, z: 0.707 },
+  { x: 0.707, y: 0, z: -0.707 },
+  { x: -0.707, y: 0, z: 0.707 },
+  { x: -0.707, y: 0, z: -0.707 },
+];
 export const Player = ({ position = [16, 32, 16] }: { position?: [number, number, number] }) => {
   const body = useRef<any>(null);
+  const collider = useRef<any>(null);
   const [isLuminaDashing, setIsLuminaDashing] = useState(false);
   const luminaTarget = useRef<THREE.Vector3 | null>(null);
 
   const getInput = usePlayerInput();
   const { rapier, world } = useRapier();
   const [isFlying, setIsFlying] = useState(false);
+  const isCrouching = useRef(false);
   const lastSpacePress = useRef<number>(0);
   const wasJumpPressed = useRef<boolean>(false);
   const spacePressHandled = useRef<boolean>(false);
@@ -99,7 +126,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       }
     }
 
-    const { move, jump, shift } = getInput();
+    const { move, jump, shift, crouch } = getInput();
     const vel = body.current.linvel();
     scratchVelocity.set(vel.x, vel.y, vel.z);
 
@@ -124,6 +151,18 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const currentUnderwaterState = useEnvironmentStore.getState().isUnderwater;
     if (isFullyUnderwater !== currentUnderwaterState) {
       setUnderwaterState(isFullyUnderwater, state.clock.getElapsedTime());
+    }
+
+    // Handle crouching - update collider shape when crouch state changes
+    if (crouch !== isCrouching.current && collider.current && !isFlying && !inWater) {
+      isCrouching.current = crouch;
+      const newHalfHeight = crouch ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL;
+      collider.current.setHalfHeight(newHalfHeight);
+    }
+    // Reset crouch when flying or in water
+    if ((isFlying || inWater) && isCrouching.current && collider.current) {
+      isCrouching.current = false;
+      collider.current.setHalfHeight(CAPSULE_HALF_HEIGHT_NORMAL);
     }
 
     // Calculate rotation for minimap
@@ -158,7 +197,8 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     scratchMoveDir.addScaledVector(scratchForward, -move.z);
     scratchMoveDir.addScaledVector(scratchSide, -move.x);
 
-    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED);
+    const crouchMul = isCrouching.current ? CROUCH_SPEED_MULTIPLIER : 1.0;
+    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul);
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
     if (scratchMoveDir.lengthSq() > 1.0) scratchMoveDir.normalize();
@@ -211,14 +251,34 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
     body.current.setLinvel({ x: scratchMoveDir.x, y: yVelocity, z: scratchMoveDir.z }, true);
 
-    // Sync camera to body eye level
-    camera.position.set(pos.x, pos.y + 0.75, pos.z);
+    // Sync camera to body eye level with wall collision detection
+    // Start with intended eye position (lower when crouching)
+    const eyeHeight = isCrouching.current ? EYE_HEIGHT_CROUCHED : EYE_HEIGHT;
+    scratchCameraPos.set(pos.x, pos.y + eyeHeight, pos.z);
+
+    // Raycast in multiple directions from camera position to detect nearby walls
+    // Push camera away from any walls that are too close
+    for (const dir of CAMERA_PUSH_DIRECTIONS) {
+      const ray = new rapier.Ray(
+        { x: scratchCameraPos.x, y: scratchCameraPos.y, z: scratchCameraPos.z },
+        dir
+      );
+      const hit = world.castRay(ray, CAMERA_CLIP_MARGIN, true);
+      if (hit && hit.timeOfImpact < CAMERA_CLIP_MARGIN) {
+        // Wall is too close - push camera away from it
+        const pushDistance = CAMERA_CLIP_MARGIN - hit.timeOfImpact;
+        scratchPushDir.set(-dir.x, -dir.y, -dir.z).multiplyScalar(pushDistance);
+        scratchCameraPos.add(scratchPushDir);
+      }
+    }
+
+    camera.position.copy(scratchCameraPos);
     frameProfiler.end('player');
   });
 
   return (
     <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0}>
-      <CapsuleCollider args={[0.4, 0.4]} />
+      <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, 0.4]} />
     </RigidBody>
   );
 };

@@ -15,16 +15,18 @@ export const usePlayerInput = () => {
       return {
         move: { x: moveVector.x, z: moveVector.y },
         jump: isJumping,
-        shift: false
+        shift: false,
+        crouch: false
       };
     } else {
-      const { forward, backward, left, right, jump, shift } = getKeys();
+      const { forward, backward, left, right, jump, shift, crouch } = getKeys();
       const x = (right ? 1 : 0) - (left ? 1 : 0);
       const z = (backward ? 1 : 0) - (forward ? 1 : 0);
       return {
         move: { x, z },
         jump,
-        shift
+        shift,
+        crouch
       };
     }
   };

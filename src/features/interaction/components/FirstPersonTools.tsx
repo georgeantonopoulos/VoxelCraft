@@ -298,8 +298,9 @@ export const FirstPersonTools: React.FC = () => {
                 torchTargetPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY, torchPoseDebug.posZ);
                 torchHiddenPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
             } else {
-                torchTargetPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y, TORCH_POSE.z);
-                torchHiddenPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
+                const torchX = (TORCH_POSE.x + (TORCH_POSE.xOffset ?? 0)) * responsiveX;
+                torchTargetPos.current.set(torchX, TORCH_POSE.y, TORCH_POSE.z);
+                torchHiddenPos.current.set(torchX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
             }
             torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
             torchRef.current.position.copy(torchPosTemp.current);
