@@ -169,7 +169,7 @@ See `AGENTS.md` for the complete list. Most critical:
 
 1. **Chunk data ownership**: ChunkDataManager is the single source of truth. Always use `chunkDataManager.getChunk(key)` to access chunk data. Never mutate chunk data directly - use `markDirty()` or `modifyTerrain()`.
 2. **Collider throttling**: Trimesh creation causes 10-30ms stalls. Always use `colliderEnableQueue`.
-3. **CustomShaderMaterial**: Use `three-custom-shader-material/vanilla` for class usage. Never redeclare `vNormal` or `vViewDir`.
+3. **CustomShaderMaterial**: Use `three-custom-shader-material/vanilla` for class usage. Never redeclare `normal`, `vNormal`, `vViewDir`, or `vViewPosition` in custom shaders — these are reserved by Three.js's base material chunks.
 4. **Material channels**: Mesher outputs matWeightsA-D bound in ChunkMesh.tsx. Shader expects this structure.
 5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.

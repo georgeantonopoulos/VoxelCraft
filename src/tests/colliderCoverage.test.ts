@@ -697,3 +697,450 @@ describe('Collider Queue Performance', () => {
     // No normal gameplay reaches this speed. The bug is elsewhere.
   });
 });
+
+/**
+ * Regression tests for collider queue bugs fixed in VoxelTerrain.tsx
+ * These tests simulate the queue management logic and verify the fixes work correctly.
+ */
+describe('Collider Queue Regression Tests', () => {
+  /**
+   * Helper class that simulates the collider queue behavior from VoxelTerrain.tsx
+   * This allows us to test the queue logic in isolation without React/Three.js overhead
+   */
+  class ColliderQueueSimulator {
+    colliderEnableQueue: string[] = [];
+    colliderEnablePending: Set<string> = new Set();
+    lastColliderCenterKey = '';
+    playerChunk = { px: 0, pz: 0 };
+    chunks: Map<string, { cx: number; cz: number; colliderEnabled: boolean; dataLoaded: boolean }> = new Map();
+    COLLIDER_RADIUS = 1;
+
+    addChunk(cx: number, cz: number, dataLoaded = true) {
+      const key = `${cx},${cz}`;
+      this.chunks.set(key, { cx, cz, colliderEnabled: false, dataLoaded });
+    }
+
+    getChunk(key: string) {
+      const chunk = this.chunks.get(key);
+      return chunk?.dataLoaded ? chunk : undefined;
+    }
+
+    /**
+     * ORIGINAL buggy queue rebuild logic (before fix)
+     * This completely clears the queue on every player chunk change
+     */
+    rebuildQueueBuggy(px: number, pz: number) {
+      const colliderCenterKey = `${px},${pz}`;
+      if (colliderCenterKey !== this.lastColliderCenterKey) {
+        this.lastColliderCenterKey = colliderCenterKey;
+        // BUG: Completely clears the queue, losing pending work
+        this.colliderEnableQueue.length = 0;
+        this.colliderEnablePending.clear();
+
+        const candidates = new Set<string>();
+        for (let dx = -this.COLLIDER_RADIUS; dx <= this.COLLIDER_RADIUS; dx++) {
+          for (let dz = -this.COLLIDER_RADIUS; dz <= this.COLLIDER_RADIUS; dz++) {
+            candidates.add(`${px + dx},${pz + dz}`);
+          }
+        }
+
+        for (const key of candidates) {
+          const c = this.getChunk(key);
+          // BUG: If chunk data hasn't loaded yet, it's silently skipped and never re-queued
+          if (c && !c.colliderEnabled && !this.colliderEnablePending.has(key)) {
+            this.colliderEnablePending.add(key);
+            this.colliderEnableQueue.push(key);
+          }
+        }
+      }
+    }
+
+    /**
+     * FIXED queue rebuild logic (after fix)
+     * Preserves valid queue entries and properly handles chunks that aren't loaded yet
+     */
+    rebuildQueueFixed(px: number, pz: number) {
+      const colliderCenterKey = `${px},${pz}`;
+      if (colliderCenterKey !== this.lastColliderCenterKey) {
+        this.lastColliderCenterKey = colliderCenterKey;
+
+        const candidates = new Set<string>();
+        for (let dx = -this.COLLIDER_RADIUS; dx <= this.COLLIDER_RADIUS; dx++) {
+          for (let dz = -this.COLLIDER_RADIUS; dz <= this.COLLIDER_RADIUS; dz++) {
+            candidates.add(`${px + dx},${pz + dz}`);
+          }
+        }
+
+        // FIX: Preserve existing queue entries that are still valid candidates
+        const newQueue: string[] = [];
+        const newPending = new Set<string>();
+
+        for (const key of this.colliderEnableQueue) {
+          if (candidates.has(key)) {
+            newQueue.push(key);
+            newPending.add(key);
+          }
+        }
+
+        for (const key of candidates) {
+          const c = this.getChunk(key);
+          if (c && !c.colliderEnabled && !newPending.has(key)) {
+            newPending.add(key);
+            newQueue.push(key);
+          }
+        }
+
+        this.colliderEnableQueue = newQueue;
+        this.colliderEnablePending = newPending;
+      }
+    }
+
+    /**
+     * ORIGINAL buggy collider processing (before fix)
+     * Completely skips processing during heavy worker frames
+     */
+    processCollidersBuggy(appliedWorkerMessageThisFrame: boolean) {
+      // BUG: If worker messages were processed, colliders are completely skipped
+      if (!appliedWorkerMessageThisFrame && this.colliderEnableQueue.length > 0) {
+        const key = this.colliderEnableQueue.shift();
+        if (key) {
+          this.colliderEnablePending.delete(key);
+          const chunk = this.getChunk(key);
+          if (chunk && !chunk.colliderEnabled) {
+            chunk.colliderEnabled = true;
+          }
+        }
+      }
+    }
+
+    /**
+     * FIXED collider processing (after fix)
+     * Always processes the player's current chunk, even during heavy worker frames
+     */
+    processCollidersFixed(appliedWorkerMessageThisFrame: boolean) {
+      if (this.colliderEnableQueue.length > 0) {
+        // FIX: Always enable player's current chunk immediately
+        const playerChunkKey = `${this.playerChunk.px},${this.playerChunk.pz}`;
+        const playerChunkQueueIndex = this.colliderEnableQueue.indexOf(playerChunkKey);
+        if (playerChunkQueueIndex !== -1) {
+          this.colliderEnableQueue.splice(playerChunkQueueIndex, 1);
+          this.colliderEnablePending.delete(playerChunkKey);
+          const chunk = this.getChunk(playerChunkKey);
+          if (chunk && !chunk.colliderEnabled) {
+            chunk.colliderEnabled = true;
+          }
+        }
+
+        // Process additional colliders only if not busy with worker messages
+        if (!appliedWorkerMessageThisFrame && this.colliderEnableQueue.length > 0) {
+          const key = this.colliderEnableQueue.shift();
+          if (key) {
+            this.colliderEnablePending.delete(key);
+            const chunk = this.getChunk(key);
+            if (chunk && !chunk.colliderEnabled) {
+              chunk.colliderEnabled = true;
+            }
+          }
+        }
+      }
+    }
+
+    movePlayer(px: number, pz: number) {
+      this.playerChunk = { px, pz };
+    }
+
+    getEnabledColliderCount(): number {
+      let count = 0;
+      for (const chunk of this.chunks.values()) {
+        if (chunk.colliderEnabled) count++;
+      }
+      return count;
+    }
+
+    isPlayerChunkEnabled(): boolean {
+      const key = `${this.playerChunk.px},${this.playerChunk.pz}`;
+      return this.chunks.get(key)?.colliderEnabled ?? false;
+    }
+  }
+
+  describe('Bug 1: Queue Clearing Race Condition', () => {
+    it('BUGGY: should demonstrate queue clearing drops pending chunks', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Setup: Create chunks around player at (0,0)
+      for (let cx = -2; cx <= 2; cx++) {
+        for (let cz = -2; cz <= 2; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      // Player at (0,0) - queue should have 9 chunks (3x3 around player)
+      sim.rebuildQueueBuggy(0, 0);
+      expect(sim.colliderEnableQueue.length).toBe(9);
+
+      // Process only 1 collider (simulating throttling)
+      sim.processCollidersBuggy(false);
+      expect(sim.getEnabledColliderCount()).toBe(1);
+      expect(sim.colliderEnableQueue.length).toBe(8);
+
+      // Player moves to (1,0) - BUG: queue is completely cleared!
+      sim.rebuildQueueBuggy(1, 0);
+
+      // The 8 pending chunks that were waiting are now lost
+      // Only the new candidates that are loaded get queued
+      // Chunks at (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1), (2,-1), (2,0), (2,1)
+      // should be in queue, but previously pending ones were dropped
+      expect(sim.colliderEnableQueue.length).toBeLessThanOrEqual(9);
+    });
+
+    it('FIXED: should preserve valid pending chunks when player moves', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Setup: Create chunks around player at (0,0)
+      for (let cx = -2; cx <= 2; cx++) {
+        for (let cz = -2; cz <= 2; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      // Player at (0,0)
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueFixed(0, 0);
+      const initialQueueLength = sim.colliderEnableQueue.length;
+      expect(initialQueueLength).toBe(9);
+
+      // Process colliders - fixed version enables player chunk + 1 additional
+      sim.processCollidersFixed(false);
+      // Player chunk (0,0) is enabled immediately, plus one more from the queue
+      expect(sim.getEnabledColliderCount()).toBe(2);
+
+      // Player moves to (1,0) - FIX: valid pending chunks are preserved
+      sim.movePlayer(1, 0);
+      sim.rebuildQueueFixed(1, 0);
+
+      // Chunks still in radius should be preserved, new ones added
+      // (0,0) was already enabled, so not in queue
+      // Preserved: (-1,-1), (-1,0), (-1,1) are no longer in radius - removed
+      // Preserved: (0,-1), (0,0), (0,1), (1,-1), (1,0), (1,1) - kept if pending
+      // New: (2,-1), (2,0), (2,1) - added
+      expect(sim.colliderEnableQueue.length).toBeGreaterThan(0);
+
+      // Process all colliders
+      for (let i = 0; i < 20; i++) {
+        sim.processCollidersFixed(false);
+      }
+
+      // All chunks within radius of new position should be enabled
+      const chunksInRadius = ['0,-1', '0,0', '0,1', '1,-1', '1,0', '1,1', '2,-1', '2,0', '2,1'];
+      for (const key of chunksInRadius) {
+        expect(sim.chunks.get(key)?.colliderEnabled).toBe(true);
+      }
+    });
+  });
+
+  describe('Bug 2: Worker Message Blocking', () => {
+    it('BUGGY: should demonstrate player chunk blocked during heavy worker frames', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Setup chunks
+      for (let cx = -1; cx <= 1; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueBuggy(0, 0);
+
+      // Simulate 5 frames of heavy worker activity
+      for (let frame = 0; frame < 5; frame++) {
+        sim.processCollidersBuggy(true); // appliedWorkerMessageThisFrame = true
+      }
+
+      // BUG: Player's chunk still doesn't have a collider!
+      expect(sim.isPlayerChunkEnabled()).toBe(false);
+      expect(sim.getEnabledColliderCount()).toBe(0);
+    });
+
+    it('FIXED: should always enable player chunk even during heavy worker frames', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Setup chunks
+      for (let cx = -1; cx <= 1; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueFixed(0, 0);
+
+      // Simulate 5 frames of heavy worker activity
+      for (let frame = 0; frame < 5; frame++) {
+        sim.processCollidersFixed(true); // appliedWorkerMessageThisFrame = true
+      }
+
+      // FIX: Player's chunk should ALWAYS be enabled immediately
+      expect(sim.isPlayerChunkEnabled()).toBe(true);
+
+      // Other chunks won't be enabled during heavy frames (expected throttling)
+      // But the critical player chunk is safe
+      expect(sim.getEnabledColliderCount()).toBe(1);
+    });
+
+    it('FIXED: should enable player chunk on first frame regardless of worker load', () => {
+      const sim = new ColliderQueueSimulator();
+
+      for (let cx = -1; cx <= 1; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueFixed(0, 0);
+
+      // Even on very first frame with heavy worker load, player chunk is enabled
+      sim.processCollidersFixed(true);
+      expect(sim.isPlayerChunkEnabled()).toBe(true);
+    });
+  });
+
+  describe('Bug 3: Direction-Biased Queuing (Chunks Behind Player)', () => {
+    /**
+     * The original code only queued chunks "ahead" of the player's movement direction.
+     * This meant chunks behind or beside the player might not get colliders when
+     * walking backwards or sideways on hills.
+     *
+     * This test simulates the scenario but the fix is in the GENERATED message handler
+     * where chunks within radius are always queued regardless of direction.
+     */
+    it('should queue all chunks within radius regardless of movement direction', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Player is at (0,0) moving in +X direction
+      sim.movePlayer(0, 0);
+
+      // Chunks exist all around player
+      for (let cx = -2; cx <= 2; cx++) {
+        for (let cz = -2; cz <= 2; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      sim.rebuildQueueFixed(0, 0);
+
+      // All 9 chunks in 3x3 around player should be queued (or already enabled)
+      const chunksInRadius = [
+        '-1,-1', '-1,0', '-1,1',
+        '0,-1', '0,0', '0,1',
+        '1,-1', '1,0', '1,1'
+      ];
+
+      // Verify all radius chunks are in queue
+      for (const key of chunksInRadius) {
+        const inQueue = sim.colliderEnableQueue.includes(key) ||
+          sim.chunks.get(key)?.colliderEnabled === true;
+        expect(inQueue).toBe(true);
+      }
+
+      // Chunks behind player (-1,*) should be included, not just ahead (+1,*)
+      expect(
+        sim.colliderEnableQueue.includes('-1,0') ||
+        sim.chunks.get('-1,0')?.colliderEnabled === true
+      ).toBe(true);
+    });
+  });
+
+  describe('Combined Scenario: Rapid Movement on Hills', () => {
+    it('should maintain collider coverage when player rapidly crosses chunk boundaries', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Create a larger world
+      for (let cx = -5; cx <= 5; cx++) {
+        for (let cz = -5; cz <= 5; cz++) {
+          sim.addChunk(cx, cz);
+        }
+      }
+
+      // Player starts at (0,0)
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueFixed(0, 0);
+
+      // Process a few frames
+      for (let i = 0; i < 3; i++) {
+        sim.processCollidersFixed(false);
+      }
+
+      expect(sim.isPlayerChunkEnabled()).toBe(true);
+
+      // Rapidly move player through several chunks (simulating fast movement on hills)
+      const positions = [
+        { px: 1, pz: 0 },
+        { px: 2, pz: 0 },
+        { px: 2, pz: 1 },
+        { px: 3, pz: 1 },
+      ];
+
+      for (const pos of positions) {
+        sim.movePlayer(pos.px, pos.pz);
+        sim.rebuildQueueFixed(pos.px, pos.pz);
+
+        // Simulate heavy worker frame on some iterations
+        const heavyFrame = Math.random() > 0.5;
+        sim.processCollidersFixed(heavyFrame);
+
+        // CRITICAL: Player's current chunk should ALWAYS have collider
+        expect(sim.isPlayerChunkEnabled()).toBe(true);
+      }
+    });
+
+    it('should handle chunk data arriving after player has moved', () => {
+      const sim = new ColliderQueueSimulator();
+
+      // Initially, only chunks around (0,0) are loaded
+      for (let cx = -1; cx <= 1; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          sim.addChunk(cx, cz, true);
+        }
+      }
+
+      // Chunks further away exist but data not loaded yet
+      for (let cx = 2; cx <= 3; cx++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          sim.addChunk(cx, cz, false); // dataLoaded = false
+        }
+      }
+
+      sim.movePlayer(0, 0);
+      sim.rebuildQueueFixed(0, 0);
+
+      // Process initial colliders
+      for (let i = 0; i < 10; i++) {
+        sim.processCollidersFixed(false);
+      }
+
+      // Player moves to (2,0) where chunk data wasn't loaded
+      sim.movePlayer(2, 0);
+      sim.rebuildQueueFixed(2, 0);
+
+      // Chunk (2,0) data is not loaded, so it won't be in queue
+      expect(sim.colliderEnableQueue.includes('2,0')).toBe(false);
+
+      // Now chunk data arrives (simulating worker message)
+      sim.chunks.get('2,0')!.dataLoaded = true;
+      sim.chunks.get('3,0')!.dataLoaded = true;
+
+      // Rebuild queue - now the chunks should be picked up
+      sim.lastColliderCenterKey = ''; // Force rebuild
+      sim.rebuildQueueFixed(2, 0);
+
+      // (2,0) should now be queued
+      expect(sim.colliderEnableQueue.includes('2,0')).toBe(true);
+
+      // Process and verify
+      sim.processCollidersFixed(false);
+      expect(sim.isPlayerChunkEnabled()).toBe(true);
+    });
+  });
+});

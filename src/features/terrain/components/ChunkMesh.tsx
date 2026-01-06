@@ -9,7 +9,7 @@ import {
 } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
-import { ProceduralGrassLayer } from './ProceduralGrassLayer';
+import { BladeGrassLayer } from './BladeGrassLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
@@ -316,9 +316,9 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
       {showLayers && (
         <>
-          {/* Procedural grass layer (GPU-based) - uses texture lookups instead of CPU position arrays */}
+          {/* Blade grass layer - high quality single draw call grass */}
           {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && chunk.grassHeightTex && (
-            <ProceduralGrassLayer
+            <BladeGrassLayer
               heightTex={chunk.grassHeightTex}
               materialTex={chunk.grassMaterialTex!}
               normalTex={chunk.grassNormalTex!}
