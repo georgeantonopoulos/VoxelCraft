@@ -8,9 +8,8 @@
 
 import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { PROCEDURAL_GRASS_SHADER, VEG_TYPE_COLORS } from '../shaders/ProceduralGrassShader';
+import { PROCEDURAL_GRASS_SHADER, GRASS_GRID_SIZE, VEG_TYPE_COLORS } from '../shaders/ProceduralGrassShader';
 import { VEGETATION_GEOMETRIES } from '../logic/VegetationGeometries';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { getNoiseTexture } from '@core/memory/sharedResources';
@@ -34,11 +33,14 @@ const VEG_TYPES = [
   { id: 3, name: 'flower', color: VEG_TYPE_COLORS.flower, geometry: 'flower' },
 ] as const;
 
+// Total instances = GRASS_GRID_SIZE^2 (imported from shader for single source of truth)
+const TOTAL_INSTANCES = GRASS_GRID_SIZE * GRASS_GRID_SIZE;
+
 // Instance counts based on LOD
 const getInstanceCount = (lodLevel: number): number => {
-  if (lodLevel <= 0) return 1024; // Full 32x32 grid
-  if (lodLevel <= 1) return 512;  // 50%
-  if (lodLevel <= 2) return 256;  // 25%
+  if (lodLevel <= 0) return TOTAL_INSTANCES;      // Full density (4096)
+  if (lodLevel <= 1) return TOTAL_INSTANCES / 2;  // 50% (2048)
+  if (lodLevel <= 2) return TOTAL_INSTANCES / 4;  // 25% (1024)
   return 0; // LOD 3+ = no vegetation
 };
 
@@ -82,6 +84,7 @@ const VegetationTypeLayer: React.FC<{
         uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
         uChunkOffset: { value: chunkOffset },
         uVegType: { value: vegType.id },
+        uGridSize: { value: GRASS_GRID_SIZE },
         uNoiseTexture: { value: getNoiseTexture() },
         uSunDir: sharedUniforms.uSunDir,
         uFogColor: sharedUniforms.uFogColor,

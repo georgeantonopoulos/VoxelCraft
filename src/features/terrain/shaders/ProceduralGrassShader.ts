@@ -13,6 +13,9 @@
  * - uCaveMask: Uint8 255=solid ground, 0=cave opening
  */
 
+// Grid size constant - must match GRASS_GRID_SIZE in ProceduralGrassLayer.tsx
+export const GRASS_GRID_SIZE = 64;
+
 export const PROCEDURAL_GRASS_SHADER = {
   vertex: `
     uniform sampler2D uHeightMap;
@@ -24,6 +27,7 @@ export const PROCEDURAL_GRASS_SHADER = {
     uniform vec2 uWindDir;
     uniform vec3 uChunkOffset;
     uniform float uVegType; // 0=grass_low, 1=grass_tall, 2=fern, 3=flower
+    uniform float uGridSize; // Grid resolution (e.g., 64 for 64x64)
 
     varying vec2 vUv;
     varying vec3 vWorldPos;
@@ -46,12 +50,18 @@ export const PROCEDURAL_GRASS_SHADER = {
       vUv = uv;
 
       // Decode grid position from instance ID
+      // Grid is uGridSize x uGridSize (e.g., 64x64 = 4096 instances)
       float instanceId = float(gl_InstanceID);
-      float gridX = mod(instanceId, 32.0);
-      float gridZ = floor(instanceId / 32.0);
+      float gridX = mod(instanceId, uGridSize);
+      float gridZ = floor(instanceId / uGridSize);
 
-      // UV for texture sampling (center of cell)
-      vec2 texUV = (vec2(gridX, gridZ) + 0.5) / 32.0;
+      // Convert grid position to chunk-local coordinates (0-32 range)
+      // This maps the denser grid onto the 32-unit chunk
+      float chunkX = gridX * (32.0 / uGridSize);
+      float chunkZ = gridZ * (32.0 / uGridSize);
+
+      // UV for texture sampling (textures are 32x32)
+      vec2 texUV = (vec2(chunkX, chunkZ) + 0.5) / 32.0;
 
       // Sample all textures
       float surfaceY = texture2D(uHeightMap, texUV).r;
@@ -60,8 +70,8 @@ export const PROCEDURAL_GRASS_SHADER = {
       float biomeId = texture2D(uBiomeMap, texUV).r * 255.0;
       float caveMask = texture2D(uCaveMask, texUV).r;
 
-      // World cell ID for deterministic randomness
-      vec2 cellId = vec2(gridX, gridZ) + uChunkOffset.xz;
+      // World cell ID for deterministic randomness (use grid position for unique hash per instance)
+      vec2 cellId = vec2(gridX, gridZ) + uChunkOffset.xz * (uGridSize / 32.0);
 
       // Type selection via hash - each type claims a portion of instances
       float typeHash = hash(cellId + vec2(100.0, 200.0));
@@ -89,13 +99,15 @@ export const PROCEDURAL_GRASS_SHADER = {
       float xzSq = surfaceNormal.x * surfaceNormal.x + surfaceNormal.z * surfaceNormal.z;
       surfaceNormal.y = sqrt(max(0.0, 1.0 - xzSq));
 
-      // Base position in chunk-local space
-      vec3 basePos = vec3(gridX, surfaceY, gridZ);
+      // Base position in chunk-local space (use chunk coordinates, not grid)
+      vec3 basePos = vec3(chunkX, surfaceY, chunkZ);
 
       // Sub-cell jitter (deterministic, stays within cell bounds)
+      // Reduce jitter range proportionally to cell size
+      float cellSize = 32.0 / uGridSize;
       vec2 jitter = hash2(cellId) - 0.5;
-      basePos.x += jitter.x * 0.9;
-      basePos.z += jitter.y * 0.9;
+      basePos.x += jitter.x * cellSize * 0.9;
+      basePos.z += jitter.y * cellSize * 0.9;
 
       // Slope compensation (match Surface Nets mesh offset)
       float slopeSink = (1.0 - surfaceNormal.y) * 0.75;

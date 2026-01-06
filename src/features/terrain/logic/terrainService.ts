@@ -852,7 +852,7 @@ export class TerrainService {
                 if (!bestCandidate || groveInfo.intensity > bestCandidate.intensity) {
                     bestCandidate = {
                         x: gx - PAD,
-                        y: surface.worldY + 0.25,
+                        y: surface.worldY + 0.1,
                         z: gz - PAD,
                         nx, ny, nz,
                         intensity: groveInfo.intensity
