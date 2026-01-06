@@ -251,6 +251,9 @@ export const triplanarFragmentShader = `
   uniform float uFragmentNormalStrength; // 0.0 = off, 0.3-0.5 = subtle, 1.0 = strong
   uniform float uFragmentNormalScale;    // Base frequency (0.2-0.5 typical)
 
+  // Color grading (in-shader, not post-processing)
+  uniform float uTerrainSaturation;      // 1.0=neutral, >1=more saturated
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -347,6 +350,13 @@ export const triplanarFragmentShader = `
       }
       // vLightColor comes from the vertex attribute, already interpolated
       return vLightColor * uGIIntensity;
+  }
+
+  // Apply saturation adjustment (in-shader color grading)
+  // sat=1.0 is neutral, >1 increases saturation, <1 decreases
+  vec3 adjustSaturation(vec3 color, float sat) {
+      float luma = dot(color, vec3(0.299, 0.587, 0.114));
+      return mix(vec3(luma), color, sat);
   }
 
   float sampleCausticPattern(vec2 uv, float ang, float tz1, float tz2) {
@@ -846,6 +856,10 @@ export const triplanarFragmentShader = `
     }
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
+
+    // Apply terrain saturation boost (in-shader, not post-processing)
+    // This affects base material colors before lighting, giving natural results
+    col = adjustSaturation(col, uTerrainSaturation);
 
     // Apply voxel-based global illumination
     vec3 giLight = getGILight();

@@ -7,7 +7,6 @@ import { Leva } from 'leva';
 import * as THREE from 'three';
 
 // Core & State
-import { DynamicEnvironmentIBL } from '@core/graphics/DynamicEnvironmentIBL';
 import { useSettingsStore } from '@state/SettingsStore';
 
 // Features
@@ -136,11 +135,9 @@ const App: React.FC = () => {
   const [fogFar, setFogFar] = useState(85);
   const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
   const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
-  const [sunIntensityMul, setSunIntensityMul] = useState(1.5);
+  const [sunIntensityMul, setSunIntensityMul] = useState(4.8);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
-  const [iblEnabled, setIblEnabled] = useState(false);
-  const [iblIntensity, setIblIntensity] = useState(0.4);
   const [exposureSurface, setExposureSurface] = useState(0.6);
   const [exposureCaveMax, setExposureCaveMax] = useState(1.3);
   const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
@@ -158,6 +155,13 @@ const App: React.FC = () => {
   // Fragment Normal Perturbation (AAA terrain quality)
   const [fragmentNormalStrength, setFragmentNormalStrength] = useState(0.4);
   const [fragmentNormalScale, setFragmentNormalScale] = useState(0.35);
+
+  // Global Illumination (voxel light grid)
+  const [giEnabled, setGiEnabled] = useState(true);
+  const [giIntensity, setGiIntensity] = useState(5.0);
+
+  // Terrain Color Grading (in-shader, not post-processing)
+  const [terrainSaturation, setTerrainSaturation] = useState(1.25);
 
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
@@ -266,8 +270,6 @@ const App: React.FC = () => {
           setSunIntensityMul={setSunIntensityMul}
           setAmbientIntensityMul={setAmbientIntensityMul}
           setMoonIntensityMul={setMoonIntensityMul}
-          setIblEnabled={setIblEnabled}
-          setIblIntensity={setIblIntensity}
           setTerrainShaderFogEnabled={setTerrainShaderFogEnabled}
           setTerrainShaderFogStrength={setTerrainShaderFogStrength}
           setTerrainThreeFogEnabled={setTerrainThreeFogEnabled}
@@ -297,14 +299,15 @@ const App: React.FC = () => {
             debugShadowsEnabled, triplanarDetail, postProcessingEnabled, aoEnabled, bloomEnabled, aoIntensity,
             bloomIntensity, bloomThreshold, exposureSurface, exposureCaveMax, exposureUnderwater,
             fogNear, fogFar, atmosphereHaze, atmosphereBrightness, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
-            iblEnabled, iblIntensity, terrainShaderFogEnabled, terrainShaderFogStrength,
+            terrainShaderFogEnabled, terrainShaderFogStrength,
             terrainThreeFogEnabled, terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
             terrainRoughnessMin, bedrockPlaneEnabled, terrainPolygonOffsetEnabled,
             terrainPolygonOffsetFactor, terrainPolygonOffsetUnits, levaScale, levaWidth,
             terrainChunkTintEnabled, terrainWireframeEnabled, terrainWeightsView,
             caOffset, vignetteDarkness, sunShadowBias, sunShadowNormalBias,
             sunShadowMapSize, sunShadowCamSize, sunOrbitRadius, sunOrbitSpeed, sunTimeOffset,
-            heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset
+            heightFogEnabled, heightFogStrength, heightFogRange, heightFogOffset,
+            giEnabled, giIntensity
           }}
           setHeightFogEnabled={setHeightFogEnabled}
           setHeightFogStrength={setHeightFogStrength}
@@ -313,6 +316,8 @@ const App: React.FC = () => {
           setBiomeFogEnabled={setBiomeFogEnabled}
           setFragmentNormalStrength={setFragmentNormalStrength}
           setFragmentNormalScale={setFragmentNormalScale}
+          setGiEnabled={setGiEnabled}
+          setGiIntensity={setGiIntensity}
         />
       )}
 
@@ -362,10 +367,6 @@ const App: React.FC = () => {
             orbitConfig={orbitConfig}
           />
 
-          {iblEnabled && (
-            <DynamicEnvironmentIBL sunDirection={sunDirection} enabled={iblEnabled} intensity={iblIntensity} />
-          )}
-
           <Suspense fallback={null}>
             <Physics gravity={[0, -20, 0]}>
               {gameStarted && spawnPos && collidersReady && <Player position={spawnPos} />}
@@ -397,6 +398,9 @@ const App: React.FC = () => {
                   biomeFogEnabled={biomeFogEnabled}
                   fragmentNormalStrength={fragmentNormalStrength}
                   fragmentNormalScale={fragmentNormalScale}
+                  giEnabled={giEnabled}
+                  giIntensity={giIntensity}
+                  terrainSaturation={terrainSaturation}
                   initialSpawnPos={spawnPos}
                   onInitialLoad={() => setTerrainLoaded(true)}
                   worldType={worldType}

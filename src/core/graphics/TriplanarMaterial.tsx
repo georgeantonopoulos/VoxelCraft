@@ -55,9 +55,8 @@ const getSharedTerrainMaterial = () => {
     uNormalStrength: { value: 1.0 },
     uFogDensity: { value: 0.01 },
     uWaterLevel: { value: 4.5 },
-    // GI uniforms
-    uGIEnabled: { value: 1.0 },
-    uGIIntensity: { value: 1.35 },
+    // Note: GI uniforms (uGIEnabled, uGIIntensity) come from sharedUniforms
+    // and are updated via updateSharedUniforms() in VoxelTerrain
   };
 
   // Merge with sharedUniforms - these are updated by VoxelTerrain each frame

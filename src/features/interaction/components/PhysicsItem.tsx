@@ -54,10 +54,64 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
     const impactSpeed = lastVel.current.length();
     const other = e.other.rigidBodyObject;
     const isTerrain = other?.userData?.type === 'terrain';
+    const otherType = other?.userData?.type;
+    const otherId = other?.userData?.id;
 
     const isStickBased = item.type === ItemType.STICK || (item.customToolData?.baseType === ItemType.STICK);
 
+    // Helper to shatter a rock at a position (used for both self and target)
+    const shatterRock = (position: { x: number; y: number; z: number }, targetId: string) => {
+      // Spawn 3 Shards
+      for (let i = 0; i < 3; i++) {
+        const vx = (Math.random() - 0.5) * 4;
+        const vy = (Math.random() * 3) + 2;
+        const vz = (Math.random() - 0.5) * 4;
+        spawnItem(ItemType.SHARD, [position.x, position.y + 0.5, position.z], [vx, vy, vz]);
+      }
+
+      // Play shatter sound
+      CLUNK_AUDIO.currentTime = 0;
+      CLUNK_AUDIO.volume = 0.5;
+      CLUNK_AUDIO.playbackRate = 1.2;
+      CLUNK_AUDIO.play().catch(() => { });
+
+      // Remove the shattered rock
+      removeItem(targetId);
+    };
+
     if (item.type === ItemType.STONE) {
+      // Check for item-to-item collision (rock hitting another rock or shard)
+      const isOtherDamageable = otherType === ItemType.STONE || otherType === ItemType.SHARD;
+
+      if (isOtherDamageable && otherId && impactSpeed > 4.0) {
+        // Item-to-item collision - damage the target
+        const dmg = impactSpeed / 6.0; // Slightly more damage for item impacts
+        const damageStore = useEntityHistoryStore.getState();
+        const targetHealth = damageStore.damageEntity(otherId, dmg, 10, 'Rock Impact');
+
+        // Get target position from the collision
+        const targetPos = other.position || e.other.rigidBody?.translation();
+
+        if (targetHealth <= 0 && targetPos) {
+          // Target shattered!
+          shatterRock(targetPos, otherId);
+        } else {
+          // Impact sound
+          CLUNK_AUDIO.currentTime = 0;
+          CLUNK_AUDIO.volume = Math.min(1.0, impactSpeed / 15);
+          CLUNK_AUDIO.playbackRate = 0.9 + Math.random() * 0.2;
+          CLUNK_AUDIO.play().catch(() => { });
+        }
+
+        // Also damage the thrown stone (both rocks take damage on collision)
+        const selfHealth = damageStore.damageEntity(item.id, dmg * 0.5, 10, 'Rock Impact');
+        if (selfHealth <= 0 && rigidBody.current) {
+          const t = rigidBody.current.translation();
+          shatterRock(t, item.id);
+        }
+        return; // Don't process terrain collision if we hit an item
+      }
+
       if (isTerrain && impactSpeed > 6.0) { // Lower threshold for damage
         // Only damage on hard terrain materials (avoid sand/soil shatter).
         const tSelf = rigidBody.current?.translation();
@@ -79,24 +133,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         if (h <= 0) {
           // Shatter!
           const t = rigidBody.current!.translation();
-
-          // Spawn 3 Shards - spawn higher up (0.5 units above stone center) to prevent
-          // shards from spawning inside terrain when stone is partially embedded
-          for (let i = 0; i < 3; i++) {
-            const vx = (Math.random() - 0.5) * 4;
-            const vy = (Math.random() * 3) + 2;
-            const vz = (Math.random() - 0.5) * 4;
-            spawnItem(ItemType.SHARD, [t.x, t.y + 0.5, t.z], [vx, vy, vz]);
-          }
-
-          // Play Sound using shared pool
-          CLUNK_AUDIO.currentTime = 0;
-          CLUNK_AUDIO.volume = 0.5;
-          CLUNK_AUDIO.playbackRate = 1.2; // higher pitch for shatter
-          CLUNK_AUDIO.play().catch(() => { });
-
-          // Remove self
-          removeItem(item.id);
+          shatterRock(t, item.id);
         } else {
           // Just a clunk
           CLUNK_AUDIO.currentTime = 0;

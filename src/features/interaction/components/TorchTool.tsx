@@ -47,7 +47,7 @@ export const TorchTool: React.FC = () => {
       downBias: { value: 0.35, min: 0, max: 1.5, step: 0.05 },
       flickerAmount: { value: 0.24, min: 0, max: 0.4, step: 0.01 },
     },
-    { hidden: !debugMode } as any
+    { hidden: !debugMode, collapsed: true } as any
   );
 
   // Stable helper objects

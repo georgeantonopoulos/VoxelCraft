@@ -39,6 +39,13 @@ export const sharedUniforms = {
     // Now uses cheap triplanar-derived detail (no extra texture samples)
     uFragmentNormalStrength: { value: 0.6 },  // 0.0=off, 0.4-0.7=good, 1.0=strong
     uFragmentNormalScale: { value: 0.5 },     // Intensity multiplier (0.3-0.7 typical)
+
+    // Global Illumination (voxel light grid)
+    uGIEnabled: { value: 1.0 },               // Toggle for GI (0 = off, 1 = on)
+    uGIIntensity: { value: 5.0 },             // GI strength multiplier (higher = more visible indirect light)
+
+    // Color grading (in-shader, not post-processing)
+    uTerrainSaturation: { value: 1.25 },      // 1.0=neutral, >1=more saturated, <1=desaturated
 };
 
 export interface SharedUniformUpdateParams {
@@ -66,6 +73,11 @@ export interface SharedUniformUpdateParams {
     // Fragment normal perturbation
     fragmentNormalStrength?: number;
     fragmentNormalScale?: number;
+    // Global Illumination
+    giEnabled?: boolean;
+    giIntensity?: number;
+    // Color grading
+    terrainSaturation?: number;
 }
 
 /**
@@ -104,4 +116,11 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
     // Fragment normal perturbation
     if (params.fragmentNormalStrength !== undefined) sharedUniforms.uFragmentNormalStrength.value = params.fragmentNormalStrength;
     if (params.fragmentNormalScale !== undefined) sharedUniforms.uFragmentNormalScale.value = params.fragmentNormalScale;
+
+    // Global Illumination
+    if (params.giEnabled !== undefined) sharedUniforms.uGIEnabled.value = params.giEnabled ? 1.0 : 0.0;
+    if (params.giIntensity !== undefined) sharedUniforms.uGIIntensity.value = params.giIntensity;
+
+    // Color grading
+    if (params.terrainSaturation !== undefined) sharedUniforms.uTerrainSaturation.value = params.terrainSaturation;
 };

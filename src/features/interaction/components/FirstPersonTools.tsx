@@ -57,7 +57,7 @@ export const FirstPersonTools: React.FC = () => {
             scale: { value: TORCH_POSE.scale, min: 0.2, max: 1.5, step: 0.01 },
             hiddenYOffset: { value: TORCH_POSE.hiddenYOffset ?? -0.8, min: -2.0, max: -0.2, step: 0.01 },
         },
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     const [rightHandStickPoseDebug, setRightHandStickPoseDebug] = useControls(
@@ -105,7 +105,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     const [rightHandStonePoseDebug, setRightHandStonePoseDebug] = useControls(
@@ -153,7 +153,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     useEffect(() => {
