@@ -14,7 +14,8 @@
  */
 
 // Grid size constant - must match GRASS_GRID_SIZE in ProceduralGrassLayer.tsx
-export const GRASS_GRID_SIZE = 64;
+// 80×80 = 6400 instances per chunk - balanced density/performance
+export const GRASS_GRID_SIZE = 80;
 
 export const PROCEDURAL_GRASS_SHADER = {
   vertex: `
@@ -23,16 +24,21 @@ export const PROCEDURAL_GRASS_SHADER = {
     uniform sampler2D uNormalMap;
     uniform sampler2D uBiomeMap;
     uniform sampler2D uCaveMask;
+    uniform sampler3D uLightGrid; // 8x32x8 3D light grid for GI
     uniform float uTime;
     uniform vec2 uWindDir;
     uniform vec3 uChunkOffset;
-    uniform float uVegType; // 0=grass_low, 1=grass_tall, 2=fern, 3=flower
-    uniform float uGridSize; // Grid resolution (e.g., 64 for 64x64)
+    uniform float uVegType; // 0-4: grass_low, grass_tall, fern, flower, shrub
+    uniform float uGridSize; // Grid resolution (e.g., 80 for 80x80)
+    uniform float uGIEnabled; // Toggle for GI (0 or 1)
+    uniform float uGIIntensity; // GI intensity multiplier
 
     varying vec2 vUv;
     varying vec3 vWorldPos;
     varying float vVisible;
     varying float vTypeBlend; // For color variation
+    varying vec3 vGILight; // GI light color from light grid
+    varying float vBiomeId; // Pass biome to fragment for color tinting
 
     // Deterministic hash functions
     float hash(vec2 p) {
@@ -73,24 +79,61 @@ export const PROCEDURAL_GRASS_SHADER = {
       // World cell ID for deterministic randomness (use grid position for unique hash per instance)
       vec2 cellId = vec2(gridX, gridZ) + uChunkOffset.xz * (uGridSize / 32.0);
 
-      // Type selection via hash - each type claims a portion of instances
-      float typeHash = hash(cellId + vec2(100.0, 200.0));
-      float typeMatch = 0.0;
+      // Pass biome to fragment shader for color tinting
+      vBiomeId = biomeId;
 
-      // Type distribution: grass_low=70%, grass_tall=15%, fern=10%, flower=5%
-      if (uVegType < 0.5) {
-        // grass_low: hash 0.0 - 0.7
-        typeMatch = step(typeHash, 0.7);
-      } else if (uVegType < 1.5) {
-        // grass_tall: hash 0.7 - 0.85
-        typeMatch = step(0.7, typeHash) * step(typeHash, 0.85);
-      } else if (uVegType < 2.5) {
-        // fern: hash 0.85 - 0.95
-        typeMatch = step(0.85, typeHash) * step(typeHash, 0.95);
+      // Type selection via hash - biome-aware distribution
+      float typeHash = hash(cellId + vec2(100.0, 200.0));
+
+      // Biome-specific vegetation type distribution using cumulative probability ranges
+      // Types: 0=grass_low, 1=grass_tall, 2=fern, 3=flower, 4=shrub (5 types for performance)
+      // Each biome defines 5 cumulative thresholds
+
+      // Get start and end thresholds for current type in current biome
+      float typeStart = 0.0;
+      float typeEnd = 0.0;
+      int t = int(uVegType);
+
+      // Simplified biome-type lookup with 5 types
+      if (biomeId < 0.5) {
+        // PLAINS: grass dominant with flowers
+        float thresholds[5] = float[5](0.55, 0.75, 0.85, 0.95, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
+      } else if (biomeId < 1.5) {
+        // THE_GROVE: lush with more ferns and flowers
+        float thresholds[5] = float[5](0.40, 0.60, 0.80, 0.95, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
+      } else if (biomeId > 3.5 && biomeId < 4.5) {
+        // JUNGLE: fern-heavy with shrubs
+        float thresholds[5] = float[5](0.20, 0.30, 0.70, 0.80, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
+      } else if (biomeId > 6.5 && biomeId < 7.5) {
+        // MOUNTAINS: sparse grass with hardy shrubs
+        float thresholds[5] = float[5](0.60, 0.70, 0.75, 0.85, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
+      } else if (biomeId > 8.5 && biomeId < 9.5) {
+        // SAVANNA: tall grass dominant
+        float thresholds[5] = float[5](0.25, 0.80, 0.85, 0.90, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
+      } else if (biomeId > 9.5) {
+        // SKY_ISLANDS: mystical with flowers
+        float thresholds[5] = float[5](0.35, 0.55, 0.65, 0.90, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
       } else {
-        // flower: hash 0.95 - 1.0
-        typeMatch = step(0.95, typeHash);
+        // Default fallback
+        float thresholds[5] = float[5](0.60, 0.80, 0.90, 1.00, 1.00);
+        typeStart = (t > 0) ? thresholds[t-1] : 0.0;
+        typeEnd = thresholds[t];
       }
+
+      // Type matches if hash falls within this type's probability range
+      float typeMatch = step(typeStart, typeHash) * step(typeHash, typeEnd);
 
       // Unpack surface normal (XZ stored, Y derived)
       vec3 surfaceNormal;
@@ -166,13 +209,39 @@ export const PROCEDURAL_GRASS_SHADER = {
       // Check above water level (5.0)
       visible *= step(5.0, surfaceY);
 
-      // Check biome (no grass in desert=2,3, snow=5, ice=6)
+      // Check biome (no grass in desert=2,3, snow=5, ice=6, beach=8)
       float badBiome = step(1.5, biomeId) * step(biomeId, 3.5); // Desert/RedDesert
       badBiome += step(4.5, biomeId) * step(biomeId, 6.5); // Snow/IceSpikes
+      badBiome += step(7.5, biomeId) * step(biomeId, 8.5); // Beach
       visible *= 1.0 - badBiome;
 
       // Check type match
       visible *= typeMatch;
+
+      // Sample GI light grid
+      // Light grid is 8x32x8 cells, each cell covers 4 voxels
+      // Convert chunk-local position to light grid UV (0-1)
+      // chunkX/chunkZ are in 0-32 range, surfaceY is world Y
+      // MESH_Y_OFFSET = -35, so local Y = worldY + 35
+      float lightCellSize = 4.0; // LIGHT_CELL_SIZE
+      float lightGridXZ = 8.0;   // LIGHT_GRID_SIZE_XZ
+      float lightGridY = 32.0;   // LIGHT_GRID_SIZE_Y
+
+      // Convert to light grid coordinates
+      float lgX = chunkX / lightCellSize / lightGridXZ;
+      float lgY = (surfaceY + 35.0) / lightCellSize / lightGridY; // +35 to convert to local Y
+      float lgZ = chunkZ / lightCellSize / lightGridXZ;
+
+      // Clamp to valid range
+      vec3 lightUV = clamp(vec3(lgX, lgY, lgZ), 0.0, 1.0);
+
+      // Sample light grid (default to neutral if GI disabled)
+      if (uGIEnabled > 0.5) {
+        vec4 lightSample = texture(uLightGrid, lightUV);
+        vGILight = lightSample.rgb * uGIIntensity;
+      } else {
+        vGILight = vec3(1.0);
+      }
 
       // Store visibility and type blend for fragment
       vVisible = visible;
@@ -194,11 +263,34 @@ export const PROCEDURAL_GRASS_SHADER = {
     uniform float uHeightFogRange;
     uniform float uHeightFogOffset;
     uniform float uShaderFogStrength;
+    uniform float uGIEnabled;
 
     varying vec2 vUv;
     varying vec3 vWorldPos;
     varying float vVisible;
     varying float vTypeBlend;
+    varying vec3 vGILight;
+    varying float vBiomeId;
+
+    // Biome-specific color tinting
+    vec3 getBiomeTint(float biomeId) {
+      // JUNGLE (4): Deep saturated green
+      if (biomeId > 3.5 && biomeId < 4.5) return vec3(0.85, 1.0, 0.75);
+
+      // SAVANNA (9): Warm golden
+      if (biomeId > 8.5 && biomeId < 9.5) return vec3(1.15, 1.05, 0.70);
+
+      // MOUNTAINS (7): Cool blue-green
+      if (biomeId > 6.5 && biomeId < 7.5) return vec3(0.92, 0.97, 1.05);
+
+      // THE_GROVE (1): Lush vibrant green
+      if (biomeId > 0.5 && biomeId < 1.5) return vec3(0.90, 1.08, 0.85);
+
+      // SKY_ISLANDS (10): Ethereal mint
+      if (biomeId > 9.5) return vec3(0.95, 1.10, 1.05);
+
+      return vec3(1.0); // Neutral for plains and others
+    }
 
     void main() {
       // Discard invisible fragments
@@ -213,10 +305,30 @@ export const PROCEDURAL_GRASS_SHADER = {
       vec3 col = csm_DiffuseColor.rgb;
       col *= (0.9 + noise * 0.2);
 
-      // Warm/cool color shift
+      // Apply biome-specific color tinting
+      col *= getBiomeTint(vBiomeId);
+
+      // Warm/cool color shift (noise-based patches)
       vec3 warmShift = vec3(1.05, 1.0, 0.9);
       vec3 coolShift = vec3(0.9, 1.0, 1.05);
       col = mix(col * coolShift, col * warmShift, noise2);
+
+      // Savanna-specific golden tips
+      if (vBiomeId > 8.5 && vBiomeId < 9.5) {
+        float tipYellow = smoothstep(0.5, 1.0, vUv.y);
+        col = mix(col, col * vec3(1.2, 1.1, 0.6), tipYellow * 0.4);
+      }
+
+      // Noise-based patchy variation (clumps of slightly different color)
+      float patchNoise = texture(uNoiseTexture, vWorldPos * 0.02).r;
+      col *= 0.92 + patchNoise * 0.16;
+
+      // Apply GI light (modulates the base color)
+      // Base ambient is low when GI is enabled (grass relies on GI for brightness)
+      if (uGIEnabled > 0.5) {
+        float baseAmbient = 0.15; // Low ambient when GI is active
+        col *= baseAmbient + vGILight * 0.85;
+      }
 
       // Vertical gradient (darker at base, brighter at tips)
       float gradient = smoothstep(0.0, 1.0, vUv.y);

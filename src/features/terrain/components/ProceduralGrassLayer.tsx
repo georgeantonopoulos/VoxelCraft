@@ -20,28 +20,30 @@ interface ProceduralGrassLayerProps {
   normalTex: Uint8Array;
   biomeTex: Uint8Array;
   caveTex: Uint8Array;
+  lightGrid?: Uint8Array; // 8x32x8 3D light grid (RGBA)
   chunkX: number;
   chunkZ: number;
   lodLevel: number;
 }
 
-// Vegetation type configuration
+// Vegetation type configuration - 5 types for balance of variety vs performance
+// Reduced from 8 to 5 layers for better draw call efficiency
 const VEG_TYPES = [
-  { id: 0, name: 'grass_low', color: VEG_TYPE_COLORS.grass_low, geometry: 'grass_low' },
-  { id: 1, name: 'grass_tall', color: VEG_TYPE_COLORS.grass_tall, geometry: 'grass_tall' },
-  { id: 2, name: 'fern', color: VEG_TYPE_COLORS.fern, geometry: 'fern' },
-  { id: 3, name: 'flower', color: VEG_TYPE_COLORS.flower, geometry: 'flower' },
+  { id: 0, name: 'grass_low', color: '#41a024', geometry: 'grass_low' },
+  { id: 1, name: 'grass_tall', color: '#41a024', geometry: 'grass_tall' },  // Also used as savanna_grass
+  { id: 2, name: 'fern', color: '#2E7D32', geometry: 'fern' },              // Also serves as jungle_fern
+  { id: 3, name: 'flower', color: '#5555ff', geometry: 'flower' },
+  { id: 4, name: 'shrub', color: '#3D6B35', geometry: 'shrub' },
 ] as const;
 
 // Total instances = GRASS_GRID_SIZE^2 (imported from shader for single source of truth)
 const TOTAL_INSTANCES = GRASS_GRID_SIZE * GRASS_GRID_SIZE;
 
-// Instance counts based on LOD
+// Instance counts based on LOD - aggressive scaling for performance
 const getInstanceCount = (lodLevel: number): number => {
-  if (lodLevel <= 0) return TOTAL_INSTANCES;      // Full density (4096)
-  if (lodLevel <= 1) return TOTAL_INSTANCES / 2;  // 50% (2048)
-  if (lodLevel <= 2) return TOTAL_INSTANCES / 4;  // 25% (1024)
-  return 0; // LOD 3+ = no vegetation
+  if (lodLevel <= 0) return TOTAL_INSTANCES;      // Full density (6400)
+  if (lodLevel <= 1) return TOTAL_INSTANCES / 4;  // 25% (1600)
+  return 0; // LOD 2+ = no vegetation (too far)
 };
 
 /**
@@ -55,6 +57,7 @@ const VegetationTypeLayer: React.FC<{
     normal: THREE.DataTexture;
     biome: THREE.DataTexture;
     cave: THREE.DataTexture;
+    light?: THREE.Data3DTexture;
   };
   chunkOffset: THREE.Vector3;
   instanceCount: number;
@@ -70,6 +73,15 @@ const VegetationTypeLayer: React.FC<{
 
   // Create material with custom shader
   const material = useMemo(() => {
+    // Create a dummy 3D texture if light grid is not available
+    const dummyLightTex = new THREE.Data3DTexture(
+      new Uint8Array([255, 255, 255, 255]), // Single white pixel
+      1, 1, 1
+    );
+    dummyLightTex.format = THREE.RGBAFormat;
+    dummyLightTex.type = THREE.UnsignedByteType;
+    dummyLightTex.needsUpdate = true;
+
     const mat = new (CustomShaderMaterial as any)({
       baseMaterial: THREE.MeshStandardMaterial,
       vertexShader: PROCEDURAL_GRASS_SHADER.vertex,
@@ -80,11 +92,14 @@ const VegetationTypeLayer: React.FC<{
         uNormalMap: { value: textures.normal },
         uBiomeMap: { value: textures.biome },
         uCaveMask: { value: textures.cave },
+        uLightGrid: { value: textures.light || dummyLightTex },
         uTime: sharedUniforms.uTime,
         uWindDir: { value: new THREE.Vector2(0.85, 0.25) },
         uChunkOffset: { value: chunkOffset },
         uVegType: { value: vegType.id },
         uGridSize: { value: GRASS_GRID_SIZE },
+        uGIEnabled: sharedUniforms.uGIEnabled,
+        uGIIntensity: sharedUniforms.uGIIntensity,
         uNoiseTexture: { value: getNoiseTexture() },
         uSunDir: sharedUniforms.uSunDir,
         uFogColor: sharedUniforms.uFogColor,
@@ -142,6 +157,10 @@ const VegetationTypeLayer: React.FC<{
 
 VegetationTypeLayer.displayName = 'VegetationTypeLayer';
 
+// Light grid dimensions (must match constants.ts)
+const LIGHT_GRID_SIZE_XZ = 8;
+const LIGHT_GRID_SIZE_Y = 32;
+
 /**
  * Main procedural grass layer component
  */
@@ -151,6 +170,7 @@ export const ProceduralGrassLayer: React.FC<ProceduralGrassLayerProps> = React.m
   normalTex,
   biomeTex,
   caveTex,
+  lightGrid,
   chunkX,
   chunkZ,
   lodLevel,
@@ -219,8 +239,27 @@ export const ProceduralGrassLayer: React.FC<ProceduralGrassLayerProps> = React.m
     cave.magFilter = THREE.NearestFilter;
     cave.needsUpdate = true;
 
-    return { height, material, normal, biome, cave };
-  }, [heightTex, materialTex, normalTex, biomeTex, caveTex]);
+    // Light grid 3D texture (8x32x8 RGBA)
+    let light: THREE.Data3DTexture | undefined;
+    if (lightGrid && lightGrid.length > 0) {
+      light = new THREE.Data3DTexture(
+        lightGrid,
+        LIGHT_GRID_SIZE_XZ,  // width (X)
+        LIGHT_GRID_SIZE_Y,   // height (Y)
+        LIGHT_GRID_SIZE_XZ   // depth (Z)
+      );
+      light.format = THREE.RGBAFormat;
+      light.type = THREE.UnsignedByteType;
+      light.minFilter = THREE.LinearFilter;
+      light.magFilter = THREE.LinearFilter;
+      light.wrapS = THREE.ClampToEdgeWrapping;
+      light.wrapT = THREE.ClampToEdgeWrapping;
+      light.wrapR = THREE.ClampToEdgeWrapping;
+      light.needsUpdate = true;
+    }
+
+    return { height, material, normal, biome, cave, light };
+  }, [heightTex, materialTex, normalTex, biomeTex, caveTex, lightGrid]);
 
   // Cleanup textures on unmount
   useEffect(() => {
@@ -230,6 +269,7 @@ export const ProceduralGrassLayer: React.FC<ProceduralGrassLayerProps> = React.m
       textures.normal.dispose();
       textures.biome.dispose();
       textures.cave.dispose();
+      textures.light?.dispose();
     };
   }, [textures]);
 

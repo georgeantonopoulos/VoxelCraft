@@ -324,6 +324,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
               normalTex={chunk.grassNormalTex!}
               biomeTex={chunk.grassBiomeTex!}
               caveTex={chunk.grassCaveTex!}
+              lightGrid={chunk.lightGrid}
               chunkX={chunk.cx}
               chunkZ={chunk.cz}
               lodLevel={lodLevel}

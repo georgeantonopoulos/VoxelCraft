@@ -144,7 +144,37 @@ function createShrubGeo() {
     return geo;
 }
 
+// 5. Tropical Flower - larger, more dramatic
+function createTropicalFlowerGeo() {
+    const pos: number[] = [];
+    const ind: number[] = [];
+    const norm: number[] = [];
+
+    const addBox = (w: number, h: number, d: number, x: number, y: number, z: number) => {
+        const g = new THREE.BoxGeometry(w, h, d);
+        g.translate(x, y, z);
+        const p = g.attributes.position.array;
+        const n = g.attributes.normal.array;
+        const i = g.index!.array;
+        const offset = pos.length / 3;
+
+        for (let k = 0; k < p.length; k++) pos.push(p[k]);
+        for (let k = 0; k < n.length; k++) norm.push(n[k]);
+        for (let k = 0; k < i.length; k++) ind.push(i[k] + offset);
+    };
+
+    addBox(0.03, 0.4, 0.03, 0, 0.2, 0);   // Taller stem
+    addBox(0.15, 0.12, 0.15, 0, 0.46, 0); // Larger head (50% bigger)
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(norm), 3));
+    geo.setIndex(ind);
+    return geo;
+}
+
 export const VEGETATION_GEOMETRIES = {
+    // Base types (used across biomes)
     grass_low: createGrassGeo(3, 0.3, 0.08),
     grass_tall: createGrassGeo(4, 0.6, 0.1),
     grass_carpet: createGrassGeo(12, 0.4, 0.05),
@@ -153,5 +183,11 @@ export const VEGETATION_GEOMETRIES = {
     giant_fern: createGrassGeo(8, 0.6, 0.3),
     broadleaf: createGrassGeo(3, 0.45, 0.24),
     shrub: createShrubGeo(),
-    box: new THREE.BoxGeometry(0.2, 0.5, 0.2)
+    box: new THREE.BoxGeometry(0.2, 0.5, 0.2),
+
+    // Biome-specific types
+    jungle_fern: createGrassGeo(8, 0.55, 0.25),    // Large tropical fronds
+    savanna_grass: createGrassGeo(5, 0.7, 0.08),   // Tall golden grass
+    alpine_grass: createGrassGeo(8, 0.2, 0.05),    // Short tufted
+    tropical_flower: createTropicalFlowerGeo(),    // Larger colorful flower
 };

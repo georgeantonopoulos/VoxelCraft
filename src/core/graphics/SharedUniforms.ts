@@ -32,7 +32,7 @@ export const sharedUniforms = {
     uBiomeFogDensityMul: { value: 1.0 },      // Multiplier for fog density
     uBiomeFogHeightMul: { value: 1.0 },       // Multiplier for height fog
     uBiomeFogTint: { value: new THREE.Vector3(0, 0, 0) },  // RGB tint offset
-    uBiomeFogAerial: { value: 0.45 },         // Aerial perspective strength
+    uBiomeFogAerial: { value: 0.25 },         // Aerial perspective strength
     uBiomeFogEnabled: { value: 1.0 },         // Toggle for biome fog effects
 
     // Fragment normal perturbation (Phase 1 AAA terrain improvement)

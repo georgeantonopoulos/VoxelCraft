@@ -73,13 +73,19 @@ export class TerrainService {
 
     // Helper to find surface height at specific world coordinates
     // Now delegates to BiomeManager's parameter system
+    // IMPORTANT: Must apply Sacred Grove terrain flattening to match generateChunk()
     static getHeightAt(wx: number, wz: number): number {
         const biome = BiomeManager.getBiomeAt(wx, wz);
         if (biome === 'SKY_ISLANDS') {
             return 40; // islandCenterY from generation logic
         }
 
-        const { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
+        let { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
+
+        // Apply Sacred Grove terrain flattening (must match generateChunk logic)
+        const sacredGroveMod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
+        amp *= sacredGroveMod.ampMultiplier;
+        warp *= sacredGroveMod.warpMultiplier;
 
         const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
         const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
