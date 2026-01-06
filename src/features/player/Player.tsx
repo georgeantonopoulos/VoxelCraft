@@ -256,14 +256,21 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const eyeHeight = isCrouching.current ? EYE_HEIGHT_CROUCHED : EYE_HEIGHT;
     scratchCameraPos.set(pos.x, pos.y + eyeHeight, pos.z);
 
-    // Raycast in multiple directions from camera position to detect nearby walls
+    // Raycast in multiple directions from camera position to detect nearby terrain walls
     // Push camera away from any walls that are too close
+    // Filter to only hit terrain colliders (not items, flora, etc.)
+    const isTerrainCollider = (collider: any): boolean => {
+      const parent = collider.parent();
+      const userData = parent?.userData as { type?: string } | undefined;
+      return userData?.type === 'terrain';
+    };
+
     for (const dir of CAMERA_PUSH_DIRECTIONS) {
       const ray = new rapier.Ray(
         { x: scratchCameraPos.x, y: scratchCameraPos.y, z: scratchCameraPos.z },
         dir
       );
-      const hit = world.castRay(ray, CAMERA_CLIP_MARGIN, true);
+      const hit = world.castRay(ray, CAMERA_CLIP_MARGIN, true, undefined, undefined, undefined, undefined, isTerrainCollider);
       if (hit && hit.timeOfImpact < CAMERA_CLIP_MARGIN) {
         // Wall is too close - push camera away from it
         const pushDistance = CAMERA_CLIP_MARGIN - hit.timeOfImpact;
