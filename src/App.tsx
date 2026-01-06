@@ -161,7 +161,7 @@ const App: React.FC = () => {
   const [giIntensity, setGiIntensity] = useState(5.0);
 
   // Terrain Color Grading (in-shader, not post-processing)
-  const [terrainSaturation, setTerrainSaturation] = useState(1.25);
+  const [terrainSaturation, setTerrainSaturation] = useState(1.5);
 
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);

@@ -45,7 +45,7 @@ export const sharedUniforms = {
     uGIIntensity: { value: 5.0 },             // GI strength multiplier (higher = more visible indirect light)
 
     // Color grading (in-shader, not post-processing)
-    uTerrainSaturation: { value: 1.25 },      // 1.0=neutral, >1=more saturated, <1=desaturated
+    uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated
 };
 
 export interface SharedUniformUpdateParams {

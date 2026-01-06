@@ -222,7 +222,7 @@ export const DebugControls: React.FC<{
             'Terrain': folder({
                 'Material': folder({
                     triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTriplanarDetail, label: 'Detail Mix' },
-                    saturation: { value: 1.25, min: 0.5, max: 2.0, step: 0.05, onChange: props.setTerrainSaturation, label: 'Saturation' },
+                    saturation: { value: 1.5, min: 0.5, max: 2.0, step: 0.05, onChange: props.setTerrainSaturation, label: 'Saturation' },
                     terrainWetness: { value: true, onChange: (v) => props.setTerrainWetnessEnabled(!!v), label: 'Wetness' },
                     terrainMoss: { value: true, onChange: (v) => props.setTerrainMossEnabled(!!v), label: 'Moss' },
                     terrainRoughnessMin: { value: 0.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTerrainRoughnessMin, label: 'Roughness Min' },

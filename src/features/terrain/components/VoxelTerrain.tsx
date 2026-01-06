@@ -436,7 +436,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   fragmentNormalScale = 0.35,
   giEnabled = true,
   giIntensity = 5.0,
-  terrainSaturation = 1.25,
+  terrainSaturation = 1.5,
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;
