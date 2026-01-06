@@ -1203,9 +1203,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const colliderCenterKey = `${px},${pz}`;
       if (colliderCenterKey !== lastColliderCenterKey.current) {
         lastColliderCenterKey.current = colliderCenterKey;
-        colliderEnableQueue.current.length = 0;
-        colliderEnablePending.current.clear();
 
+        // Build new candidate set
         const candidates = new Set<string>();
         const addRadius = (cx: number, cz: number, r: number) => {
           for (let dx = -r; dx <= r; dx++) {
@@ -1218,13 +1217,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         addRadius(px, pz, colliderRadius);
         addRadius(px + offsetCx, pz + offsetCz, colliderRadius);
 
-        for (const key of candidates) {
-          const c = chunkDataManager.getChunk(key);
-          if (c && !c.colliderEnabled && !colliderEnablePending.current.has(key)) {
-            colliderEnablePending.current.add(key);
-            colliderEnableQueue.current.push(key);
+        // Preserve existing queue entries that are still valid candidates,
+        // and remove ones that are no longer in range (prevents race condition
+        // where queue is cleared while chunks are still being processed)
+        const newQueue: string[] = [];
+        const newPending = new Set<string>();
+
+        // Keep existing queued items that are still valid
+        for (const key of colliderEnableQueue.current) {
+          if (candidates.has(key)) {
+            newQueue.push(key);
+            newPending.add(key);
           }
         }
+
+        // Add new candidates that weren't already queued
+        for (const key of candidates) {
+          const c = chunkDataManager.getChunk(key);
+          if (c && !c.colliderEnabled && !newPending.has(key)) {
+            newPending.add(key);
+            newQueue.push(key);
+          }
+        }
+
+        colliderEnableQueue.current = newQueue;
+        colliderEnablePending.current = newPending;
       }
     }
 
@@ -1397,11 +1414,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             mountQueue.current.push(newChunk);
           }
 
+          // Queue for collider enabling if within collider radius
+          // FIX: Always queue chunks within collider radius, not just those "ahead" of the player
+          // This prevents the bug where chunks behind/beside the player don't get colliders,
+          // causing fall-through when walking backwards or sideways on hills
           if (!colliderEnabled && !colliderEnablePending.current.has(key)) {
-            const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
-            const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
-            const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
-            if (dChebyAhead <= getColliderRadius()) {
+            if (dChebyPlayer <= getColliderRadius()) {
               colliderEnablePending.current.add(key);
               colliderEnableQueue.current.push(key);
             }
@@ -1462,60 +1480,82 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     frameProfiler.end('terrain-worker-msgs');
 
     // 4. THROTTLED COLLIDER ENABLES
-    // Process multiple colliders per frame to reduce physics activation latency.
+    // Process colliders per frame to reduce physics activation latency.
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
     // to push collider BVH construction to idle time when possible.
-    if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
-      // Enable 1 collider per frame max - BVH construction can take 20-50ms even with simplified geometry
-      const MAX_COLLIDERS_PER_FRAME = 1;
-      const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
+    // CRITICAL: Always process the player's current chunk collider even during heavy worker frames
+    // to prevent falling through terrain when walking on hills or uneven ground.
+    if (colliderEnableQueue.current.length > 0) {
       const keysEnabledSync: string[] = [];
 
-      for (let i = 0; i < collidersToProcess; i++) {
-        const key = colliderEnableQueue.current.shift();
-        if (!key) break;
+      // Helper to enable a collider
+      const enableColliderForKey = (k: string) => {
+        const latest = chunkDataManager.getChunk(k);
+        if (latest && !latest.colliderEnabled) {
+          const updated = { ...latest, colliderEnabled: true };
+          chunkDataRef.current.set(k, updated);
+          chunkDataManager.addChunk(k, updated); // Keep both in sync
+        }
+      };
 
-        colliderEnablePending.current.delete(key);
-        const current = chunkDataManager.getChunk(key);
-        if (current && !current.colliderEnabled) {
-          // Check if this chunk is directly under the player (critical) or adjacent (can defer)
-          const [cxStr, czStr] = key.split(',');
-          const cx = parseInt(cxStr);
-          const cz = parseInt(czStr);
-          const distToPlayer = Math.max(
-            Math.abs(cx - playerChunk.current.px),
-            Math.abs(cz - playerChunk.current.pz)
-          );
+      // First pass: ALWAYS enable player's current chunk collider immediately (critical for physics)
+      // This prevents the bug where player falls through terrain on hills
+      const playerChunkKey = `${playerChunk.current.px},${playerChunk.current.pz}`;
+      const playerChunkQueueIndex = colliderEnableQueue.current.indexOf(playerChunkKey);
+      if (playerChunkQueueIndex !== -1) {
+        // Remove from queue and enable immediately
+        colliderEnableQueue.current.splice(playerChunkQueueIndex, 1);
+        colliderEnablePending.current.delete(playerChunkKey);
+        const playerChunkData = chunkDataManager.getChunk(playerChunkKey);
+        if (playerChunkData && !playerChunkData.colliderEnabled) {
+          enableColliderForKey(playerChunkKey);
+          keysEnabledSync.push(playerChunkKey);
+        }
+      }
 
-          const enableColliderForKey = (k: string) => {
-            const latest = chunkDataManager.getChunk(k);
-            if (latest && !latest.colliderEnabled) {
-              const updated = { ...latest, colliderEnabled: true };
-              chunkDataRef.current.set(k, updated);
-              chunkDataManager.addChunk(k, updated); // Keep both in sync
+      // Second pass: Process additional colliders only if we didn't have a heavy worker frame
+      if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
+        // Enable 1 collider per frame max - BVH construction can take 20-50ms even with simplified geometry
+        const MAX_COLLIDERS_PER_FRAME = 1;
+        const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
+
+        for (let i = 0; i < collidersToProcess; i++) {
+          const key = colliderEnableQueue.current.shift();
+          if (!key) break;
+
+          colliderEnablePending.current.delete(key);
+          const current = chunkDataManager.getChunk(key);
+          if (current && !current.colliderEnabled) {
+            // Check if this chunk is directly under the player (critical) or adjacent (can defer)
+            const [cxStr, czStr] = key.split(',');
+            const cx = parseInt(cxStr);
+            const cz = parseInt(czStr);
+            const distToPlayer = Math.max(
+              Math.abs(cx - playerChunk.current.px),
+              Math.abs(cz - playerChunk.current.pz)
+            );
+
+            // Critical chunks (distance 0 = player is standing on it): enable immediately
+            // Adjacent chunks (distance 1): defer to idle callback if available
+            if (distToPlayer === 0 || !initialLoadTriggered.current) {
+              // Synchronous enable for player chunk or during initial load
+              enableColliderForKey(key);
+              keysEnabledSync.push(key);
+            } else if (typeof requestIdleCallback !== 'undefined') {
+              // Defer to idle time for adjacent chunks
+              const deferredKey = key;
+              requestIdleCallback(() => {
+                enableColliderForKey(deferredKey);
+                queueVersionIncrement(deferredKey);
+              }, { timeout: 100 });
+            } else {
+              // Fallback for browsers without requestIdleCallback
+              const deferredKey = key;
+              setTimeout(() => {
+                enableColliderForKey(deferredKey);
+                queueVersionIncrement(deferredKey);
+              }, 0);
             }
-          };
-
-          // Critical chunks (distance 0 = player is standing on it): enable immediately
-          // Adjacent chunks (distance 1): defer to idle callback if available
-          if (distToPlayer === 0 || !initialLoadTriggered.current) {
-            // Synchronous enable for player chunk or during initial load
-            enableColliderForKey(key);
-            keysEnabledSync.push(key);
-          } else if (typeof requestIdleCallback !== 'undefined') {
-            // Defer to idle time for adjacent chunks
-            const deferredKey = key;
-            requestIdleCallback(() => {
-              enableColliderForKey(deferredKey);
-              queueVersionIncrement(deferredKey);
-            }, { timeout: 100 });
-          } else {
-            // Fallback for browsers without requestIdleCallback
-            const deferredKey = key;
-            setTimeout(() => {
-              enableColliderForKey(deferredKey);
-              queueVersionIncrement(deferredKey);
-            }, 0);
           }
         }
       }
