@@ -175,7 +175,9 @@ export enum ItemType {
   FIRE = 'fire',
   FLORA = 'flora',
   TORCH = 'torch',
-  AXE = 'axe'
+  AXE = 'axe',
+  SAW = 'saw',
+  LOG = 'log'
 }
 
 export interface ActivePhysicsItem {

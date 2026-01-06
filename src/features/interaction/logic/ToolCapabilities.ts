@@ -24,7 +24,7 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
             canSmash: type === ItemType.STONE,
             isNormalDig: type === ItemType.PICKAXE,
 
-            woodDamage: type === ItemType.AXE ? 5.0 : (type === ItemType.SHARD ? 1.0 : 0.2),
+            woodDamage: type === ItemType.AXE ? 5.0 : (type === ItemType.SAW ? 8.0 : (type === ItemType.SHARD ? 1.0 : 0.2)),
             stoneDamage: type === ItemType.PICKAXE ? 3.0 : (type === ItemType.SHARD ? 0.5 : 2.5),
             shatterForce: type === ItemType.STONE ? 1.5 : 0.3
         };
@@ -37,17 +37,21 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
     const floras = attachments.filter(t => t === ItemType.FLORA).length;
 
     // Slot Analysis
-    const hasLeftShard = tool.attachments['side_left'] === ItemType.SHARD;
+    const hasBlade1Shard = tool.attachments['blade_1'] === ItemType.SHARD;
+    const hasBlade2Shard = tool.attachments['blade_2'] === ItemType.SHARD;
+    const hasBlade3Shard = tool.attachments['blade_3'] === ItemType.SHARD;
     const hasRightShard = tool.attachments['side_right'] === ItemType.SHARD;
-    const hasTopShard = tool.attachments['tip_center'] === ItemType.SHARD;
+    const hasRightStone = tool.attachments['side_right'] === ItemType.STONE;
 
-    const canDig = hasLeftShard && hasRightShard;
-    const canChop = hasTopShard && (hasLeftShard || hasRightShard);
+    const canDig = hasBlade2Shard && hasRightShard;
+    const canChop = hasBlade1Shard && hasBlade2Shard && hasRightStone;
+    const canSaw = hasBlade1Shard && hasBlade2Shard && hasBlade3Shard;
 
     return {
         canDig,
         digPower: canDig ? (shards * 0.5 + stones * 0.4) : 0,
         canChop,
+        canSaw,
         canSmash: stones >= 1 && shards === 0,          // Blunt only
         isNormalDig: canDig,
         isLuminaTool: floras > 0,

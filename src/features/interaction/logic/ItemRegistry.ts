@@ -75,6 +75,18 @@ export const ITEM_REGISTRY: Record<ItemType, ItemMetadata> = {
         isStackable: false,
         icon: axeImg,
     },
+    [ItemType.SAW]: {
+        name: 'Saw',
+        color: '#555555',
+        isStackable: false,
+        icon: axeImg, // Placeholder icon
+    },
+    [ItemType.LOG]: {
+        name: 'Log',
+        color: '#795548',
+        isStackable: false, // Large physical object
+        icon: stickImg, // Placeholder icon
+    },
 };
 
 export const STACKABLE_ITEMS = Object.values(ItemType).filter(t => ITEM_REGISTRY[t].isStackable);

@@ -13,25 +13,30 @@ export interface CraftingRecipe {
 }
 
 export const STICK_SLOTS: AttachmentSlot[] = [
-  // Left Side (for Pickaxe/Axe)
+  // Left Side - Multi-slot for Saw/Axe
   {
-    id: 'side_left',
+    id: 'blade_1', // Top Left
+    position: [-0.12, 0.42, 0],
+    rotation: [0, 0, Math.PI / 3],
+    allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
+  },
+  {
+    id: 'blade_2', // Mid Left
     position: [-0.12, 0.35, 0],
     rotation: [0, 0, Math.PI / 3],
     allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
   },
-  // Right Side (for Pickaxe)
+  {
+    id: 'blade_3', // Bottom Left
+    position: [-0.12, 0.28, 0],
+    rotation: [0, 0, Math.PI / 3],
+    allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
+  },
+  // Right Side (for Pickaxe/Axe)
   {
     id: 'side_right',
     position: [0.12, 0.35, 0],
     rotation: [0, 0, -Math.PI / 3],
-    allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
-  },
-  // Top Tip (for Spear/Axe)
-  {
-    id: 'tip_center',
-    position: [0, 0.5, 0],
-    rotation: [0, 0, 0],
     allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
   }
 ];
@@ -39,10 +44,14 @@ export const STICK_SLOTS: AttachmentSlot[] = [
 export const RECIPES: CraftingRecipe[] = [
   {
     result: ItemType.PICKAXE,
-    ingredients: ['side_left', 'side_right'] // T-Shape
+    ingredients: ['blade_2', 'side_right'] // Classic T-Shape
   },
   {
     result: ItemType.AXE,
-    ingredients: ['side_left', 'tip_center'] // L-Shape
+    ingredients: ['blade_1', 'blade_2', 'side_right'] // Heavy head
+  },
+  {
+    result: ItemType.SAW,
+    ingredients: ['blade_1', 'blade_2', 'blade_3'] // Long blade on one side
   }
 ];
