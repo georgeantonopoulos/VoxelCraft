@@ -70,6 +70,32 @@ Message format: `{ type: string, payload: {...} }`. Use transferables for Float3
 
 Ambient light reduced to minimal levels (surface: 0.08, cave: 0.04). GI provides all indirect lighting.
 
+### Audio System
+
+**AudioManager** (src/core/audio/AudioManager.ts) - Centralized audio playback system:
+- **Singleton pattern**: One global instance initialized on app mount
+- **Pool-based**: Each sound has multiple HTMLAudioElement instances for overlapping playback
+- **Event-driven**: Listens to `vc-audio-*` custom events (play, stop, ambient-enter, ambient-exit)
+- **Category-based volume**: SFX_IMPACT, SFX_DIG, SFX_CHOP, SFX_INTERACT, AMBIENT, UI, MUSIC
+
+**Sound Registry** (src/core/audio/soundRegistry.ts):
+- Single source of truth for all sound definitions
+- Each sound: id, URL, category, baseVolume, pitchVariation, poolSize
+- Helpers: `getRandomDigSound()`, `isSoundRegistered()`
+
+**Usage pattern**:
+```typescript
+// Dispatch event from anywhere in the codebase
+window.dispatchEvent(new CustomEvent('vc-audio-play', {
+  detail: { soundId: 'rock_hit', options: { pitch: 1.2, volume: 0.8 } }
+}));
+```
+
+**Integration points**:
+- `App.tsx`: `audioManager.initialize(SOUND_REGISTRY)` on mount
+- `useTerrainInteraction.ts`: Dig/build/chop sounds
+- `PhysicsItem.tsx`: Stone impact sounds
+
 ### State Management
 
 11 Zustand stores handle different concerns:
@@ -160,6 +186,7 @@ Changing these breaks mesher output dimensions and worker communication. Light g
 - `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
 - `window.__chunkDataManager.getStats()` - View chunk cache stats (total, dirty, pending persistence, memory MB)
+- `window.__audioManager.getStats()` - View audio pool stats (totalSounds, totalInstances, activeLoops, categories)
 
 **GI Tuning**: uGIEnabled (0/1 toggle), uGIIntensity (multiplier, default 1.2) accessible via debug panel.
 
@@ -176,6 +203,7 @@ See `AGENTS.md` for the complete list. Most critical:
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
 9. **Item shader consistency**: GroundItemShaders.ts defines all item shaders (STICK, ROCK, SHARD, FLORA, TORCH). When adding visual detail to items, update the shader here - never copy shader code to individual components. All consumers (UniversalTool, GroundItemsLayer, LuminaFlora) must use both `vertex` AND `fragment` properties.
+10. **Audio centralization**: AudioManager (src/core/audio/AudioManager.ts) is the single source of truth for all audio playback. NEVER call `new Audio()` or play sounds directly. Always dispatch `vc-audio-play` events. Sound definitions live in soundRegistry.ts.
 
 ## Logging Best Practices
 
@@ -219,6 +247,47 @@ Tests focus on math kernels (mesher, noise) and state logic. Located in `src/tes
 ```bash
 npm run test:unit    # Run all tests
 ```
+
+### Testing Strategy
+
+**Unit Tests (Vitest)**: Test pure math kernels, data structures, and logic functions.
+- **When to use**: Mathematical operations, data transformations, store logic
+- **Limitations**: Cannot test browser APIs (Audio, window events), React/R3F integration, or initialization-dependent singletons
+
+**Integration Tests (Browser)**: Test systems that require DOM, browser APIs, or app initialization.
+- **When to use**: Audio playback, event systems, singleton initialization, React component mounting
+- **Method**: Manual smoke testing via `npm run dev`
+
+### Audio System Testing
+
+The AudioManager is a singleton that initializes on app mount and uses browser-native `HTMLAudioElement` and `CustomEvent` APIs. **It cannot be tested with Vitest** because:
+
+1. **Singleton initialization**: `audioManager.initialize()` is called in `App.tsx` useEffect. Unit tests don't mount the app.
+2. **Browser APIs**: Requires `new Audio()`, `window.addEventListener`, and `window.dispatchEvent`.
+3. **Type imports**: `import type` vs value imports affect runtime but don't cause test failures.
+
+**Testing approach**:
+1. **Type errors**: Caught by `npm run build` (TypeScript compilation)
+2. **Import errors**: Only caught at runtime in browser (e.g., `SoundCategory` must be value import, not type import)
+3. **Event system**: Test by triggering audio events in-game and verifying console logs / audio playback
+
+**Smoke test checklist** (after implementing audio features):
+```bash
+npm run build        # Verify TypeScript compilation
+npm run dev          # Start dev server
+# In browser:
+# 1. Check console for "[AudioManager] Initialized with N sounds"
+# 2. Trigger digging action (verify dig sounds play)
+# 3. Hit rock with rock (verify rock_hit plays)
+# 4. Place torch (verify fire_loop starts)
+# 5. Open browser DevTools console, verify no import errors
+```
+
+**Common audio pitfalls**:
+- **Type-only imports**: `import type { SoundCategory }` fails at runtime if used as a value. Use `import { SoundCategory }` for enums/values.
+- **Pool size**: Too small = overlapping sounds cut off. Too large = memory waste.
+- **Event naming**: Custom events must match exactly (`'vc-audio-play'`, not `'audio-play'`).
+- **Initialization order**: AudioManager MUST initialize before any audio events are dispatched.
 
 ## Subagent Usage Guide
 

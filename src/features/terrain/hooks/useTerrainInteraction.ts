@@ -133,6 +133,12 @@ export function useTerrainInteraction(
   // Track particle burst ID internally to ensure increment
   const particleBurstId = useRef(0);
 
+  // Track last interaction to prevent duplicate sounds
+  const lastInteractionFrame = useRef<{ action: string | null; timestamp: number }>({
+    action: null,
+    timestamp: 0
+  });
+
   const emitParticle = (opts: Omit<ParticleState, 'burstId' | 'active'>) => {
     particleBurstId.current++;
     onParticle({
@@ -142,15 +148,28 @@ export function useTerrainInteraction(
     });
   };
 
-  // Helper to play sounds via AudioManager
+  // Helper to play sounds via AudioManager with throttling
   const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
+    const now = performance.now();
+    const timeSinceLastSound = now - lastInteractionFrame.current.timestamp;
+
+    // Throttle: only play if more than 100ms has passed since last sound of same action
+    if (lastInteractionFrame.current.action === action && timeSinceLastSound < 100) {
+      return;
+    }
+
+    lastInteractionFrame.current = { action, timestamp: now };
     window.dispatchEvent(new CustomEvent('vc-audio-play', {
       detail: { soundId, options }
     }));
   };
 
   useEffect(() => {
-    if (!isInteracting || !action) return;
+    if (!isInteracting || !action) {
+      // Reset throttle when interaction ends
+      lastInteractionFrame.current = { action: null, timestamp: 0 };
+      return;
+    }
 
     const origin = camera.position.clone();
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);

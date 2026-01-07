@@ -383,3 +383,8 @@ export class AudioManager {
 
 // Export singleton instance for convenience
 export const audioManager = AudioManager.getInstance();
+
+// Expose to window for debugging
+if (typeof window !== 'undefined') {
+  (window as any).__audioManager = audioManager;
+}
