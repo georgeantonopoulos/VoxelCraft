@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html, Stats } from '@react-three/drei';
+import { fpsBenchmark } from '@core/utils/FPSBenchmark';
 
 interface PerformanceMonitorProps {
     visible?: boolean;
@@ -9,6 +10,7 @@ interface PerformanceMonitorProps {
 /**
  * Performance Monitor: Measures frame time and logs diagnostics when FPS < 20.
  * Also provides an on-screen visual overlay of detailed stats when visible.
+ * Additionally drives the FPS benchmark system when ?benchmark is in URL.
  */
 export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ visible }) => {
     const { gl, scene } = useThree();
@@ -25,6 +27,9 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({ visible 
     });
 
     useFrame(() => {
+        // Drive the FPS benchmark (runs during ?benchmark mode)
+        fpsBenchmark.tick();
+
         // Visual Stats Update (every 30 frames) - only when overlay is visible
         if (!visible) return;
         frameCount.current++;

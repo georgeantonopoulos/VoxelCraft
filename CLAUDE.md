@@ -155,11 +155,14 @@ Changing these breaks mesher output dimensions and worker communication. Light g
 - `?mode=map` - Biome/map debug view
 - `?normals` - Normal material for geometry inspection
 - `?profile` or `localStorage.vcProfiler = "1"` - Enable FrameProfiler with spike detection
+- `?benchmark` or `?benchmark=N` - Run FPS benchmark for N seconds (default 5s), reports pass/fail against 40 FPS threshold
 - `?nocolliders` - Disable all terrain colliders (physics debugging)
 - `?nosim` - Disable simulation worker (performance isolation)
 - `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
 - `window.__chunkDataManager.getStats()` - View chunk cache stats (total, dirty, pending persistence, memory MB)
+- `window.__fpsBenchmark.start()` - Manually trigger FPS benchmark from console
+- `window.__fpsBenchmarkResult` - Access last benchmark results (avgFps, minFps, p1Fps, passed)
 
 **GI Tuning**: uGIEnabled (0/1 toggle), uGIIntensity (multiplier, default 1.2) accessible via debug panel.
 

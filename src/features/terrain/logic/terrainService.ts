@@ -818,24 +818,53 @@ export class TerrainService {
 
         // --- 3.65 Root Hollow Generation (Sacred Grove Centers) ---
         // Root Hollows spawn at the center of Sacred Grove clearings.
-        // Use a finer grid (8x8) with multiple sample points to catch Sacred Grove centers.
-        // Sacred Groves are flat, barren zones - Root Hollows mark their heart.
-        const ROOT_HOLLOW_GRID = 8; // Sample every 8 blocks for better coverage
-        const MAX_ROOT_HOLLOWS_PER_CHUNK = 1; // Only 1 per chunk to keep them special
-        let rootHollowsPlaced = 0;
-        let bestCandidate: { x: number; y: number; z: number; nx: number; ny: number; nz: number; intensity: number } | null = null;
+        //
+        // CROSS-CHUNK COORDINATION: Sacred Groves can span multiple chunks. To ensure
+        // exactly ONE Root Hollow per grove, we use a super-grid approach:
+        // 1. Divide the world into 64x64 super-cells (larger than most groves)
+        // 2. Each super-cell can have at most 1 Root Hollow
+        // 3. Within a super-cell, the Root Hollow spawns at a deterministic position
+        //    based on a hash of the super-cell coordinates
+        //
+        // This ensures adjacent chunks in the same grove won't both place Root Hollows.
+        const ROOT_HOLLOW_SUPER_GRID = 64; // One Root Hollow per 64x64 world area max
+        const ROOT_HOLLOW_SAMPLE_GRID = 8; // Sample every 8 blocks within chunk
 
-        // Scan the chunk for Sacred Grove centers, keeping the best candidate
-        for (let gz = PAD; gz < sizeZ - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gz += ROOT_HOLLOW_GRID) {
-            for (let gx = PAD; gx < sizeX - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gx += ROOT_HOLLOW_GRID) {
+        // Track which super-cells we've already placed in (for this chunk)
+        const placedSuperCells = new Set<string>();
+
+        // Scan the chunk for Sacred Grove centers
+        for (let gz = PAD; gz < sizeZ - PAD; gz += ROOT_HOLLOW_SAMPLE_GRID) {
+            for (let gx = PAD; gx < sizeX - PAD; gx += ROOT_HOLLOW_SAMPLE_GRID) {
                 const wx = (gx - PAD) + worldOffsetX;
                 const wz = (gz - PAD) + worldOffsetZ;
 
                 // Check if this location is at the CENTER of a Sacred Grove
-                // Using isCenter (noise > 0.65) instead of inGrove (noise > 0.45) prevents
-                // multiple Root Hollows from spawning in adjacent chunks of the same grove
                 const groveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
                 if (!groveInfo.isCenter) continue;
+
+                // Determine which super-cell this point belongs to
+                const superCellX = Math.floor(wx / ROOT_HOLLOW_SUPER_GRID);
+                const superCellZ = Math.floor(wz / ROOT_HOLLOW_SUPER_GRID);
+                const superCellKey = `${superCellX},${superCellZ}`;
+
+                // Skip if we already placed in this super-cell
+                if (placedSuperCells.has(superCellKey)) continue;
+
+                // Use a deterministic hash to decide the "designated" spawn point within this super-cell
+                // The Root Hollow should only spawn if this sample point is close to the designated spot
+                const hashSeed = superCellX * 73856093 + superCellZ * 19349663;
+                const designatedOffsetX = ((hashSeed & 0xFFFF) / 0xFFFF) * ROOT_HOLLOW_SUPER_GRID;
+                const designatedOffsetZ = (((hashSeed >> 16) & 0xFFFF) / 0xFFFF) * ROOT_HOLLOW_SUPER_GRID;
+                const designatedWx = superCellX * ROOT_HOLLOW_SUPER_GRID + designatedOffsetX;
+                const designatedWz = superCellZ * ROOT_HOLLOW_SUPER_GRID + designatedOffsetZ;
+
+                // Only spawn if this sample point is within 12 blocks of the designated spot
+                // (accounts for sampling grid and slight variations)
+                const distToDesignated = Math.sqrt(
+                    (wx - designatedWx) ** 2 + (wz - designatedWz) ** 2
+                );
+                if (distToDesignated > 12) continue;
 
                 // Find the surface at this position
                 const surface = findTopSurfaceAtLocalXZ(gx - PAD, gz - PAD);
@@ -856,30 +885,16 @@ export class TerrainService {
                                  mat === MaterialType.DIRT;
                 if (!validMat) continue;
 
-                // Track the best candidate (highest intensity = closest to grove center)
-                if (!bestCandidate || groveInfo.intensity > bestCandidate.intensity) {
-                    bestCandidate = {
-                        x: gx - PAD,
-                        y: surface.worldY + 0.1,
-                        z: gz - PAD,
-                        nx, ny, nz,
-                        intensity: groveInfo.intensity
-                    };
-                }
+                // Place the Root Hollow
+                rootHollowCandidates.push(
+                    gx - PAD,
+                    // RootHollow component has embedOffset=0.3, so add that here to place stump at surface level
+                    surface.worldY + 0.3,
+                    gz - PAD,
+                    nx, ny, nz
+                );
+                placedSuperCells.add(superCellKey);
             }
-        }
-
-        // Place the best candidate found (if any)
-        if (bestCandidate) {
-            rootHollowCandidates.push(
-                bestCandidate.x,
-                bestCandidate.y,
-                bestCandidate.z,
-                bestCandidate.nx,
-                bestCandidate.ny,
-                bestCandidate.nz
-            );
-            rootHollowsPlaced++;
         }
 
         // --- 3.7 Firefly Generation (Surface Pass) ---

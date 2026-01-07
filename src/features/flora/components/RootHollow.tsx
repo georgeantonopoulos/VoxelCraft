@@ -39,7 +39,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const [swarmDissipating, setSwarmDissipating] = useState(false);
 
     const removeEntity = useWorldStore(s => s.removeEntity);
-    const addEntity = useWorldStore(s => s.addEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
 
@@ -50,6 +49,8 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const growTimerRef = useRef<NodeJS.Timeout | null>(null);
     const dissipateStartTimerRef = useRef<NodeJS.Timeout | null>(null);
     const dissipateTimerRef = useRef<NodeJS.Timeout | null>(null);
+    // Track if tree has been registered to prevent repeated addEntity calls
+    const treeRegisteredRef = useRef(false);
 
     // Orientation Logic (used for the tree and swarm placement)
     const quaternion = useMemo(() => {
@@ -90,14 +91,18 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
 
         if (status === 'GROWING') {
-            // Register the grown tree in WorldStore for humidity spreading
-            addEntity({
-                id: treeEntityId,
-                type: 'GROWN_TREE' as const,
-                position: posVec.clone(),
-                grownAt: Date.now()
-            });
-            console.log('[RootHollow] Registered grown tree for humidity spreading:', treeEntityId);
+            // Register the grown tree in WorldStore for humidity spreading (only once!)
+            if (!treeRegisteredRef.current) {
+                treeRegisteredRef.current = true;
+                // Use getState() to avoid dependency on addEntity reference
+                useWorldStore.getState().addEntity({
+                    id: treeEntityId,
+                    type: 'GROWN_TREE' as const,
+                    position: posVec.clone(),
+                    grownAt: Date.now()
+                });
+                console.log('[RootHollow] Registered grown tree for humidity spreading:', treeEntityId);
+            }
 
             dissipateStartTimerRef.current = setTimeout(() => {
                 console.log('[RootHollow] Starting swarm dissipation');
@@ -114,7 +119,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             if (dissipateStartTimerRef.current) clearTimeout(dissipateStartTimerRef.current);
             if (dissipateTimerRef.current) clearTimeout(dissipateTimerRef.current);
         };
-    }, [status, addEntity, treeEntityId, posVec]);
+    }, [status, treeEntityId, posVec]);
 
     const frameCount = useRef(0);
     useFrame((state) => {
@@ -127,23 +132,50 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         frameCount.current++;
         if (frameCount.current % 20 !== 0) return;
 
-        const nearbyEntities = getEntitiesNearby(posVec, 2.0);
+        const nearbyEntities = getEntitiesNearby(posVec, 4.0); // Search wider to catch flora at different Y levels
 
         for (const entity of nearbyEntities) {
             if (entity.type !== ItemType.FLORA) continue;
 
             const body = entity.bodyRef?.current;
-            if (!body) continue;
+            if (!body) {
+                // Flora entity exists but RigidBody ref not yet populated - try position fallback
+                const entityPos = entity.position;
+                if (entityPos) {
+                    const distSq = entityPos.distanceToSquared(posVec);
+                    // Use horizontal distance check (ignore Y) with generous radius
+                    const dx = entityPos.x - posVec.x;
+                    const dz = entityPos.z - posVec.z;
+                    const horizDistSq = dx * dx + dz * dz;
+                    if (horizDistSq < 4.0) { // 2 units radius
+                        console.log('[RootHollow] Flora detected via position fallback, absorbing');
+                        removeEntity(entity.id);
+                        setStatus('CHARGING');
+                        setSwarmVisible(true);
+                        setSwarmDissipating(false);
+                        return;
+                    }
+                }
+                continue;
+            }
 
             const fPos = body.translation();
-            const distSq = (fPos.x - posVec.x) ** 2 + (fPos.y - posVec.y) ** 2 + (fPos.z - posVec.z) ** 2;
-            if (distSq < 2.25) {
+            // Use horizontal distance primarily (flora might be at different Y due to physics)
+            const dx = fPos.x - posVec.x;
+            const dz = fPos.z - posVec.z;
+            const horizDistSq = dx * dx + dz * dz;
+
+            if (horizDistSq < 4.0) { // 2 units horizontal radius
                 const vel = body.linvel();
-                if (vel.x ** 2 + vel.y ** 2 + vel.z ** 2 < 0.01) {
+                const velSq = vel.x ** 2 + vel.y ** 2 + vel.z ** 2;
+                // More lenient velocity check - flora might still be settling
+                if (velSq < 0.5) {
+                    console.log('[RootHollow] Flora detected via physics body, absorbing');
                     removeEntity(entity.id);
                     setStatus('CHARGING');
                     setSwarmVisible(true);
                     setSwarmDissipating(false);
+                    return;
                 }
             }
         }
@@ -158,10 +190,10 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     );
 
     const treeWorldPosition = useMemo(() => {
-        // Tree grows from inside the hollow stump - position at ~40% stump height
-        // to account for embed offset and have trunk emerge from stump opening
-        return new THREE.Vector3(0, stumpHeight * 0.4, 0).applyQuaternion(quaternion).add(groupPosition);
-    }, [quaternion, groupPosition, stumpHeight]);
+        // Tree grows from ground level (y=0 in local space of the stump group)
+        // The stump group is already embedded, so y=0 is at terrain surface
+        return new THREE.Vector3(0, 0, 0).applyQuaternion(quaternion).add(groupPosition);
+    }, [quaternion, groupPosition]);
 
     return (
         <group position={groupPosition} quaternion={quaternion}>
@@ -210,7 +242,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             {(status === 'CHARGING' || status === 'GROWING') && (
                 <FractalTree
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
-                    position={new THREE.Vector3(0, stumpHeight * 0.4, 0)}
+                    position={new THREE.Vector3(0, 0, 0)}
                     baseRadius={stumpRadius * 0.7}
                     userData={{ type: 'flora_tree' }}
                     orientation={quaternion}
