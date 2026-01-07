@@ -403,7 +403,7 @@ export function useTerrainInteraction(
                 }
 
                 next[hit.index + 1] = -10000;
-                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
                 chunkDataRef.current?.set(hit.key, updatedChunk);
                 chunkDataManager.replaceChunk(hit.key, updatedChunk);
                 chunkDataManager.markDirty(hit.key);

@@ -958,7 +958,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (modified) {
           // Update both local ref and ChunkDataManager
           chunkDataRef.current.set(key, updatedChunk);
-          chunkDataManager.replaceChunk(key, updatedChunk);
+          updatedChunk.visualVersion = (chunk.visualVersion ?? 0) + 1; chunkDataManager.replaceChunk(key, updatedChunk);
           queueVersionIncrement(key);
 
           // Update hotspots
@@ -1841,7 +1841,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         // stride 4: x, y, z, type
         next[hit.index + 1] = -10000;
 
-        const updatedChunk = { ...chunk, floraPositions: next };
+        const updatedChunk = { ...chunk, floraPositions: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(key, updatedChunk);
         chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
@@ -1898,7 +1898,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
 
         next[hit.index + 1] = -10000;
-        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(hit.key, updatedChunk);
         chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
