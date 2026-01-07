@@ -81,43 +81,72 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
         setPhysicsReady(false);
     }, [seed, baseRadius, type, active]);
 
+    // Track whether geometry has been applied (for prewarm vs just-mounted states)
+    const geometryAppliedRef = useRef(false);
+
+    // Initialize mesh counts to 0 until data arrives (prewarm state)
+    useEffect(() => {
+        if (meshRef.current) meshRef.current.count = 0;
+        if (leafRef.current) leafRef.current.count = 0;
+    }, []);
+
     useEffect(() => {
         if (!data || !meshRef.current) return;
 
-        const { matrices, depths, leafMatrices, boundingBox } = data;
-        const count = matrices.length / 16;
+        // Spread the expensive work across multiple frames using requestIdleCallback
+        // This prevents the main thread from blocking during geometry setup
+        const applyGeometry = () => {
+            if (!meshRef.current) return;
 
-        meshRef.current.count = count;
+            const { matrices, depths, leafMatrices, boundingBox } = data;
+            const count = matrices.length / 16;
 
-        // Reapply instance transforms/attributes so the fractal structure renders correctly.
-        const im = meshRef.current.instanceMatrix;
-        im.array.set(matrices);
-        im.needsUpdate = true;
+            meshRef.current.count = count;
 
-        geometry.setAttribute('aBranchDepth', new THREE.InstancedBufferAttribute(depths, 1));
+            // Reapply instance transforms/attributes so the fractal structure renders correctly.
+            const im = meshRef.current.instanceMatrix;
+            im.array.set(matrices);
+            im.needsUpdate = true;
 
-        if (leafRef.current && leafMatrices && leafMatrices.length > 0) {
-            const leafCount = leafMatrices.length / 16;
-            leafRef.current.count = leafCount;
-            leafRef.current.instanceMatrix.array.set(leafMatrices);
-            leafRef.current.instanceMatrix.needsUpdate = true;
-        }
+            geometry.setAttribute('aBranchDepth', new THREE.InstancedBufferAttribute(depths, 1));
 
-        if (boundingBox) {
-            geometry.boundingBox = new THREE.Box3(
-                new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.min.z),
-                new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.max.z)
-            );
-            geometry.boundingSphere = new THREE.Sphere();
-            geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+            if (leafRef.current && leafMatrices && leafMatrices.length > 0) {
+                const leafCount = leafMatrices.length / 16;
+                leafRef.current.count = leafCount;
+                leafRef.current.instanceMatrix.array.set(leafMatrices);
+                leafRef.current.instanceMatrix.needsUpdate = true;
+            }
+
+            if (boundingBox) {
+                geometry.boundingBox = new THREE.Box3(
+                    new THREE.Vector3(boundingBox.min.x, boundingBox.min.y, boundingBox.min.z),
+                    new THREE.Vector3(boundingBox.max.x, boundingBox.max.y, boundingBox.max.z)
+                );
+                geometry.boundingSphere = new THREE.Sphere();
+                geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+            }
+
+            geometryAppliedRef.current = true;
+        };
+
+        // Use requestIdleCallback to apply geometry during browser idle time
+        // This is especially important during CHARGING phase when we're prewarming
+        if ('requestIdleCallback' in window) {
+            const id = requestIdleCallback(applyGeometry, { timeout: 100 });
+            return () => cancelIdleCallback(id);
+        } else {
+            // Fallback for browsers without requestIdleCallback
+            const id = setTimeout(applyGeometry, 0);
+            return () => clearTimeout(id);
         }
     }, [data, geometry]);
 
     // Physics Generation
     // NOTE: We must clone pos/quat before passing to RigidBody, otherwise all colliders
     // share the same reference and end up at the last computed position (all bunched up).
+    // Only create physics when active (not during prewarm) AND after growth completes.
     const physicsBodies = useMemo(() => {
-        if (!physicsReady || !data) return null;
+        if (!active || !physicsReady || !data) return null;
 
         // RootHollow flora-trees don't need per-branch colliders (expensive to create all at once).
         // Use a single coarse trunk collider to avoid a hitch at the end of the growth animation.
@@ -200,7 +229,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
         }
 
         return bodies;
-    }, [physicsReady, data, userData, baseRadius]);
+    }, [active, physicsReady, data, userData, baseRadius]);
 
     const uniforms = useMemo(() => {
         let base = '#3e2723';
@@ -285,13 +314,16 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
         return { center, halfExtents };
     }, [data]);
 
-    if (!data) return null;
+    // Estimate max instance count for prewarm (before data arrives)
+    // This allows the mesh to be created and GPU resources allocated during CHARGING
+    const estimatedCount = data ? data.matrices.length / 16 : 200;
+    const estimatedLeafCount = data?.leafMatrices ? data.leafMatrices.length / 16 : 50;
 
     return (
         <group position={position} visible={visible}>
             <instancedMesh
                 ref={meshRef}
-                args={[geometry, undefined, data.matrices.length / 16]}
+                args={[geometry, undefined, estimatedCount]}
                 frustumCulled={true}
             >
                 <CustomShaderMaterial
@@ -447,7 +479,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
             </instancedMesh>
             <instancedMesh
                 ref={leafRef}
-                args={[leafGeometry, undefined, data.leafMatrices ? data.leafMatrices.length / 16 : 0]}
+                args={[leafGeometry, undefined, estimatedLeafCount]}
                 frustumCulled={true}
             >
                 <CustomShaderMaterial
@@ -538,7 +570,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
                     toneMapped={false}
                 />
             </instancedMesh>
-            {userData?.type === 'flora_tree' && interactionBounds && (
+            {userData?.type === 'flora_tree' && interactionBounds && active && (
                 <RigidBody
                     type="fixed"
                     colliders={false}

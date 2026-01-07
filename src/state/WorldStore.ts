@@ -31,7 +31,7 @@ const packHotspots = (
   return out;
 };
 
-export type EntityType = ItemType.FLORA | ItemType.TORCH | 'TREE_STUMP' | 'BEE';
+export type EntityType = ItemType.FLORA | ItemType.TORCH | 'TREE_STUMP' | 'BEE' | 'GROWN_TREE';
 
 export interface EntityData {
   id: string;
@@ -43,6 +43,8 @@ export interface EntityData {
   // Storing the ref here allows systems to access physics bodies
   // without needing to pass props down through React.
   bodyRef?: React.RefObject<any>;
+  // For GROWN_TREE: when the tree finished growing (for humidity spreading radius calculation)
+  grownAt?: number;
 }
 
 export interface PlayerParams {
@@ -121,6 +123,12 @@ interface WorldState {
    * Reset all world state for a fresh start (new world).
    */
   resetAll: () => void;
+
+  /**
+   * Get all grown trees (for humidity spreading calculation).
+   * Returns an array of { x, z, grownAt } for trees that have finished growing.
+   */
+  getGrownTrees: () => Array<{ x: number; z: number; grownAt: number }>;
 }
 
 export const useWorldStore = create<WorldState>((set, get) => ({
@@ -375,4 +383,25 @@ export const useWorldStore = create<WorldState>((set, get) => ({
     stickHotspots: new Map(),
     rockHotspots: new Map(),
   }),
+
+  /**
+   * Get all grown trees (for humidity spreading calculation).
+   * Returns an array of { x, z, grownAt } for trees that have finished growing.
+   */
+  getGrownTrees: () => {
+    const { entities } = get();
+    const trees: Array<{ x: number; z: number; grownAt: number }> = [];
+
+    entities.forEach((entity) => {
+      if (entity.type === 'GROWN_TREE' && entity.grownAt) {
+        trees.push({
+          x: entity.position.x,
+          z: entity.position.z,
+          grownAt: entity.grownAt
+        });
+      }
+    });
+
+    return trees;
+  },
 }));

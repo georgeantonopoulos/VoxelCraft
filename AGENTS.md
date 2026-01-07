@@ -386,4 +386,9 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Changes**: Commented out the `console.log` on line 133 of `ChunkMesh.tsx`.
   - **Result**: Console is now free of terrain-reconstruction spam during digging/modification.
 
+- 2026-01-06: **Git Worktree Creation**.
+  - **Goal**: Create a new git worktree 'saw' from the 'crafting' branch.
+  - **Implementation**: Created worktree at `worktrees/saw` and checked out new branch `saw`.
+  - **Result**: Worktree is available for concurrent development in the `worktrees/saw` directory.
+
 [diff_block_end]

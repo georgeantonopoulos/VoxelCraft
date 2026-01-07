@@ -254,6 +254,14 @@ export const triplanarFragmentShader = `
   // Color grading (in-shader, not post-processing)
   uniform float uTerrainSaturation;      // 1.0=neutral, >1=more saturated
 
+  // Humidity Spreading System - DISABLED (causes GPU perf issues with array uniforms)
+  // TODO: Re-implement using vertex attributes or texture-based approach instead
+  // uniform int uGrownTreeCount;
+  // uniform vec2 uGrownTreePositions[8];
+  // uniform float uGrownTreeAges[8];
+  // uniform float uHumiditySpreadRate;
+  // uniform float uHumidityMaxRadius;
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -421,6 +429,15 @@ export const triplanarFragmentShader = `
       return MatInfo(baseCol, roughness, noiseFactor, emission);
   }
 
+  // HUMIDITY SPREADING FUNCTION - DISABLED (causes GPU perf issues)
+  // TODO: Re-implement using vertex attributes or texture-based approach
+  /*
+  float getHumidityInfluence(vec2 worldPosXZ) {
+    // ... disabled ...
+    return 0.0;
+  }
+  */
+
   void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
     inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float accEmission, inout float totalW,
     inout int dominantChannel, inout float dominantWeight) {
@@ -472,6 +489,16 @@ export const triplanarFragmentShader = `
     }
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
+
+    // === HUMIDITY SPREADING - DISABLED ===
+    // Causes GPU performance issues with array uniforms on some hardware.
+    // TODO: Re-implement using a different approach (vertex attributes, texture lookup, etc.)
+    float humidityDeltaGrass = 0.0;
+    float humidityDeltaDirt = 0.0;
+    float humidityDeltaRedSand = 0.0;
+    float humidityDeltaStone = 0.0;
+    float humidityDeltaTerracotta = 0.0;
+
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
     float accNoise = 0.0;
@@ -481,16 +508,16 @@ export const triplanarFragmentShader = `
     int dominantChannel = 2;
     accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(2, vWa.z + humidityDeltaStone, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(3, vWa.w + humidityDeltaDirt, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(4, vWb.x + humidityDeltaGrass, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(10, vWc.z + humidityDeltaRedSand, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(11, vWc.w + humidityDeltaTerracotta, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);

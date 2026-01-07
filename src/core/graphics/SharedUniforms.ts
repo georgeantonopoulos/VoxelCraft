@@ -46,6 +46,15 @@ export const sharedUniforms = {
 
     // Color grading (in-shader, not post-processing)
     uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated
+
+    // Humidity Spreading System (Sacred Grove terraforming)
+    // Up to 8 grown trees can influence nearby terrain to transform from RED_SAND to GRASS
+    // NOTE: Array uniforms in Three.js must be arrays of the proper type (Vector2, not Float32Array)
+    uGrownTreeCount: { value: 0 },            // Number of active grown trees (0-8)
+    uGrownTreePositions: { value: Array.from({ length: 8 }, () => new THREE.Vector2(0, 0)) },  // XZ positions
+    uGrownTreeAges: { value: new Array(8).fill(0) },        // Time since growth (seconds) for each tree
+    uHumiditySpreadRate: { value: 0.5 },      // Blocks per second of humidity spread
+    uHumidityMaxRadius: { value: 64.0 },      // Maximum spread radius
 };
 
 export interface SharedUniformUpdateParams {
@@ -78,6 +87,12 @@ export interface SharedUniformUpdateParams {
     giIntensity?: number;
     // Color grading
     terrainSaturation?: number;
+    // Humidity Spreading
+    grownTreeCount?: number;
+    grownTreePositions?: THREE.Vector2[];  // Array of Vector2 for proper Three.js uniform binding
+    grownTreeAges?: number[];              // Array of numbers
+    humiditySpreadRate?: number;
+    humidityMaxRadius?: number;
 }
 
 /**
@@ -123,4 +138,23 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
 
     // Color grading
     if (params.terrainSaturation !== undefined) sharedUniforms.uTerrainSaturation.value = params.terrainSaturation;
+
+    // Humidity Spreading
+    if (params.grownTreeCount !== undefined) sharedUniforms.uGrownTreeCount.value = params.grownTreeCount;
+    if (params.grownTreePositions) {
+        // Copy Vector2 values into the uniform array (mutate in place to maintain reference)
+        const uniformArr = sharedUniforms.uGrownTreePositions.value;
+        for (let i = 0; i < Math.min(params.grownTreePositions.length, 8); i++) {
+            uniformArr[i].copy(params.grownTreePositions[i]);
+        }
+    }
+    if (params.grownTreeAges) {
+        // Copy age values into the uniform array
+        const uniformArr = sharedUniforms.uGrownTreeAges.value;
+        for (let i = 0; i < Math.min(params.grownTreeAges.length, 8); i++) {
+            uniformArr[i] = params.grownTreeAges[i];
+        }
+    }
+    if (params.humiditySpreadRate !== undefined) sharedUniforms.uHumiditySpreadRate.value = params.humiditySpreadRate;
+    if (params.humidityMaxRadius !== undefined) sharedUniforms.uHumidityMaxRadius.value = params.humidityMaxRadius;
 };

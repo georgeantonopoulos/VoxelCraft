@@ -39,8 +39,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const [swarmDissipating, setSwarmDissipating] = useState(false);
 
     const removeEntity = useWorldStore(s => s.removeEntity);
+    const addEntity = useWorldStore(s => s.addEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
     const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
+
+    // Unique ID for this hollow's grown tree (stable across re-renders)
+    const treeEntityId = useMemo(() => `grown-tree-${position[0]}-${position[2]}`, [position]);
 
     // Use ref to track timer so we can properly clean it up
     const growTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -86,6 +90,15 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
 
         if (status === 'GROWING') {
+            // Register the grown tree in WorldStore for humidity spreading
+            addEntity({
+                id: treeEntityId,
+                type: 'GROWN_TREE' as const,
+                position: posVec.clone(),
+                grownAt: Date.now()
+            });
+            console.log('[RootHollow] Registered grown tree for humidity spreading:', treeEntityId);
+
             dissipateStartTimerRef.current = setTimeout(() => {
                 console.log('[RootHollow] Starting swarm dissipation');
                 setSwarmDissipating(true);
@@ -101,7 +114,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             if (dissipateStartTimerRef.current) clearTimeout(dissipateStartTimerRef.current);
             if (dissipateTimerRef.current) clearTimeout(dissipateTimerRef.current);
         };
-    }, [status]);
+    }, [status, addEntity, treeEntityId, posVec]);
 
     const frameCount = useRef(0);
     useFrame((state) => {
@@ -136,17 +149,17 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
     });
 
+    const stumpHeight = STUMP_CONFIG.height * STUMP_CONFIG.scale;
+    const stumpRadius = 1.4 * STUMP_CONFIG.scale;
+
     const groupPosition = useMemo(
         () => new THREE.Vector3(position[0], position[1] - STUMP_CONFIG.embedOffset, position[2]),
         [position]
     );
 
     const treeWorldPosition = useMemo(() => {
-        return new THREE.Vector3(0, 0.5, 0).applyQuaternion(quaternion).add(groupPosition);
-    }, [quaternion, groupPosition]);
-
-    const stumpHeight = STUMP_CONFIG.height * STUMP_CONFIG.scale;
-    const stumpRadius = 1.4 * STUMP_CONFIG.scale;
+        return new THREE.Vector3(0, stumpHeight * 0.75, 0).applyQuaternion(quaternion).add(groupPosition);
+    }, [quaternion, groupPosition, stumpHeight]);
 
     return (
         <group position={groupPosition} quaternion={quaternion}>
@@ -193,18 +206,16 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             )}
 
             {(status === 'CHARGING' || status === 'GROWING') && (
-                // Prewarm the tree during CHARGING so the worker finishes before GROWING starts.
-                // This avoids a visible "gap" where the swarm is present but the tree hasn't generated yet.
                 <FractalTree
-                    active={status === 'GROWING'}
-                    visible={status === 'GROWING'}
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
-                    position={new THREE.Vector3(0, 0.5, 0)}
-                    baseRadius={stumpRadius}
+                    position={new THREE.Vector3(0, stumpHeight * 0.75, 0)}
+                    baseRadius={stumpRadius * 0.7}
                     userData={{ type: 'flora_tree' }}
                     orientation={quaternion}
                     worldPosition={treeWorldPosition}
                     worldQuaternion={quaternion}
+                    active={status === 'GROWING'}
+                    visible={status === 'GROWING'}
                 />
             )}
         </group>

@@ -481,6 +481,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, []);
 
   // === BIOME FOG STATE ===
+  // Track grown tree data for humidity spreading shader
+  // Store grownAt timestamps and compute ages each frame to avoid jerky updates
+  // NOTE: Uses THREE.Vector2[] and number[] for proper Three.js uniform binding
+  const grownTreeDataRef = useRef<{
+    count: number;
+    positions: THREE.Vector2[];      // Array of Vector2 for shader uniform
+    grownAtTimestamps: number[];     // Store raw timestamps, compute ages each frame
+    ages: number[];                  // Array of ages for shader uniform
+    lastTreeListUpdate: number;      // When we last refreshed the tree list
+  } | null>(null);
+
   // Track current biome fog settings with smooth interpolation.
   // We sample the biome at camera position each frame and lerp toward target values.
   const biomeFogState = useRef({
@@ -1676,6 +1687,71 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Convert weightsView string to numeric value for shader
     const weightsViewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
 
+    // Collect grown tree data for humidity spreading shader
+    // Only update when trees exist and humidity hasn't reached max spread
+    const now = Date.now();
+    // maxRadius=64, spreadRate=0.5 => 128 seconds to reach full spread
+    const maxSpreadTimeMs = 128 * 1000;
+
+    // Refresh the tree list every 2 seconds (positions don't change often)
+    // But compute ages EVERY FRAME to avoid jerky humidity expansion
+    if (!grownTreeDataRef.current || now - grownTreeDataRef.current.lastTreeListUpdate > 2000) {
+      const grownTrees = useWorldStore.getState().getGrownTrees();
+
+      if (grownTrees.length > 0) {
+        // Filter out trees that have fully spread (age > time to reach max radius)
+        // These trees no longer need shader updates
+        const activeTrees = grownTrees.filter(t => (now - t.grownAt) < maxSpreadTimeMs);
+
+        if (activeTrees.length > 0) {
+          // Sort by distance to camera for best coverage
+          const cameraPos = state.camera.position;
+          activeTrees.sort((a, b) => {
+            const distA = (a.x - cameraPos.x) ** 2 + (a.z - cameraPos.z) ** 2;
+            const distB = (b.x - cameraPos.x) ** 2 + (b.z - cameraPos.z) ** 2;
+            return distA - distB;
+          });
+
+          // Reuse or create Vector2 array for positions
+          const positions = grownTreeDataRef.current?.positions || Array.from({ length: 8 }, () => new THREE.Vector2(0, 0));
+          const ages = grownTreeDataRef.current?.ages || new Array(8).fill(0);
+          const count = Math.min(activeTrees.length, 8);
+          const timestamps: number[] = [];
+
+          for (let i = 0; i < count; i++) {
+            positions[i].set(activeTrees[i].x, activeTrees[i].z);
+            timestamps.push(activeTrees[i].grownAt);
+          }
+
+          grownTreeDataRef.current = { count, positions, grownAtTimestamps: timestamps, ages, lastTreeListUpdate: now };
+        } else {
+          // All trees have reached max spread - set count to 0 to disable shader work
+          if (grownTreeDataRef.current) {
+            grownTreeDataRef.current.count = 0;
+            grownTreeDataRef.current.lastTreeListUpdate = now;
+          }
+        }
+      } else if (!grownTreeDataRef.current) {
+        grownTreeDataRef.current = {
+          count: 0,
+          positions: Array.from({ length: 8 }, () => new THREE.Vector2(0, 0)),
+          grownAtTimestamps: [],
+          ages: new Array(8).fill(0),
+          lastTreeListUpdate: now
+        };
+      } else {
+        grownTreeDataRef.current.lastTreeListUpdate = now;
+      }
+    }
+
+    // Update ages EVERY FRAME from stored timestamps for smooth humidity expansion
+    if (grownTreeDataRef.current && grownTreeDataRef.current.count > 0) {
+      const { grownAtTimestamps, ages, count } = grownTreeDataRef.current;
+      for (let i = 0; i < count; i++) {
+        ages[i] = (now - grownAtTimestamps[i]) / 1000;
+      }
+    }
+
     updateSharedUniforms(state, {
       sunDir: sunDirection,
       fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
@@ -1706,6 +1782,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       giIntensity,
       // Color grading
       terrainSaturation,
+      // Humidity spreading from grown trees
+      grownTreeCount: grownTreeDataRef.current?.count ?? 0,
+      grownTreePositions: grownTreeDataRef.current?.positions,
+      grownTreeAges: grownTreeDataRef.current?.ages,
     });
     frameProfiler.end('terrain-uniforms');
 
