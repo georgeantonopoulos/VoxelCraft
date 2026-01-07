@@ -15,7 +15,8 @@ import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
-import { FallingTree } from '@features/flora/components/FallingTree';
+import { FallingTree, LogSpawnData } from '@features/flora/components/FallingTree';
+import { Log } from '@features/building/components/Log';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
@@ -749,6 +750,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
+  const [logs, setLogs] = useState<Array<{ id: string; position: THREE.Vector3; treeType: number; seed: number; isPlaced: boolean }>>([]);
 
   // Callbacks for terrain interaction hook
   const handleParticle = useCallback((state: Partial<ParticleState> & { burstId?: number }) => {
@@ -763,8 +765,60 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     setFallingTrees(prev => [...prev, tree]);
   }, []);
 
+  // Callback for when a falling tree is converted to logs (via sawing)
+  const handleConvertToLogs = useCallback((treeId: string, spawnedLogs: LogSpawnData[]) => {
+    // Remove the falling tree
+    setFallingTrees(prev => prev.filter(t => t.id !== treeId));
+    // Add the logs
+    setLogs(prev => [
+      ...prev,
+      ...spawnedLogs.map((log, i) => ({
+        id: `${treeId}-log-${i}-${Date.now()}`,
+        position: log.position,
+        treeType: log.treeType,
+        seed: log.seed,
+        isPlaced: false
+      }))
+    ]);
+  }, []);
+
+  // Callback to remove a falling tree (used when sawing converts it)
+  const handleFallingTreeRemove = useCallback((treeId: string) => {
+    setFallingTrees(prev => prev.filter(t => t.id !== treeId));
+  }, []);
+
   const handleLeafHit = useCallback((position: THREE.Vector3, color?: string) => {
     setLeafPickup({ position, color: color || '#4CAF50' }); // Default to green
+  }, []);
+
+  // Log pickup/drop event handlers
+  useEffect(() => {
+    const handleLogPickup = (e: CustomEvent<{ logId: string }>) => {
+      const { logId } = e.detail;
+      setLogs(prev => prev.filter(log => log.id !== logId));
+    };
+
+    const handleLogDrop = (e: CustomEvent<{ log: { id: string; treeType: number; seed: number }; position: number[] }>) => {
+      const { log, position } = e.detail;
+      setLogs(prev => [
+        ...prev,
+        {
+          id: `dropped-${log.id}-${Date.now()}`,
+          position: new THREE.Vector3(position[0], position[1], position[2]),
+          treeType: log.treeType,
+          seed: log.seed,
+          isPlaced: false
+        }
+      ]);
+    };
+
+    window.addEventListener('vc-log-pickup', handleLogPickup as EventListener);
+    window.addEventListener('vc-log-drop', handleLogDrop as EventListener);
+
+    return () => {
+      window.removeEventListener('vc-log-pickup', handleLogPickup as EventListener);
+      window.removeEventListener('vc-log-drop', handleLogDrop as EventListener);
+    };
   }, []);
 
   // Use extracted terrain interaction hook
@@ -777,6 +831,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       queueRemesh: (key: string) => remeshQueue.current.add(key),
       chunkDataRef,
       audioPool,
+      onLogSpawn: handleConvertToLogs,
+      onFallingTreeRemove: handleFallingTreeRemove,
     },
     {
       buildMat,
@@ -2012,7 +2068,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         color={particleState.color}
       />
       {fallingTrees.map(tree => (
-        <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
+        <FallingTree
+          key={tree.id}
+          id={tree.id}
+          position={tree.position}
+          type={tree.type}
+          seed={tree.seed}
+          onConvertToLogs={(spawnedLogs) => handleConvertToLogs(tree.id, spawnedLogs)}
+        />
+      ))}
+      {logs.map(log => (
+        <Log
+          key={log.id}
+          id={log.id}
+          position={log.position}
+          treeType={log.treeType}
+          seed={log.seed}
+          isPlaced={log.isPlaced}
+        />
       ))}
       {leafPickup && (
         <LeafPickupEffect

@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useControls, button } from 'leva';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
+import { useCarryingStore } from '@/state/CarryingStore';
 import { TorchTool } from './TorchTool';
 import { RIGHT_HAND_HELD_ITEM_POSES, PICKAXE_POSE, TORCH_POSE } from '@features/interaction/logic/HeldItemPoses';
 import { ItemType } from '@/types';
@@ -21,6 +22,10 @@ export const FirstPersonTools: React.FC = () => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
     const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
     const customTools = useInventoryStore(state => state.customTools);
+
+    // Carrying State
+    const carriedLog = useCarryingStore(state => state.carriedLog);
+    const isCarrying = !!carriedLog;
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
@@ -415,16 +420,34 @@ export const FirstPersonTools: React.FC = () => {
                 </group>
             </group>
             <group ref={rightItemRef}>
-                {/* 
-                  Prevent UniversalTool from rendering the torch (and its extra PointLight) 
+                {/*
+                  Prevent UniversalTool from rendering the torch (and its extra PointLight)
                   when TorchTool is already handling it in the left hand.
+                  Also hide right-hand item when carrying a log.
                 */}
                 <UniversalTool item={
-                    (activeCustomTool || selectedItem) === ItemType.TORCH
+                    isCarrying
                         ? null
-                        : (activeCustomTool || selectedItem)
+                        : ((activeCustomTool || selectedItem) === ItemType.TORCH
+                            ? null
+                            : (activeCustomTool || selectedItem))
                 } />
             </group>
+            {/* Carried Log Visual - shows log end being held */}
+            {isCarrying && (
+                <group position={[0.4, -0.5, -0.6]}>
+                    {/* Log cylinder oriented horizontally */}
+                    <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+                        <cylinderGeometry args={[0.12, 0.12, 0.6, 8]} />
+                        <meshStandardMaterial color="#5D4037" roughness={0.85} />
+                    </mesh>
+                    {/* Log end cap (visible cut face) */}
+                    <mesh position={[0, 0.3, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                        <circleGeometry args={[0.12, 8]} />
+                        <meshStandardMaterial color="#8D6E63" roughness={0.9} />
+                    </mesh>
+                </group>
+            )}
         </group>
     );
 };

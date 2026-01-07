@@ -6,13 +6,21 @@ import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 
+export interface LogSpawnData {
+    position: THREE.Vector3;
+    treeType: number;
+    seed: number;
+}
+
 interface FallingTreeProps {
+    id: string;
     position: THREE.Vector3;
     type: number;
     seed: number; // We pass the seed derived from position to match the static tree
+    onConvertToLogs?: (logs: LogSpawnData[]) => void;
 }
 
-export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }) => {
+export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, seed, onConvertToLogs }) => {
     const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
 
     const { rotation, scale } = useMemo(() => {
@@ -209,6 +217,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
             mass={150 * scale}
             friction={3.0}
             restitution={0}
+            userData={{ type: 'fallen_tree', id, treeType: type, seed, scale }}
         >
             {/* Approximate collider for the trunk - positioned so it pivots from the base slightly */}
             <CylinderCollider args={[2.0 * scale, 0.35 * scale]} position={[0, 2.0 * scale, 0]} friction={3.0} restitution={0} />

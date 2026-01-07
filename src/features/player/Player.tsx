@@ -10,11 +10,13 @@ import { useEnvironmentStore } from '@/state/EnvironmentStore';
 import { LuminaExitFinder } from '@features/terrain/logic/LuminaExitFinder';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { updatePlayerState, notifyListeners } from '@core/player/PlayerState';
+import { useCarryingStore } from '@/state/CarryingStore';
 
 const FLY_SPEED = 24; // Increased for faster testing
 const DOUBLE_TAP_TIME = 300;
 const SWIM_SPEED = 4.0;
 const SWIM_VERTICAL_SPEED = 4.5;
+const CARRYING_SPEED_MULTIPLIER = 0.33; // 33% speed when carrying a log
 
 // Scratch objects to avoid per-frame allocations
 const scratchPos = new THREE.Vector3();
@@ -198,7 +200,8 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     scratchMoveDir.addScaledVector(scratchSide, -move.x);
 
     const crouchMul = isCrouching.current ? CROUCH_SPEED_MULTIPLIER : 1.0;
-    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul);
+    const carryMul = useCarryingStore.getState().isCarrying() ? CARRYING_SPEED_MULTIPLIER : 1.0;
+    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul * carryMul);
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
     if (scratchMoveDir.lengthSq() > 1.0) scratchMoveDir.normalize();

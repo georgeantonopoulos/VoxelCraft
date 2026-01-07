@@ -85,6 +85,12 @@ export interface FallingTreeData {
   seed: number;
 }
 
+export interface LogSpawnData {
+  position: THREE.Vector3;
+  treeType: number;
+  seed: number;
+}
+
 export interface InteractionCallbacks {
   /** Called to trigger particle effects */
   onParticle: (state: Partial<ParticleState> & { burstId?: number | 'increment' }) => void;
@@ -102,6 +108,10 @@ export interface InteractionCallbacks {
   audioPool: {
     play: (url: string, volume?: number, pitchVar?: number) => void;
   };
+  /** Called when logs are spawned from sawing a fallen tree */
+  onLogSpawn?: (treeId: string, logs: LogSpawnData[]) => void;
+  /** Called to remove a falling tree (e.g., after sawing) */
+  onFallingTreeRemove?: (treeId: string) => void;
 }
 
 export interface InteractionConfig {
@@ -212,8 +222,8 @@ export function useTerrainInteraction(
                 : (selectedItem as ItemType);
               const capabilities = getToolCapabilities(currentTool);
 
-              // Guard: Only tools with canChop capability can damage trees
-              if (!capabilities.canChop) {
+              // Guard: Only tools with canChop or canSaw capability can damage trees
+              if (!capabilities.canChop && !capabilities.canSaw) {
                 audioPool.play(clunkUrl, 0.3, 1.5);
                 return;
               }
@@ -327,6 +337,63 @@ export function useTerrainInteraction(
                 }
               }
             }
+            return;
+          }
+
+          // --- FALLEN TREE (for sawing into logs) ---
+          if (userData.type === 'fallen_tree') {
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const selectedItem = inventorySlots[selectedSlotIndex];
+            const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+              ? customTools[selectedItem as string]
+              : (selectedItem as ItemType);
+            const capabilities = getToolCapabilities(currentTool);
+
+            // Only SAW can cut fallen trees into logs
+            if (!capabilities.canSaw) {
+              audioPool.play(clunkUrl, 0.3, 1.5);
+              return;
+            }
+
+            const hitPointRaw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
+            const { id: fallenTreeId, treeType, seed, scale } = userData;
+
+            // Particle and sound for sawing
+            emitParticle({
+              pos: hitPoint,
+              dir: direction.clone().multiplyScalar(-1),
+              kind: 'debris',
+              color: '#D2691E' // Wood sawdust color
+            });
+            audioPool.play(clunkUrl, 0.4, 0.7);
+
+            // Convert to logs (2-3 logs depending on tree scale)
+            const logCount = Math.floor(2 + (scale || 1) * 0.5);
+            const spawnedLogs: LogSpawnData[] = [];
+
+            // Get the fallen tree's physics position (may have moved from original)
+            const treePos = parent.translation();
+            const treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
+
+            for (let i = 0; i < logCount; i++) {
+              // Offset logs along the tree's length
+              const offset = (i - (logCount - 1) / 2) * 1.5;
+              spawnedLogs.push({
+                position: treeBasePos.clone().add(new THREE.Vector3(offset * 0.3, 0.5 + i * 0.2, offset * 0.3)),
+                treeType: treeType,
+                seed: seed + i
+              });
+            }
+
+            // Call the interaction callbacks to spawn logs and remove the fallen tree
+            if (callbacks.onLogSpawn) {
+              callbacks.onLogSpawn(fallenTreeId, spawnedLogs);
+            }
+            if (callbacks.onFallingTreeRemove) {
+              callbacks.onFallingTreeRemove(fallenTreeId);
+            }
+
             return;
           }
         }
@@ -509,9 +576,9 @@ export function useTerrainInteraction(
                   : (selectedItem as ItemType);
                 const capabilities = getToolCapabilities(currentTool);
 
-                // Guard: Only tools with canChop capability can damage trees
+                // Guard: Only tools with canChop or canSaw capability can damage trees
                 // Non-chopping tools can still shake/interact but deal no damage
-                if (!capabilities.canChop) {
+                if (!capabilities.canChop && !capabilities.canSaw) {
                   // SMASH/SHAKE Animation for non-chopping tools
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
@@ -553,7 +620,7 @@ export function useTerrainInteraction(
                 }
 
                 // Not dead yet: Shake or Hit?
-                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop;
+                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop || capabilities.canSaw;
 
                 if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
                   // SMASH/SHAKE Animation
