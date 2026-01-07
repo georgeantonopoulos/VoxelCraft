@@ -44,11 +44,8 @@ import {
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
 
-// Sound imports
-import dig1Url from '@/assets/sounds/Dig_1.wav?url';
-import dig2Url from '@/assets/sounds/Dig_2.wav?url';
-import dig3Url from '@/assets/sounds/Dig_3.wav?url';
-import clunkUrl from '@/assets/sounds/clunk.wav?url';
+// Audio System
+import { getRandomDigSound } from '@core/audio';
 
 // Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
 function getLeafColorForTreeType(treeType: number): string {
@@ -98,10 +95,6 @@ export interface InteractionCallbacks {
   queueRemesh: (key: string) => void;
   /** Reference to chunk data map for raycasting */
   chunkDataRef: React.RefObject<Map<string, ChunkState>>;
-  /** Audio pool for playing sounds */
-  audioPool: {
-    play: (url: string, volume?: number, pitchVar?: number) => void;
-  };
 }
 
 export interface InteractionConfig {
@@ -135,11 +128,13 @@ export function useTerrainInteraction(
     queueVersionIncrement,
     queueRemesh,
     chunkDataRef,
-    audioPool,
   } = callbacks;
 
   // Track particle burst ID internally to ensure increment
   const particleBurstId = useRef(0);
+
+  // Track last sound timestamp to prevent duplicate sounds
+  const lastSoundTimestamp = useRef<number>(0);
 
   const emitParticle = (opts: Omit<ParticleState, 'burstId' | 'active'>) => {
     particleBurstId.current++;
@@ -150,8 +145,27 @@ export function useTerrainInteraction(
     });
   };
 
+  // Helper to play sounds via AudioManager with throttling
+  // Note: pitch is playbackRate (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
+  const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
+    const now = performance.now();
+    const timeSinceLastSound = now - lastSoundTimestamp.current;
+
+    // Throttle: only play if more than 100ms has passed since last sound
+    if (timeSinceLastSound < 100) {
+      return;
+    }
+
+    lastSoundTimestamp.current = now;
+    window.dispatchEvent(new CustomEvent('vc-audio-play', {
+      detail: { soundId, options }
+    }));
+  };
+
   useEffect(() => {
-    if (!isInteracting || !action) return;
+    if (!isInteracting || !action) {
+      return;
+    }
 
     const origin = camera.position.clone();
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -214,7 +228,7 @@ export function useTerrainInteraction(
 
               // Guard: Only tools with canChop capability can damage trees
               if (!capabilities.canChop) {
-                audioPool.play(clunkUrl, 0.3, 1.5);
+                playSound('wood_hit', { pitch: 1.5 });
                 return;
               }
 
@@ -239,7 +253,7 @@ export function useTerrainInteraction(
                 kind: 'debris',
                 color: '#8B4513'
               });
-              audioPool.play(clunkUrl, 0.4, 0.5);
+              playSound('wood_hit', { pitch: 0.5 });
 
               if (currentHealth <= 0) {
                 // Remove tree
@@ -303,13 +317,15 @@ export function useTerrainInteraction(
                 emitSpark(hitPoint);
               }
 
+              // Play rock-on-rock impact sound (NEW: using stone_hit.mp3)
+              playSound('rock_hit', { pitch: 1.2 });
+
               emitParticle({
                 pos: hitPoint,
                 dir: direction.clone().multiplyScalar(-1),
                 kind: 'debris',
                 color: '#888888'
               });
-              audioPool.play(clunkUrl, 0.5, 1.2);
 
               if (h <= 0) {
                 // Break!
@@ -351,13 +367,15 @@ export function useTerrainInteraction(
             const hitPoint = groundHit.position;
             emitSpark(hitPoint);
 
+            // Play rock-on-rock impact sound (NEW: using stone_hit.mp3)
+            playSound('rock_hit', { pitch: 1.2 });
+
             emitParticle({
               pos: hitPoint,
               dir: direction.clone().multiplyScalar(-1),
               kind: 'debris',
               color: '#888888'
             });
-            audioPool.play(clunkUrl, 0.5, 1.2);
 
             if (h <= 0) {
               // Break Natural Rock!
@@ -475,6 +493,7 @@ export function useTerrainInteraction(
           if (chunk.treePositions) {
             const positions = chunk.treePositions;
             const hitIndices: number[] = [];
+            let treeSoundPlayed = false; // Prevent multiple tree hit sounds per interaction
 
             for (let i = 0; i < positions.length; i += 5) {
               const x = positions[i] + chunkOriginX;
@@ -522,7 +541,10 @@ export function useTerrainInteraction(
                     kind: 'debris',
                     color: leafColor
                   });
-                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  if (!treeSoundPlayed) {
+                    playSound('wood_hit', { pitch: 0.85 });
+                    treeSoundPlayed = true;
+                  }
                   anyFloraHit = true;
                   continue;
                 }
@@ -566,7 +588,10 @@ export function useTerrainInteraction(
                     kind: 'debris',
                     color: leafColor
                   });
-                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  if (!treeSoundPlayed) {
+                    playSound('wood_hit', { pitch: 0.85 });
+                    treeSoundPlayed = true;
+                  }
                   anyFloraHit = true;
                 } else {
                   // CHOP Animation
@@ -579,7 +604,10 @@ export function useTerrainInteraction(
                     color: '#8B4513'
                   });
                   setTimeout(() => onParticle({ active: false }), 120);
-                  audioPool.play(clunkUrl, 0.4, 0.5);
+                  if (!treeSoundPlayed) {
+                    playSound('wood_hit', { pitch: 0.5 });
+                    treeSoundPlayed = true;
+                  }
                   anyFloraHit = true;
                 }
               }
@@ -690,7 +718,7 @@ export function useTerrainInteraction(
       // AAA FIX: Root Anchoring Block
       if (isNearTree && action === 'DIG') {
         // Play a "thud" to indicate blocking
-        audioPool.play(clunkUrl, 0.4, 0.5);
+        playSound('wood_hit', { pitch: 0.5 });
         window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false, color: '#555555' } }));
         return;
       }
@@ -789,12 +817,10 @@ export function useTerrainInteraction(
         affectedChunks.forEach(key => queueVersionIncrement(key));
         // Play Dig Sound
         if (action === 'DIG') {
-          const sounds = [dig1Url, dig2Url, dig3Url];
-          const selected = sounds[Math.floor(Math.random() * sounds.length)];
-          audioPool.play(selected, 0.3, 0.1);
+          playSound(getRandomDigSound());
         } else {
-          // Building sound - Use Dig_1 pitched down
-          audioPool.play(dig1Url, 0.3, 0.0);
+          // Building sound - Use random dig sound pitched down
+          playSound(getRandomDigSound(), { pitch: 0.85 });
         }
 
         affectedChunks.forEach(key => {
@@ -826,10 +852,8 @@ export function useTerrainInteraction(
       } else if (!anyModified && action === 'DIG') {
         // Tried to dig but nothing changed -> Indestructible (Bedrock)
         if (terrainHit) {
-          const audio = new Audio(clunkUrl);
-          audio.volume = 0.4;
-          audio.playbackRate = 0.9 + Math.random() * 0.2;
-          audio.play().catch(() => { });
+          // Play rock hit sound with random pitch variation
+          playSound('rock_hit', { pitch: 0.9 + Math.random() * 0.2 });
 
           // AAA FIX: Visual Feedback for Invincible Blocks
           emitParticle({
