@@ -15,6 +15,7 @@ import { Player } from '@features/player/Player';
 import { FloraPlacer } from '@features/flora/components/FloraPlacer';
 import { BedrockPlane } from '@features/terrain/components/BedrockPlane';
 import { AmbientLife } from '@features/environment/AmbientLife';
+import { BeeManager } from '@features/creatures/BeeManager';
 import { FirstPersonTools } from '@features/interaction/components/FirstPersonTools';
 import { PhysicsItemRenderer } from '@features/interaction/components/PhysicsItemRenderer';
 import { InteractionHandler } from '@features/interaction/logic/InteractionHandler';
@@ -413,6 +414,7 @@ const App: React.FC = () => {
               {gameStarted && spawnPos && collidersReady && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
               <AmbientLife enabled={gameStarted} />
+              <BeeManager enabled={gameStarted} />
               {worldType && (
                 <VoxelTerrain
                   sunDirection={sunDirection}
