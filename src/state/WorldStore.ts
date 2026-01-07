@@ -31,7 +31,7 @@ const packHotspots = (
   return out;
 };
 
-export type EntityType = ItemType.FLORA | ItemType.TORCH | 'TREE_STUMP' | 'BEE' | 'GROWN_TREE';
+export type EntityType = ItemType.FLORA | ItemType.TORCH | ItemType.FIRE | 'TREE_STUMP' | 'BEE' | 'GROWN_TREE';
 
 export interface EntityData {
   id: string;

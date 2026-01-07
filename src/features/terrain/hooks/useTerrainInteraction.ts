@@ -133,11 +133,8 @@ export function useTerrainInteraction(
   // Track particle burst ID internally to ensure increment
   const particleBurstId = useRef(0);
 
-  // Track last interaction to prevent duplicate sounds
-  const lastInteractionFrame = useRef<{ action: string | null; timestamp: number }>({
-    action: null,
-    timestamp: 0
-  });
+  // Track last sound timestamp to prevent duplicate sounds
+  const lastSoundTimestamp = useRef<number>(0);
 
   const emitParticle = (opts: Omit<ParticleState, 'burstId' | 'active'>) => {
     particleBurstId.current++;
@@ -149,16 +146,17 @@ export function useTerrainInteraction(
   };
 
   // Helper to play sounds via AudioManager with throttling
+  // Note: pitch is playbackRate (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
   const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
     const now = performance.now();
-    const timeSinceLastSound = now - lastInteractionFrame.current.timestamp;
+    const timeSinceLastSound = now - lastSoundTimestamp.current;
 
-    // Throttle: only play if more than 100ms has passed since last sound of same action
-    if (lastInteractionFrame.current.action === action && timeSinceLastSound < 100) {
+    // Throttle: only play if more than 100ms has passed since last sound
+    if (timeSinceLastSound < 100) {
       return;
     }
 
-    lastInteractionFrame.current = { action, timestamp: now };
+    lastSoundTimestamp.current = now;
     window.dispatchEvent(new CustomEvent('vc-audio-play', {
       detail: { soundId, options }
     }));
@@ -166,8 +164,6 @@ export function useTerrainInteraction(
 
   useEffect(() => {
     if (!isInteracting || !action) {
-      // Reset throttle when interaction ends
-      lastInteractionFrame.current = { action: null, timestamp: 0 };
       return;
     }
 
@@ -821,10 +817,10 @@ export function useTerrainInteraction(
         affectedChunks.forEach(key => queueVersionIncrement(key));
         // Play Dig Sound
         if (action === 'DIG') {
-          playSound(getRandomDigSound(), { pitch: 0.1 });
+          playSound(getRandomDigSound());
         } else {
           // Building sound - Use random dig sound pitched down
-          playSound(getRandomDigSound(), { pitch: 0.0 });
+          playSound(getRandomDigSound(), { pitch: 0.85 });
         }
 
         affectedChunks.forEach(key => {

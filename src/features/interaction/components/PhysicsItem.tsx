@@ -237,6 +237,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
             castShadow={false}
           />
           <FireParticles />
+          <FireSound />
         </>
       )}
     </RigidBody>
@@ -309,4 +310,21 @@ const FireParticles: React.FC = () => {
       </instancedMesh>
     </group>
   );
+};
+const FireSound: React.FC = () => {
+  useEffect(() => {
+    // Start fire loop on mount
+    window.dispatchEvent(new CustomEvent('vc-audio-ambient-enter', {
+      detail: { soundId: 'fire_loop', fadeIn: 500 }
+    }));
+
+    return () => {
+      // Stop fire loop on unmount
+      window.dispatchEvent(new CustomEvent('vc-audio-ambient-exit', {
+        detail: { soundId: 'fire_loop', fadeOut: 1000 }
+      }));
+    };
+  }, []);
+
+  return null;
 };

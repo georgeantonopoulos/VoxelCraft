@@ -44,9 +44,21 @@ export class AudioManager {
   // Initialization flag
   private initialized: boolean = false;
 
+  // Bound event handlers (stored for proper removal)
+  private boundHandlePlayEvent: (event: Event) => void;
+  private boundHandleStopEvent: (event: Event) => void;
+  private boundHandleAmbientEnterEvent: (event: Event) => void;
+  private boundHandleAmbientExitEvent: (event: Event) => void;
+
   private constructor() {
     // Private constructor for singleton
     this.initializeCategoryVolumes();
+
+    // Bind handlers once in constructor so they can be properly removed
+    this.boundHandlePlayEvent = this.handlePlayEvent.bind(this);
+    this.boundHandleStopEvent = this.handleStopEvent.bind(this);
+    this.boundHandleAmbientEnterEvent = this.handleAmbientEnterEvent.bind(this);
+    this.boundHandleAmbientExitEvent = this.handleAmbientExitEvent.bind(this);
   }
 
   /**
@@ -119,10 +131,10 @@ export class AudioManager {
    * Setup event listeners for audio events
    */
   private setupEventListeners(): void {
-    window.addEventListener('vc-audio-play', this.handlePlayEvent.bind(this));
-    window.addEventListener('vc-audio-stop', this.handleStopEvent.bind(this));
-    window.addEventListener('vc-audio-ambient-enter', this.handleAmbientEnterEvent.bind(this));
-    window.addEventListener('vc-audio-ambient-exit', this.handleAmbientExitEvent.bind(this));
+    window.addEventListener('vc-audio-play', this.boundHandlePlayEvent);
+    window.addEventListener('vc-audio-stop', this.boundHandleStopEvent);
+    window.addEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
+    window.addEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
   }
 
   /**
@@ -349,11 +361,11 @@ export class AudioManager {
     // Clear all pools
     this.pools.clear();
 
-    // Remove event listeners
-    window.removeEventListener('vc-audio-play', this.handlePlayEvent.bind(this));
-    window.removeEventListener('vc-audio-stop', this.handleStopEvent.bind(this));
-    window.removeEventListener('vc-audio-ambient-enter', this.handleAmbientEnterEvent.bind(this));
-    window.removeEventListener('vc-audio-ambient-exit', this.handleAmbientExitEvent.bind(this));
+    // Remove event listeners (using stored bound handlers)
+    window.removeEventListener('vc-audio-play', this.boundHandlePlayEvent);
+    window.removeEventListener('vc-audio-stop', this.boundHandleStopEvent);
+    window.removeEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
+    window.removeEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
 
     this.initialized = false;
   }
