@@ -21,6 +21,7 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
             canDig: type === ItemType.PICKAXE,
             digPower: type === ItemType.PICKAXE ? 1.0 : 0.0,
             canChop: type === ItemType.AXE,
+            canSaw: type === ItemType.SAW,  // SAW can cut fallen trees into logs
             canSmash: type === ItemType.STONE,
             isNormalDig: type === ItemType.PICKAXE,
 

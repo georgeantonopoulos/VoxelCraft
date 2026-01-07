@@ -222,8 +222,9 @@ export function useTerrainInteraction(
                 : (selectedItem as ItemType);
               const capabilities = getToolCapabilities(currentTool);
 
-              // Guard: Only tools with canChop or canSaw capability can damage trees
-              if (!capabilities.canChop && !capabilities.canSaw) {
+              // Guard: Only tools with canChop capability can damage standing trees
+              // SAW cannot chop standing trees - it only works on fallen trees
+              if (!capabilities.canChop) {
                 audioPool.play(clunkUrl, 0.3, 1.5);
                 return;
               }
@@ -576,9 +577,10 @@ export function useTerrainInteraction(
                   : (selectedItem as ItemType);
                 const capabilities = getToolCapabilities(currentTool);
 
-                // Guard: Only tools with canChop or canSaw capability can damage trees
+                // Guard: Only tools with canChop capability can damage standing trees
+                // SAW cannot chop standing trees - it only works on fallen trees
                 // Non-chopping tools can still shake/interact but deal no damage
-                if (!capabilities.canChop && !capabilities.canSaw) {
+                if (!capabilities.canChop) {
                   // SMASH/SHAKE Animation for non-chopping tools
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
@@ -620,7 +622,7 @@ export function useTerrainInteraction(
                 }
 
                 // Not dead yet: Shake or Hit?
-                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop || capabilities.canSaw;
+                const isChopAction = (hasAxe && selectedItem === ItemType.AXE) || capabilities.canChop;
 
                 if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
                   // SMASH/SHAKE Animation
