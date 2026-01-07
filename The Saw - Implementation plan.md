@@ -83,7 +83,7 @@ Since "real-time mesh slicing" (CSG) is expensive and complex, we use a **segmen
 - **Ghost Preview**: When holding a log and looking at a *placed* log:
     - Show valid snap positions (Green Box outline).
     - **Wall Snap**: Adjacent to existing log (offset by log diameter).
-    - **Roof Snap**: Perpendicular on top of wall logs (requires 4-wall check or height check).
+    - **Roof Snap**: Perpendicular on top of wall logs (requires height check AND appropriate distance between standing logs).
     - **Alignment**: Auto-align rotation to match the neighbor.
 
 ### 6.3. Construction Rules
