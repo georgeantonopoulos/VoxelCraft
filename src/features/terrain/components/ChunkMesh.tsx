@@ -9,12 +9,16 @@ import {
 } from '@/constants';
 import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
+import { BladeGrassLayer } from './BladeGrassLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
 
-// Profiling flag - enable via console: window.__vcChunkProfile = true
-const shouldProfile = () => typeof window !== 'undefined' && (window as any).__vcChunkProfile;
+// Profiling flag - enable via ?profile URL param or console: window.__vcChunkProfile = true
+const shouldProfile = () => typeof window !== 'undefined' && (
+  (window as any).__vcChunkProfile ||
+  new URLSearchParams(window.location.search).has('profile')
+);
 
 // Debug flag to completely disable terrain colliders - use ?nocolliders URL param
 const collidersDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nocolliders');
@@ -29,9 +33,10 @@ const ProfiledRigidBody: React.FC<{
   colliderIndices?: Uint32Array;
 }> = React.memo(({ colliderKey, chunkKey, useHeightfield, colliderHeightfield, colliderPositions, colliderIndices }) => {
 
-  // Log creation timing
+  // Log creation timing (only in profile mode)
   const mountStart = useRef(performance.now());
   useEffect(() => {
+    if (!shouldProfile()) return;
     const duration = performance.now() - mountStart.current;
     if (duration > 15) {
       console.warn(`[ChunkMesh] Collider mount took ${duration.toFixed(1)}ms for ${chunkKey} (${useHeightfield ? 'heightfield' : 'trimesh'})`);
@@ -129,9 +134,9 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     const start = performance.now();
 
     // DEBUG: Log when geometry is recreated due to terrain modification
-    if (chunk.terrainVersion && chunk.terrainVersion > 1) {
-      console.log(`[ChunkMesh] Recreating geometry for ${chunk.key}: ${chunk.meshPositions.length / 3} verts, ver=${chunk.terrainVersion}`);
-    }
+    // if (chunk.terrainVersion && chunk.terrainVersion > 1) {
+    //   console.log(`[ChunkMesh] Recreating geometry for ${chunk.key}: ${chunk.meshPositions.length / 3} verts, ver=${chunk.terrainVersion}`);
+    // }
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(chunk.meshPositions, 3));
@@ -152,6 +157,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     ensureAttribute(chunk.meshMossiness, 'aVoxelMossiness', 1);
     ensureAttribute(chunk.meshCavity, 'aVoxelCavity', 1);
     ensureAttribute(chunk.meshLightColors, 'aLightColor', 3);  // Per-vertex GI light
+    ensureAttribute(chunk.meshBaseHumidity, 'aBaseHumidity', 1);  // Per-vertex base humidity
+    ensureAttribute(chunk.meshTreeHumidityBoost, 'aTreeHumidityBoost', 1);  // Per-vertex tree boost
 
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
     geom.computeBoundingSphere();
@@ -224,12 +231,16 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
         setDeferredColliderEnabled(true);
         return;
       }
-      // Stagger collider creation heavily to avoid BVH construction stutters
-      // Use longer delays - BVH takes 50-200ms, so we need significant gaps between colliders
-      // LOD 0 = 500ms base delay, +200ms per distance level
-      const baseDelay = 500 + lodLevel * 200;
-      // Add random jitter to prevent multiple colliders from all firing at once
-      const jitter = Math.random() * 300;
+      // LOD 0 chunks (player is standing in them) need colliders ASAP to prevent falling through
+      // LOD 1 chunks can have a small delay since player isn't there yet
+      if (lodLevel === 0) {
+        // Player chunk - enable immediately
+        setDeferredColliderEnabled(true);
+        return;
+      }
+      // Adjacent chunks: short delay to stagger BVH construction but not so long player falls through
+      const baseDelay = 100 + lodLevel * 100;
+      const jitter = Math.random() * 100;
       const handle = setTimeout(() => setDeferredColliderEnabled(true), baseDelay + jitter);
       return () => clearTimeout(handle);
     } else {
@@ -307,7 +318,23 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
       {showLayers && (
         <>
-          {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && chunk.vegetationData && (
+          {/* Blade grass layer - high quality single draw call grass */}
+          {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && chunk.grassHeightTex && (
+            <BladeGrassLayer
+              heightTex={chunk.grassHeightTex}
+              materialTex={chunk.grassMaterialTex!}
+              normalTex={chunk.grassNormalTex!}
+              biomeTex={chunk.grassBiomeTex!}
+              caveTex={chunk.grassCaveTex!}
+              lightGrid={chunk.lightGrid}
+              chunkX={chunk.cx}
+              chunkZ={chunk.cz}
+              lodLevel={lodLevel}
+            />
+          )}
+
+          {/* Legacy vegetation layer - fallback if procedural textures not available */}
+          {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && !chunk.grassHeightTex && chunk.vegetationData && (
             <VegetationLayer
               data={chunk.vegetationData}
               lodLevel={lodLevel}

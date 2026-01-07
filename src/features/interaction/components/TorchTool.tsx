@@ -19,7 +19,6 @@ export const TorchTool: React.FC = () => {
   const particlesRef = useRef<THREE.InstancedMesh>(null);
 
   // Preallocated helpers for spotlight aiming (avoid per-frame allocs)
-  const worldQuat = useRef(new THREE.Quaternion());
   const forwardWorld = useRef(new THREE.Vector3());
   const lightPosWorld = useRef(new THREE.Vector3());
   const targetWorld = useRef(new THREE.Vector3());
@@ -47,7 +46,7 @@ export const TorchTool: React.FC = () => {
       downBias: { value: 0.35, min: 0, max: 1.5, step: 0.05 },
       flickerAmount: { value: 0.24, min: 0, max: 0.4, step: 0.01 },
     },
-    { hidden: !debugMode } as any
+    { hidden: !debugMode, collapsed: true } as any
   );
 
   // Stable helper objects
@@ -90,11 +89,11 @@ export const TorchTool: React.FC = () => {
     const t = state.clock.getElapsedTime();
 
     // Subtle idle sway for the torch itself.
+    // Note: Major rotation is now handled by TORCH_POSE in FirstPersonTools.
+    // We only apply subtle sway here, not the base orientation.
     if (torchRef.current) {
-      // Base yaw flips the torch so the flame faces forward in FPS space.
-      torchRef.current.rotation.y = Math.PI;
-      torchRef.current.rotation.z = -0.15 + Math.sin(t * 1.8) * 0.015;
-      torchRef.current.rotation.x = 0.05 + Math.cos(t * 1.2) * 0.01;
+      torchRef.current.rotation.z = Math.sin(t * 1.8) * 0.015;
+      torchRef.current.rotation.x = Math.cos(t * 1.2) * 0.01;
     }
 
     // Light flicker (small amplitude so it doesn't distract).
@@ -107,11 +106,11 @@ export const TorchTool: React.FC = () => {
     }
 
     // Aim spotlight forward in world space, with a slight downward bias.
-    // The FPS rig rotates the torch, so we can't rely on a fixed local target.
+    // The FPS rig rotates the torch via TORCH_POSE, so we derive forward from the camera.
     if (torchRef.current && flameLightRef.current && lightTargetRef.current) {
-      torchRef.current.getWorldQuaternion(worldQuat.current);
-      // Torch "forward" in world space (-Z by convention).
-      forwardWorld.current.set(0, 0, -1).applyQuaternion(worldQuat.current).normalize();
+      // Get the camera's forward direction (where player is looking)
+      const camera = state.camera;
+      forwardWorld.current.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
       flameLightRef.current.getWorldPosition(lightPosWorld.current);
 
       const targetDist = debugMode ? torchLightDebug.targetDistance : 12.0;

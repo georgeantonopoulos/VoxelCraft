@@ -1,5 +1,47 @@
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL, LIGHT_CELL_SIZE, LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
+import { BiomeManager } from './BiomeManager';
+
+/**
+ * Configuration for tree-based humidity boost (Sacred Grove spreading)
+ */
+export interface HumidityConfig {
+  grownTrees: Array<{ worldX: number; worldZ: number; ageMs: number }>;
+  currentTime: number;
+  spreadRate: number;  // voxels per second (default: 2.0)
+  maxRadius: number;   // max influence radius (default: 64)
+}
+
+/**
+ * Calculate humidity boost from nearby Sacred Grove trees at a vertex position.
+ * Uses quadratic falloff from tree centers based on tree age and spread rate.
+ */
+function calculateTreeHumidityBoost(
+  worldX: number,
+  worldZ: number,
+  config: HumidityConfig | null
+): number {
+  if (!config || config.grownTrees.length === 0) return 0;
+
+  let maxBoost = 0;
+  for (const tree of config.grownTrees) {
+    const age = (config.currentTime - tree.ageMs) / 1000;
+    const radius = Math.min(age * config.spreadRate, config.maxRadius);
+    if (radius <= 0) continue;
+
+    const dx = worldX - tree.worldX;
+    const dz = worldZ - tree.worldZ;
+    const distSq = dx * dx + dz * dz;
+    const radiusSq = radius * radius;
+
+    if (distSq < radiusSq) {
+      // Quadratic falloff: 1.0 at center, 0.0 at edge
+      const t = Math.sqrt(distSq) / radius;
+      maxBoost = Math.max(maxBoost, 1.0 - t * t);
+    }
+  }
+  return maxBoost;
+}
 
 const SIZE_X = TOTAL_SIZE_XZ;
 const SIZE_Y = TOTAL_SIZE_Y;
@@ -43,6 +85,84 @@ const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.l
  */
 const clampSampleCoord = (v: number, max: number) => Math.min(Math.max(v, 1), max - 2);
 const MIN_NORMAL_LEN_SQ = 0.0001;
+
+
+/**
+ * Computes smoothed normals using area-weighted face normal averaging.
+ * This produces smoother shading on steep slopes and cave openings by
+ * blending normals from adjacent triangles based on their surface area.
+ *
+ * Larger triangles contribute more to the final normal, which naturally
+ * weights toward the dominant surface orientation and reduces artifacts
+ * from small sliver triangles.
+ */
+function computeAreaWeightedNormals(
+  positions: number[],
+  indices: number[],
+  originalNormals: number[]
+): number[] {
+  const vertexCount = positions.length / 3;
+
+  // Accumulator for weighted normals (initialized to zero)
+  const accumulated = new Float32Array(vertexCount * 3);
+
+  // First pass: accumulate area-weighted face normals
+  for (let i = 0; i < indices.length; i += 3) {
+    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+
+    // Get vertex positions
+    const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
+    const bx = positions[i1 * 3], by = positions[i1 * 3 + 1], bz = positions[i1 * 3 + 2];
+    const cx = positions[i2 * 3], cy = positions[i2 * 3 + 1], cz = positions[i2 * 3 + 2];
+
+    // Edge vectors
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+
+    // Cross product = face normal × 2×area (unnormalized)
+    // We don't normalize here - the magnitude IS the area weight
+    const crossX = e1y * e2z - e1z * e2y;
+    const crossY = e1z * e2x - e1x * e2z;
+    const crossZ = e1x * e2y - e1y * e2x;
+
+    // Add to each vertex of this triangle
+    accumulated[i0 * 3 + 0] += crossX;
+    accumulated[i0 * 3 + 1] += crossY;
+    accumulated[i0 * 3 + 2] += crossZ;
+
+    accumulated[i1 * 3 + 0] += crossX;
+    accumulated[i1 * 3 + 1] += crossY;
+    accumulated[i1 * 3 + 2] += crossZ;
+
+    accumulated[i2 * 3 + 0] += crossX;
+    accumulated[i2 * 3 + 1] += crossY;
+    accumulated[i2 * 3 + 2] += crossZ;
+  }
+
+  // Second pass: normalize accumulated normals, falling back to original if degenerate
+  const result: number[] = new Array(originalNormals.length);
+
+  for (let i = 0; i < vertexCount; i++) {
+    const nx = accumulated[i * 3 + 0];
+    const ny = accumulated[i * 3 + 1];
+    const nz = accumulated[i * 3 + 2];
+    const lenSq = nx * nx + ny * ny + nz * nz;
+
+    if (lenSq >= MIN_NORMAL_LEN_SQ) {
+      const len = Math.sqrt(lenSq);
+      result[i * 3 + 0] = nx / len;
+      result[i * 3 + 1] = ny / len;
+      result[i * 3 + 2] = nz / len;
+    } else {
+      // Fall back to original density-gradient normal
+      result[i * 3 + 0] = originalNormals[i * 3 + 0];
+      result[i * 3 + 1] = originalNormals[i * 3 + 1];
+      result[i * 3 + 2] = originalNormals[i * 3 + 2];
+    }
+  }
+
+  return result;
+}
 
 // Helpers
 const getVal = (density: Float32Array, x: number, y: number, z: number) => {
@@ -284,7 +404,10 @@ export function generateMesh(
   material: Uint8Array,
   wetness?: Uint8Array,
   mossiness?: Uint8Array,
-  lightGrid?: Uint8Array
+  lightGrid?: Uint8Array,
+  humidityConfig?: HumidityConfig | null,
+  chunkWorldX: number = 0,
+  chunkWorldZ: number = 0
 ): MeshData {
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
@@ -301,8 +424,76 @@ export function generateMesh(
   const tMoss: number[] = [];
   const tCavity: number[] = [];
   const tLightColors: number[] = []; // Per-vertex GI light
+  const tBaseHumidity: number[] = [];  // Per-vertex base humidity (biome + water proximity)
+  const tTreeBoost: number[] = [];     // Per-vertex humidity boost from Sacred Grove trees
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
+
+  // === WATER PROXIMITY FIELD ===
+  // Pre-compute 2D horizontal distance to nearest water voxel for humidity calculation.
+  // Uses BFS flood-fill from water edges - O(CHUNK_XZ²) computation, O(1) per-vertex lookup.
+  const WATER_HUMIDITY_RADIUS = 12; // Max horizontal distance water affects humidity (in voxels)
+  const waterDistField = new Uint8Array(SIZE_X * SIZE_Z); // Distance to nearest water (255 = no water nearby)
+  waterDistField.fill(255);
+
+  // Step 1: Find all water voxels and mark their XZ positions
+  const hasWaterAt = new Uint8Array(SIZE_X * SIZE_Z);
+  for (let z = 0; z < SIZE_Z; z++) {
+    for (let x = 0; x < SIZE_X; x++) {
+      // Check the entire Y column for water
+      for (let y = 0; y < SIZE_Y; y++) {
+        if (getMat(material, x, y, z) === MaterialType.WATER) {
+          hasWaterAt[x + z * SIZE_X] = 1;
+          break;
+        }
+      }
+    }
+  }
+
+  // Step 2: BFS from water edges to compute distance field
+  const waterQ: number[] = [];
+  let waterQHead = 0;
+
+  // Seed queue with water boundary cells
+  for (let z = 0; z < SIZE_Z; z++) {
+    for (let x = 0; x < SIZE_X; x++) {
+      if (hasWaterAt[x + z * SIZE_X]) {
+        waterDistField[x + z * SIZE_X] = 0;
+        waterQ.push(x, z);
+      }
+    }
+  }
+
+  // BFS to propagate distance outward from water
+  while (waterQHead < waterQ.length) {
+    const wx = waterQ[waterQHead++];
+    const wz = waterQ[waterQHead++];
+    const currentDist = waterDistField[wx + wz * SIZE_X];
+    if (currentDist >= WATER_HUMIDITY_RADIUS) continue;
+
+    const newDist = currentDist + 1;
+    const tryExpand = (nx: number, nz: number) => {
+      if (nx < 0 || nz < 0 || nx >= SIZE_X || nz >= SIZE_Z) return;
+      const idx = nx + nz * SIZE_X;
+      if (waterDistField[idx] <= newDist) return;
+      waterDistField[idx] = newDist;
+      waterQ.push(nx, nz);
+    };
+    tryExpand(wx - 1, wz);
+    tryExpand(wx + 1, wz);
+    tryExpand(wx, wz - 1);
+    tryExpand(wx, wz + 1);
+  }
+
+  // Helper to sample water proximity (0 = at water, 1 = far from water)
+  const getWaterProximity = (x: number, z: number): number => {
+    const ix = Math.floor(x);
+    const iz = Math.floor(z);
+    if (ix < 0 || iz < 0 || ix >= SIZE_X || iz >= SIZE_Z) return 0;
+    const dist = waterDistField[ix + iz * SIZE_X];
+    if (dist >= 255) return 0; // No water nearby
+    return Math.max(0, 1 - dist / WATER_HUMIDITY_RADIUS);
+  };
 
   // Snap epsilon is used to close seams by snapping vertices near chunk borders.
   // IMPORTANT: Do NOT clamp vertices to the chunk interior. Surface-Nets-style vertices can land
@@ -407,6 +598,8 @@ export function generateMesh(
 
             // Reduced blend radius from 3 to 2: samples 5x5x5=125 voxels instead of 7x7x7=343 (2.7x faster)
             const BLEND_RADIUS = 2;
+            // Fresh allocation per vertex - V8 returns pre-zeroed typed arrays, and small allocations
+            // are very efficient in the nursery. This avoids the overhead of fill(0) per vertex.
             const localWeights = new Float32Array(16);
             let bestWet = 0, bestMoss = 0, bestVal = -Infinity;
             let totalWeight = 0, occTotalW = 0, occSolidW = 0;
@@ -453,6 +646,27 @@ export function generateMesh(
             const [lr, lg, lb] = sampleLightGrid(lightGrid, px, py, pz);
             tLightColors.push(lr, lg, lb);
 
+            // Sample humidity field at vertex position
+            // Combines: biome climate humidity + actual water voxel proximity (from BFS field)
+            const worldX = chunkWorldX + px;
+            const worldY = py + MESH_Y_OFFSET;
+            const worldZ = chunkWorldZ + pz;
+
+            // Get biome-based humidity (no longer includes generic water level proximity)
+            const biomeHumidity = BiomeManager.getHumidityField(worldX, worldY, worldZ);
+
+            // Get actual water voxel proximity from pre-computed BFS field
+            const waterProximity = getWaterProximity(x, z);
+
+            // Combine: biome climate (60%) + actual water proximity (40%)
+            // Water proximity provides strong local effect near actual water bodies
+            const baseHumidity = Math.min(1, biomeHumidity * 0.6 + waterProximity * 0.4);
+            tBaseHumidity.push(baseHumidity);
+
+            // Sample tree boost (Sacred Grove spreading)
+            const treeBoost = calculateTreeHumidityBoost(worldX, worldZ, humidityConfig ?? null);
+            tTreeBoost.push(treeBoost);
+
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -461,11 +675,87 @@ export function generateMesh(
   }
 
   const start = PAD, endX = PAD + CHUNK_SIZE_XZ, endY = PAD + CHUNK_SIZE_Y;
+
+  /**
+   * Push a quad as two triangles, choosing the shorter diagonal for splitting.
+   * This minimizes distortion on non-planar quads (common at cave openings and steep slopes).
+   *
+   * Quad vertices:  c0 --- c1
+   *                  |     |
+   *                 c2 --- c3
+   *
+   * Two possible splits:
+   *   - Diagonal c0-c3: triangles (c0,c1,c3) and (c0,c3,c2)
+   *   - Diagonal c1-c2: triangles (c0,c1,c2) and (c2,c1,c3)
+   *
+   * We measure both diagonals and pick the shorter one to minimize triangle distortion.
+   */
   const pushQuad = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
     const c0 = tVertIdx[i0], c1 = tVertIdx[i1], c2 = tVertIdx[i2], c3 = tVertIdx[i3];
     if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
-      if (!flipped) tInds.push(c0, c1, c2, c2, c1, c3);
-      else tInds.push(c2, c1, c0, c3, c1, c2);
+      // Get vertex positions for diagonal length comparison
+      const p0x = tVerts[c0 * 3], p0y = tVerts[c0 * 3 + 1], p0z = tVerts[c0 * 3 + 2];
+      const p1x = tVerts[c1 * 3], p1y = tVerts[c1 * 3 + 1], p1z = tVerts[c1 * 3 + 2];
+      const p2x = tVerts[c2 * 3], p2y = tVerts[c2 * 3 + 1], p2z = tVerts[c2 * 3 + 2];
+      const p3x = tVerts[c3 * 3], p3y = tVerts[c3 * 3 + 1], p3z = tVerts[c3 * 3 + 2];
+
+      // Choose diagonal split that minimizes the angle between resulting triangle normals.
+      // This produces more consistent shading on non-planar quads (saddle shapes at cave openings).
+      //
+      // Quad layout:  c0 --- c1
+      //                |     |
+      //               c2 --- c3
+
+      // Option A: Split along c0-c3 diagonal -> triangles (c0,c1,c3) and (c0,c3,c2)
+      // Triangle A1 normal: (c1-c0) × (c3-c0)
+      const a1e1x = p1x - p0x, a1e1y = p1y - p0y, a1e1z = p1z - p0z;
+      const a1e2x = p3x - p0x, a1e2y = p3y - p0y, a1e2z = p3z - p0z;
+      const a1nx = a1e1y * a1e2z - a1e1z * a1e2y;
+      const a1ny = a1e1z * a1e2x - a1e1x * a1e2z;
+      const a1nz = a1e1x * a1e2y - a1e1y * a1e2x;
+
+      // Triangle A2 normal: (c3-c0) × (c2-c0)
+      const a2e1x = p3x - p0x, a2e1y = p3y - p0y, a2e1z = p3z - p0z;
+      const a2e2x = p2x - p0x, a2e2y = p2y - p0y, a2e2z = p2z - p0z;
+      const a2nx = a2e1y * a2e2z - a2e1z * a2e2y;
+      const a2ny = a2e1z * a2e2x - a2e1x * a2e2z;
+      const a2nz = a2e1x * a2e2y - a2e1y * a2e2x;
+
+      // Option B: Split along c1-c2 diagonal -> triangles (c0,c1,c2) and (c2,c1,c3)
+      // Triangle B1 normal: (c1-c0) × (c2-c0)
+      const b1e1x = p1x - p0x, b1e1y = p1y - p0y, b1e1z = p1z - p0z;
+      const b1e2x = p2x - p0x, b1e2y = p2y - p0y, b1e2z = p2z - p0z;
+      const b1nx = b1e1y * b1e2z - b1e1z * b1e2y;
+      const b1ny = b1e1z * b1e2x - b1e1x * b1e2z;
+      const b1nz = b1e1x * b1e2y - b1e1y * b1e2x;
+
+      // Triangle B2 normal: (c1-c2) × (c3-c2)
+      const b2e1x = p1x - p2x, b2e1y = p1y - p2y, b2e1z = p1z - p2z;
+      const b2e2x = p3x - p2x, b2e2y = p3y - p2y, b2e2z = p3z - p2z;
+      const b2nx = b2e1y * b2e2z - b2e1z * b2e2y;
+      const b2ny = b2e1z * b2e2x - b2e1x * b2e2z;
+      const b2nz = b2e1x * b2e2y - b2e1y * b2e2x;
+
+      // Dot products of normals (higher = more aligned = flatter split)
+      const dotA = a1nx * a2nx + a1ny * a2ny + a1nz * a2nz;
+      const dotB = b1nx * b2nx + b1ny * b2ny + b1nz * b2nz;
+
+      // Choose the split where triangles are more coplanar (higher dot product)
+      if (dotA > dotB) {
+        // Split along c0-c3 diagonal
+        if (!flipped) {
+          tInds.push(c0, c1, c3, c0, c3, c2);
+        } else {
+          tInds.push(c3, c1, c0, c2, c3, c0);
+        }
+      } else {
+        // Split along c1-c2 diagonal
+        if (!flipped) {
+          tInds.push(c0, c1, c2, c2, c1, c3);
+        } else {
+          tInds.push(c2, c1, c0, c3, c1, c2);
+        }
+      }
     }
   };
 
@@ -494,13 +784,21 @@ export function generateMesh(
     }
   }
 
+  // === Post-processing: Smooth normals ===
+  // NOTE: Vertex welding and degenerate triangle filtering have been removed
+  // as they caused issues with chunk boundaries. The cave size filtering in
+  // terrainService.ts is the proper fix for mesh artifacts at cave openings.
+
+  // Compute area-weighted smoothed normals to improve shading on steep slopes
+  const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms);
+
   const water = generateWaterSurfaceMesh(density, material);
   const collider = generateColliderData(density);
 
   return {
     positions: new Float32Array(tVerts),
     indices: new Uint32Array(tInds),
-    normals: new Float32Array(tNorms),
+    normals: new Float32Array(smoothedNormals),
     matWeightsA: new Float32Array(tWa),
     matWeightsB: new Float32Array(tWb),
     matWeightsC: new Float32Array(tWc),
@@ -509,6 +807,8 @@ export function generateMesh(
     mossiness: new Float32Array(tMoss),
     cavity: new Float32Array(tCavity),
     lightColors: new Float32Array(tLightColors),
+    baseHumidity: new Float32Array(tBaseHumidity),
+    treeHumidityBoost: new Float32Array(tTreeBoost),
     waterPositions: water.positions,
     waterIndices: water.indices,
     waterNormals: water.normals,

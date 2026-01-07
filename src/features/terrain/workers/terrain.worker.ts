@@ -1,5 +1,5 @@
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
+import { generateMesh, generateWaterSurfaceMesh, HumidityConfig } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 import { CACHE_VERSION, getCachedChunk } from '@/state/ChunkCache';
@@ -10,6 +10,20 @@ import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constan
 import { generateLightGrid, extractLuminaLights, getSkyLightConfig } from '@core/lighting/lightPropagation';
 
 const ctx: Worker = self as any;
+
+// Profile mode - enable via CONFIGURE message with profile: true
+let profileMode = false;
+
+// Grown trees cache for humidity spreading (Sacred Grove feature)
+// Updated via UPDATE_GROWN_TREES message from main thread
+let grownTreesCache: Array<{ worldX: number; worldZ: number; ageMs: number }> = [];
+const profile = (label: string, fn: () => void) => {
+    if (!profileMode) { fn(); return; }
+    const start = performance.now();
+    fn();
+    const duration = performance.now() - start;
+    if (duration > 1) console.log(`[terrain.worker] ${label}: ${duration.toFixed(1)}ms`);
+};
 
 // Instantiate DB connection implicitly by importing it (Singleton in WorldDB.ts)
 // The user requested: "Ensure you instantiate WorldDB outside the onmessage handler."
@@ -87,6 +101,212 @@ const buildRockData = (rockPositions: Float32Array, cx: number, cz: number) => {
     };
 };
 
+// ============================================================================
+// PROCEDURAL GRASS TEXTURE GENERATION
+// These textures replace per-instance vegetation data with GPU-friendly formats
+// ============================================================================
+
+/**
+ * Generate 32x32 surface height texture for procedural grass placement.
+ * Each cell stores the interpolated surface Y in world space.
+ * Returns -999 for cells with no surface (air columns).
+ */
+const generateSurfaceHeightTexture = (
+    density: Float32Array,
+    sizeX: number,
+    sizeY: number,
+    pad: number
+): Float32Array => {
+    const tex = new Float32Array(32 * 32);
+    const MESH_Y_OFFSET = -35;
+
+    for (let z = 0; z < 32; z++) {
+        for (let x = 0; x < 32; x++) {
+            const dx = x + pad;
+            const dz = z + pad;
+            let surfaceY = -999.0;
+
+            // Scan from top down to find surface
+            for (let y = sizeY - 2; y >= 0; y--) {
+                const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                if (density[idx] > ISO_LEVEL) {
+                    // Interpolate for sub-voxel precision
+                    const above = density[idx + sizeX];
+                    surfaceY = y + (ISO_LEVEL - density[idx]) / (above - density[idx] + 0.0001);
+                    break;
+                }
+            }
+
+            // Convert to world space
+            const worldY = surfaceY > 0 ? (surfaceY - pad) + MESH_Y_OFFSET : -999.0;
+            tex[x + z * 32] = worldY;
+        }
+    }
+    return tex;
+};
+
+/**
+ * Generate 32x32 material mask texture.
+ * 255 = grass can grow here (GRASS, DIRT, JUNGLE_GRASS materials)
+ * 0 = no grass (stone, sand, snow, water, etc.)
+ */
+const generateMaterialMaskTexture = (
+    material: Uint8Array,
+    density: Float32Array,
+    sizeX: number,
+    sizeY: number,
+    pad: number
+): Uint8Array => {
+    const tex = new Uint8Array(32 * 32);
+    // Grass-friendly materials: GRASS=4, DIRT=3, JUNGLE_GRASS=14, MOSSY_STONE=10
+    const grassMats = new Set([3, 4, 10, 14]);
+
+    for (let z = 0; z < 32; z++) {
+        for (let x = 0; x < 32; x++) {
+            const dx = x + pad;
+            const dz = z + pad;
+
+            // Find surface voxel
+            for (let y = sizeY - 2; y >= 0; y--) {
+                const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                if (density[idx] > ISO_LEVEL) {
+                    const mat = material[idx];
+                    tex[x + z * 32] = grassMats.has(mat) ? 255 : 0;
+                    break;
+                }
+            }
+        }
+    }
+    return tex;
+};
+
+/**
+ * Generate 32x32 surface normal texture (RG format, 2 bytes per cell).
+ * Stores normalized X and Z components (0-255 maps to -1 to +1).
+ * Y component is derived in shader: y = sqrt(1 - x² - z²)
+ */
+const generateNormalTexture = (
+    density: Float32Array,
+    sizeX: number,
+    sizeY: number,
+    pad: number
+): Uint8Array => {
+    const tex = new Uint8Array(32 * 32 * 2); // RG format
+
+    const getD = (dx: number, dy: number, dz: number) => {
+        const cx = Math.max(0, Math.min(sizeX - 1, dx));
+        const cy = Math.max(0, Math.min(sizeY - 1, dy));
+        const cz = Math.max(0, Math.min(sizeX - 1, dz)); // sizeX used for Z too (square XZ)
+        return density[cx + cy * sizeX + cz * sizeX * sizeY];
+    };
+
+    for (let z = 0; z < 32; z++) {
+        for (let x = 0; x < 32; x++) {
+            const dx = x + pad;
+            const dz = z + pad;
+
+            // Find surface Y
+            let surfaceYInt = 64;
+            for (let y = sizeY - 2; y >= 0; y--) {
+                const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                if (density[idx] > ISO_LEVEL) {
+                    surfaceYInt = y;
+                    break;
+                }
+            }
+
+            // Compute normal via central differences
+            const nx = -(getD(dx + 1, surfaceYInt, dz) - getD(dx - 1, surfaceYInt, dz));
+            const ny = -(getD(dx, surfaceYInt + 1, dz) - getD(dx, surfaceYInt - 1, dz));
+            const nz = -(getD(dx, surfaceYInt, dz + 1) - getD(dx, surfaceYInt, dz - 1));
+
+            const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+            const nxN = nx / len;
+            const nzN = nz / len;
+
+            // Pack to 0-255 (maps -1..+1 to 0..255)
+            const texIdx = (x + z * 32) * 2;
+            tex[texIdx + 0] = Math.floor((nxN * 0.5 + 0.5) * 255);
+            tex[texIdx + 1] = Math.floor((nzN * 0.5 + 0.5) * 255);
+        }
+    }
+    return tex;
+};
+
+/**
+ * Generate 32x32 biome ID texture.
+ * Each cell stores the biome enum value (0-15).
+ */
+const generateBiomeTexture = (cx: number, cz: number): Uint8Array => {
+    const tex = new Uint8Array(32 * 32);
+    const BIOME_IDS: Record<string, number> = {
+        'PLAINS': 0, 'THE_GROVE': 1, 'DESERT': 2, 'RED_DESERT': 3,
+        'JUNGLE': 4, 'SNOW': 5, 'ICE_SPIKES': 6, 'MOUNTAINS': 7,
+        'BEACH': 8, 'SAVANNA': 9, 'SKY_ISLANDS': 10
+    };
+
+    for (let z = 0; z < 32; z++) {
+        for (let x = 0; x < 32; x++) {
+            const worldX = cx * CHUNK_SIZE_XZ + x;
+            const worldZ = cz * CHUNK_SIZE_XZ + z;
+            const biome = BiomeManager.getBiomeAt(worldX, worldZ);
+            tex[x + z * 32] = BIOME_IDS[biome] ?? 0;
+        }
+    }
+    return tex;
+};
+
+/**
+ * Generate 32x32 cave mask texture to prevent floating grass over cave openings.
+ * 255 = solid ground (grass OK), 0 = cave opening (no grass)
+ */
+const generateCaveMaskTexture = (
+    density: Float32Array,
+    sizeX: number,
+    sizeY: number,
+    pad: number
+): Uint8Array => {
+    const tex = new Uint8Array(32 * 32);
+    const CHECK_DEPTH = 4;
+
+    for (let z = 0; z < 32; z++) {
+        for (let x = 0; x < 32; x++) {
+            const dx = x + pad;
+            const dz = z + pad;
+
+            // Find surface Y
+            let surfaceYInt = -1;
+            for (let y = sizeY - 2; y >= 0; y--) {
+                const idx = dx + y * sizeX + dz * sizeX * sizeY;
+                if (density[idx] > ISO_LEVEL) {
+                    surfaceYInt = y;
+                    break;
+                }
+            }
+
+            if (surfaceYInt < 0) {
+                tex[x + z * 32] = 0; // No surface = no grass
+                continue;
+            }
+
+            // Check for cave opening below
+            let airCount = 0;
+            for (let dy = 1; dy <= CHECK_DEPTH; dy++) {
+                const checkY = surfaceYInt - dy;
+                if (checkY < 0) break;
+                const idx = dx + checkY * sizeX + dz * sizeX * sizeY;
+                if (density[idx] <= ISO_LEVEL) airCount++;
+            }
+
+            // 255 = solid ground, 0 = cave opening
+            tex[x + z * 32] = airCount >= 2 ? 0 : 255;
+        }
+    }
+    return tex;
+};
+
+// ============================================================================
+
 const buildTreeInstanceData = (treePositions: Float32Array) => {
     const batches = new Map<string, { type: number; variant: number; positions: number[]; scales: number[]; originalIndices: number[] }>();
     const STRIDE = 5;
@@ -125,7 +345,8 @@ ctx.onmessage = async (e: MessageEvent) => {
     const { type, payload } = e.data;
     try {
         if (type === 'CONFIGURE') {
-            const { worldType, seed } = payload;
+            const { worldType, seed, profile: enableProfile } = payload;
+            if (enableProfile !== undefined) profileMode = enableProfile;
             if (seed !== undefined) {
                 BiomeManager.reinitialize(seed);
                 // Also reinitialize Perlin noise for terrain generation
@@ -137,6 +358,12 @@ ctx.onmessage = async (e: MessageEvent) => {
                 BiomeManager.setWorldType(worldType);
                 (self as any).worldType = worldType;
             }
+            if (profileMode) {
+                console.log(`[terrain.worker] Configured - SAB: false, profile: ${profileMode}`);
+            }
+        } else if (type === 'UPDATE_GROWN_TREES') {
+            // Update the grown trees cache for humidity spreading
+            grownTreesCache = payload.trees || [];
         } else if (type === 'GENERATE') {
             const { cx, cz } = payload;
             let modifications: any[] = [];
@@ -222,10 +449,32 @@ ctx.onmessage = async (e: MessageEvent) => {
                 ]);
                 return;
             }
+            // Surface Nets mesh shifts vertices downward on slopes vs pure vertical interpolation.
+            // This sink factor compensates: steeper slopes (lower ny) need more sink.
+            const slopeSinkFactor = (ny: number): number => (1.0 - ny) * 0.75;
+
+            // Check if position is near a cave opening by sampling density below surface
+            // Returns true if there's substantial air within a few voxels below the surface
+            const isNearCaveOpening = (dx: number, surfaceYInt: number, dz: number, sizeX: number, sizeY: number): boolean => {
+                const checkDepth = 4; // Check 4 voxels below surface
+                let airCount = 0;
+                for (let dy = 1; dy <= checkDepth; dy++) {
+                    const checkY = surfaceYInt - dy;
+                    if (checkY < 0) break;
+                    const idx = dx + checkY * sizeX + dz * sizeX * sizeY;
+                    if (density[idx] <= ISO_LEVEL) airCount++;
+                }
+                // If 2+ of the 4 voxels below are air, we're near a cave opening
+                return airCount >= 2;
+            };
+
             const vegetationBuckets: Record<number, number[]> = {};
             for (let z = 0; z < CHUNK_SIZE_XZ; z++) {
                 for (let x = 0; x < CHUNK_SIZE_XZ; x++) {
                     const worldX = cx * CHUNK_SIZE_XZ + x, worldZ = cz * CHUNK_SIZE_XZ + z;
+                    // Sacred Grove Check: No vegetation in barren zones (Root Hollows spawn there)
+                    const sacredGroveInfo = BiomeManager.getSacredGroveInfo(worldX, worldZ);
+                    if (sacredGroveInfo.inGrove) continue;
                     const biome = BiomeManager.getBiomeAt(worldX, worldZ);
                     let bDensity = BiomeManager.getVegetationDensity(worldX, worldZ); if (biome === 'BEACH') bDensity *= 0.1;
                     if ((noise(worldX * 0.15, 0, worldZ * 0.15) + 1) * 0.5 + noise(worldX * 0.8, 0, worldZ * 0.8) * 0.3 > 1.0 - bDensity) {
@@ -236,10 +485,16 @@ ctx.onmessage = async (e: MessageEvent) => {
                         }
                         const worldY = (surfaceY - pad) - 35;
                         if (surfaceY > 0 && worldY > 11) {
-                            const cX = Math.floor(dx), cY = Math.floor(surfaceY), cZ = Math.floor(dz);
+                            // Skip vegetation near cave openings to prevent floating grass
+                            const surfaceYInt = Math.floor(surfaceY);
+                            if (isNearCaveOpening(dx, surfaceYInt, dz, sizeX, sizeY)) continue;
+
+                            const cX = Math.floor(dx), cY = surfaceYInt, cZ = Math.floor(dz);
                             const getD = (ox: number, oy: number, oz: number) => density[Math.max(0, Math.min(sizeX - 1, cX + ox)) + Math.max(0, Math.min(sizeY - 1, cY + oy)) * sizeX + Math.max(0, Math.min(sizeX - 1, cZ + oz)) * sizeX * sizeY];
                             const nx = -(getD(1, 0, 0) - getD(-1, 0, 0)), ny = -(getD(0, 1, 0) - getD(0, -1, 0)), nz = -(getD(0, 0, 1) - getD(0, 0, -1)), len = Math.sqrt(nx * nx + ny * ny + nz * nz), invLen = len > 0.0001 ? 1.0 / len : 0;
                             const nxV = nx * invLen, nyV = len > 0.0001 ? ny * invLen : 1, nzV = nz * invLen;
+                            // Slope sink to match Surface Nets mesh positioning
+                            const slopeSink = slopeSinkFactor(nyV);
                             let numPlants = (biome === 'JUNGLE' || biome === 'THE_GROVE') ? 3 : 1;
                             const vegType = getVegetationForBiome(biome, (noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100) + 1) * 0.5);
                             if (vegType !== null) {
@@ -248,7 +503,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                                     const seed = worldX * 31 + worldZ * 17 + i * 13, r1 = Math.sin(seed) * 43758.5453, r2 = Math.cos(seed) * 43758.5453;
                                     const offX = (r1 - Math.floor(r1) - 0.5) * 1.4, offZ = (r2 - Math.floor(r2) - 0.5) * 1.4, offY = ((r1 + r2) % 1) * -0.15;
                                     let slopeY = nyV > 0.1 ? -(nxV * offX + nzV * offZ) / nyV : 0;
-                                    vegetationBuckets[vegType].push(x + offX, worldY - 0.1 + offY + Math.max(-1.0, Math.min(1.0, slopeY)), z + offZ, nxV, nyV, nzV);
+                                    vegetationBuckets[vegType].push(x + offX, worldY - 0.1 + offY + Math.max(-1.0, Math.min(1.0, slopeY)) - slopeSink, z + offZ, nxV, nyV, nzV);
                                 }
                             }
                         }
@@ -261,33 +516,68 @@ ctx.onmessage = async (e: MessageEvent) => {
             const skyLight = getSkyLightConfig(0.5); // 0.5 = midday sun
             const lightGrid = generateLightGrid(density, luminaLights, skyLight);
 
-            // Generate mesh with light grid for per-vertex GI baking
-            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness, lightGrid) as MeshData;
+            // Build humidity config for Sacred Grove tree spreading
+            const humidityConfig: HumidityConfig = {
+                grownTrees: grownTreesCache,
+                currentTime: Date.now(),
+                spreadRate: 2.0,
+                maxRadius: 64.0
+            };
+
+            // Generate mesh with light grid for per-vertex GI baking and humidity
+            const mesh = generateMesh(
+                density, material, metadata.wetness, metadata.mossiness, lightGrid,
+                humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ
+            ) as MeshData;
+
+            // Generate procedural grass textures (GPU-friendly replacement for vegetationData)
+            const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
+            const grassHeightTex = generateSurfaceHeightTexture(density, sizeX, sizeY, pad);
+            const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
+            const grassNormalTex = generateNormalTexture(density, sizeX, sizeY, pad);
+            const grassBiomeTex = generateBiomeTexture(cx, cz);
+            const grassCaveTex = generateCaveMaskTexture(density, sizeX, sizeY, pad);
 
             const vegetationData: Record<number, Float32Array> = {}, vegetationBuffers: ArrayBuffer[] = [];
             for (const [vKey, points] of Object.entries(vegetationBuckets)) { const f32 = new Float32Array(points); vegetationData[parseInt(vKey)] = f32; vegetationBuffers.push(f32.buffer); }
             const stickData = buildStickData(stickPositions, cx, cz), rockData = buildRockData(rockPositions, cx, cz), treeInstanceData = buildTreeInstanceData(treePositions);
             const response = {
                 key: `${cx},${cz}`, cx, cz, density, material, metadata, terrainVersion: 0, visualVersion: 0, vegetationData, floraPositions, treePositions, treeInstanceBatches: treeInstanceData.treeInstanceBatches, rootHollowPositions, stickPositions, rockPositions, drySticks: stickData.drySticks, jungleSticks: stickData.jungleSticks, rockDataBuckets: rockData.rockDataBuckets, largeRockPositions, fireflyPositions, floraHotspots: buildFloraHotspotsPacked(floraPositions), stickHotspots: stickData.stickHotspots, rockHotspots: rockData.rockHotspots,
-                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshLightColors: mesh.lightColors, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshLightColors: mesh.lightColors, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
                 colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield,
-                lightGrid
+                lightGrid,
+                // Procedural grass textures
+                grassHeightTex, grassMaterialTex, grassNormalTex, grassBiomeTex, grassCaveTex
             };
             const transfers: any[] = [
-                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer, lightGrid.buffer
+                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer, lightGrid.buffer,
+                // Transfer grass textures
+                grassHeightTex.buffer, grassMaterialTex.buffer, grassNormalTex.buffer, grassBiomeTex.buffer, grassCaveTex.buffer
             ];
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'GENERATED', payload: response }, transfers);
         } else if (type === 'REMESH') {
             const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
-            const mesh = generateMesh(density, material, wetness, mossiness) as MeshData;
+
+            // Build humidity config for Sacred Grove tree spreading
+            const humidityConfig: HumidityConfig = {
+                grownTrees: grownTreesCache,
+                currentTime: Date.now(),
+                spreadRate: 2.0,
+                maxRadius: 64.0
+            };
+
+            const mesh = generateMesh(
+                density, material, wetness, mossiness, undefined,
+                humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ
+            ) as MeshData;
             const response = {
-                key, cx, cz, version, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                key, cx, cz, version, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
                 colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
             };
             const transfers: any[] = [
-                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
-            ];
+                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
+            ].filter(Boolean);
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'REMESHED', payload: response }, transfers);
         }

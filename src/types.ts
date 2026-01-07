@@ -65,6 +65,8 @@ export interface MeshData {
   mossiness: Float32Array; // Attribute for mossiness
   cavity: Float32Array; // Attribute for baked micro-occlusion (creases/cavities)
   lightColors: Float32Array; // Per-vertex GI light color (RGB, stride 3)
+  baseHumidity?: Float32Array; // Per-vertex base humidity from biome + water proximity (0-1)
+  treeHumidityBoost?: Float32Array; // Per-vertex humidity boost from Sacred Grove trees (0-1)
 
   // Water Mesh Data
   waterPositions: Float32Array;
@@ -115,6 +117,8 @@ export interface ChunkState {
   meshMossiness: Float32Array;
   meshCavity: Float32Array;
   meshLightColors?: Float32Array;  // Per-vertex GI light (RGB, stride 3)
+  meshBaseHumidity?: Float32Array;  // Per-vertex base humidity from biome + water (0-1)
+  meshTreeHumidityBoost?: Float32Array;  // Per-vertex humidity boost from Sacred Grove trees (0-1)
 
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
@@ -151,6 +155,14 @@ export interface ChunkState {
   // RGBA Uint8Array of size LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y * LIGHT_GRID_SIZE_XZ * 4
   // Stores indirect light color (RGB) and intensity (A) per cell
   lightGrid?: Uint8Array;
+
+  // Procedural grass textures (GPU-friendly replacement for vegetationData)
+  // All are 32x32 textures matching chunk XZ grid
+  grassHeightTex?: Float32Array;   // Surface Y in world space (-999 = no surface)
+  grassMaterialTex?: Uint8Array;   // 255 = grass-friendly material, 0 = no grass
+  grassNormalTex?: Uint8Array;     // RG format (2 bytes): packed XZ normal components
+  grassBiomeTex?: Uint8Array;      // Biome ID (0-15)
+  grassCaveTex?: Uint8Array;       // 255 = solid ground, 0 = cave opening
 }
 
 export interface CustomTool {

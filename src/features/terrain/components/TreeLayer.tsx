@@ -198,7 +198,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
             varying vec3 vWorldNormal;
             varying vec3 vBranchAxis;
             varying vec3 vBranchOrigin;
-            
+
             uniform vec3 uColorBase;
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
@@ -215,26 +215,70 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
                 float x = dot(radial, tangent);
                 float z = dot(radial, bitangent);
                 float angle = atan(x, z);
-                
+
+                // Multi-scale noise sampling for rich bark detail
                 float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
                 vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);
                 float nBark = texture(uNoiseTexture, barkP * 0.8).r;
-                
+                float nFine = texture(uNoiseTexture, barkP * 2.5 + vec3(3.0)).g;
+                float nMicro = texture(uNoiseTexture, vPos * 5.0).b;
+
                 float ridges = smoothstep(0.3, 0.7, nBark);
                 float crevices = 1.0 - ridges;
 
+                // Fine vertical bark fibers
+                float fiberDetail = sin(along * 25.0 + nFine * 6.0) * 0.5 + 0.5;
+                fiberDetail *= smoothstep(0.3, 0.6, nFine);
+
+                // Micro pores and lichens
+                float pores = smoothstep(0.55, 0.6, nMicro);
+                float lichens = smoothstep(0.7, 0.75, nFine) * smoothstep(0.5, 0.55, nMicro);
+
+                // Base color with variation
                 vec3 col = uColorBase;
-                col *= mix(0.92, 1.05, nBase * 0.6);
-                col *= mix(1.0, 0.5, crevices * 0.8);
-                
+                col *= mix(0.88, 1.08, nBase * 0.6);
+
+                // Color temperature variation
+                col.r *= 1.0 + (nFine - 0.5) * 0.06;
+                col.b *= 1.0 - (nFine - 0.5) * 0.04;
+
+                // Darken crevices
+                col *= mix(1.0, 0.45, crevices * 0.85);
+
+                // Fiber highlights on ridges
+                col += vec3(0.03, 0.025, 0.02) * fiberDetail * ridges;
+
+                // Micro pore darkening
+                col *= 1.0 - pores * 0.15;
+
+                // Lichen patches
+                vec3 lichenColor = vec3(0.38, 0.45, 0.35);
+                col = mix(col, lichenColor, lichens * 0.5);
+
+                // Moss on upward-facing surfaces
                 float mossNoise = texture(uNoiseTexture, vPos * 0.55 + vec3(5.0)).g;
+                float mossDetail = texture(uNoiseTexture, vPos * 3.0).r;
                 float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
-                if (upFactor > 0.2 && mossNoise > 0.5) {
-                    col = mix(col, vec3(0.1, 0.5, 0.1), (mossNoise - 0.5) * 2.0 * upFactor);
+                if (upFactor > 0.2 && mossNoise > 0.45) {
+                    vec3 mossCol = vec3(0.1, 0.48, 0.1);
+                    mossCol *= 0.85 + mossDetail * 0.3;
+                    float mossMix = (mossNoise - 0.45) * 3.0 * upFactor;
+                    col = mix(col, mossCol, mossMix * 0.7);
                 }
 
+                // Wet sheen in crevices
+                float wetSheen = crevices * nMicro * 0.12;
+                col += vec3(0.015) * wetSheen;
+
                 csm_DiffuseColor = vec4(col, 1.0);
-                csm_Roughness = 0.8 + crevices * 0.2;
+
+                // Variable roughness
+                float rough = 0.72;
+                rough += crevices * 0.18;
+                rough -= fiberDetail * ridges * 0.12;
+                rough += lichens * 0.08;
+                rough -= wetSheen * 0.25;
+                csm_Roughness = clamp(rough, 0.45, 1.0);
             }
         `,
         uniforms: {
@@ -310,6 +354,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
             varying float vHueCos;
             varying float vHueSin;
             varying float vLeafRand;
+            varying vec3 vWorldNormal;
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
             uniform float uTime;
@@ -325,26 +370,66 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
                 if (lodRand > uLeafLodAlpha) {
                     discard;
                 }
-                float treeBrightness = 0.85 + vTreeSeed * 0.30;
-                float treeSaturation = 0.70 + fract(vTreeSeed * 7.3) * 0.20;
+
+                // Multi-scale noise for leaf detail
                 float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
                 float micro = texture(uNoiseTexture, vNoisePos * 0.4 + vPos * 0.5 + vec3(11.0)).r;
-                float tip = smoothstep(0.0, 1.0, vPos.y + 0.5); 
-                
+                float fine = texture(uNoiseTexture, vNoisePos * 1.2 + vec3(7.0)).g;
+                float ultraFine = texture(uNoiseTexture, vNoisePos * 3.0).b;
+
+                float tip = smoothstep(0.0, 1.0, vPos.y + 0.5);
+                float treeBrightness = 0.85 + vTreeSeed * 0.30;
+                float treeSaturation = 0.70 + fract(vTreeSeed * 7.3) * 0.20;
+
+                // Base leaf color
                 vec3 baseLeaf = uColorTip * 0.80 * treeBrightness;
                 vec3 tintA = baseLeaf * vec3(0.70, 0.95, 0.75);
                 vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);
                 vec3 col = mix(tintA, tintB, variation);
+
+                // Vein pattern - radial from center
+                float radial = length(vPos.xz);
+                float veinPattern = sin(radial * 20.0 + fine * 4.0);
+                float veins = smoothstep(0.75, 1.0, veinPattern);
+
+                // Darken between veins
+                col *= 0.94 + veins * 0.08;
+
+                // Cell structure - small bright spots
+                float cells = smoothstep(0.58, 0.63, ultraFine);
+                col += col * cells * 0.1;
+
+                // Edge discoloration (yellowing at tips)
+                float edge = smoothstep(0.35, 0.45, radial);
+                col.r *= 1.0 + edge * 0.06;
+                col.g *= 1.0 - edge * 0.03;
+
+                // Apply micro and tip variation
                 col *= mix(0.88, 1.12, micro);
                 col *= mix(0.90, 1.08, tip);
-                
+
+                // Subtle translucency effect
+                float translucent = fine * 0.08;
+                col += uColorTip * translucent * 0.2;
+
+                // Saturation and hue rotation
                 float lum = dot(col, vec3(0.299, 0.587, 0.114));
                 col = mix(vec3(lum), col, treeSaturation);
                 col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
+                // Dead/dry spots
+                float drySpot = smoothstep(0.72, 0.77, micro) * smoothstep(0.6, 0.65, fine);
+                vec3 dryColor = vec3(0.45, 0.38, 0.25);
+                col = mix(col, dryColor, drySpot * 0.4);
+
                 csm_DiffuseColor = vec4(col, 1.0);
-                csm_Emissive = uColorTip * 0.05; 
-                csm_Roughness = 0.6;
+
+                // Subtle emissive with vein modulation
+                csm_Emissive = uColorTip * (0.04 + veins * 0.02);
+
+                // Variable roughness
+                float rough = 0.55 + veins * 0.08 - cells * 0.08 + drySpot * 0.15;
+                csm_Roughness = clamp(rough, 0.4, 0.75);
             }
         `,
         uniforms: {

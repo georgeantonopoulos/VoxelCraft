@@ -39,7 +39,6 @@ import {
   isTerrainCollider,
   rayHitsGeneratedGroundPickup,
   buildChunkLocalHotspots,
-  GroundPickupArrayKey,
 } from '@features/terrain/logic/raycastUtils';
 
 import { DIG_RADIUS, DIG_STRENGTH, CHUNK_SIZE_XZ } from '@/constants';
@@ -50,6 +49,19 @@ import dig1Url from '@/assets/sounds/Dig_1.wav?url';
 import dig2Url from '@/assets/sounds/Dig_2.wav?url';
 import dig3Url from '@/assets/sounds/Dig_3.wav?url';
 import clunkUrl from '@/assets/sounds/clunk.wav?url';
+
+// Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
+function getLeafColorForTreeType(treeType: number): string {
+  switch (treeType) {
+    case TreeType.OAK: return '#4CAF50';
+    case TreeType.PINE: return '#1B5E20';
+    case TreeType.PALM: return '#8BC34A';
+    case TreeType.ACACIA: return '#CDDC39';
+    case TreeType.CACTUS: return '#43A047';
+    case TreeType.JUNGLE: return '#2E7D32';
+    default: return '#4CAF50'; // Default green
+  }
+}
 
 // ============================================================================
 // Types
@@ -75,11 +87,11 @@ export interface FallingTreeData {
 
 export interface InteractionCallbacks {
   /** Called to trigger particle effects */
-  onParticle: (state: Partial<ParticleState> & { burstId?: 'increment' }) => void;
+  onParticle: (state: Partial<ParticleState> & { burstId?: number | 'increment' }) => void;
   /** Called when a tree is felled */
   onTreeFall: (tree: FallingTreeData) => void;
   /** Called when a leaf is hit (for pickup effect) */
-  onLeafHit: (position: THREE.Vector3) => void;
+  onLeafHit: (position: THREE.Vector3, color?: string) => void;
   /** Called to queue a chunk version increment for re-render */
   queueVersionIncrement: (key: string) => void;
   /** Called to queue a chunk remesh */
@@ -154,7 +166,12 @@ export function useTerrainInteraction(
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-      const physicsHit = world.castRay(ray, maxRayDistance, true);
+      // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
+      const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
+        const userData = collider.parent()?.userData as any;
+        // Include physics items and flora trees, exclude terrain
+        return userData?.type !== 'terrain';
+      });
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
         const userData = parent?.userData as any;
@@ -162,13 +179,23 @@ export function useTerrainInteraction(
         if (parent && userData) {
           // --- FLORA TREE ---
           if (userData.type === 'flora_tree') {
-            if (userData.part === 'leaf') {
-              const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-              onLeafHit(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z));
-              return;
-            }
+            // Skip physics tree hit if terrain is closer - let terrain-based proximity detection
+            // find the correct nearest tree instead of hitting background trees
+            const physicsDistance = (physicsHit as any).timeOfImpact ?? Infinity;
+            if (terrainHit && terrainHit.timeOfImpact < physicsDistance) {
+              // Terrain is closer, skip physics path and fall through to terrain-based tree check
+            } else {
+              if (userData.part === 'leaf') {
+                const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+                // Get tree type from chunk data for proper leaf color
+                const { chunkKey: leafChunkKey, treeIndex: leafTreeIndex } = userData;
+                const leafChunk = chunkDataManager.getChunk(leafChunkKey);
+                const leafTreeType = leafChunk?.treePositions?.[leafTreeIndex + 3] ?? 0;
+                onLeafHit(new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z), getLeafColorForTreeType(leafTreeType));
+                return;
+              }
 
-            // Tree Damage Logic (from physics hit)
+              // Tree Damage Logic (from physics hit)
             const { chunkKey, treeIndex } = userData;
             const chunk = chunkDataManager.getChunk(chunkKey);
             if (chunk && chunk.treePositions) {
@@ -184,6 +211,12 @@ export function useTerrainInteraction(
                 ? customTools[selectedItem as string]
                 : (selectedItem as ItemType);
               const capabilities = getToolCapabilities(currentTool);
+
+              // Guard: Only tools with canChop capability can damage trees
+              if (!capabilities.canChop) {
+                audioPool.play(clunkUrl, 0.3, 1.5);
+                return;
+              }
 
               // Seed/Scale Logic (same as terrain-hit path)
               const seed = chunk.treePositions[posIdx] * 12.9898 + chunk.treePositions[posIdx + 2] * 78.233;
@@ -223,7 +256,8 @@ export function useTerrainInteraction(
                   newPositions[destIdx++] = positions[j + 4];
                 }
 
-                const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+                // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
+                const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current?.set(chunkKey, updatedChunk);
                 chunkDataManager.replaceChunk(chunkKey, updatedChunk);
                 chunkDataManager.markDirty(chunkKey);
@@ -239,6 +273,7 @@ export function useTerrainInteraction(
               }
             }
             return;
+            } // end else (physics tree is closer)
           }
 
           // --- STONE PHYSICS ITEM ---
@@ -282,7 +317,9 @@ export function useTerrainInteraction(
                 physicsStore.removeItem(stoneId);
                 const count = 2 + Math.floor(Math.random() * 2);
                 for (let i = 0; i < count; i++) {
-                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                  // Spawn shards higher up (0.4 units above hit point) to prevent
+                  // them from falling through terrain when stone is on ground
+                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
                     (Math.random() - 0.5) * 3,
                     2 + Math.random() * 2,
                     (Math.random() - 0.5) * 3
@@ -334,12 +371,22 @@ export function useTerrainInteraction(
                 let updatedVisuals: Partial<ChunkState> = {};
                 const variant = next[hit.index + 6];
                 const seed = next[hit.index + 7];
+                // Also store the local position for more reliable matching
+                const hitX = next[hit.index + 0];
+                const hitY = next[hit.index + 1];
+                const hitZ = next[hit.index + 2];
 
                 const updateBuffer = (buf: Float32Array | undefined) => {
                   if (!buf) return undefined;
                   const nb = new Float32Array(buf);
+                  // Visual buffer has stride 7: x, y, z, nx, ny, nz, seed
                   for (let i = 0; i < nb.length; i += 7) {
-                    if (Math.abs(nb[i + 6] - seed) < 0.001) {
+                    // Match by both seed AND position for reliability
+                    const seedMatch = Math.abs(nb[i + 6] - seed) < 0.001;
+                    const posMatch = Math.abs(nb[i] - hitX) < 0.1 &&
+                                     Math.abs(nb[i + 1] - hitY) < 0.1 &&
+                                     Math.abs(nb[i + 2] - hitZ) < 0.1;
+                    if (seedMatch && posMatch) {
                       nb[i + 1] = -10000;
                       break;
                     }
@@ -356,7 +403,7 @@ export function useTerrainInteraction(
                 }
 
                 next[hit.index + 1] = -10000;
-                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+                const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
                 chunkDataRef.current?.set(hit.key, updatedChunk);
                 chunkDataManager.replaceChunk(hit.key, updatedChunk);
                 chunkDataManager.markDirty(hit.key);
@@ -369,7 +416,9 @@ export function useTerrainInteraction(
               const physicsStore = usePhysicsItemStore.getState();
               const count = 2 + Math.floor(Math.random() * 2);
               for (let i = 0; i < count; i++) {
-                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.1, hitPoint.z], [
+                // Spawn shards higher up (0.4 units above hit point) to prevent
+                // them from falling through terrain
+                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
                   (Math.random() - 0.5) * 3,
                   2 + Math.random() * 2,
                   (Math.random() - 0.5) * 3
@@ -460,6 +509,24 @@ export function useTerrainInteraction(
                   : (selectedItem as ItemType);
                 const capabilities = getToolCapabilities(currentTool);
 
+                // Guard: Only tools with canChop capability can damage trees
+                // Non-chopping tools can still shake/interact but deal no damage
+                if (!capabilities.canChop) {
+                  // SMASH/SHAKE Animation for non-chopping tools
+                  const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
+                  const leafColor = getLeafColorForTreeType(type);
+                  onLeafHit(leafPos, leafColor);
+                  emitParticle({
+                    pos: leafPos,
+                    dir: new THREE.Vector3(0, -1, 0),
+                    kind: 'debris',
+                    color: leafColor
+                  });
+                  audioPool.play(clunkUrl, 0.4, 0.85);
+                  anyFloraHit = true;
+                  continue;
+                }
+
                 // Radius/Scale Logic to determine health
                 const seed = positions[i] * 12.9898 + positions[i + 2] * 78.233;
                 const scale = 0.8 + Math.abs(seed % 0.4);
@@ -491,12 +558,13 @@ export function useTerrainInteraction(
                 if (!isChopAction && (capabilities.canSmash || action === 'SMASH')) {
                   // SMASH/SHAKE Animation
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
-                  onLeafHit(leafPos);
+                  const leafColor = getLeafColorForTreeType(type);
+                  onLeafHit(leafPos, leafColor);
                   emitParticle({
                     pos: leafPos,
                     dir: new THREE.Vector3(0, -1, 0),
                     kind: 'debris',
-                    color: '#4fa02a'
+                    color: leafColor
                   });
                   audioPool.play(clunkUrl, 0.4, 0.85);
                   anyFloraHit = true;
@@ -539,7 +607,8 @@ export function useTerrainInteraction(
                 destIdx += 5;
               }
 
-              const updatedChunk = { ...chunk, treePositions: newPositions, visualVersion: chunk.visualVersion + 1 };
+              // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
+              const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current?.set(key, updatedChunk);
               chunkDataManager.replaceChunk(key, updatedChunk);
               chunkDataManager.markDirty(key);
@@ -701,10 +770,6 @@ export function useTerrainInteraction(
             if (modified) {
               anyModified = true;
               affectedChunks.push(key);
-
-              // DEBUG: Check if density was actually modified
-              const testIdx = Math.floor(localX + 2) + Math.floor(localY - (-64) + 2) * 36 + Math.floor(localZ + 2) * 36 * 132;
-              console.log(`[DIG-MOD] ${key} modified density at test idx ${testIdx}: ${chunk.density[testIdx]?.toFixed(2)}`);
 
               if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {

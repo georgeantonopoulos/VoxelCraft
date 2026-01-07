@@ -11,8 +11,9 @@ const MAP_SIZE = 64; // Reduced from 128 for better performance
 const MAP_SCALE = 4; // World units per pixel (Higher = zoomed out, was 2)
 const SAMPLING_STEP = 8; // Sample every 8th pixel (was 4) - only 64 samples now vs 1024
 
-// Debug flag to disable minimap - use ?nominimap URL param
-const minimapDisabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nominimap');
+// Minimap disabled by default due to performance impact (causes stuttering)
+// Use ?minimap URL param to enable it
+const minimapEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('minimap');
 
 const BIOME_COLORS: Record<BiomeType, string> = {
   'PLAINS': '#4ade80',      // green-400
@@ -116,7 +117,6 @@ export const HUD: React.FC = () => {
   const inventoryCount = useGameStore((state) => state.inventoryCount);
   const stickCount = useGameStore((state) => state.stickCount);
   const stoneCount = useGameStore((state) => state.stoneCount);
-  const isSharedArrayBufferEnabled = useGameStore((state) => state.isSharedArrayBufferEnabled);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
 
   // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
@@ -211,11 +211,6 @@ export const HUD: React.FC = () => {
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
         <div className="flex items-center justify-between mb-1">
           <h1 className="font-semibold text-sm text-emerald-700">Organic Voxel Engine</h1>
-          {!isSharedArrayBufferEnabled && (
-            <span className="px-1.5 py-0.5 bg-red-500 text-[9px] font-bold text-white rounded animate-pulse">
-              LEGACY MODE
-            </span>
-          )}
         </div>
         <div className="space-y-0.5 text-xs font-medium leading-tight">
           <p>WASD + Space to move</p>
@@ -239,8 +234,8 @@ export const HUD: React.FC = () => {
       {/* Bottom Left: Inventory Bar */}
       <InventoryBar />
 
-      {/* Bottom Right: Minimap */}
-      {!minimapDisabled && (
+      {/* Bottom Right: Minimap (disabled by default, use ?minimap to enable) */}
+      {minimapEnabled && (
         <div className="absolute bottom-6 right-6 pointer-events-auto">
           <Minimap x={coords.x} z={coords.z} rotation={coords.rotation} />
           <div className="text-center mt-1 text-[10px] text-white font-mono bg-black/50 rounded px-1 backdrop-blur-sm">

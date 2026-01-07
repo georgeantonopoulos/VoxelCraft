@@ -32,8 +32,23 @@ export const sharedUniforms = {
     uBiomeFogDensityMul: { value: 1.0 },      // Multiplier for fog density
     uBiomeFogHeightMul: { value: 1.0 },       // Multiplier for height fog
     uBiomeFogTint: { value: new THREE.Vector3(0, 0, 0) },  // RGB tint offset
-    uBiomeFogAerial: { value: 0.45 },         // Aerial perspective strength
+    uBiomeFogAerial: { value: 0.25 },         // Aerial perspective strength
     uBiomeFogEnabled: { value: 1.0 },         // Toggle for biome fog effects
+
+    // Fragment normal perturbation (Phase 1 AAA terrain improvement)
+    // Now uses cheap triplanar-derived detail (no extra texture samples)
+    uFragmentNormalStrength: { value: 0.6 },  // 0.0=off, 0.4-0.7=good, 1.0=strong
+    uFragmentNormalScale: { value: 0.5 },     // Intensity multiplier (0.3-0.7 typical)
+
+    // Global Illumination (voxel light grid)
+    uGIEnabled: { value: 1.0 },               // Toggle for GI (0 = off, 1 = on)
+    uGIIntensity: { value: 5.0 },             // GI strength multiplier (higher = more visible indirect light)
+
+    // Color grading (in-shader, not post-processing)
+    uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated
+
+    // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
+    // computed during mesh generation. No runtime uniforms needed - it's baked into vertices!
 };
 
 export interface SharedUniformUpdateParams {
@@ -58,6 +73,15 @@ export interface SharedUniformUpdateParams {
     biomeFogTint?: THREE.Vector3;
     biomeFogAerial?: number;
     biomeFogEnabled?: boolean;
+    // Fragment normal perturbation
+    fragmentNormalStrength?: number;
+    fragmentNormalScale?: number;
+    // Global Illumination
+    giEnabled?: boolean;
+    giIntensity?: number;
+    // Color grading
+    terrainSaturation?: number;
+    // NOTE: Humidity spreading now uses vertex attributes - no uniform params needed
 }
 
 /**
@@ -92,4 +116,17 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
     if (params.biomeFogTint) sharedUniforms.uBiomeFogTint.value.copy(params.biomeFogTint);
     if (params.biomeFogAerial !== undefined) sharedUniforms.uBiomeFogAerial.value = params.biomeFogAerial;
     if (params.biomeFogEnabled !== undefined) sharedUniforms.uBiomeFogEnabled.value = params.biomeFogEnabled ? 1.0 : 0.0;
+
+    // Fragment normal perturbation
+    if (params.fragmentNormalStrength !== undefined) sharedUniforms.uFragmentNormalStrength.value = params.fragmentNormalStrength;
+    if (params.fragmentNormalScale !== undefined) sharedUniforms.uFragmentNormalScale.value = params.fragmentNormalScale;
+
+    // Global Illumination
+    if (params.giEnabled !== undefined) sharedUniforms.uGIEnabled.value = params.giEnabled ? 1.0 : 0.0;
+    if (params.giIntensity !== undefined) sharedUniforms.uGIIntensity.value = params.giIntensity;
+
+    // Color grading
+    if (params.terrainSaturation !== undefined) sharedUniforms.uTerrainSaturation.value = params.terrainSaturation;
+
+    // NOTE: Humidity spreading now uses vertex attributes - no uniform updates needed
 };

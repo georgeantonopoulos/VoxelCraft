@@ -21,7 +21,6 @@ import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/f
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
-import { canUseSharedArrayBuffer } from '@features/terrain/workers/sharedBuffers';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { saveGroundPickup, getGroundPickups, GroundItemType } from '@state/WorldDB';
@@ -345,6 +344,14 @@ interface VoxelTerrainProps {
   fogNear?: number;
   fogFar?: number;
   biomeFogEnabled?: boolean;
+  // Fragment normal perturbation (AAA terrain quality)
+  fragmentNormalStrength?: number;
+  fragmentNormalScale?: number;
+  // Global Illumination settings
+  giEnabled?: boolean;
+  giIntensity?: number;
+  // Color grading
+  terrainSaturation?: number;
   // Material properties (passed to ChunkMesh → TriplanarMaterial)
   terrainThreeFogEnabled?: boolean;
   terrainPolygonOffsetEnabled?: boolean;
@@ -424,7 +431,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   heightFogOffset = 4.0,
   fogNear = 23,
   fogFar = 85,
-  biomeFogEnabled = true
+  biomeFogEnabled = true,
+  fragmentNormalStrength = 0.4,
+  fragmentNormalScale = 0.35,
+  giEnabled = true,
+  giIntensity = 5.0,
+  terrainSaturation = 1.5,
 }) => {
   const action = useInputStore(s => s.interactionAction);
   const isInteracting = action !== null;
@@ -469,6 +481,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, []);
 
   // === BIOME FOG STATE ===
+  // NOTE: Humidity spreading now uses vertex attributes instead of uniforms
+  // The grownTreeDataRef is no longer needed - tree data is broadcast to workers directly
+
   // Track current biome fog settings with smooth interpolation.
   // We sample the biome at camera position each frame and lerp toward target values.
   const biomeFogState = useRef({
@@ -531,8 +546,23 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const pendingVersionAdds = useRef<Map<string, number>>(new Map());
   const lastFlushTime = useRef(0);
 
-  // Flush all pending version updates in a single React state update
-  // Throttled to 10Hz (100ms) to reduce React reconciliation overhead
+  // === HUMIDITY EXPANSION TRACKING ===
+  // Track grown trees and their spreading humidity radius
+  const humidityState = useRef<{
+    lastCheckTime: number;
+    treeRadii: Map<string, number>;  // treeId -> last known radius
+  }>({ lastCheckTime: 0, treeRadii: new Map() });
+
+  const HUMIDITY_CHECK_INTERVAL_MS = 5000;  // Check every 5 seconds
+  const HUMIDITY_SPREAD_RATE = 2.0;  // voxels per second
+  const HUMIDITY_MAX_RADIUS = 64;  // ~2 chunks max
+
+  // Flush pending version updates in batches to prevent massive React reconciliations.
+  // Previously flushed ALL queued updates every 100ms, causing 50-120ms render spikes
+  // when many chunks updated together (e.g., during streaming).
+  //
+  // Now limits batch size: max 4 adds + 4 updates per flush (plus unlimited removals).
+  // Remaining items stay queued for next flush, spreading load across frames.
   const flushVersionUpdates = (forceImmediate = false) => {
     if (pendingVersionUpdates.current.size === 0 &&
       pendingVersionRemovals.current.size === 0 &&
@@ -540,22 +570,47 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       return;
     }
 
-    // Throttle to 10Hz unless forced (e.g., during initial load or critical updates)
+    // Throttle to ~15Hz (66ms) for more frequent, smaller batches
     const now = performance.now();
-    if (!forceImmediate && now - lastFlushTime.current < 100) {
+    if (!forceImmediate && now - lastFlushTime.current < 66) {
       return; // Skip this flush, will catch up on next tick
     }
     lastFlushTime.current = now;
 
-    const updates = new Set(pendingVersionUpdates.current);
+    // Limit batch sizes to keep React reconciliation under ~16ms
+    // Adds are more expensive (new components) so limit more aggressively
+    const MAX_ADDS_PER_FLUSH = 4;
+    const MAX_UPDATES_PER_FLUSH = 6;
+    // Removals are cheap (just deleting from state) - process all
     const removals = new Set(pendingVersionRemovals.current);
-    const adds = new Map(pendingVersionAdds.current);
-
-    pendingVersionUpdates.current.clear();
     pendingVersionRemovals.current.clear();
-    pendingVersionAdds.current.clear();
 
-    frameProfiler.trackOperation(`version-flush-${updates.size + removals.size + adds.size}`);
+    // Take limited subset of adds
+    const adds = new Map<string, number>();
+    let addCount = 0;
+    for (const [k, v] of pendingVersionAdds.current) {
+      if (addCount >= MAX_ADDS_PER_FLUSH) break;
+      adds.set(k, v);
+      addCount++;
+    }
+    // Remove processed adds from pending
+    adds.forEach((_, k) => pendingVersionAdds.current.delete(k));
+
+    // Take limited subset of updates
+    const updates = new Set<string>();
+    let updateCount = 0;
+    for (const k of pendingVersionUpdates.current) {
+      if (updateCount >= MAX_UPDATES_PER_FLUSH) break;
+      updates.add(k);
+      updateCount++;
+    }
+    // Remove processed updates from pending
+    updates.forEach(k => pendingVersionUpdates.current.delete(k));
+
+    const totalOps = updates.size + removals.size + adds.size;
+    if (totalOps === 0) return;
+
+    frameProfiler.trackOperation(`version-flush-${totalOps}`);
 
     // Safety: Don't remove chunks that are being added in the same flush
     adds.forEach((_, k) => removals.delete(k));
@@ -608,15 +663,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // If too many are in-flight, pause dispatching new work to prevent memory exhaustion.
   const inFlightGenerations = useRef<Set<string>>(new Set());
 
-  const setSharedArrayBufferEnabled = useGameStore(s => s.setSharedArrayBufferEnabled);
-
-  useEffect(() => {
-    const sab = canUseSharedArrayBuffer();
-    setSharedArrayBufferEnabled(sab);
-    if (!sab) {
-      console.warn('%c⚠️ PERFORMANCE WARNING: SharedArrayBuffer unavailable. Falling back to memory copying. Check COOP/COEP headers.', 'color: #ff0000; font-weight: bold; font-size: 14px;');
-    }
-  }, [setSharedArrayBufferEnabled]);
   // During initial load, use fewer concurrent generations to reduce frame spikes.
   // Post-load, we can be more aggressive since chunks are processed one at a time via mountQueue.
   const MAX_IN_FLIGHT_INITIAL = 4; // Lower limit during initial load
@@ -713,7 +759,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     kind: 'debris',
     active: false
   });
-  const [leafPickup, setLeafPickup] = useState<THREE.Vector3 | null>(null);
+  const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
   const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
@@ -731,8 +777,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     setFallingTrees(prev => [...prev, tree]);
   }, []);
 
-  const handleLeafHit = useCallback((position: THREE.Vector3) => {
-    setLeafPickup(position);
+  const handleLeafHit = useCallback((position: THREE.Vector3, color?: string) => {
+    setLeafPickup({ position, color: color || '#4CAF50' }); // Default to green
   }, []);
 
   // Use extracted terrain interaction hook
@@ -775,7 +821,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     poolRef.current = pool;
 
     // Send configuration to all workers (including seed for deterministic generation)
-    pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed } });
+    const profileEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('profile');
+    pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed, profile: profileEnabled } });
 
     // Handle messages from any worker in the pool
     pool.addMessageListener((e) => {
@@ -911,7 +958,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (modified) {
           // Update both local ref and ChunkDataManager
           chunkDataRef.current.set(key, updatedChunk);
-          chunkDataManager.replaceChunk(key, updatedChunk);
+          updatedChunk.visualVersion = (chunk.visualVersion ?? 0) + 1; chunkDataManager.replaceChunk(key, updatedChunk);
           queueVersionIncrement(key);
 
           // Update hotspots
@@ -1170,9 +1217,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const colliderCenterKey = `${px},${pz}`;
       if (colliderCenterKey !== lastColliderCenterKey.current) {
         lastColliderCenterKey.current = colliderCenterKey;
-        colliderEnableQueue.current.length = 0;
-        colliderEnablePending.current.clear();
 
+        // Build new candidate set
         const candidates = new Set<string>();
         const addRadius = (cx: number, cz: number, r: number) => {
           for (let dx = -r; dx <= r; dx++) {
@@ -1185,13 +1231,31 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         addRadius(px, pz, colliderRadius);
         addRadius(px + offsetCx, pz + offsetCz, colliderRadius);
 
-        for (const key of candidates) {
-          const c = chunkDataManager.getChunk(key);
-          if (c && !c.colliderEnabled && !colliderEnablePending.current.has(key)) {
-            colliderEnablePending.current.add(key);
-            colliderEnableQueue.current.push(key);
+        // Preserve existing queue entries that are still valid candidates,
+        // and remove ones that are no longer in range (prevents race condition
+        // where queue is cleared while chunks are still being processed)
+        const newQueue: string[] = [];
+        const newPending = new Set<string>();
+
+        // Keep existing queued items that are still valid
+        for (const key of colliderEnableQueue.current) {
+          if (candidates.has(key)) {
+            newQueue.push(key);
+            newPending.add(key);
           }
         }
+
+        // Add new candidates that weren't already queued
+        for (const key of candidates) {
+          const c = chunkDataManager.getChunk(key);
+          if (c && !c.colliderEnabled && !newPending.has(key)) {
+            newPending.add(key);
+            newQueue.push(key);
+          }
+        }
+
+        colliderEnableQueue.current = newQueue;
+        colliderEnablePending.current = newPending;
       }
     }
 
@@ -1364,11 +1428,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             mountQueue.current.push(newChunk);
           }
 
+          // Queue for collider enabling if within collider radius
+          // FIX: Always queue chunks within collider radius, not just those "ahead" of the player
+          // This prevents the bug where chunks behind/beside the player don't get colliders,
+          // causing fall-through when walking backwards or sideways on hills
           if (!colliderEnabled && !colliderEnablePending.current.has(key)) {
-            const aheadX = px + (Math.abs(streamForward.current.x) > 0.35 ? Math.sign(streamForward.current.x) : 0);
-            const aheadZ = pz + (Math.abs(streamForward.current.z) > 0.35 ? Math.sign(streamForward.current.z) : 0);
-            const dChebyAhead = Math.max(Math.abs(cx - aheadX), Math.abs(cz - aheadZ));
-            if (dChebyAhead <= getColliderRadius()) {
+            if (dChebyPlayer <= getColliderRadius()) {
               colliderEnablePending.current.add(key);
               colliderEnableQueue.current.push(key);
             }
@@ -1429,60 +1494,82 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     frameProfiler.end('terrain-worker-msgs');
 
     // 4. THROTTLED COLLIDER ENABLES
-    // Process multiple colliders per frame to reduce physics activation latency.
+    // Process colliders per frame to reduce physics activation latency.
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
     // to push collider BVH construction to idle time when possible.
-    if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
-      // Enable 1 collider per frame max - BVH construction can take 20-50ms even with simplified geometry
-      const MAX_COLLIDERS_PER_FRAME = 1;
-      const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
+    // CRITICAL: Always process the player's current chunk collider even during heavy worker frames
+    // to prevent falling through terrain when walking on hills or uneven ground.
+    if (colliderEnableQueue.current.length > 0) {
       const keysEnabledSync: string[] = [];
 
-      for (let i = 0; i < collidersToProcess; i++) {
-        const key = colliderEnableQueue.current.shift();
-        if (!key) break;
+      // Helper to enable a collider
+      const enableColliderForKey = (k: string) => {
+        const latest = chunkDataManager.getChunk(k);
+        if (latest && !latest.colliderEnabled) {
+          const updated = { ...latest, colliderEnabled: true };
+          chunkDataRef.current.set(k, updated);
+          chunkDataManager.addChunk(k, updated); // Keep both in sync
+        }
+      };
 
-        colliderEnablePending.current.delete(key);
-        const current = chunkDataManager.getChunk(key);
-        if (current && !current.colliderEnabled) {
-          // Check if this chunk is directly under the player (critical) or adjacent (can defer)
-          const [cxStr, czStr] = key.split(',');
-          const cx = parseInt(cxStr);
-          const cz = parseInt(czStr);
-          const distToPlayer = Math.max(
-            Math.abs(cx - playerChunk.current.px),
-            Math.abs(cz - playerChunk.current.pz)
-          );
+      // First pass: ALWAYS enable player's current chunk collider immediately (critical for physics)
+      // This prevents the bug where player falls through terrain on hills
+      const playerChunkKey = `${playerChunk.current.px},${playerChunk.current.pz}`;
+      const playerChunkQueueIndex = colliderEnableQueue.current.indexOf(playerChunkKey);
+      if (playerChunkQueueIndex !== -1) {
+        // Remove from queue and enable immediately
+        colliderEnableQueue.current.splice(playerChunkQueueIndex, 1);
+        colliderEnablePending.current.delete(playerChunkKey);
+        const playerChunkData = chunkDataManager.getChunk(playerChunkKey);
+        if (playerChunkData && !playerChunkData.colliderEnabled) {
+          enableColliderForKey(playerChunkKey);
+          keysEnabledSync.push(playerChunkKey);
+        }
+      }
 
-          const enableColliderForKey = (k: string) => {
-            const latest = chunkDataManager.getChunk(k);
-            if (latest && !latest.colliderEnabled) {
-              const updated = { ...latest, colliderEnabled: true };
-              chunkDataRef.current.set(k, updated);
-              chunkDataManager.addChunk(k, updated); // Keep both in sync
+      // Second pass: Process additional colliders only if we didn't have a heavy worker frame
+      if (!appliedWorkerMessageThisFrame && colliderEnableQueue.current.length > 0) {
+        // Enable 1 collider per frame max - BVH construction can take 20-50ms even with simplified geometry
+        const MAX_COLLIDERS_PER_FRAME = 1;
+        const collidersToProcess = Math.min(MAX_COLLIDERS_PER_FRAME, colliderEnableQueue.current.length);
+
+        for (let i = 0; i < collidersToProcess; i++) {
+          const key = colliderEnableQueue.current.shift();
+          if (!key) break;
+
+          colliderEnablePending.current.delete(key);
+          const current = chunkDataManager.getChunk(key);
+          if (current && !current.colliderEnabled) {
+            // Check if this chunk is directly under the player (critical) or adjacent (can defer)
+            const [cxStr, czStr] = key.split(',');
+            const cx = parseInt(cxStr);
+            const cz = parseInt(czStr);
+            const distToPlayer = Math.max(
+              Math.abs(cx - playerChunk.current.px),
+              Math.abs(cz - playerChunk.current.pz)
+            );
+
+            // Critical chunks (distance 0 = player is standing on it): enable immediately
+            // Adjacent chunks (distance 1): defer to idle callback if available
+            if (distToPlayer === 0 || !initialLoadTriggered.current) {
+              // Synchronous enable for player chunk or during initial load
+              enableColliderForKey(key);
+              keysEnabledSync.push(key);
+            } else if (typeof requestIdleCallback !== 'undefined') {
+              // Defer to idle time for adjacent chunks
+              const deferredKey = key;
+              requestIdleCallback(() => {
+                enableColliderForKey(deferredKey);
+                queueVersionIncrement(deferredKey);
+              }, { timeout: 100 });
+            } else {
+              // Fallback for browsers without requestIdleCallback
+              const deferredKey = key;
+              setTimeout(() => {
+                enableColliderForKey(deferredKey);
+                queueVersionIncrement(deferredKey);
+              }, 0);
             }
-          };
-
-          // Critical chunks (distance 0 = player is standing on it): enable immediately
-          // Adjacent chunks (distance 1): defer to idle callback if available
-          if (distToPlayer === 0 || !initialLoadTriggered.current) {
-            // Synchronous enable for player chunk or during initial load
-            enableColliderForKey(key);
-            keysEnabledSync.push(key);
-          } else if (typeof requestIdleCallback !== 'undefined') {
-            // Defer to idle time for adjacent chunks
-            const deferredKey = key;
-            requestIdleCallback(() => {
-              enableColliderForKey(deferredKey);
-              queueVersionIncrement(deferredKey);
-            }, { timeout: 100 });
-          } else {
-            // Fallback for browsers without requestIdleCallback
-            const deferredKey = key;
-            setTimeout(() => {
-              enableColliderForKey(deferredKey);
-              queueVersionIncrement(deferredKey);
-            }, 0);
           }
         }
       }
@@ -1558,6 +1645,59 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    // 7. HUMIDITY EXPANSION CHECK
+    // Check if Sacred Grove trees have expanded their humidity radius
+    const now = Date.now();
+    if (now - humidityState.current.lastCheckTime > HUMIDITY_CHECK_INTERVAL_MS) {
+      humidityState.current.lastCheckTime = now;
+
+      const grownTrees = useWorldStore.getState().getGrownTrees();
+      const chunksToRemesh = new Set<string>();
+
+      for (const tree of grownTrees) {
+        const treeId = `${tree.x},${tree.z}`;
+        const age = (now - tree.grownAt) / 1000;
+        const currentRadius = Math.min(age * HUMIDITY_SPREAD_RATE, HUMIDITY_MAX_RADIUS);
+        const prevRadius = humidityState.current.treeRadii.get(treeId) || 0;
+
+        // Only remesh if radius expanded significantly (half a chunk)
+        if (currentRadius > prevRadius + CHUNK_SIZE_XZ * 0.5) {
+          humidityState.current.treeRadii.set(treeId, currentRadius);
+
+          // Queue chunks within new radius
+          const chunkRadius = Math.ceil(currentRadius / CHUNK_SIZE_XZ);
+          const treeCx = Math.floor(tree.x / CHUNK_SIZE_XZ);
+          const treeCz = Math.floor(tree.z / CHUNK_SIZE_XZ);
+
+          for (let dcx = -chunkRadius; dcx <= chunkRadius; dcx++) {
+            for (let dcz = -chunkRadius; dcz <= chunkRadius; dcz++) {
+              const key = `${treeCx + dcx},${treeCz + dcz}`;
+              if (chunkDataRef.current.has(key)) {
+                chunksToRemesh.add(key);
+              }
+            }
+          }
+        }
+      }
+
+      // Queue affected chunks for remesh
+      chunksToRemesh.forEach(key => remeshQueue.current.add(key));
+
+      // Broadcast tree data to workers for humidity calculation
+      if (poolRef.current && grownTrees.length > 0) {
+        poolRef.current.postToAll({
+          type: 'UPDATE_GROWN_TREES',
+          payload: {
+            trees: grownTrees.map(t => ({
+              worldX: t.x,
+              worldZ: t.z,
+              ageMs: t.grownAt
+            }))
+          }
+        });
+      }
+    }
+
     // --- Performance Diagnostics ---
     if (typeof window !== 'undefined') {
       const diag = (window as any).__vcDiagnostics || {};
@@ -1603,6 +1743,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Convert weightsView string to numeric value for shader
     const weightsViewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
 
+    // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
+    // computed during mesh generation. No uniform updates needed - it's baked into vertices!
+    // Tree expansion is tracked above in section 7 (HUMIDITY EXPANSION CHECK).
+
     updateSharedUniforms(state, {
       sunDir: sunDirection,
       fogColor: state.scene.fog instanceof THREE.Fog || state.scene.fog instanceof THREE.FogExp2 ? state.scene.fog.color : undefined,
@@ -1625,6 +1769,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       biomeFogHeightMul: biomeFogState.current.heightMul,
       biomeFogTint: biomeFogTintVec.current,
       biomeFogAerial: biomeFogState.current.aerial,
+      // Fragment normal perturbation (AAA terrain quality)
+      fragmentNormalStrength,
+      fragmentNormalScale,
+      // Global Illumination
+      giEnabled,
+      giIntensity,
+      // Color grading
+      terrainSaturation,
     });
     frameProfiler.end('terrain-uniforms');
 
@@ -1689,7 +1841,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         // stride 4: x, y, z, type
         next[hit.index + 1] = -10000;
 
-        const updatedChunk = { ...chunk, floraPositions: next };
+        const updatedChunk = { ...chunk, floraPositions: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(key, updatedChunk);
         chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
@@ -1710,13 +1862,23 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         let updatedVisuals: Partial<ChunkState> = {};
         const variant = next[hit.index + 6];
         const seed = next[hit.index + 7];
+        // Also store the local position for more reliable matching
+        const hitX = next[hit.index + 0];
+        const hitY = next[hit.index + 1];
+        const hitZ = next[hit.index + 2];
 
         const updateBuffer = (buf: Float32Array | undefined) => {
           if (!buf) return undefined;
           const nb = new Float32Array(buf);
+          // Visual buffer has stride 7: x, y, z, nx, ny, nz, seed
           for (let i = 0; i < nb.length; i += 7) {
-            // Find by seed and approximate position
-            if (Math.abs(nb[i + 6] - seed) < 0.001) {
+            // Match by both seed AND position for reliability
+            // (seed alone may have floating-point issues or duplicates)
+            const seedMatch = Math.abs(nb[i + 6] - seed) < 0.001;
+            const posMatch = Math.abs(nb[i] - hitX) < 0.1 &&
+                             Math.abs(nb[i + 1] - hitY) < 0.1 &&
+                             Math.abs(nb[i + 2] - hitZ) < 0.1;
+            if (seedMatch && posMatch) {
               nb[i + 1] = -10000;
               break;
             }
@@ -1736,7 +1898,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
 
         next[hit.index + 1] = -10000;
-        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(hit.key, updatedChunk);
         chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
@@ -1925,7 +2087,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       ))}
       {leafPickup && (
         <LeafPickupEffect
-          start={leafPickup}
+          start={leafPickup.position}
+          color={leafPickup.color}
           onDone={() => {
             setLeafPickup(null);
           }}

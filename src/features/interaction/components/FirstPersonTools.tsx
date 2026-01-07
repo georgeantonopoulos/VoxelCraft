@@ -57,7 +57,7 @@ export const FirstPersonTools: React.FC = () => {
             scale: { value: TORCH_POSE.scale, min: 0.2, max: 1.5, step: 0.01 },
             hiddenYOffset: { value: TORCH_POSE.hiddenYOffset ?? -0.8, min: -2.0, max: -0.2, step: 0.01 },
         },
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     const [rightHandStickPoseDebug, setRightHandStickPoseDebug] = useControls(
@@ -105,7 +105,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     const [rightHandStonePoseDebug, setRightHandStonePoseDebug] = useControls(
@@ -153,7 +153,7 @@ export const FirstPersonTools: React.FC = () => {
                 }
             })()),
         }),
-        ({ hidden: !debugMode } as any)
+        ({ hidden: !debugMode, collapsed: true } as any)
     );
 
     useEffect(() => {
@@ -298,8 +298,9 @@ export const FirstPersonTools: React.FC = () => {
                 torchTargetPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY, torchPoseDebug.posZ);
                 torchHiddenPos.current.set(torchPoseDebug.posX * responsiveX, torchPoseDebug.posY + torchPoseDebug.hiddenYOffset, torchPoseDebug.posZ);
             } else {
-                torchTargetPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y, TORCH_POSE.z);
-                torchHiddenPos.current.set(TORCH_POSE.x * responsiveX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
+                const torchX = (TORCH_POSE.x + (TORCH_POSE.xOffset ?? 0)) * responsiveX;
+                torchTargetPos.current.set(torchX, TORCH_POSE.y, TORCH_POSE.z);
+                torchHiddenPos.current.set(torchX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
             }
             torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
             torchRef.current.position.copy(torchPosTemp.current);
@@ -341,7 +342,9 @@ export const FirstPersonTools: React.FC = () => {
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
                             }
                         })
-                    : (activeCustomTool ? RIGHT_HAND_HELD_ITEM_POSES.pickaxe : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
+                    : (activeCustomTool
+                        ? (RIGHT_HAND_HELD_ITEM_POSES[activeCustomTool.baseType] ?? RIGHT_HAND_HELD_ITEM_POSES.stick)
+                        : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
                 : null;
             if (pose && rightHandShown) {
                 const animOffsetY = positionY - (debugPos.current.y + swayY);
