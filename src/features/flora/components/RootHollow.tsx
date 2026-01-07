@@ -158,7 +158,9 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     );
 
     const treeWorldPosition = useMemo(() => {
-        return new THREE.Vector3(0, stumpHeight * 0.75, 0).applyQuaternion(quaternion).add(groupPosition);
+        // Tree grows from inside the hollow stump - position at ~40% stump height
+        // to account for embed offset and have trunk emerge from stump opening
+        return new THREE.Vector3(0, stumpHeight * 0.4, 0).applyQuaternion(quaternion).add(groupPosition);
     }, [quaternion, groupPosition, stumpHeight]);
 
     return (
@@ -208,7 +210,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             {(status === 'CHARGING' || status === 'GROWING') && (
                 <FractalTree
                     seed={Math.abs(position[0] * 31 + position[2] * 17)}
-                    position={new THREE.Vector3(0, stumpHeight * 0.75, 0)}
+                    position={new THREE.Vector3(0, stumpHeight * 0.4, 0)}
                     baseRadius={stumpRadius * 0.7}
                     userData={{ type: 'flora_tree' }}
                     orientation={quaternion}

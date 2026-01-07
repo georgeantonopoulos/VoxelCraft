@@ -346,21 +346,17 @@ export class BiomeManager {
       return 0.0;
     }
 
-    // 1. Get base climate humidity (already exists, -1 to 1 range)
+    // Get base climate humidity (already exists, -1 to 1 range)
     const climate = this.getClimate(worldX, worldZ);
     const baseHumid = (climate.humid + 1) * 0.5; // Normalize to 0-1
 
-    // 2. Water proximity boost - closer to water level = more humid
-    const waterDist = Math.abs(worldY - WATER_LEVEL);
-    const waterInfluence = Math.max(0, 1 - waterDist / 24); // Full influence within 24 blocks
+    // NOTE: Actual water proximity is now computed in the mesher using BFS from water voxels.
+    // This function only returns biome-based climate humidity.
+    // The mesher combines this with actual water voxel proximity for the final humidity value.
 
-    // 3. Below water = fully saturated
-    if (worldY < WATER_LEVEL) return 1.0;
+    let humidity = baseHumid;
 
-    // 4. Combine: 70% biome base + 30% water proximity
-    let humidity = Math.min(1, baseHumid * 0.7 + waterInfluence * 0.3);
-
-    // 5. Fade humidity at Sacred Grove edges (intensity 0-0.3)
+    // Fade humidity at Sacred Grove edges (intensity 0-0.3)
     if (groveInfo.inGrove) {
       // Smooth transition at edges
       const edgeFade = groveInfo.intensity / 0.3; // 0 at edge, 1 at intensity=0.3

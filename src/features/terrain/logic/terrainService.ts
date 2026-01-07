@@ -831,9 +831,11 @@ export class TerrainService {
                 const wx = (gx - PAD) + worldOffsetX;
                 const wz = (gz - PAD) + worldOffsetZ;
 
-                // Check if this location is in a Sacred Grove (relaxed check - just inGrove, not isCenter)
+                // Check if this location is at the CENTER of a Sacred Grove
+                // Using isCenter (noise > 0.65) instead of inGrove (noise > 0.45) prevents
+                // multiple Root Hollows from spawning in adjacent chunks of the same grove
                 const groveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
-                if (!groveInfo.inGrove) continue;
+                if (!groveInfo.isCenter) continue;
 
                 // Find the surface at this position
                 const surface = findTopSurfaceAtLocalXZ(gx - PAD, gz - PAD);
