@@ -43,12 +43,6 @@ import {
   FallingTreeData,
 } from '@features/terrain/hooks/useTerrainInteraction';
 
-// Sounds
-import dig1Url from '@/assets/sounds/Dig_1.wav?url';
-import dig2Url from '@/assets/sounds/Dig_2.wav?url';
-import dig3Url from '@/assets/sounds/Dig_3.wav?url';
-import clunkUrl from '@/assets/sounds/clunk.wav?url';
-
 // Type alias for backwards compatibility
 type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
 
@@ -367,43 +361,6 @@ interface VoxelTerrainProps {
   seed?: number;
 }
 
-// --- Audio Pool Helper ---
-class AudioPool {
-  private pools: Map<string, HTMLAudioElement[]> = new Map();
-  private index: Map<string, number> = new Map();
-
-  constructor(urls: string[], size: number = 3) {
-    urls.forEach(url => {
-      const pool: HTMLAudioElement[] = [];
-      for (let i = 0; i < size; i++) {
-        const a = new Audio(url);
-        a.volume = 0.3;
-        pool.push(a);
-      }
-      this.pools.set(url, pool);
-      this.index.set(url, 0);
-    });
-  }
-
-  play(url: string, volume: number = 0.3, pitchVar: number = 0) {
-    const pool = this.pools.get(url);
-    if (!pool) return;
-
-    // Round robin
-    const idx = this.index.get(url) || 0;
-    const audio = pool[idx];
-    this.index.set(url, (idx + 1) % pool.length);
-
-    // Reset and play
-    audio.currentTime = 0;
-    audio.volume = volume;
-    // Simple pitch shift (speed change)
-    audio.playbackRate = Math.max(0.1, 1.0 + (Math.random() * pitchVar * 2 - pitchVar));
-
-    audio.play().catch(e => console.warn("Audio play failed", e));
-  }
-}
-
 const FRAME_BUDGET_MS = 4; // ms allocated per frame for processing worker messages
 
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
@@ -474,11 +431,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }
   const { camera } = useThree();
   const { world, rapier } = useRapier();
-
-  // Initialize Audio Pool once
-  const audioPool = useMemo(() => {
-    return new AudioPool([dig1Url, dig2Url, dig3Url, clunkUrl], 4);
-  }, []);
 
   // === BIOME FOG STATE ===
   // NOTE: Humidity spreading now uses vertex attributes instead of uniforms
@@ -790,7 +742,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       queueVersionIncrement,
       queueRemesh: (key: string) => remeshQueue.current.add(key),
       chunkDataRef,
-      audioPool,
     },
     {
       buildMat,

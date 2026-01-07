@@ -10,14 +10,6 @@ import { UniversalTool } from './UniversalTool';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import CustomShaderMaterial from 'three-custom-shader-material';
 
-// Sounds
-import clunkUrl from '@/assets/sounds/clunk.wav?url';
-import dig1Url from '@/assets/sounds/Dig_1.wav?url';
-
-// Shared Audio Pool for performance
-const CLUNK_AUDIO = new Audio(clunkUrl);
-const DIG_AUDIO = new Audio(dig1Url);
-
 interface PhysicsItemProps {
   item: ActivePhysicsItem;
 }
@@ -26,6 +18,13 @@ const IMPACT_THRESHOLD_STICK = 5.0; // Lowered to make planting more reliable
 
 const isHardImpactSurface = (mat: MaterialType | null): boolean => {
   return mat === MaterialType.STONE || mat === MaterialType.BEDROCK || mat === MaterialType.MOSSY_STONE;
+};
+
+// Helper to play sounds via AudioManager
+const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
+  window.dispatchEvent(new CustomEvent('vc-audio-play', {
+    detail: { soundId, options }
+  }));
 };
 
 export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
@@ -69,11 +68,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         spawnItem(ItemType.SHARD, [position.x, position.y + 0.5, position.z], [vx, vy, vz]);
       }
 
-      // Play shatter sound
-      CLUNK_AUDIO.currentTime = 0;
-      CLUNK_AUDIO.volume = 0.5;
-      CLUNK_AUDIO.playbackRate = 1.2;
-      CLUNK_AUDIO.play().catch(() => { });
+      // Play shatter sound (NEW: using stone_hit.mp3)
+      playSound('rock_hit', { pitch: 1.2, volume: 0.5 });
 
       // Remove the shattered rock
       removeItem(targetId);
@@ -96,11 +92,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           // Target shattered!
           shatterRock(targetPos, otherId);
         } else {
-          // Impact sound
-          CLUNK_AUDIO.currentTime = 0;
-          CLUNK_AUDIO.volume = Math.min(1.0, impactSpeed / 15);
-          CLUNK_AUDIO.playbackRate = 0.9 + Math.random() * 0.2;
-          CLUNK_AUDIO.play().catch(() => { });
+          // Impact sound (NEW: using stone_hit.mp3)
+          const volume = Math.min(1.0, impactSpeed / 15);
+          playSound('rock_hit', { pitch: 0.9 + Math.random() * 0.2, volume });
         }
 
         // Also damage the thrown stone (both rocks take damage on collision)
@@ -135,10 +129,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           const t = rigidBody.current!.translation();
           shatterRock(t, item.id);
         } else {
-          // Just a clunk
-          CLUNK_AUDIO.currentTime = 0;
-          CLUNK_AUDIO.volume = Math.min(1.0, impactSpeed / 20);
-          CLUNK_AUDIO.play().catch(() => { });
+          // Just a clunk (NEW: using stone_hit.mp3)
+          const volume = Math.min(1.0, impactSpeed / 20);
+          playSound('rock_hit', { volume });
         }
       }
     }
@@ -178,9 +171,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           rigidBody.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
           rigidBody.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
 
-          // Play sound using shared pool
-          DIG_AUDIO.currentTime = 0;
-          DIG_AUDIO.play().catch(() => { });
+          // Play planting sound (use random dig sound)
+          playSound(Math.random() > 0.5 ? 'dig_1' : (Math.random() > 0.5 ? 'dig_2' : 'dig_3'));
         }
       }
     }

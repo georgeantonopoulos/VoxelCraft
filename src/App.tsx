@@ -49,6 +49,9 @@ import { initializeNoise } from '@core/math/noise';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { useWorldStore } from '@state/WorldStore';
 
+// Audio System
+import { audioManager, SOUND_REGISTRY } from '@core/audio';
+
 // Keyboard Map
 const keyboardMap = [
   { name: 'forward', keys: ['ArrowUp', 'w', 'W'] },
@@ -88,6 +91,14 @@ const App: React.FC = () => {
   // Wait for colliders to be created after terrain loads
   // Initial load chunks now create colliders immediately (spawnedAt === 0 in ChunkMesh),
   // but we still add a small delay to ensure Rapier has processed the trimesh BVH
+  // Initialize AudioManager once on app mount
+  useEffect(() => {
+    audioManager.initialize(SOUND_REGISTRY);
+    return () => {
+      audioManager.dispose();
+    };
+  }, []);
+
   useEffect(() => {
     if (terrainLoaded && !collidersReady) {
       const handle = setTimeout(() => setCollidersReady(true), 150);
