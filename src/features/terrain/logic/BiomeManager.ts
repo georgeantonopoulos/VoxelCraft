@@ -337,6 +337,15 @@ export class BiomeManager {
    * @returns Humidity value 0-1 (0 = arid, 1 = saturated)
    */
   static getHumidityField(worldX: number, worldY: number, worldZ: number): number {
+    // Check Sacred Grove FIRST - barren zones are completely arid until tree grows
+    // Tree humidity spreading is handled separately via treeHumidityBoost vertex attribute
+    const groveInfo = this.getSacredGroveInfo(worldX, worldZ);
+    if (groveInfo.inGrove && groveInfo.intensity > 0.3) {
+      // Sacred Grove centers are bone dry - no water influence, no climate humidity
+      // This overrides everything including water proximity
+      return 0.0;
+    }
+
     // 1. Get base climate humidity (already exists, -1 to 1 range)
     const climate = this.getClimate(worldX, worldZ);
     const baseHumid = (climate.humid + 1) * 0.5; // Normalize to 0-1
@@ -349,7 +358,16 @@ export class BiomeManager {
     if (worldY < WATER_LEVEL) return 1.0;
 
     // 4. Combine: 70% biome base + 30% water proximity
-    return Math.min(1, baseHumid * 0.7 + waterInfluence * 0.3);
+    let humidity = Math.min(1, baseHumid * 0.7 + waterInfluence * 0.3);
+
+    // 5. Fade humidity at Sacred Grove edges (intensity 0-0.3)
+    if (groveInfo.inGrove) {
+      // Smooth transition at edges
+      const edgeFade = groveInfo.intensity / 0.3; // 0 at edge, 1 at intensity=0.3
+      humidity *= (1.0 - edgeFade);
+    }
+
+    return humidity;
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {
