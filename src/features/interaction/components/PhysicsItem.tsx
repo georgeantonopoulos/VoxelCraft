@@ -1,6 +1,7 @@
-import React, { useRef, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
+import React, { useRef, useEffect, Suspense } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier } from '@react-three/rapier';
+import { PositionalAudio } from '@react-three/drei';
 import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
@@ -9,6 +10,9 @@ import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import CustomShaderMaterial from 'three-custom-shader-material';
+
+// Fire sound URL for spatial audio
+import fireUrl from '@/assets/sounds/fire.mp3?url';
 
 interface PhysicsItemProps {
   item: ActivePhysicsItem;
@@ -311,20 +315,44 @@ const FireParticles: React.FC = () => {
     </group>
   );
 };
+/**
+ * FireSound - Spatial audio for campfires using drei's PositionalAudio.
+ *
+ * Uses Web Audio API's PannerNode for true 3D spatialization:
+ * - refDistance: Radius where volume is 100% (5 units = ~5 meters)
+ * - rolloffFactor: How quickly sound fades beyond refDistance
+ * - maxDistance: Sound is silent beyond this distance
+ * - distanceModel: "inverse" provides realistic falloff curve
+ *
+ * The sound automatically pans left/right based on player orientation
+ * and attenuates based on distance from the fire.
+ */
 const FireSound: React.FC = () => {
+  const audioRef = useRef<THREE.PositionalAudio>(null);
+
   useEffect(() => {
-    // Start fire loop on mount
-    window.dispatchEvent(new CustomEvent('vc-audio-ambient-enter', {
-      detail: { soundId: 'fire_loop', fadeIn: 500 }
-    }));
+    // Auto-play when component mounts
+    if (audioRef.current && !audioRef.current.isPlaying) {
+      audioRef.current.play();
+    }
 
     return () => {
-      // Stop fire loop on unmount
-      window.dispatchEvent(new CustomEvent('vc-audio-ambient-exit', {
-        detail: { soundId: 'fire_loop', fadeOut: 1000 }
-      }));
+      // Stop when component unmounts (fire destroyed)
+      if (audioRef.current && audioRef.current.isPlaying) {
+        audioRef.current.stop();
+      }
     };
   }, []);
 
-  return null;
+  return (
+    <Suspense fallback={null}>
+      <PositionalAudio
+        ref={audioRef}
+        url={fireUrl}
+        distance={5}           // Full volume within 5 units
+        loop
+        autoplay
+      />
+    </Suspense>
+  );
 };

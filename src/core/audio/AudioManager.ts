@@ -41,6 +41,9 @@ export class AudioManager {
   // Active looping sounds (ambient)
   private loopingSounds: Map<string, HTMLAudioElement> = new Map();
 
+  // Reference count for ambient sounds (multiple sources can request same sound)
+  private ambientRefCounts: Map<string, number> = new Map();
+
   // Initialization flag
   private initialized: boolean = false;
 
@@ -251,9 +254,14 @@ export class AudioManager {
 
   /**
    * Start an ambient looping sound (fire, wind, etc.)
+   * Uses reference counting so multiple sources can request the same sound.
    */
   private startAmbient(soundId: string, fadeIn?: number): void {
-    // Don't restart if already playing
+    // Increment reference count
+    const currentCount = this.ambientRefCounts.get(soundId) ?? 0;
+    this.ambientRefCounts.set(soundId, currentCount + 1);
+
+    // If already playing, just increment the ref count (done above)
     if (this.loopingSounds.has(soundId)) {
       return;
     }
@@ -289,8 +297,22 @@ export class AudioManager {
 
   /**
    * Stop an ambient looping sound
+   * Uses reference counting - only stops when all sources have released.
    */
   private stopAmbient(soundId: string, fadeOut?: number): void {
+    // Decrement reference count
+    const currentCount = this.ambientRefCounts.get(soundId) ?? 0;
+    const newCount = Math.max(0, currentCount - 1);
+
+    if (newCount > 0) {
+      // Other sources still want this sound playing
+      this.ambientRefCounts.set(soundId, newCount);
+      return;
+    }
+
+    // No more references, actually stop the sound
+    this.ambientRefCounts.delete(soundId);
+
     const audio = this.loopingSounds.get(soundId);
     if (!audio) return;
 
@@ -357,6 +379,7 @@ export class AudioManager {
     // Stop all looping sounds
     this.loopingSounds.forEach(audio => audio.pause());
     this.loopingSounds.clear();
+    this.ambientRefCounts.clear();
 
     // Clear all pools
     this.pools.clear();
