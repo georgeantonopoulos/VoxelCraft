@@ -564,7 +564,21 @@ export const triplanarFragmentShader = `
       col = mix(col, mossColor * (0.6 + 0.4 * nHigh.a), mossMix);
       accRoughness = mix(accRoughness, 0.9, mossMix);
     }
-    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, vWetness * 0.9);
+    // === HUMIDITY-BASED VISUAL WETNESS ===
+    // Materials respond differently to humidity:
+    // - Sand, stone, dirt, clay: get visually wet (darker, shinier)
+    // - Grass: stays dry (water drains, leaves shed water)
+    // - Snow, ice: unaffected (already frozen water)
+    // Weight how much this surface should show wetness based on material composition
+    float wettableMaterials = vWa.z + vWa.w + vWb.y + vWb.w + vWc.z + vWc.w; // stone + dirt + sand + clay + red_sand + terracotta
+    float nonWettableMaterials = vWb.x + vWb.z + vWd.y; // grass + snow + ice
+    float wettabilityFactor = clamp(wettableMaterials / max(wettableMaterials + nonWettableMaterials, 0.001), 0.0, 1.0);
+
+    // Humidity contributes to visual wetness for wettable materials
+    float humidityWetness = totalHumidity * wettabilityFactor * 0.7; // 0.7 = max humidity wetness contribution
+    float combinedWetness = max(vWetness, humidityWetness);
+
+    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, combinedWetness * 0.9);
     col *= (1.0 + macro * 0.06); accRoughness += macro * 0.05;
 
     // === UNIVERSAL FINE GRAIN: Apply to ALL terrain close-up ===
@@ -984,7 +998,11 @@ export const triplanarFragmentShader = `
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     csm_Emissive = vec3(accEmission * accColor);
     accRoughness -= (nHigh.r * 0.1);
-    if (uWetnessEnabled > 0.5) accRoughness = mix(accRoughness, 0.2, vWetness);
+    // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
+    if (uWetnessEnabled > 0.5) {
+      float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);
+      accRoughness = mix(accRoughness, 0.2, roughnessWetness);
+    }
     accRoughness = max(accRoughness, clamp(uRoughnessMin, 0.0, 1.0));
     if (dominantChannel == 8) accRoughness = 0.1;
     csm_Roughness = accRoughness;
