@@ -1,5 +1,47 @@
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL, LIGHT_CELL_SIZE, LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
+import { BiomeManager } from './BiomeManager';
+
+/**
+ * Configuration for tree-based humidity boost (Sacred Grove spreading)
+ */
+export interface HumidityConfig {
+  grownTrees: Array<{ worldX: number; worldZ: number; ageMs: number }>;
+  currentTime: number;
+  spreadRate: number;  // voxels per second (default: 2.0)
+  maxRadius: number;   // max influence radius (default: 64)
+}
+
+/**
+ * Calculate humidity boost from nearby Sacred Grove trees at a vertex position.
+ * Uses quadratic falloff from tree centers based on tree age and spread rate.
+ */
+function calculateTreeHumidityBoost(
+  worldX: number,
+  worldZ: number,
+  config: HumidityConfig | null
+): number {
+  if (!config || config.grownTrees.length === 0) return 0;
+
+  let maxBoost = 0;
+  for (const tree of config.grownTrees) {
+    const age = (config.currentTime - tree.ageMs) / 1000;
+    const radius = Math.min(age * config.spreadRate, config.maxRadius);
+    if (radius <= 0) continue;
+
+    const dx = worldX - tree.worldX;
+    const dz = worldZ - tree.worldZ;
+    const distSq = dx * dx + dz * dz;
+    const radiusSq = radius * radius;
+
+    if (distSq < radiusSq) {
+      // Quadratic falloff: 1.0 at center, 0.0 at edge
+      const t = Math.sqrt(distSq) / radius;
+      maxBoost = Math.max(maxBoost, 1.0 - t * t);
+    }
+  }
+  return maxBoost;
+}
 
 const SIZE_X = TOTAL_SIZE_XZ;
 const SIZE_Y = TOTAL_SIZE_Y;
@@ -362,7 +404,10 @@ export function generateMesh(
   material: Uint8Array,
   wetness?: Uint8Array,
   mossiness?: Uint8Array,
-  lightGrid?: Uint8Array
+  lightGrid?: Uint8Array,
+  humidityConfig?: HumidityConfig | null,
+  chunkWorldX: number = 0,
+  chunkWorldZ: number = 0
 ): MeshData {
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
@@ -379,6 +424,8 @@ export function generateMesh(
   const tMoss: number[] = [];
   const tCavity: number[] = [];
   const tLightColors: number[] = []; // Per-vertex GI light
+  const tBaseHumidity: number[] = [];  // Per-vertex base humidity (biome + water proximity)
+  const tTreeBoost: number[] = [];     // Per-vertex humidity boost from Sacred Grove trees
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
@@ -534,6 +581,17 @@ export function generateMesh(
             const [lr, lg, lb] = sampleLightGrid(lightGrid, px, py, pz);
             tLightColors.push(lr, lg, lb);
 
+            // Sample humidity field at vertex position
+            const worldX = chunkWorldX + px;
+            const worldY = py + MESH_Y_OFFSET;
+            const worldZ = chunkWorldZ + pz;
+            const baseHumidity = BiomeManager.getHumidityField(worldX, worldY, worldZ);
+            tBaseHumidity.push(baseHumidity);
+
+            // Sample tree boost (Sacred Grove spreading)
+            const treeBoost = calculateTreeHumidityBoost(worldX, worldZ, humidityConfig ?? null);
+            tTreeBoost.push(treeBoost);
+
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -674,6 +732,8 @@ export function generateMesh(
     mossiness: new Float32Array(tMoss),
     cavity: new Float32Array(tCavity),
     lightColors: new Float32Array(tLightColors),
+    baseHumidity: new Float32Array(tBaseHumidity),
+    treeHumidityBoost: new Float32Array(tTreeBoost),
     waterPositions: water.positions,
     waterIndices: water.indices,
     waterNormals: water.normals,

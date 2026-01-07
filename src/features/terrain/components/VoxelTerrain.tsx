@@ -481,16 +481,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, []);
 
   // === BIOME FOG STATE ===
-  // Track grown tree data for humidity spreading shader
-  // Store grownAt timestamps and compute ages each frame to avoid jerky updates
-  // NOTE: Uses THREE.Vector2[] and number[] for proper Three.js uniform binding
-  const grownTreeDataRef = useRef<{
-    count: number;
-    positions: THREE.Vector2[];      // Array of Vector2 for shader uniform
-    grownAtTimestamps: number[];     // Store raw timestamps, compute ages each frame
-    ages: number[];                  // Array of ages for shader uniform
-    lastTreeListUpdate: number;      // When we last refreshed the tree list
-  } | null>(null);
+  // NOTE: Humidity spreading now uses vertex attributes instead of uniforms
+  // The grownTreeDataRef is no longer needed - tree data is broadcast to workers directly
 
   // Track current biome fog settings with smooth interpolation.
   // We sample the biome at camera position each frame and lerp toward target values.
@@ -553,6 +545,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const pendingVersionRemovals = useRef<Set<string>>(new Set());
   const pendingVersionAdds = useRef<Map<string, number>>(new Map());
   const lastFlushTime = useRef(0);
+
+  // === HUMIDITY EXPANSION TRACKING ===
+  // Track grown trees and their spreading humidity radius
+  const humidityState = useRef<{
+    lastCheckTime: number;
+    treeRadii: Map<string, number>;  // treeId -> last known radius
+  }>({ lastCheckTime: 0, treeRadii: new Map() });
+
+  const HUMIDITY_CHECK_INTERVAL_MS = 5000;  // Check every 5 seconds
+  const HUMIDITY_SPREAD_RATE = 2.0;  // voxels per second
+  const HUMIDITY_MAX_RADIUS = 64;  // ~2 chunks max
 
   // Flush pending version updates in batches to prevent massive React reconciliations.
   // Previously flushed ALL queued updates every 100ms, causing 50-120ms render spikes
@@ -1642,6 +1645,59 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    // 7. HUMIDITY EXPANSION CHECK
+    // Check if Sacred Grove trees have expanded their humidity radius
+    const now = Date.now();
+    if (now - humidityState.current.lastCheckTime > HUMIDITY_CHECK_INTERVAL_MS) {
+      humidityState.current.lastCheckTime = now;
+
+      const grownTrees = useWorldStore.getState().getGrownTrees();
+      const chunksToRemesh = new Set<string>();
+
+      for (const tree of grownTrees) {
+        const treeId = `${tree.x},${tree.z}`;
+        const age = (now - tree.grownAt) / 1000;
+        const currentRadius = Math.min(age * HUMIDITY_SPREAD_RATE, HUMIDITY_MAX_RADIUS);
+        const prevRadius = humidityState.current.treeRadii.get(treeId) || 0;
+
+        // Only remesh if radius expanded significantly (half a chunk)
+        if (currentRadius > prevRadius + CHUNK_SIZE_XZ * 0.5) {
+          humidityState.current.treeRadii.set(treeId, currentRadius);
+
+          // Queue chunks within new radius
+          const chunkRadius = Math.ceil(currentRadius / CHUNK_SIZE_XZ);
+          const treeCx = Math.floor(tree.x / CHUNK_SIZE_XZ);
+          const treeCz = Math.floor(tree.z / CHUNK_SIZE_XZ);
+
+          for (let dcx = -chunkRadius; dcx <= chunkRadius; dcx++) {
+            for (let dcz = -chunkRadius; dcz <= chunkRadius; dcz++) {
+              const key = `${treeCx + dcx},${treeCz + dcz}`;
+              if (chunkDataRef.current.has(key)) {
+                chunksToRemesh.add(key);
+              }
+            }
+          }
+        }
+      }
+
+      // Queue affected chunks for remesh
+      chunksToRemesh.forEach(key => remeshQueue.current.add(key));
+
+      // Broadcast tree data to workers for humidity calculation
+      if (poolRef.current && grownTrees.length > 0) {
+        poolRef.current.postToAll({
+          type: 'UPDATE_GROWN_TREES',
+          payload: {
+            trees: grownTrees.map(t => ({
+              worldX: t.x,
+              worldZ: t.z,
+              ageMs: t.grownAt
+            }))
+          }
+        });
+      }
+    }
+
     // --- Performance Diagnostics ---
     if (typeof window !== 'undefined') {
       const diag = (window as any).__vcDiagnostics || {};
@@ -1687,70 +1743,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Convert weightsView string to numeric value for shader
     const weightsViewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
 
-    // Collect grown tree data for humidity spreading shader
-    // Only update when trees exist and humidity hasn't reached max spread
-    const now = Date.now();
-    // maxRadius=64, spreadRate=0.5 => 128 seconds to reach full spread
-    const maxSpreadTimeMs = 128 * 1000;
-
-    // Refresh the tree list every 2 seconds (positions don't change often)
-    // But compute ages EVERY FRAME to avoid jerky humidity expansion
-    if (!grownTreeDataRef.current || now - grownTreeDataRef.current.lastTreeListUpdate > 2000) {
-      const grownTrees = useWorldStore.getState().getGrownTrees();
-
-      if (grownTrees.length > 0) {
-        // Filter out trees that have fully spread (age > time to reach max radius)
-        // These trees no longer need shader updates
-        const activeTrees = grownTrees.filter(t => (now - t.grownAt) < maxSpreadTimeMs);
-
-        if (activeTrees.length > 0) {
-          // Sort by distance to camera for best coverage
-          const cameraPos = state.camera.position;
-          activeTrees.sort((a, b) => {
-            const distA = (a.x - cameraPos.x) ** 2 + (a.z - cameraPos.z) ** 2;
-            const distB = (b.x - cameraPos.x) ** 2 + (b.z - cameraPos.z) ** 2;
-            return distA - distB;
-          });
-
-          // Reuse or create Vector2 array for positions
-          const positions = grownTreeDataRef.current?.positions || Array.from({ length: 8 }, () => new THREE.Vector2(0, 0));
-          const ages = grownTreeDataRef.current?.ages || new Array(8).fill(0);
-          const count = Math.min(activeTrees.length, 8);
-          const timestamps: number[] = [];
-
-          for (let i = 0; i < count; i++) {
-            positions[i].set(activeTrees[i].x, activeTrees[i].z);
-            timestamps.push(activeTrees[i].grownAt);
-          }
-
-          grownTreeDataRef.current = { count, positions, grownAtTimestamps: timestamps, ages, lastTreeListUpdate: now };
-        } else {
-          // All trees have reached max spread - set count to 0 to disable shader work
-          if (grownTreeDataRef.current) {
-            grownTreeDataRef.current.count = 0;
-            grownTreeDataRef.current.lastTreeListUpdate = now;
-          }
-        }
-      } else if (!grownTreeDataRef.current) {
-        grownTreeDataRef.current = {
-          count: 0,
-          positions: Array.from({ length: 8 }, () => new THREE.Vector2(0, 0)),
-          grownAtTimestamps: [],
-          ages: new Array(8).fill(0),
-          lastTreeListUpdate: now
-        };
-      } else {
-        grownTreeDataRef.current.lastTreeListUpdate = now;
-      }
-    }
-
-    // Update ages EVERY FRAME from stored timestamps for smooth humidity expansion
-    if (grownTreeDataRef.current && grownTreeDataRef.current.count > 0) {
-      const { grownAtTimestamps, ages, count } = grownTreeDataRef.current;
-      for (let i = 0; i < count; i++) {
-        ages[i] = (now - grownAtTimestamps[i]) / 1000;
-      }
-    }
+    // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
+    // computed during mesh generation. No uniform updates needed - it's baked into vertices!
+    // Tree expansion is tracked above in section 7 (HUMIDITY EXPANSION CHECK).
 
     updateSharedUniforms(state, {
       sunDir: sunDirection,
@@ -1782,10 +1777,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       giIntensity,
       // Color grading
       terrainSaturation,
-      // Humidity spreading from grown trees
-      grownTreeCount: grownTreeDataRef.current?.count ?? 0,
-      grownTreePositions: grownTreeDataRef.current?.positions,
-      grownTreeAges: grownTreeDataRef.current?.ages,
     });
     frameProfiler.end('terrain-uniforms');
 

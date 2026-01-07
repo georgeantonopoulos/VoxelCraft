@@ -1,5 +1,6 @@
 import { makeNoise2D } from 'fast-simplex-noise';
 import { MaterialType } from '@/types';
+import { WATER_LEVEL } from '@/constants';
 
 export type BiomeType =
   | 'PLAINS'
@@ -324,6 +325,31 @@ export class BiomeManager {
     let erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
 
     return { temp, humid, continent, erosion };
+  }
+
+  /**
+   * Get humidity field value at world position.
+   * Combines biome climate humidity with water proximity.
+   *
+   * @param worldX - World X coordinate
+   * @param worldY - World Y coordinate (height matters for water proximity)
+   * @param worldZ - World Z coordinate
+   * @returns Humidity value 0-1 (0 = arid, 1 = saturated)
+   */
+  static getHumidityField(worldX: number, worldY: number, worldZ: number): number {
+    // 1. Get base climate humidity (already exists, -1 to 1 range)
+    const climate = this.getClimate(worldX, worldZ);
+    const baseHumid = (climate.humid + 1) * 0.5; // Normalize to 0-1
+
+    // 2. Water proximity boost - closer to water level = more humid
+    const waterDist = Math.abs(worldY - WATER_LEVEL);
+    const waterInfluence = Math.max(0, 1 - waterDist / 24); // Full influence within 24 blocks
+
+    // 3. Below water = fully saturated
+    if (worldY < WATER_LEVEL) return 1.0;
+
+    // 4. Combine: 70% biome base + 30% water proximity
+    return Math.min(1, baseHumid * 0.7 + waterInfluence * 0.3);
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {

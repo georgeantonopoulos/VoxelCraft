@@ -7,6 +7,8 @@ export const triplanarVertexShader = `
   attribute float aVoxelMossiness;
   attribute float aVoxelCavity;
   attribute vec3 aLightColor;  // Per-vertex GI light from light grid
+  attribute float aBaseHumidity;  // Per-vertex base humidity from biome + water proximity
+  attribute float aTreeHumidityBoost;  // Per-vertex humidity boost from Sacred Grove trees
 
   uniform vec2 uWindDirXZ;
   uniform float uNormalStrength;
@@ -24,6 +26,8 @@ export const triplanarVertexShader = `
   varying float vDominantChannel;
   varying float vDominantWeight;
   varying vec3 vLightColor;  // Pass GI light to fragment shader
+  varying float vBaseHumidity;  // Pass base humidity to fragment shader
+  varying float vTreeHumidityBoost;  // Pass tree boost to fragment shader
 
   vec2 safeNormalize2(vec2 v) {
     float len = length(v);
@@ -166,6 +170,8 @@ export const triplanarVertexShader = `
     vMossiness = aVoxelMossiness;
     vCavity = aVoxelCavity;
     vLightColor = aLightColor;  // Pass GI light to fragment
+    vBaseHumidity = aBaseHumidity;  // Pass base humidity to fragment
+    vTreeHumidityBoost = aTreeHumidityBoost;  // Pass tree boost to fragment
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     float wMax = vWa.x; float ch = 0.0;
@@ -274,6 +280,8 @@ export const triplanarFragmentShader = `
   varying float vDominantChannel;
   varying float vDominantWeight;
   varying vec3 vLightColor;  // GI light interpolated from vertices
+  varying float vBaseHumidity;  // Base humidity from biome + water proximity
+  varying float vTreeHumidityBoost;  // Humidity boost from Sacred Grove trees
 
   vec3 safeNormalize(vec3 v) {
       float len = length(v);
@@ -490,14 +498,18 @@ export const triplanarFragmentShader = `
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
 
-    // === HUMIDITY SPREADING - DISABLED ===
-    // Causes GPU performance issues with array uniforms on some hardware.
-    // TODO: Re-implement using a different approach (vertex attributes, texture lookup, etc.)
-    float humidityDeltaGrass = 0.0;
-    float humidityDeltaDirt = 0.0;
-    float humidityDeltaRedSand = 0.0;
-    float humidityDeltaStone = 0.0;
-    float humidityDeltaTerracotta = 0.0;
+    // === HUMIDITY FIELD SYSTEM ===
+    // Two-layer humidity: base (biome+water) + tree boost (Sacred Grove)
+    // Both values are baked into vertex attributes during meshing - zero per-fragment cost!
+    float totalHumidity = clamp(vBaseHumidity + vTreeHumidityBoost, 0.0, 1.0);
+
+    // Material weight deltas based on humidity
+    // High humidity: boost grass/dirt, reduce desert materials
+    float humidityDeltaGrass = totalHumidity * 0.6;
+    float humidityDeltaDirt = totalHumidity * 0.3;
+    float humidityDeltaRedSand = -totalHumidity * 0.8;
+    float humidityDeltaStone = -totalHumidity * 0.2;
+    float humidityDeltaTerracotta = -totalHumidity * 0.5;
 
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
