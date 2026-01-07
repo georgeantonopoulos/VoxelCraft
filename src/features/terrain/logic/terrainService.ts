@@ -819,19 +819,13 @@ export class TerrainService {
         // --- 3.65 Root Hollow Generation (Sacred Grove Centers) ---
         // Root Hollows spawn at the center of Sacred Grove clearings.
         //
-        // CROSS-CHUNK COORDINATION: Sacred Groves can span multiple chunks. To ensure
-        // exactly ONE Root Hollow per grove, we use a super-grid approach:
-        // 1. Divide the world into 64x64 super-cells (larger than most groves)
-        // 2. Each super-cell can have at most 1 Root Hollow
-        // 3. Within a super-cell, the Root Hollow spawns at a deterministic position
-        //    based on a hash of the super-cell coordinates
-        //
-        // This ensures adjacent chunks in the same grove won't both place Root Hollows.
-        const ROOT_HOLLOW_SUPER_GRID = 64; // One Root Hollow per 64x64 world area max
+        // CROSS-CHUNK COORDINATION: To ensure exactly ONE Root Hollow per grove center, 
+        // we use a Local Maximum Detection approach:
+        // 1. Each 8x8 sample point checks if it's at the "peak" of the grove noise.
+        // 2. We compare the current point's intensity against its neighbors.
+        // 3. Only the local peak point (the absolute center) places a hollow.
+        // This ensures consistency across chunk boundaries without random offsets.
         const ROOT_HOLLOW_SAMPLE_GRID = 8; // Sample every 8 blocks within chunk
-
-        // Track which super-cells we've already placed in (for this chunk)
-        const placedSuperCells = new Set<string>();
 
         // Scan the chunk for Sacred Grove centers
         for (let gz = PAD; gz < sizeZ - PAD; gz += ROOT_HOLLOW_SAMPLE_GRID) {
@@ -843,28 +837,17 @@ export class TerrainService {
                 const groveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
                 if (!groveInfo.isCenter) continue;
 
-                // Determine which super-cell this point belongs to
-                const superCellX = Math.floor(wx / ROOT_HOLLOW_SUPER_GRID);
-                const superCellZ = Math.floor(wz / ROOT_HOLLOW_SUPER_GRID);
-                const superCellKey = `${superCellX},${superCellZ}`;
+                // --- LOCAL MAXIMUM DETECTION ---
+                // Only place if this point is a peak compared to neighbors 
+                // (prevents clusters of hollows at the center).
+                const step = ROOT_HOLLOW_SAMPLE_GRID;
+                const iC = groveInfo.intensity;
+                const iN = BiomeManager.getSacredGroveInfo(wx, wz + step).intensity;
+                const iS = BiomeManager.getSacredGroveInfo(wx, wz - step).intensity;
+                const iE = BiomeManager.getSacredGroveInfo(wx + step, wz).intensity;
+                const iW = BiomeManager.getSacredGroveInfo(wx - step, wz).intensity;
 
-                // Skip if we already placed in this super-cell
-                if (placedSuperCells.has(superCellKey)) continue;
-
-                // Use a deterministic hash to decide the "designated" spawn point within this super-cell
-                // The Root Hollow should only spawn if this sample point is close to the designated spot
-                const hashSeed = superCellX * 73856093 + superCellZ * 19349663;
-                const designatedOffsetX = ((hashSeed & 0xFFFF) / 0xFFFF) * ROOT_HOLLOW_SUPER_GRID;
-                const designatedOffsetZ = (((hashSeed >> 16) & 0xFFFF) / 0xFFFF) * ROOT_HOLLOW_SUPER_GRID;
-                const designatedWx = superCellX * ROOT_HOLLOW_SUPER_GRID + designatedOffsetX;
-                const designatedWz = superCellZ * ROOT_HOLLOW_SUPER_GRID + designatedOffsetZ;
-
-                // Only spawn if this sample point is within 12 blocks of the designated spot
-                // (accounts for sampling grid and slight variations)
-                const distToDesignated = Math.sqrt(
-                    (wx - designatedWx) ** 2 + (wz - designatedWz) ** 2
-                );
-                if (distToDesignated > 12) continue;
+                if (iC < iN || iC < iS || iC < iE || iC < iW) continue;
 
                 // Find the surface at this position
                 const surface = findTopSurfaceAtLocalXZ(gx - PAD, gz - PAD);
@@ -893,7 +876,6 @@ export class TerrainService {
                     gz - PAD,
                     nx, ny, nz
                 );
-                placedSuperCells.add(superCellKey);
             }
         }
 

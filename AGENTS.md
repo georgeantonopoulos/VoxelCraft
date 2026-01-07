@@ -392,3 +392,8 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Result**: Worktree is available for concurrent development in the `worktrees/saw` directory.
 
 [diff_block_end]
+
+- 2026-01-07: **Fixed Root Hollow Placement Logic**.
+  - **Issue**: Root Hollows were either clustered or non-existent due to a random "designated spot" logic in the super-grid de-duplication.
+  - **Fix**: Replaced random super-grid sampling with Local Maximum Detection. Now, each sample point checks if it is the "peak" of the grove noise compared to its neighbors.
+  - **Result**: Exactly one Root Hollow is placed at the absolute center of each Sacred Grove, consistent across chunk boundaries.
