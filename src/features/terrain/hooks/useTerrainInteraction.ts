@@ -102,10 +102,6 @@ export interface InteractionCallbacks {
   queueRemesh: (key: string) => void;
   /** Reference to chunk data map for raycasting */
   chunkDataRef: React.RefObject<Map<string, ChunkState>>;
-  /** Audio pool for playing sounds */
-  audioPool: {
-    play: (url: string, volume?: number, pitchVar?: number) => void;
-  };
   /** Called when logs are spawned from sawing a fallen tree */
   onLogSpawn?: (treeId: string, logs: LogSpawnData[]) => void;
   /** Called to remove a falling tree (e.g., after sawing) */

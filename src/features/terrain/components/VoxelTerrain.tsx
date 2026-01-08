@@ -796,7 +796,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       queueVersionIncrement,
       queueRemesh: (key: string) => remeshQueue.current.add(key),
       chunkDataRef,
-      audioPool,
       onLogSpawn: handleConvertToLogs,
       onFallingTreeRemove: handleFallingTreeRemove,
     },
