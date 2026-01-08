@@ -4,12 +4,14 @@ import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const lumabeeUrl = "/src/assets/models/lumabee.glb";
+// Import model as URL (Vite will handle bundling)
+import lumabeeUrl from '@/assets/models/lumabee.glb?url';
 
 /**
  * Bee AI States
  */
 export enum BeeState {
+  APPROACH = 'APPROACH',   // Flying to tree from spawn (dramatic entrance)
   IDLE = 'IDLE',           // Hovering near tree
   PATROL = 'PATROL',       // Flying in pattern around tree
   HARVEST = 'HARVEST',     // Extracting nectar from tree
