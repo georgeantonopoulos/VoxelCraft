@@ -32,6 +32,7 @@ import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilitie
 import { emitSpark } from '@features/interaction/components/SparkSystem';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
+import { fallingTreeRegistry, fallingTreeColliderRegistry } from '@features/flora/components/FallingTree';
 
 import {
   getMaterialColor,
@@ -176,17 +177,46 @@ export function useTerrainInteraction(
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-      // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
+      // Filter out terrain and player colliders - we want to hit physics items (trees, stones, etc.)
       const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
         const userData = collider.parent()?.userData as any;
-        // Include physics items and flora trees, exclude terrain
-        return userData?.type !== 'terrain';
+        // Include physics items and flora trees, exclude terrain and player
+        return userData?.type !== 'terrain' && userData?.type !== 'player';
       });
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
-        const userData = parent?.userData as any;
+        let userData = parent?.userData as any;
 
-        if (parent && userData) {
+        // Check fallingTreeColliderRegistry if userData is not available via collider.parent()
+        // This works around @react-three/rapier's userData not being accessible in raycasts
+        // We use the COLLIDER handle directly since that's what raycast returns
+        const colliderHandle = physicsHit.collider.handle;
+
+        // Debug: log handles and registry contents
+        const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+        console.log('[DEBUG] Raycast hit - colliderHandle:', colliderHandle, 'at:', hitPoint.x.toFixed(1), hitPoint.y.toFixed(1), hitPoint.z.toFixed(1), 'userData:', userData?.type, 'colliderRegistrySize:', fallingTreeColliderRegistry.size);
+
+        if (!userData) {
+          // First try collider registry (most reliable - direct match)
+          const colliderRegistryData = fallingTreeColliderRegistry.get(colliderHandle);
+          if (colliderRegistryData) {
+            userData = colliderRegistryData;
+            console.log('[DEBUG] Found userData in fallingTreeColliderRegistry for colliderHandle:', colliderHandle, userData);
+          } else {
+            // Fallback: try parent handle in rigid body registry
+            const parentHandle = parent?.handle;
+            if (parentHandle !== undefined) {
+              const rbRegistryData = fallingTreeRegistry.get(parentHandle);
+              if (rbRegistryData) {
+                userData = rbRegistryData;
+                console.log('[DEBUG] Found userData in fallingTreeRegistry for parentHandle:', parentHandle, userData);
+              }
+            }
+          }
+        }
+
+        // Note: parent may be null for fallen trees when userData came from registry
+        if (userData) {
           // --- FLORA TREE ---
           if (userData.type === 'flora_tree') {
             // Skip physics tree hit if terrain is closer - let terrain-based proximity detection
@@ -343,6 +373,7 @@ export function useTerrainInteraction(
 
           // --- FALLEN TREE (for sawing into logs) ---
           if (userData.type === 'fallen_tree') {
+            console.log('[DEBUG] FALLEN TREE detected! userData:', userData);
             const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
             const selectedItem = inventorySlots[selectedSlotIndex];
             const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
@@ -374,8 +405,15 @@ export function useTerrainInteraction(
             const spawnedLogs: LogSpawnData[] = [];
 
             // Get the fallen tree's physics position (may have moved from original)
-            const treePos = parent.translation();
-            const treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
+            // Use parent.translation() if available, otherwise use hit point as fallback
+            let treeBasePos: THREE.Vector3;
+            if (parent) {
+              const treePos = parent.translation();
+              treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
+            } else {
+              // Fallback to hit point (less accurate but functional)
+              treeBasePos = hitPoint.clone();
+            }
 
             for (let i = 0; i < logCount; i++) {
               // Offset logs along the tree's length

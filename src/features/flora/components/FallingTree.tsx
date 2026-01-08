@@ -1,10 +1,18 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
+import type { RapierRigidBody, RapierCollider } from '@react-three/rapier';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
+
+// Global registries to map handles to userData
+// This works around @react-three/rapier's userData not being accessible via collider.parent()
+// We maintain TWO registries: one by rigid body handle, one by collider handle, since raycast returns collider handle
+export const fallingTreeRegistry = new Map<number, { type: string; id: string; treeType: number; seed: number; scale: number }>();
+export const fallingTreeColliderRegistry = new Map<number, { type: string; id: string; treeType: number; seed: number; scale: number }>();
 
 export interface LogSpawnData {
     position: THREE.Vector3;
@@ -21,7 +29,102 @@ interface FallingTreeProps {
 }
 
 export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, seed, onConvertToLogs }) => {
+    const rigidBodyRef = useRef<RapierRigidBody>(null);
+    const colliderRef = useRef<RapierCollider>(null);
     const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
+
+    // userData for physics raycast detection
+    const userDataObj = useMemo(() => {
+        const data = { type: 'fallen_tree' as const, id, treeType: type, seed, scale: 0.8 + (seed % 0.4) };
+        return data;
+    }, [id, type, seed]);
+
+    // Register handles in global registries for raycast detection
+    // This works around @react-three/rapier's userData not being accessible via collider.parent()
+    // We register BOTH rigid body handle and collider handle for reliable lookup
+    useEffect(() => {
+        const checkAndRegister = () => {
+            const rbReady = rigidBodyRef.current !== null;
+            const colliderReady = colliderRef.current !== null;
+
+            if (rbReady) {
+                const rbHandle = rigidBodyRef.current!.handle;
+                fallingTreeRegistry.set(rbHandle, userDataObj);
+            }
+
+            if (colliderReady) {
+                const colliderHandle = colliderRef.current!.handle;
+                fallingTreeColliderRegistry.set(colliderHandle, userDataObj);
+                console.log('[FallingTree] Registered colliderHandle:', colliderHandle, 'userData:', userDataObj);
+            }
+
+            return rbReady && colliderReady;
+        };
+
+        // Try immediately, then retry after a short delay if not ready
+        if (!checkAndRegister()) {
+            const timeout = setTimeout(checkAndRegister, 100);
+            return () => clearTimeout(timeout);
+        }
+
+        return () => {
+            if (rigidBodyRef.current) {
+                fallingTreeRegistry.delete(rigidBodyRef.current.handle);
+            }
+            if (colliderRef.current) {
+                fallingTreeColliderRegistry.delete(colliderRef.current.handle);
+            }
+        };
+    }, [userDataObj]);
+
+    // Track if tree has settled (lying flat with low velocity)
+    const [isSettled, setIsSettled] = useState(false);
+    const settleCheckRef = useRef({ stableFrames: 0, lastCheckTime: 0 });
+
+    // Check if tree has settled - freeze physics when lying flat
+    useFrame(() => {
+        if (isSettled || !rigidBodyRef.current) return;
+
+        const now = performance.now();
+        // Only check every 100ms to reduce overhead
+        if (now - settleCheckRef.current.lastCheckTime < 100) return;
+        settleCheckRef.current.lastCheckTime = now;
+
+        const body = rigidBodyRef.current;
+        const linVel = body.linvel();
+        const angVel = body.angvel();
+
+        // Check velocity magnitude
+        const linSpeed = Math.sqrt(linVel.x ** 2 + linVel.y ** 2 + linVel.z ** 2);
+        const angSpeed = Math.sqrt(angVel.x ** 2 + angVel.y ** 2 + angVel.z ** 2);
+
+        // Get the tree's up vector (local Y axis in world space)
+        const rot = body.rotation();
+        const quat = new THREE.Quaternion(rot.x, rot.y, rot.z, rot.w);
+        const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+
+        // Tree is "flat" when its local Y axis is nearly horizontal (dot with world Y is small)
+        const upDot = Math.abs(localUp.y);
+        const isNearlyHorizontal = upDot < 0.3; // Tree trunk is close to horizontal
+
+        // Tree is stable when velocity is low and orientation is horizontal
+        const isStable = linSpeed < 0.1 && angSpeed < 0.1 && isNearlyHorizontal;
+
+        if (isStable) {
+            settleCheckRef.current.stableFrames++;
+            // Require 5 consecutive stable checks (~500ms) to confirm settled
+            if (settleCheckRef.current.stableFrames >= 5) {
+                // Freeze the tree by setting to kinematic
+                body.setBodyType(2, true); // 2 = KinematicPositionBased
+                body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+                body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+                setIsSettled(true);
+                console.log('[FallingTree] Tree settled and frozen:', id);
+            }
+        } else {
+            settleCheckRef.current.stableFrames = 0;
+        }
+    });
 
     const { rotation, scale } = useMemo(() => {
         const r = (seed % 1) * Math.PI * 2;
@@ -209,6 +312,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, se
 
     return (
         <RigidBody
+            ref={rigidBodyRef}
             position={position}
             colliders={false}
             type="dynamic"
@@ -217,10 +321,10 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, se
             mass={150 * scale}
             friction={3.0}
             restitution={0}
-            userData={{ type: 'fallen_tree', id, treeType: type, seed, scale }}
+            userData={userDataObj}
         >
-            {/* Approximate collider for the trunk - positioned so it pivots from the base slightly */}
-            <CylinderCollider args={[2.0 * scale, 0.35 * scale]} position={[0, 2.0 * scale, 0]} friction={3.0} restitution={0} />
+            {/* Approximate collider for the trunk - LARGER radius for easier raycast detection */}
+            <CylinderCollider ref={colliderRef} args={[2.5 * scale, 0.6 * scale]} position={[0, 2.5 * scale, 0]} friction={3.0} restitution={0} />
 
             <group rotation={[0, rotation, 0]} scale={[scale, scale, scale]}>
                 <mesh geometry={wood} material={woodMaterial} castShadow receiveShadow />

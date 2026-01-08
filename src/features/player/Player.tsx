@@ -287,7 +287,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   });
 
   return (
-    <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0}>
+    <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0} userData={{ type: 'player' }}>
       <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, 0.4]} />
     </RigidBody>
   );
