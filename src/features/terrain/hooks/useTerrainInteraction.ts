@@ -192,16 +192,11 @@ export function useTerrainInteraction(
         // We use the COLLIDER handle directly since that's what raycast returns
         const colliderHandle = physicsHit.collider.handle;
 
-        // Debug: log handles and registry contents
-        const hitPoint = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
-        console.log('[DEBUG] Raycast hit - colliderHandle:', colliderHandle, 'at:', hitPoint.x.toFixed(1), hitPoint.y.toFixed(1), hitPoint.z.toFixed(1), 'userData:', userData?.type, 'colliderRegistrySize:', fallingTreeColliderRegistry.size);
-
         if (!userData) {
           // First try collider registry (most reliable - direct match)
           const colliderRegistryData = fallingTreeColliderRegistry.get(colliderHandle);
           if (colliderRegistryData) {
             userData = colliderRegistryData;
-            console.log('[DEBUG] Found userData in fallingTreeColliderRegistry for colliderHandle:', colliderHandle, userData);
           } else {
             // Fallback: try parent handle in rigid body registry
             const parentHandle = parent?.handle;
@@ -209,7 +204,6 @@ export function useTerrainInteraction(
               const rbRegistryData = fallingTreeRegistry.get(parentHandle);
               if (rbRegistryData) {
                 userData = rbRegistryData;
-                console.log('[DEBUG] Found userData in fallingTreeRegistry for parentHandle:', parentHandle, userData);
               }
             }
           }
@@ -373,7 +367,6 @@ export function useTerrainInteraction(
 
           // --- FALLEN TREE (for sawing into logs) ---
           if (userData.type === 'fallen_tree') {
-            console.log('[DEBUG] FALLEN TREE detected! userData:', userData);
             const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
             const selectedItem = inventorySlots[selectedSlotIndex];
             const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
@@ -391,6 +384,14 @@ export function useTerrainInteraction(
             const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
             const { id: fallenTreeId, treeType, seed, scale } = userData;
 
+            // Calculate max health based on tree scale (larger trees need more sawing)
+            const maxHealth = Math.floor((scale || 1) * 30); // ~24-36 HP depending on scale
+            const sawDamage = capabilities.woodDamage; // SAW has 8.0 woodDamage
+
+            // Apply damage and track health
+            const damageStore = useEntityHistoryStore.getState();
+            const currentHealth = damageStore.damageEntity(fallenTreeId, sawDamage, maxHealth, 'Fallen Tree');
+
             // Particle and sound for sawing
             emitParticle({
               pos: hitPoint,
@@ -400,37 +401,40 @@ export function useTerrainInteraction(
             });
             audioPool.play(clunkUrl, 0.4, 0.7);
 
-            // Convert to logs (2-3 logs depending on tree scale)
-            const logCount = Math.floor(2 + (scale || 1) * 0.5);
-            const spawnedLogs: LogSpawnData[] = [];
+            // Only convert to logs when health reaches 0
+            if (currentHealth <= 0) {
+              // Convert to logs (2-3 logs depending on tree scale)
+              const logCount = Math.floor(2 + (scale || 1) * 0.5);
+              const spawnedLogs: LogSpawnData[] = [];
 
-            // Get the fallen tree's physics position (may have moved from original)
-            // Use parent.translation() if available, otherwise use hit point as fallback
-            let treeBasePos: THREE.Vector3;
-            if (parent) {
-              const treePos = parent.translation();
-              treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
-            } else {
-              // Fallback to hit point (less accurate but functional)
-              treeBasePos = hitPoint.clone();
-            }
+              // Get the fallen tree's physics position (may have moved from original)
+              // Use parent.translation() if available, otherwise use hit point as fallback
+              let treeBasePos: THREE.Vector3;
+              if (parent) {
+                const treePos = parent.translation();
+                treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
+              } else {
+                // Fallback to hit point (less accurate but functional)
+                treeBasePos = hitPoint.clone();
+              }
 
-            for (let i = 0; i < logCount; i++) {
-              // Offset logs along the tree's length
-              const offset = (i - (logCount - 1) / 2) * 1.5;
-              spawnedLogs.push({
-                position: treeBasePos.clone().add(new THREE.Vector3(offset * 0.3, 0.5 + i * 0.2, offset * 0.3)),
-                treeType: treeType,
-                seed: seed + i
-              });
-            }
+              for (let i = 0; i < logCount; i++) {
+                // Offset logs along the tree's length
+                const offset = (i - (logCount - 1) / 2) * 1.5;
+                spawnedLogs.push({
+                  position: treeBasePos.clone().add(new THREE.Vector3(offset * 0.3, 0.5 + i * 0.2, offset * 0.3)),
+                  treeType: treeType,
+                  seed: seed + i
+                });
+              }
 
-            // Call the interaction callbacks to spawn logs and remove the fallen tree
-            if (callbacks.onLogSpawn) {
-              callbacks.onLogSpawn(fallenTreeId, spawnedLogs);
-            }
-            if (callbacks.onFallingTreeRemove) {
-              callbacks.onFallingTreeRemove(fallenTreeId);
+              // Call the interaction callbacks to spawn logs and remove the fallen tree
+              if (callbacks.onLogSpawn) {
+                callbacks.onLogSpawn(fallenTreeId, spawnedLogs);
+              }
+              if (callbacks.onFallingTreeRemove) {
+                callbacks.onFallingTreeRemove(fallenTreeId);
+              }
             }
 
             return;

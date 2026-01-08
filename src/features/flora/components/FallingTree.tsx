@@ -55,7 +55,6 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, se
             if (colliderReady) {
                 const colliderHandle = colliderRef.current!.handle;
                 fallingTreeColliderRegistry.set(colliderHandle, userDataObj);
-                console.log('[FallingTree] Registered colliderHandle:', colliderHandle, 'userData:', userDataObj);
             }
 
             return rbReady && colliderReady;
@@ -119,7 +118,6 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, se
                 body.setLinvel({ x: 0, y: 0, z: 0 }, true);
                 body.setAngvel({ x: 0, y: 0, z: 0 }, true);
                 setIsSettled(true);
-                console.log('[FallingTree] Tree settled and frozen:', id);
             }
         } else {
             settleCheckRef.current.stableFrames = 0;

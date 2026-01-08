@@ -6,7 +6,6 @@ import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType } from '@/types';
 import { useInputStore } from '@/state/InputStore';
 import { useCraftingStore } from '@/state/CraftingStore';
-import { useCarryingStore } from '@/state/CarryingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 import { getToolCapabilities } from './ToolCapabilities';
@@ -55,56 +54,32 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         }
       }
 
-      // Q key: Pick up / drop log
+      // Q key: Pick up log into inventory
       if (e.key.toLowerCase() === 'q') {
         if (!document.pointerLockElement) return;
 
-        const carryingState = useCarryingStore.getState();
+        // Try to pick up a nearby log - raycast for logs
+        const origin = camera.position.clone();
+        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        const ray = new rapier.Ray(origin, direction);
 
-        if (carryingState.isCarrying()) {
-          // Drop the carried log - dispatch event for VoxelTerrain to handle
-          const droppedLog = carryingState.drop();
-          if (droppedLog) {
-            const origin = camera.position.clone();
-            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-            // Drop position: slightly in front of player, at player's feet level
-            const dropPos = origin.clone().add(direction.multiplyScalar(1.5));
-            dropPos.y = origin.y - 0.5; // Drop at feet level
+        const hit = world.castRay(ray, 4.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
+          return collider.parent()?.userData?.type === 'log';
+        });
 
-            window.dispatchEvent(new CustomEvent('vc-log-drop', {
-              detail: {
-                log: droppedLog,
-                position: [dropPos.x, dropPos.y, dropPos.z]
-              }
-            }));
-          }
-        } else {
-          // Try to pick up a nearby log - raycast for logs
-          const origin = camera.position.clone();
-          const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-          const ray = new rapier.Ray(origin, direction);
+        if (hit && hit.collider) {
+          const rigidBody = hit.collider.parent();
+          if (rigidBody) {
+            const userData = rigidBody.userData as any;
+            if (userData?.type === 'log') {
+              // Add log to inventory
+              const invState = useInventoryStore.getState();
+              invState.addItem(ItemType.LOG, 1);
 
-          const hit = world.castRay(ray, 4.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
-            return collider.parent()?.userData?.type === 'log';
-          });
-
-          if (hit && hit.collider) {
-            const rigidBody = hit.collider.parent();
-            if (rigidBody) {
-              const userData = rigidBody.userData as any;
-              if (userData?.type === 'log') {
-                // Pick up the log
-                carryingState.pickUp({
-                  id: userData.id,
-                  treeType: userData.treeType,
-                  seed: userData.seed || 0
-                });
-
-                // Dispatch event to remove log from world
-                window.dispatchEvent(new CustomEvent('vc-log-pickup', {
-                  detail: { logId: userData.id }
-                }));
-              }
+              // Dispatch event to remove log from world (no animation)
+              window.dispatchEvent(new CustomEvent('vc-log-pickup', {
+                detail: { logId: userData.id }
+              }));
             }
           }
         }
