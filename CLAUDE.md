@@ -305,6 +305,7 @@ Claude Code has access to specialized subagents for different tasks. **Use these
 | **root-cause-analyst** | Debugging errors, stack traces, unexpected behavior | Error messages, "X is broken", "doesn't work", crashes |
 | **docs-sync** | Updating CLAUDE.md/AGENTS.md after completing changes | After refactors, new features, architecture changes |
 | **claude-code-guide** | Questions about Claude Code itself, hooks, MCP servers | "Can Claude do...", "How do I configure..." |
+| **test-architect** | After implementing features, use to design and verify tests | New features, bug fixes needing regression tests |
 
 ### When to Use Each Agent
 
@@ -330,6 +331,12 @@ Claude Code has access to specialized subagents for different tasks. **Use these
 ```
 ❌ Forget to update documentation
 ✅ Task(docs-sync): "Update CLAUDE.md and AGENTS.md after GI lighting system implementation"
+```
+
+**Test Architect** - Use AFTER implementing new features or fixing bugs:
+```
+❌ Implement feature without considering test coverage
+✅ Task(test-architect): "Design tests for the new audio spatial system"
 ```
 
 ### Agent Usage Rules
