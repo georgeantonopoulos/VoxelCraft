@@ -1,5 +1,5 @@
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { generateMesh, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
+import { generateMesh, generateWaterSurfaceMesh, HumidityConfig } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications } from '@/state/WorldDB';
 import { CACHE_VERSION, getCachedChunk } from '@/state/ChunkCache';
@@ -13,6 +13,10 @@ const ctx: Worker = self as any;
 
 // Profile mode - enable via CONFIGURE message with profile: true
 let profileMode = false;
+
+// Grown trees cache for humidity spreading (Sacred Grove feature)
+// Updated via UPDATE_GROWN_TREES message from main thread
+let grownTreesCache: Array<{ worldX: number; worldZ: number; ageMs: number }> = [];
 const profile = (label: string, fn: () => void) => {
     if (!profileMode) { fn(); return; }
     const start = performance.now();
@@ -357,6 +361,9 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (profileMode) {
                 console.log(`[terrain.worker] Configured - SAB: false, profile: ${profileMode}`);
             }
+        } else if (type === 'UPDATE_GROWN_TREES') {
+            // Update the grown trees cache for humidity spreading
+            grownTreesCache = payload.trees || [];
         } else if (type === 'GENERATE') {
             const { cx, cz } = payload;
             let modifications: any[] = [];
@@ -509,8 +516,19 @@ ctx.onmessage = async (e: MessageEvent) => {
             const skyLight = getSkyLightConfig(0.5); // 0.5 = midday sun
             const lightGrid = generateLightGrid(density, luminaLights, skyLight);
 
-            // Generate mesh with light grid for per-vertex GI baking
-            const mesh = generateMesh(density, material, metadata.wetness, metadata.mossiness, lightGrid) as MeshData;
+            // Build humidity config for Sacred Grove tree spreading
+            const humidityConfig: HumidityConfig = {
+                grownTrees: grownTreesCache,
+                currentTime: Date.now(),
+                spreadRate: 2.0,
+                maxRadius: 64.0
+            };
+
+            // Generate mesh with light grid for per-vertex GI baking and humidity
+            const mesh = generateMesh(
+                density, material, metadata.wetness, metadata.mossiness, lightGrid,
+                humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ
+            ) as MeshData;
 
             // Generate procedural grass textures (GPU-friendly replacement for vegetationData)
             const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
@@ -525,14 +543,14 @@ ctx.onmessage = async (e: MessageEvent) => {
             const stickData = buildStickData(stickPositions, cx, cz), rockData = buildRockData(rockPositions, cx, cz), treeInstanceData = buildTreeInstanceData(treePositions);
             const response = {
                 key: `${cx},${cz}`, cx, cz, density, material, metadata, terrainVersion: 0, visualVersion: 0, vegetationData, floraPositions, treePositions, treeInstanceBatches: treeInstanceData.treeInstanceBatches, rootHollowPositions, stickPositions, rockPositions, drySticks: stickData.drySticks, jungleSticks: stickData.jungleSticks, rockDataBuckets: rockData.rockDataBuckets, largeRockPositions, fireflyPositions, floraHotspots: buildFloraHotspotsPacked(floraPositions), stickHotspots: stickData.stickHotspots, rockHotspots: rockData.rockHotspots,
-                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshLightColors: mesh.lightColors, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshLightColors: mesh.lightColors, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
                 colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield,
                 lightGrid,
                 // Procedural grass textures
                 grassHeightTex, grassMaterialTex, grassNormalTex, grassBiomeTex, grassCaveTex
             };
             const transfers: any[] = [
-                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer, lightGrid.buffer,
+                ...vegetationBuffers, ...rockData.rockBuffers, ...treeInstanceData.treeMatrixBuffers, response.floraHotspots.buffer, stickData.stickHotspots.buffer, stickData.drySticks.buffer, stickData.jungleSticks.buffer, rockData.rockHotspots.buffer, density.buffer, material.buffer, metadata.wetness.buffer, metadata.mossiness.buffer, floraPositions.buffer, treePositions.buffer, largeRockPositions.buffer, rootHollowPositions.buffer, fireflyPositions.buffer, mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer, lightGrid.buffer,
                 // Transfer grass textures
                 grassHeightTex.buffer, grassMaterialTex.buffer, grassNormalTex.buffer, grassBiomeTex.buffer, grassCaveTex.buffer
             ];
@@ -540,14 +558,26 @@ ctx.onmessage = async (e: MessageEvent) => {
             ctx.postMessage({ type: 'GENERATED', payload: response }, transfers);
         } else if (type === 'REMESH') {
             const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
-            const mesh = generateMesh(density, material, wetness, mossiness) as MeshData;
+
+            // Build humidity config for Sacred Grove tree spreading
+            const humidityConfig: HumidityConfig = {
+                grownTrees: grownTreesCache,
+                currentTime: Date.now(),
+                spreadRate: 2.0,
+                maxRadius: 64.0
+            };
+
+            const mesh = generateMesh(
+                density, material, wetness, mossiness, undefined,
+                humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ
+            ) as MeshData;
             const response = {
-                key, cx, cz, version, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                key, cx, cz, version, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
                 colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
             };
             const transfers: any[] = [
-                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
-            ];
+                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
+            ].filter(Boolean);
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'REMESHED', payload: response }, transfers);
         }

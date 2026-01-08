@@ -44,12 +44,6 @@ import {
   FallingTreeData,
 } from '@features/terrain/hooks/useTerrainInteraction';
 
-// Sounds
-import dig1Url from '@/assets/sounds/Dig_1.wav?url';
-import dig2Url from '@/assets/sounds/Dig_2.wav?url';
-import dig3Url from '@/assets/sounds/Dig_3.wav?url';
-import clunkUrl from '@/assets/sounds/clunk.wav?url';
-
 // Type alias for backwards compatibility
 type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
 
@@ -368,43 +362,6 @@ interface VoxelTerrainProps {
   seed?: number;
 }
 
-// --- Audio Pool Helper ---
-class AudioPool {
-  private pools: Map<string, HTMLAudioElement[]> = new Map();
-  private index: Map<string, number> = new Map();
-
-  constructor(urls: string[], size: number = 3) {
-    urls.forEach(url => {
-      const pool: HTMLAudioElement[] = [];
-      for (let i = 0; i < size; i++) {
-        const a = new Audio(url);
-        a.volume = 0.3;
-        pool.push(a);
-      }
-      this.pools.set(url, pool);
-      this.index.set(url, 0);
-    });
-  }
-
-  play(url: string, volume: number = 0.3, pitchVar: number = 0) {
-    const pool = this.pools.get(url);
-    if (!pool) return;
-
-    // Round robin
-    const idx = this.index.get(url) || 0;
-    const audio = pool[idx];
-    this.index.set(url, (idx + 1) % pool.length);
-
-    // Reset and play
-    audio.currentTime = 0;
-    audio.volume = volume;
-    // Simple pitch shift (speed change)
-    audio.playbackRate = Math.max(0.1, 1.0 + (Math.random() * pitchVar * 2 - pitchVar));
-
-    audio.play().catch(e => console.warn("Audio play failed", e));
-  }
-}
-
 const FRAME_BUDGET_MS = 4; // ms allocated per frame for processing worker messages
 
 export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
@@ -476,12 +433,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const { camera } = useThree();
   const { world, rapier } = useRapier();
 
-  // Initialize Audio Pool once
-  const audioPool = useMemo(() => {
-    return new AudioPool([dig1Url, dig2Url, dig3Url, clunkUrl], 4);
-  }, []);
-
   // === BIOME FOG STATE ===
+  // NOTE: Humidity spreading now uses vertex attributes instead of uniforms
+  // The grownTreeDataRef is no longer needed - tree data is broadcast to workers directly
+
   // Track current biome fog settings with smooth interpolation.
   // We sample the biome at camera position each frame and lerp toward target values.
   const biomeFogState = useRef({
@@ -543,6 +498,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const pendingVersionRemovals = useRef<Set<string>>(new Set());
   const pendingVersionAdds = useRef<Map<string, number>>(new Map());
   const lastFlushTime = useRef(0);
+
+  // === HUMIDITY EXPANSION TRACKING ===
+  // Track grown trees and their spreading humidity radius
+  const humidityState = useRef<{
+    lastCheckTime: number;
+    treeRadii: Map<string, number>;  // treeId -> last known radius
+  }>({ lastCheckTime: 0, treeRadii: new Map() });
+
+  const HUMIDITY_CHECK_INTERVAL_MS = 5000;  // Check every 5 seconds
+  const HUMIDITY_SPREAD_RATE = 2.0;  // voxels per second
+  const HUMIDITY_MAX_RADIUS = 64;  // ~2 chunks max
 
   // Flush pending version updates in batches to prevent massive React reconciliations.
   // Previously flushed ALL queued updates every 100ms, causing 50-120ms render spikes
@@ -1000,7 +966,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (modified) {
           // Update both local ref and ChunkDataManager
           chunkDataRef.current.set(key, updatedChunk);
-          chunkDataManager.replaceChunk(key, updatedChunk);
+          updatedChunk.visualVersion = (chunk.visualVersion ?? 0) + 1; chunkDataManager.replaceChunk(key, updatedChunk);
           queueVersionIncrement(key);
 
           // Update hotspots
@@ -1687,6 +1653,59 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    // 7. HUMIDITY EXPANSION CHECK
+    // Check if Sacred Grove trees have expanded their humidity radius
+    const now = Date.now();
+    if (now - humidityState.current.lastCheckTime > HUMIDITY_CHECK_INTERVAL_MS) {
+      humidityState.current.lastCheckTime = now;
+
+      const grownTrees = useWorldStore.getState().getGrownTrees();
+      const chunksToRemesh = new Set<string>();
+
+      for (const tree of grownTrees) {
+        const treeId = `${tree.x},${tree.z}`;
+        const age = (now - tree.grownAt) / 1000;
+        const currentRadius = Math.min(age * HUMIDITY_SPREAD_RATE, HUMIDITY_MAX_RADIUS);
+        const prevRadius = humidityState.current.treeRadii.get(treeId) || 0;
+
+        // Only remesh if radius expanded significantly (half a chunk)
+        if (currentRadius > prevRadius + CHUNK_SIZE_XZ * 0.5) {
+          humidityState.current.treeRadii.set(treeId, currentRadius);
+
+          // Queue chunks within new radius
+          const chunkRadius = Math.ceil(currentRadius / CHUNK_SIZE_XZ);
+          const treeCx = Math.floor(tree.x / CHUNK_SIZE_XZ);
+          const treeCz = Math.floor(tree.z / CHUNK_SIZE_XZ);
+
+          for (let dcx = -chunkRadius; dcx <= chunkRadius; dcx++) {
+            for (let dcz = -chunkRadius; dcz <= chunkRadius; dcz++) {
+              const key = `${treeCx + dcx},${treeCz + dcz}`;
+              if (chunkDataRef.current.has(key)) {
+                chunksToRemesh.add(key);
+              }
+            }
+          }
+        }
+      }
+
+      // Queue affected chunks for remesh
+      chunksToRemesh.forEach(key => remeshQueue.current.add(key));
+
+      // Broadcast tree data to workers for humidity calculation
+      if (poolRef.current && grownTrees.length > 0) {
+        poolRef.current.postToAll({
+          type: 'UPDATE_GROWN_TREES',
+          payload: {
+            trees: grownTrees.map(t => ({
+              worldX: t.x,
+              worldZ: t.z,
+              ageMs: t.grownAt
+            }))
+          }
+        });
+      }
+    }
+
     // --- Performance Diagnostics ---
     if (typeof window !== 'undefined') {
       const diag = (window as any).__vcDiagnostics || {};
@@ -1731,6 +1750,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Convert weightsView string to numeric value for shader
     const weightsViewMap: Record<string, number> = { off: 0, snow: 1, grass: 2, snowMinusGrass: 3, dominant: 4 };
+
+    // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
+    // computed during mesh generation. No uniform updates needed - it's baked into vertices!
+    // Tree expansion is tracked above in section 7 (HUMIDITY EXPANSION CHECK).
 
     updateSharedUniforms(state, {
       sunDir: sunDirection,
@@ -1826,7 +1849,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         // stride 4: x, y, z, type
         next[hit.index + 1] = -10000;
 
-        const updatedChunk = { ...chunk, floraPositions: next };
+        const updatedChunk = { ...chunk, floraPositions: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(key, updatedChunk);
         chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
@@ -1883,7 +1906,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
 
         next[hit.index + 1] = -10000;
-        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next };
+        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
         chunkDataRef.current.set(hit.key, updatedChunk);
         chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
         chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup

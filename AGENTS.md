@@ -80,6 +80,24 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
 - **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
 
+### Browser-Only Systems (Cannot Unit Test)
+Some systems require browser APIs and MUST be tested via `npm run dev`:
+- **AudioManager** (`src/core/audio/AudioManager.ts`): Singleton that uses `HTMLAudioElement`, `window.addEventListener`, and custom events. Initialization happens in `App.tsx` useEffect.
+- **Event-driven systems**: Custom window events (`vc-audio-play`, `vc-audio-stop`, etc.) don't exist in Vitest's jsdom environment.
+- **React/R3F integration**: Components that depend on Canvas context, useFrame, or Three.js scene.
+
+**Testing methodology for browser-only systems**:
+1. Run `npm run build` to catch TypeScript errors (type-only imports, missing properties).
+2. Run `npm run dev` and open browser DevTools console.
+3. Verify initialization logs (e.g., "[AudioManager] Initialized with N sounds").
+4. Trigger functionality in-game and verify expected behavior (sounds play, events fire).
+5. Check console for runtime errors (import errors, undefined properties).
+
+**Why unit tests can't catch everything**:
+- `import type { Enum }` vs `import { Enum }`: Both compile, but type-only imports cause runtime errors when used as values.
+- Singleton initialization order: AudioManager must initialize before events are dispatched. This is a runtime constraint, not a compile-time one.
+- Browser API availability: `new Audio()`, `window.dispatchEvent()` don't exist in Node.js test environment.
+
 ---
 
 ## Terrain: Hard Invariants (verified)
@@ -129,6 +147,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 
 ## Known Pitfalls (keep this list small)
 
+- **Audio System Centralization**: All audio playback MUST go through AudioManager (`src/core/audio/AudioManager.ts`). NEVER call `new Audio()` directly. Always dispatch `vc-audio-play` events. Sound definitions live in `soundRegistry.ts`. **Critical**: `SoundCategory` must be imported as a value (`import { SoundCategory }`), NOT as a type (`import type { SoundCategory }`), because it's used in runtime code (`Object.values(SoundCategory)`). Type-only imports compile successfully but fail at runtime.
 - **Item Geometry Centralization**: All item visuals (sticks, stones, shards, flora, tools) MUST use geometry factories and colors from `src/core/items/ItemGeometry.ts`. Never define item geometry, colors, or materials inline. This ensures visual consistency across held items, ground clutter, crafting UI, and physics items. Shard geometry is octahedron-based (blade-like), not cone-based.
 - **Shared references from `Array(n).fill(obj)`**: Use `Array.from({ length: n }, () => new Obj())` for per-particle/per-instance objects (common particle bug class).
 - **React StrictMode timer bugs**: Effects can mount/unmount twice in dev; store timeout IDs in refs and clear them before setting new ones (see `src/features/flora/components/RootHollow.tsx`).
@@ -180,6 +199,7 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - `?debug`: enables debug UI paths (Leva/HUD/placement debug) (`src/App.tsx`, `src/ui/HUD.tsx`, `src/state/InventoryStore.ts`). Now includes **Granular Sun Controls**:
   - **Properties**: `sunIntensity`, `radius` (orbit size), `speed` (day/night duration), `timeOffset` (manual time scrubbing).
   - **Shadows**: `shadowsEnabled`, `bias`, `normalBias`, `mapSize`, `camSize` (frustum).
+- **Audio Debug**: `window.__audioManager.getStats()` returns `{ totalSounds, totalInstances, activeLoops, categories }` for debugging audio pool usage.
 - **Export Config**: Use the **"Copy Config"** button in `Tools` folder to export all current settings to JSON (clipboard).
 - `?mode=map`: shows the biome/map debug view (`src/App.tsx` -> `src/ui/MapDebug.tsx`).
 - `?normals`: swaps terrain material to normal material for geometry inspection (`src/features/terrain/components/ChunkMesh.tsx`).
@@ -213,6 +233,30 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - 'npm run test:unit' (confirm tests pass)
 
 ## Worklog (last 5 entries)
+
+- 2026-01-07: **Centralized Audio System (AudioManager)**.
+  - **Goal**: Implement a centralized audio manager to prevent duplicate sound triggers, manage audio pooling, and provide category-based volume control.
+  - **Implementation**:
+    1. Created `src/core/audio/AudioManager.ts` as singleton for all audio playback:
+       - Pool-based architecture: each sound has multiple HTMLAudioElement instances for overlapping playback.
+       - Event-driven: listens to `vc-audio-play`, `vc-audio-stop`, `vc-audio-ambient-enter`, `vc-audio-ambient-exit` custom events.
+       - Category-based volume control: SFX_IMPACT, SFX_DIG, SFX_CHOP, SFX_INTERACT, AMBIENT, UI, MUSIC.
+       - Features: pitch variation, volume control, delayed playback, looping ambient sounds.
+    2. Created `src/core/audio/soundRegistry.ts` as single source of truth for sound definitions:
+       - Registered sounds: dig_1/2/3, pickaxe_dig, rock_hit, wood_hit, clunk, fire_loop.
+       - Each sound: id, URL, category, baseVolume, pitchVariation, poolSize.
+       - Helpers: `getRandomDigSound()`, `isSoundRegistered()`.
+    3. Created `src/core/audio/types.ts` for type safety:
+       - `SoundCategory` enum (must be value import, not type import).
+       - Interfaces: SoundDefinition, PlayOptions, AudioPlayEventDetail, etc.
+    4. Integrated into `App.tsx`: `audioManager.initialize(SOUND_REGISTRY)` on mount, `dispose()` on unmount.
+    5. Integrated into `useTerrainInteraction.ts`: Dig/build/chop sounds via `vc-audio-play` events.
+    6. Integrated into `PhysicsItem.tsx`: Stone impact sounds on collision.
+  - **Testing Lessons**:
+    - **Unit tests cannot catch**: Type-only imports (`import type { SoundCategory }`) compile but fail at runtime when used as values. Browser API usage (HTMLAudioElement, window events) requires `npm run dev` testing.
+    - **Smoke test required**: After audio changes, always verify in browser: (1) "[AudioManager] Initialized" log, (2) trigger digging/impacts, (3) check for import errors in DevTools.
+  - **Files**: `AudioManager.ts` (new), `soundRegistry.ts` (new), `types.ts` (new), `index.ts` (new), `App.tsx`, `useTerrainInteraction.ts`, `PhysicsItem.tsx`.
+  - **Documentation**: Updated CLAUDE.md and AGENTS.md with audio testing strategy and import pitfalls.
 
 - 2026-01-04: **Item Geometry Centralization**.
   - **Goal**: Eliminate duplicate item geometry/color definitions across UniversalTool, GroundItemsLayer, and future physics items. Ensure visual consistency.
@@ -388,4 +432,14 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **Changes**: Commented out the `console.log` on line 133 of `ChunkMesh.tsx`.
   - **Result**: Console is now free of terrain-reconstruction spam during digging/modification.
 
+- 2026-01-06: **Git Worktree Creation**.
+  - **Goal**: Create a new git worktree 'saw' from the 'crafting' branch.
+  - **Implementation**: Created worktree at `worktrees/saw` and checked out new branch `saw`.
+  - **Result**: Worktree is available for concurrent development in the `worktrees/saw` directory.
+
 [diff_block_end]
+
+- 2026-01-07: **Fixed Root Hollow Placement Logic**.
+  - **Issue**: Root Hollows were either clustered or non-existent due to a random "designated spot" logic in the super-grid de-duplication.
+  - **Fix**: Replaced random super-grid sampling with Local Maximum Detection. Now, each sample point checks if it is the "peak" of the grove noise compared to its neighbors.
+  - **Result**: Exactly one Root Hollow is placed at the absolute center of each Sacred Grove, consistent across chunk boundaries.

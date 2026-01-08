@@ -419,6 +419,8 @@ export const FirstPersonTools: React.FC = () => {
                     <TorchTool />
                 </group>
             </group>
+            {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
+            {selectedItem === ItemType.TORCH && <TorchSound />}
             <group ref={rightItemRef}>
                 {/*
                   Prevent UniversalTool from rendering the torch (and its extra PointLight)
@@ -492,3 +494,25 @@ function usePickaxeDebug() {
 
     return { debugPos, debugRot };
 }
+
+/**
+ * TorchSound - Plays fire crackling sound when held torch is selected.
+ * Mount/unmount controls playback via AudioManager ambient events.
+ */
+const TorchSound: React.FC = () => {
+    useEffect(() => {
+        // Start fire loop on mount (torch selected)
+        window.dispatchEvent(new CustomEvent('vc-audio-ambient-enter', {
+            detail: { soundId: 'fire_loop', fadeIn: 300 }
+        }));
+
+        return () => {
+            // Stop fire loop on unmount (torch deselected)
+            window.dispatchEvent(new CustomEvent('vc-audio-ambient-exit', {
+                detail: { soundId: 'fire_loop', fadeOut: 200 }
+            }));
+        };
+    }, []);
+
+    return null;
+};

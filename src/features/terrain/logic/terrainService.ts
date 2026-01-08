@@ -818,22 +818,36 @@ export class TerrainService {
 
         // --- 3.65 Root Hollow Generation (Sacred Grove Centers) ---
         // Root Hollows spawn at the center of Sacred Grove clearings.
-        // Use a finer grid (8x8) with multiple sample points to catch Sacred Grove centers.
-        // Sacred Groves are flat, barren zones - Root Hollows mark their heart.
-        const ROOT_HOLLOW_GRID = 8; // Sample every 8 blocks for better coverage
-        const MAX_ROOT_HOLLOWS_PER_CHUNK = 1; // Only 1 per chunk to keep them special
-        let rootHollowsPlaced = 0;
-        let bestCandidate: { x: number; y: number; z: number; nx: number; ny: number; nz: number; intensity: number } | null = null;
+        //
+        // CROSS-CHUNK COORDINATION: To ensure exactly ONE Root Hollow per grove center, 
+        // we use a Local Maximum Detection approach:
+        // 1. Each 8x8 sample point checks if it's at the "peak" of the grove noise.
+        // 2. We compare the current point's intensity against its neighbors.
+        // 3. Only the local peak point (the absolute center) places a hollow.
+        // This ensures consistency across chunk boundaries without random offsets.
+        const ROOT_HOLLOW_SAMPLE_GRID = 8; // Sample every 8 blocks within chunk
 
-        // Scan the chunk for Sacred Grove centers, keeping the best candidate
-        for (let gz = PAD; gz < sizeZ - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gz += ROOT_HOLLOW_GRID) {
-            for (let gx = PAD; gx < sizeX - PAD && rootHollowsPlaced < MAX_ROOT_HOLLOWS_PER_CHUNK; gx += ROOT_HOLLOW_GRID) {
+        // Scan the chunk for Sacred Grove centers
+        for (let gz = PAD; gz < sizeZ - PAD; gz += ROOT_HOLLOW_SAMPLE_GRID) {
+            for (let gx = PAD; gx < sizeX - PAD; gx += ROOT_HOLLOW_SAMPLE_GRID) {
                 const wx = (gx - PAD) + worldOffsetX;
                 const wz = (gz - PAD) + worldOffsetZ;
 
-                // Check if this location is in a Sacred Grove (relaxed check - just inGrove, not isCenter)
+                // Check if this location is at the CENTER of a Sacred Grove
                 const groveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
-                if (!groveInfo.inGrove) continue;
+                if (!groveInfo.isCenter) continue;
+
+                // --- LOCAL MAXIMUM DETECTION ---
+                // Only place if this point is a peak compared to neighbors 
+                // (prevents clusters of hollows at the center).
+                const step = ROOT_HOLLOW_SAMPLE_GRID;
+                const iC = groveInfo.intensity;
+                const iN = BiomeManager.getSacredGroveInfo(wx, wz + step).intensity;
+                const iS = BiomeManager.getSacredGroveInfo(wx, wz - step).intensity;
+                const iE = BiomeManager.getSacredGroveInfo(wx + step, wz).intensity;
+                const iW = BiomeManager.getSacredGroveInfo(wx - step, wz).intensity;
+
+                if (iC < iN || iC < iS || iC < iE || iC < iW) continue;
 
                 // Find the surface at this position
                 const surface = findTopSurfaceAtLocalXZ(gx - PAD, gz - PAD);
@@ -854,30 +868,15 @@ export class TerrainService {
                                  mat === MaterialType.DIRT;
                 if (!validMat) continue;
 
-                // Track the best candidate (highest intensity = closest to grove center)
-                if (!bestCandidate || groveInfo.intensity > bestCandidate.intensity) {
-                    bestCandidate = {
-                        x: gx - PAD,
-                        y: surface.worldY + 0.1,
-                        z: gz - PAD,
-                        nx, ny, nz,
-                        intensity: groveInfo.intensity
-                    };
-                }
+                // Place the Root Hollow
+                rootHollowCandidates.push(
+                    gx - PAD,
+                    // RootHollow component has embedOffset=0.3, so add that here to place stump at surface level
+                    surface.worldY + 0.3,
+                    gz - PAD,
+                    nx, ny, nz
+                );
             }
-        }
-
-        // Place the best candidate found (if any)
-        if (bestCandidate) {
-            rootHollowCandidates.push(
-                bestCandidate.x,
-                bestCandidate.y,
-                bestCandidate.z,
-                bestCandidate.nx,
-                bestCandidate.ny,
-                bestCandidate.nz
-            );
-            rootHollowsPlaced++;
         }
 
         // --- 3.7 Firefly Generation (Surface Pass) ---

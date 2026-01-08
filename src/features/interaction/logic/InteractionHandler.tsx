@@ -3,6 +3,8 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useInventoryStore } from '@state/InventoryStore';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
+import { useWorldStore } from '@state/WorldStore';
+import { Vector3 } from 'three';
 import { ItemType } from '@/types';
 import { useInputStore } from '@/state/InputStore';
 import { useCraftingStore } from '@/state/CraftingStore';
@@ -245,12 +247,24 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                     idsToRemove.push(targetItem.id); // Also remove the rock
                     usePhysicsItemStore.getState().bulkRemoveItems(idsToRemove);
 
+                    // FIX: Use stable ID for both physics and world entity to ensure persistence
+                    const fireId = Math.random().toString(36).substring(2, 9);
+
                     // FIX: Use live position for fire spawn location
                     spawnPhysicsItem(
                       ItemType.FIRE,
                       [livePosition.x, livePosition.y + 0.3, livePosition.z],
-                      [0, 0, 0]
+                      [0, 0, 0],
+                      undefined,
+                      fireId
                     );
+
+                    // Register with WorldStore for persistence
+                    useWorldStore.getState().addEntity({
+                      id: fireId,
+                      type: ItemType.FIRE,
+                      position: new Vector3(livePosition.x, livePosition.y + 0.3, livePosition.z)
+                    });
                   } else {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { heat: currentHeat + 1 });
                   }

@@ -1,6 +1,6 @@
-import React, { useState, Suspense, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MapDebug } from '@/ui/MapDebug';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
 import { Leva } from 'leva';
@@ -49,6 +49,9 @@ import { initializeNoise } from '@core/math/noise';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { useWorldStore } from '@state/WorldStore';
 
+// Audio System
+import { audioManager, SOUND_REGISTRY } from '@core/audio';
+
 // Keyboard Map
 const keyboardMap = [
   { name: 'forward', keys: ['ArrowUp', 'w', 'W'] },
@@ -59,6 +62,33 @@ const keyboardMap = [
   { name: 'shift', keys: ['Shift'] },
   { name: 'crouch', keys: ['ControlLeft', 'ControlRight'] },
 ];
+
+/**
+ * SpatialAudioListener - Attaches a Three.js AudioListener to the camera.
+ *
+ * Required for drei's PositionalAudio to work. The listener tracks the
+ * camera's position and orientation, enabling 3D spatialization for
+ * campfires, ambient sounds, and other positional audio sources.
+ */
+const SpatialAudioListener: React.FC = () => {
+  const { camera } = useThree();
+  const listenerRef = useRef<THREE.AudioListener | null>(null);
+
+  useEffect(() => {
+    // Create and attach listener to camera
+    const listener = new THREE.AudioListener();
+    camera.add(listener);
+    listenerRef.current = listener;
+
+    return () => {
+      // Cleanup on unmount
+      camera.remove(listener);
+      listenerRef.current = null;
+    };
+  }, [camera]);
+
+  return null;
+};
 
 const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
@@ -88,6 +118,14 @@ const App: React.FC = () => {
   // Wait for colliders to be created after terrain loads
   // Initial load chunks now create colliders immediately (spawnedAt === 0 in ChunkMesh),
   // but we still add a small delay to ensure Rapier has processed the trimesh BVH
+  // Initialize AudioManager once on app mount
+  useEffect(() => {
+    audioManager.initialize(SOUND_REGISTRY);
+    return () => {
+      audioManager.dispose();
+    };
+  }, []);
+
   useEffect(() => {
     if (terrainLoaded && !collidersReady) {
       const handle = setTimeout(() => setCollidersReady(true), 150);
@@ -350,6 +388,7 @@ const App: React.FC = () => {
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
           <SceneWarmup />
+          <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />
 
           <AtmosphereManager

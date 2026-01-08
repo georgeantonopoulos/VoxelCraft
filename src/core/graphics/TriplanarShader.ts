@@ -7,6 +7,8 @@ export const triplanarVertexShader = `
   attribute float aVoxelMossiness;
   attribute float aVoxelCavity;
   attribute vec3 aLightColor;  // Per-vertex GI light from light grid
+  attribute float aBaseHumidity;  // Per-vertex base humidity from biome + water proximity
+  attribute float aTreeHumidityBoost;  // Per-vertex humidity boost from Sacred Grove trees
 
   uniform vec2 uWindDirXZ;
   uniform float uNormalStrength;
@@ -24,6 +26,8 @@ export const triplanarVertexShader = `
   varying float vDominantChannel;
   varying float vDominantWeight;
   varying vec3 vLightColor;  // Pass GI light to fragment shader
+  varying float vBaseHumidity;  // Pass base humidity to fragment shader
+  varying float vTreeHumidityBoost;  // Pass tree boost to fragment shader
 
   vec2 safeNormalize2(vec2 v) {
     float len = length(v);
@@ -166,6 +170,8 @@ export const triplanarVertexShader = `
     vMossiness = aVoxelMossiness;
     vCavity = aVoxelCavity;
     vLightColor = aLightColor;  // Pass GI light to fragment
+    vBaseHumidity = aBaseHumidity;  // Pass base humidity to fragment
+    vTreeHumidityBoost = aTreeHumidityBoost;  // Pass tree boost to fragment
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     float wMax = vWa.x; float ch = 0.0;
@@ -254,6 +260,14 @@ export const triplanarFragmentShader = `
   // Color grading (in-shader, not post-processing)
   uniform float uTerrainSaturation;      // 1.0=neutral, >1=more saturated
 
+  // Humidity Spreading System - DISABLED (causes GPU perf issues with array uniforms)
+  // TODO: Re-implement using vertex attributes or texture-based approach instead
+  // uniform int uGrownTreeCount;
+  // uniform vec2 uGrownTreePositions[8];
+  // uniform float uGrownTreeAges[8];
+  // uniform float uHumiditySpreadRate;
+  // uniform float uHumidityMaxRadius;
+
   varying vec4 vWa;
   varying vec4 vWb;
   varying vec4 vWc;
@@ -266,6 +280,8 @@ export const triplanarFragmentShader = `
   varying float vDominantChannel;
   varying float vDominantWeight;
   varying vec3 vLightColor;  // GI light interpolated from vertices
+  varying float vBaseHumidity;  // Base humidity from biome + water proximity
+  varying float vTreeHumidityBoost;  // Humidity boost from Sacred Grove trees
 
   vec3 safeNormalize(vec3 v) {
       float len = length(v);
@@ -421,6 +437,15 @@ export const triplanarFragmentShader = `
       return MatInfo(baseCol, roughness, noiseFactor, emission);
   }
 
+  // HUMIDITY SPREADING FUNCTION - DISABLED (causes GPU perf issues)
+  // TODO: Re-implement using vertex attributes or texture-based approach
+  /*
+  float getHumidityInfluence(vec2 worldPosXZ) {
+    // ... disabled ...
+    return 0.0;
+  }
+  */
+
   void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
     inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float accEmission, inout float totalW,
     inout int dominantChannel, inout float dominantWeight) {
@@ -472,6 +497,20 @@ export const triplanarFragmentShader = `
     }
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
+
+    // === HUMIDITY FIELD SYSTEM ===
+    // Two-layer humidity: base (biome+water) + tree boost (Sacred Grove)
+    // Both values are baked into vertex attributes during meshing - zero per-fragment cost!
+    float totalHumidity = clamp(vBaseHumidity + vTreeHumidityBoost, 0.0, 1.0);
+
+    // Material weight deltas based on humidity
+    // High humidity: boost grass/dirt, reduce desert materials
+    float humidityDeltaGrass = totalHumidity * 0.6;
+    float humidityDeltaDirt = totalHumidity * 0.3;
+    float humidityDeltaRedSand = -totalHumidity * 0.8;
+    float humidityDeltaStone = -totalHumidity * 0.2;
+    float humidityDeltaTerracotta = -totalHumidity * 0.5;
+
     vec3 accColor = vec3(0.0);
     float accRoughness = 0.0;
     float accNoise = 0.0;
@@ -481,16 +520,16 @@ export const triplanarFragmentShader = `
     int dominantChannel = 2;
     accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(2, vWa.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(3, vWa.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(4, vWb.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(2, vWa.z + humidityDeltaStone, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(3, vWa.w + humidityDeltaDirt, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(4, vWb.x + humidityDeltaGrass, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(10, vWc.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(11, vWc.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(10, vWc.z + humidityDeltaRedSand, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
+    accumulateChannel(11, vWc.w + humidityDeltaTerracotta, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
     accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
@@ -525,7 +564,21 @@ export const triplanarFragmentShader = `
       col = mix(col, mossColor * (0.6 + 0.4 * nHigh.a), mossMix);
       accRoughness = mix(accRoughness, 0.9, mossMix);
     }
-    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, vWetness * 0.9);
+    // === HUMIDITY-BASED VISUAL WETNESS ===
+    // Materials respond differently to humidity:
+    // - Sand, stone, dirt, clay: get visually wet (darker, shinier)
+    // - Grass: stays dry (water drains, leaves shed water)
+    // - Snow, ice: unaffected (already frozen water)
+    // Weight how much this surface should show wetness based on material composition
+    float wettableMaterials = vWa.z + vWa.w + vWb.y + vWb.w + vWc.z + vWc.w; // stone + dirt + sand + clay + red_sand + terracotta
+    float nonWettableMaterials = vWb.x + vWb.z + vWd.y; // grass + snow + ice
+    float wettabilityFactor = clamp(wettableMaterials / max(wettableMaterials + nonWettableMaterials, 0.001), 0.0, 1.0);
+
+    // Humidity contributes to visual wetness for wettable materials
+    float humidityWetness = totalHumidity * wettabilityFactor * 0.7; // 0.7 = max humidity wetness contribution
+    float combinedWetness = max(vWetness, humidityWetness);
+
+    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, combinedWetness * 0.9);
     col *= (1.0 + macro * 0.06); accRoughness += macro * 0.05;
 
     // === UNIVERSAL FINE GRAIN: Apply to ALL terrain close-up ===
@@ -945,7 +998,11 @@ export const triplanarFragmentShader = `
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
     csm_Emissive = vec3(accEmission * accColor);
     accRoughness -= (nHigh.r * 0.1);
-    if (uWetnessEnabled > 0.5) accRoughness = mix(accRoughness, 0.2, vWetness);
+    // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
+    if (uWetnessEnabled > 0.5) {
+      float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);
+      accRoughness = mix(accRoughness, 0.2, roughnessWetness);
+    }
     accRoughness = max(accRoughness, clamp(uRoughnessMin, 0.0, 1.0));
     if (dominantChannel == 8) accRoughness = 0.1;
     csm_Roughness = accRoughness;

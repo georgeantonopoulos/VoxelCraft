@@ -1,5 +1,47 @@
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON, WATER_LEVEL, LIGHT_CELL_SIZE, LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 import { MeshData, MaterialType } from '@/types';
+import { BiomeManager } from './BiomeManager';
+
+/**
+ * Configuration for tree-based humidity boost (Sacred Grove spreading)
+ */
+export interface HumidityConfig {
+  grownTrees: Array<{ worldX: number; worldZ: number; ageMs: number }>;
+  currentTime: number;
+  spreadRate: number;  // voxels per second (default: 2.0)
+  maxRadius: number;   // max influence radius (default: 64)
+}
+
+/**
+ * Calculate humidity boost from nearby Sacred Grove trees at a vertex position.
+ * Uses quadratic falloff from tree centers based on tree age and spread rate.
+ */
+function calculateTreeHumidityBoost(
+  worldX: number,
+  worldZ: number,
+  config: HumidityConfig | null
+): number {
+  if (!config || config.grownTrees.length === 0) return 0;
+
+  let maxBoost = 0;
+  for (const tree of config.grownTrees) {
+    const age = (config.currentTime - tree.ageMs) / 1000;
+    const radius = Math.min(age * config.spreadRate, config.maxRadius);
+    if (radius <= 0) continue;
+
+    const dx = worldX - tree.worldX;
+    const dz = worldZ - tree.worldZ;
+    const distSq = dx * dx + dz * dz;
+    const radiusSq = radius * radius;
+
+    if (distSq < radiusSq) {
+      // Quadratic falloff: 1.0 at center, 0.0 at edge
+      const t = Math.sqrt(distSq) / radius;
+      maxBoost = Math.max(maxBoost, 1.0 - t * t);
+    }
+  }
+  return maxBoost;
+}
 
 const SIZE_X = TOTAL_SIZE_XZ;
 const SIZE_Y = TOTAL_SIZE_Y;
@@ -362,7 +404,10 @@ export function generateMesh(
   material: Uint8Array,
   wetness?: Uint8Array,
   mossiness?: Uint8Array,
-  lightGrid?: Uint8Array
+  lightGrid?: Uint8Array,
+  humidityConfig?: HumidityConfig | null,
+  chunkWorldX: number = 0,
+  chunkWorldZ: number = 0
 ): MeshData {
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
@@ -379,9 +424,76 @@ export function generateMesh(
   const tMoss: number[] = [];
   const tCavity: number[] = [];
   const tLightColors: number[] = []; // Per-vertex GI light
+  const tBaseHumidity: number[] = [];  // Per-vertex base humidity (biome + water proximity)
+  const tTreeBoost: number[] = [];     // Per-vertex humidity boost from Sacred Grove trees
 
   const tVertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
 
+  // === WATER PROXIMITY FIELD ===
+  // Pre-compute 2D horizontal distance to nearest water voxel for humidity calculation.
+  // Uses BFS flood-fill from water edges - O(CHUNK_XZ²) computation, O(1) per-vertex lookup.
+  const WATER_HUMIDITY_RADIUS = 12; // Max horizontal distance water affects humidity (in voxels)
+  const waterDistField = new Uint8Array(SIZE_X * SIZE_Z); // Distance to nearest water (255 = no water nearby)
+  waterDistField.fill(255);
+
+  // Step 1: Find all water voxels and mark their XZ positions
+  const hasWaterAt = new Uint8Array(SIZE_X * SIZE_Z);
+  for (let z = 0; z < SIZE_Z; z++) {
+    for (let x = 0; x < SIZE_X; x++) {
+      // Check the entire Y column for water
+      for (let y = 0; y < SIZE_Y; y++) {
+        if (getMat(material, x, y, z) === MaterialType.WATER) {
+          hasWaterAt[x + z * SIZE_X] = 1;
+          break;
+        }
+      }
+    }
+  }
+
+  // Step 2: BFS from water edges to compute distance field
+  const waterQ: number[] = [];
+  let waterQHead = 0;
+
+  // Seed queue with water boundary cells
+  for (let z = 0; z < SIZE_Z; z++) {
+    for (let x = 0; x < SIZE_X; x++) {
+      if (hasWaterAt[x + z * SIZE_X]) {
+        waterDistField[x + z * SIZE_X] = 0;
+        waterQ.push(x, z);
+      }
+    }
+  }
+
+  // BFS to propagate distance outward from water
+  while (waterQHead < waterQ.length) {
+    const wx = waterQ[waterQHead++];
+    const wz = waterQ[waterQHead++];
+    const currentDist = waterDistField[wx + wz * SIZE_X];
+    if (currentDist >= WATER_HUMIDITY_RADIUS) continue;
+
+    const newDist = currentDist + 1;
+    const tryExpand = (nx: number, nz: number) => {
+      if (nx < 0 || nz < 0 || nx >= SIZE_X || nz >= SIZE_Z) return;
+      const idx = nx + nz * SIZE_X;
+      if (waterDistField[idx] <= newDist) return;
+      waterDistField[idx] = newDist;
+      waterQ.push(nx, nz);
+    };
+    tryExpand(wx - 1, wz);
+    tryExpand(wx + 1, wz);
+    tryExpand(wx, wz - 1);
+    tryExpand(wx, wz + 1);
+  }
+
+  // Helper to sample water proximity (0 = at water, 1 = far from water)
+  const getWaterProximity = (x: number, z: number): number => {
+    const ix = Math.floor(x);
+    const iz = Math.floor(z);
+    if (ix < 0 || iz < 0 || ix >= SIZE_X || iz >= SIZE_Z) return 0;
+    const dist = waterDistField[ix + iz * SIZE_X];
+    if (dist >= 255) return 0; // No water nearby
+    return Math.max(0, 1 - dist / WATER_HUMIDITY_RADIUS);
+  };
 
   // Snap epsilon is used to close seams by snapping vertices near chunk borders.
   // IMPORTANT: Do NOT clamp vertices to the chunk interior. Surface-Nets-style vertices can land
@@ -534,6 +646,27 @@ export function generateMesh(
             const [lr, lg, lb] = sampleLightGrid(lightGrid, px, py, pz);
             tLightColors.push(lr, lg, lb);
 
+            // Sample humidity field at vertex position
+            // Combines: biome climate humidity + actual water voxel proximity (from BFS field)
+            const worldX = chunkWorldX + px;
+            const worldY = py + MESH_Y_OFFSET;
+            const worldZ = chunkWorldZ + pz;
+
+            // Get biome-based humidity (no longer includes generic water level proximity)
+            const biomeHumidity = BiomeManager.getHumidityField(worldX, worldY, worldZ);
+
+            // Get actual water voxel proximity from pre-computed BFS field
+            const waterProximity = getWaterProximity(x, z);
+
+            // Combine: biome climate (60%) + actual water proximity (40%)
+            // Water proximity provides strong local effect near actual water bodies
+            const baseHumidity = Math.min(1, biomeHumidity * 0.6 + waterProximity * 0.4);
+            tBaseHumidity.push(baseHumidity);
+
+            // Sample tree boost (Sacred Grove spreading)
+            const treeBoost = calculateTreeHumidityBoost(worldX, worldZ, humidityConfig ?? null);
+            tTreeBoost.push(treeBoost);
+
             tVertIdx[bufIdx(x, y, z)] = (tVerts.length / 3) - 1;
           }
         }
@@ -674,6 +807,8 @@ export function generateMesh(
     mossiness: new Float32Array(tMoss),
     cavity: new Float32Array(tCavity),
     lightColors: new Float32Array(tLightColors),
+    baseHumidity: new Float32Array(tBaseHumidity),
+    treeHumidityBoost: new Float32Array(tTreeBoost),
     waterPositions: water.positions,
     waterIndices: water.indices,
     waterNormals: water.normals,

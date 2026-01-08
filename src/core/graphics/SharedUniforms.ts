@@ -46,6 +46,9 @@ export const sharedUniforms = {
 
     // Color grading (in-shader, not post-processing)
     uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated
+
+    // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
+    // computed during mesh generation. No runtime uniforms needed - it's baked into vertices!
 };
 
 export interface SharedUniformUpdateParams {
@@ -78,6 +81,7 @@ export interface SharedUniformUpdateParams {
     giIntensity?: number;
     // Color grading
     terrainSaturation?: number;
+    // NOTE: Humidity spreading now uses vertex attributes - no uniform params needed
 }
 
 /**
@@ -123,4 +127,6 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
 
     // Color grading
     if (params.terrainSaturation !== undefined) sharedUniforms.uTerrainSaturation.value = params.terrainSaturation;
+
+    // NOTE: Humidity spreading now uses vertex attributes - no uniform updates needed
 };

@@ -1,5 +1,6 @@
 import { makeNoise2D } from 'fast-simplex-noise';
 import { MaterialType } from '@/types';
+import { WATER_LEVEL } from '@/constants';
 
 export type BiomeType =
   | 'PLAINS'
@@ -324,6 +325,45 @@ export class BiomeManager {
     let erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
 
     return { temp, humid, continent, erosion };
+  }
+
+  /**
+   * Get humidity field value at world position.
+   * Combines biome climate humidity with water proximity.
+   *
+   * @param worldX - World X coordinate
+   * @param worldY - World Y coordinate (height matters for water proximity)
+   * @param worldZ - World Z coordinate
+   * @returns Humidity value 0-1 (0 = arid, 1 = saturated)
+   */
+  static getHumidityField(worldX: number, worldY: number, worldZ: number): number {
+    // Check Sacred Grove FIRST - barren zones are completely arid until tree grows
+    // Tree humidity spreading is handled separately via treeHumidityBoost vertex attribute
+    const groveInfo = this.getSacredGroveInfo(worldX, worldZ);
+    if (groveInfo.inGrove && groveInfo.intensity > 0.3) {
+      // Sacred Grove centers are bone dry - no water influence, no climate humidity
+      // This overrides everything including water proximity
+      return 0.0;
+    }
+
+    // Get base climate humidity (already exists, -1 to 1 range)
+    const climate = this.getClimate(worldX, worldZ);
+    const baseHumid = (climate.humid + 1) * 0.5; // Normalize to 0-1
+
+    // NOTE: Actual water proximity is now computed in the mesher using BFS from water voxels.
+    // This function only returns biome-based climate humidity.
+    // The mesher combines this with actual water voxel proximity for the final humidity value.
+
+    let humidity = baseHumid;
+
+    // Fade humidity at Sacred Grove edges (intensity 0-0.3)
+    if (groveInfo.inGrove) {
+      // Smooth transition at edges
+      const edgeFade = groveInfo.intensity / 0.3; // 0 at edge, 1 at intensity=0.3
+      humidity *= (1.0 - edgeFade);
+    }
+
+    return humidity;
   }
 
   static getBiomeAt(x: number, z: number): BiomeType {

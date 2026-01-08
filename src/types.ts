@@ -65,6 +65,8 @@ export interface MeshData {
   mossiness: Float32Array; // Attribute for mossiness
   cavity: Float32Array; // Attribute for baked micro-occlusion (creases/cavities)
   lightColors: Float32Array; // Per-vertex GI light color (RGB, stride 3)
+  baseHumidity?: Float32Array; // Per-vertex base humidity from biome + water proximity (0-1)
+  treeHumidityBoost?: Float32Array; // Per-vertex humidity boost from Sacred Grove trees (0-1)
 
   // Water Mesh Data
   waterPositions: Float32Array;
@@ -115,6 +117,8 @@ export interface ChunkState {
   meshMossiness: Float32Array;
   meshCavity: Float32Array;
   meshLightColors?: Float32Array;  // Per-vertex GI light (RGB, stride 3)
+  meshBaseHumidity?: Float32Array;  // Per-vertex base humidity from biome + water (0-1)
+  meshTreeHumidityBoost?: Float32Array;  // Per-vertex humidity boost from Sacred Grove trees (0-1)
 
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
