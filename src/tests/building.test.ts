@@ -106,7 +106,7 @@ describe('Building System - Vertical-First Placement Logic', () => {
     const VERTICAL_STACK_GAP = 0.05;
     const ADJACENT_GAP = 0.08;
     const GRID_SNAP = 0.25;
-    const MIN_GROUND_CLEARANCE = 0.1;
+    const GROUND_PENETRATION = 0.15; // Logs are "planted" into ground like fence posts
 
     it('should calculate grid-snapped positions correctly', () => {
         // Test grid snapping logic
@@ -119,21 +119,22 @@ describe('Building System - Vertical-First Placement Logic', () => {
         expect(snapToGrid(1.38)).toBe(1.5);
     });
 
-    it('should calculate vertical placement height correctly', () => {
-        // Vertical log center should be at LOG_LENGTH/2 + clearance above ground
+    it('should calculate vertical placement height correctly (with ground penetration)', () => {
+        // Vertical log center should be at LOG_LENGTH/2 - penetration above ground
+        // This plants the log into the ground like a fence post
         const groundY = 10.0;
-        const expectedCenterY = groundY + LOG_LENGTH / 2 + MIN_GROUND_CLEARANCE;
+        const expectedCenterY = groundY + LOG_LENGTH / 2 - GROUND_PENETRATION;
 
-        expect(expectedCenterY).toBeCloseTo(11.1); // 10 + 1.0 + 0.1
+        expect(expectedCenterY).toBeCloseTo(10.85); // 10 + 1.0 - 0.15
     });
 
     it('should calculate vertical stack position correctly', () => {
-        // Stacking: new log center at existing top + LOG_LENGTH/2 + gap
-        const existingLogY = 11.1; // Center of first vertical log
-        const existingTop = existingLogY + LOG_LENGTH / 2; // 12.1
+        // Stacking: new log center at existing center + LOG_LENGTH + gap
+        // First log at groundY=10 has center at 10.85 (with ground penetration)
+        const existingLogY = 10.85; // Center of first vertical log
         const stackedCenterY = existingLogY + LOG_LENGTH + VERTICAL_STACK_GAP;
 
-        expect(stackedCenterY).toBeCloseTo(13.15); // 11.1 + 2.0 + 0.05
+        expect(stackedCenterY).toBeCloseTo(12.9); // 10.85 + 2.0 + 0.05
     });
 
     it('should calculate adjacent placement position correctly', () => {
@@ -189,6 +190,7 @@ describe('Building System - Vertical-First Placement Logic', () => {
     });
 
     it('should calculate horizontal beam placement at midpoint between supports', () => {
+        // Support logs have centers at Y=5 (already placed, position is center)
         const log1Pos = [10, 5, 10] as [number, number, number];
         const log2Pos = [12.5, 5, 10] as [number, number, number]; // 2.5 units apart (perfect spacing)
 
@@ -199,7 +201,7 @@ describe('Building System - Vertical-First Placement Logic', () => {
         expect(midX).toBe(11.25);
         expect(midZ).toBe(10);
 
-        // Beam Y position: on top of supports
+        // Beam Y position: on top of supports (support top = center + LOG_LENGTH/2)
         const supportTopY = Math.max(log1Pos[1], log2Pos[1]) + LOG_LENGTH / 2;
         const beamCenterY = supportTopY + LOG_RADIUS + VERTICAL_STACK_GAP;
 

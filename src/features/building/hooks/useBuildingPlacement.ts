@@ -13,7 +13,7 @@ const LOG_DIAMETER = LOG_RADIUS * 2;
 const PLACEMENT_DISTANCE = 4.0; // Max distance to place a log
 const VERTICAL_STACK_GAP = 0.05; // Small gap between stacked logs
 const ADJACENT_GAP = 0.08; // Gap between adjacent logs for walls
-const MIN_GROUND_CLEARANCE = 0.1; // Minimum height above ground
+const GROUND_PENETRATION = 0.15; // How deep logs are "planted" into ground (like fence posts)
 const GRID_SNAP = 0.25; // Snap positions to grid (smoother placement)
 
 // For horizontal roof beam detection
@@ -111,23 +111,56 @@ export function useBuildingPlacement(placedLogs: LogData[]) {
             return;
         }
 
-        // Raycast from camera to find terrain hit point
+        // Raycast from camera
         rayOrigin.current.copy(camera.position);
         rayDirection.current.set(0, 0, -1).applyQuaternion(camera.quaternion);
 
         const ray = new rapier.Ray(rayOrigin.current, rayDirection.current);
 
-        // Cast ray looking for terrain (exclude player, logs, physics items)
-        const hit = world.castRay(ray, PLACEMENT_DISTANCE, true, undefined, undefined, undefined, undefined, (collider) => {
+        // Cast ray for TERRAIN (ground placement)
+        const terrainHit = world.castRay(ray, PLACEMENT_DISTANCE, true, undefined, undefined, undefined, undefined, (collider) => {
             const userData = collider.parent()?.userData as { type?: string } | undefined;
-            const type = userData?.type;
-            // Only hit terrain, exclude player, logs, and physics items
-            return type === 'terrain';
+            return userData?.type === 'terrain';
         });
 
-        if (hit && hit.collider) {
+        // Cast ray for PLACED LOGS (stacking placement)
+        // Log colliders should have userData.type === 'log'
+        const logHit = world.castRay(ray, PLACEMENT_DISTANCE, true, undefined, undefined, undefined, undefined, (collider) => {
+            const userData = collider.parent()?.userData as { type?: string } | undefined;
+            return userData?.type === 'log';
+        });
+
+        // Determine which hit to use - prefer log hit for stacking if it's closer or terrain not hit
+        let effectiveHit = terrainHit;
+        let hitLog: LogData | null = null;
+
+        if (logHit && logHit.collider) {
+            const logHitPoint = rayOrigin.current.clone().addScaledVector(rayDirection.current, logHit.timeOfImpact);
+            // Find which placed log was hit
+            const hitLogData = placedLogs.find(log => {
+                if (!log.isPlaced || !(log.isVertical ?? true)) return false;
+                // Check if hit point is near the top of this log
+                const logTop = log.position.y + LOG_LENGTH / 2;
+                const distXZ = Math.sqrt(
+                    Math.pow(logHitPoint.x - log.position.x, 2) +
+                    Math.pow(logHitPoint.z - log.position.z, 2)
+                );
+                // Hit is on this log if within radius and near top
+                return distXZ < LOG_RADIUS * 2 && Math.abs(logHitPoint.y - logTop) < LOG_RADIUS * 2;
+            });
+
+            if (hitLogData) {
+                hitLog = hitLogData;
+                // Use log hit if terrain wasn't hit or log is closer
+                if (!terrainHit || logHit.timeOfImpact < terrainHit.timeOfImpact) {
+                    effectiveHit = logHit;
+                }
+            }
+        }
+
+        if (effectiveHit && effectiveHit.collider) {
             // Calculate hit point
-            hitPoint.current.copy(rayOrigin.current).addScaledVector(rayDirection.current, hit.timeOfImpact);
+            hitPoint.current.copy(rayOrigin.current).addScaledVector(rayDirection.current, effectiveHit.timeOfImpact);
 
             // Get camera facing direction for Y rotation
             const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -154,6 +187,14 @@ export function useBuildingPlacement(placedLogs: LogData[]) {
                 const { position, rotation } = calculateHorizontalPlacement(horizontalSupports);
                 finalPosition = position;
                 finalRotation = rotation;
+            } else if (hitLog) {
+                // Direct stacking on hit log - user is looking at the top of a placed log
+                finalPosition = new THREE.Vector3(
+                    hitLog.position.x,
+                    hitLog.position.y + LOG_LENGTH + VERTICAL_STACK_GAP,
+                    hitLog.position.z
+                );
+                finalRotation = new THREE.Euler(0, yRotation, 0);
             } else {
                 // Vertical placement (default)
                 const { position, rotation } = calculateVerticalPlacement(
@@ -183,7 +224,7 @@ export function useBuildingPlacement(placedLogs: LogData[]) {
                 }))
             });
         } else {
-            // No terrain hit - hide preview
+            // No hit - hide preview
             if (placementState.showPreview) {
                 setPlacementState(prev => ({ ...prev, showPreview: false, isValid: false }));
             }
@@ -220,23 +261,27 @@ function calculateVerticalPlacement(
     allLogs: LogData[]
 ): { position: THREE.Vector3; rotation: THREE.Euler } {
     // For vertical log, center is at half the log length above hit point
-    const baseY = hitPoint.y + LOG_LENGTH / 2 + MIN_GROUND_CLEARANCE;
+    // Subtract GROUND_PENETRATION so logs are "planted" into the ground like fence posts
+    const baseY = hitPoint.y + LOG_LENGTH / 2 - GROUND_PENETRATION;
 
     // Snap X/Z to grid for cleaner placement
     let placementX = Math.round(hitPoint.x / GRID_SNAP) * GRID_SNAP;
     let placementZ = Math.round(hitPoint.z / GRID_SNAP) * GRID_SNAP;
     let placementY = baseY;
 
-    // Check for vertical stacking (placing on top of existing vertical log)
+    // Check for vertical stacking FIRST (placing on top of existing vertical log)
+    // Use the cursor hit point for detection, not the snapped position
     const stackTarget = findStackTarget(
-        new THREE.Vector3(placementX, hitPoint.y, placementZ),
+        hitPoint,
         allLogs.filter(l => l.isPlaced && (l.isVertical ?? true))
     );
 
     if (stackTarget) {
         // Stack on top of existing vertical log
+        // Align perfectly with the log below
         placementX = stackTarget.position.x;
         placementZ = stackTarget.position.z;
+        // New log center = old log center + full log length + small gap
         placementY = stackTarget.position.y + LOG_LENGTH + VERTICAL_STACK_GAP;
     } else {
         // Check for adjacent placement (wall building)

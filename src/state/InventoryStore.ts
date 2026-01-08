@@ -48,7 +48,7 @@ const getDebugModeTools = (): { tools: Record<string, CustomTool>; ids: string[]
     attachments: {
       blade_1: ItemType.SHARD,
       blade_2: ItemType.SHARD,
-      side_right: ItemType.SHARD,
+      side_right: ItemType.STONE,
     }
   };
 
