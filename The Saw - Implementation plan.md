@@ -45,19 +45,33 @@ This feature introduces "The Saw", a new advanced tool for wood processing and c
 - `vc-log-pickup` / `vc-log-drop` events for VoxelTerrain state sync
 
 ### ✅ Phase 5: Building System - COMPLETE
+- **Vertical-First Placement** - Logs placed as fence posts by default
+  - Ground Post: Vertical log planted in terrain (cornerstone)
+  - Stacked Post: Vertical log on top of existing vertical log (walls upward)
+  - Adjacent Post: Vertical log beside existing log (walls outward)
+  - Roof Beam: Horizontal ONLY when two vertical supports at correct spacing
 - **GhostLog.tsx** - Semi-transparent wireframe preview for placement
   - Green when valid placement, red when invalid
   - Dual rendering (solid + wireframe) for visibility
+  - Orientation matches vertical/horizontal placement mode
 - **useBuildingPlacement.ts** hook - Manages placement state and validation
   - Raycasts against terrain to find hit point
   - Grid snapping (0.25 unit increments) for clean alignment
-  - Adjacent log snapping for wall building
-  - Stack detection for roof building
+  - **Placement priority**: Stack → Adjacent → Ground
+  - Support detection for horizontal beams (two vertical posts ~2.5 units apart)
+  - `preferHorizontal` state toggled by mouse wheel
   - Sphere intersection test for collision validation
+- **Mouse wheel rotation** - Toggles between vertical/horizontal when both valid
+  - Only available when two vertical supports detected
+  - Wheel prevented from changing inventory while carrying
 - **Right-click placement** - Places kinematic log at preview position
   - `vc-log-place-request` event from InteractionHandler
   - VoxelTerrain handles placement and state updates
+  - `isVertical` flag tracked per placed log
   - Audio feedback on placement
+- **Log.tsx** - Supports `isVertical` prop for correct rotation
+  - Vertical: `rotation=[0, yRot, 0]` (Y-axis aligned)
+  - Horizontal: `rotation=[0, yRot, PI/2]` (laying flat)
 - **Debug mode tools** - Pre-crafted AXE and SAW in inventory for testing
   - `?debug` URL param adds both tools to inventory automatically
   - Defined in `InventoryStore.ts` via `getDebugModeTools()`
@@ -142,7 +156,6 @@ This feature introduces "The Saw", a new advanced tool for wood processing and c
 3. **Log variants** - Different wood colors based on tree type
 4. **Log persistence** - Save/load placed logs in IndexedDB
 5. **Advanced snapping** - Perpendicular roof placement on wall tops
-6. **Log rotation** - R key to rotate placement preview
 
 ---
 
@@ -156,13 +169,16 @@ This feature introduces "The Saw", a new advanced tool for wood processing and c
 - [x] Q key picks up nearby log
 - [x] Movement speed reduced to 33% while carrying
 - [x] Carried log visible in first-person
-- [x] Right-click places log (horizontal by default)
+- [x] Right-click places log (**vertical** by default - fence post style)
 - [x] Ghost preview shows green when valid, red when invalid
 - [x] Logs snap to grid (0.25 unit increments)
+- [x] Vertical stacking for walls (place on top of existing vertical log)
 - [x] Adjacent log snapping for wall building
+- [x] Horizontal placement only when two vertical supports exist
+- [x] Mouse wheel toggles vertical/horizontal when both valid
 - [x] Debug mode (`?debug`) includes pre-crafted AXE and SAW
 - [x] Build passes: `npm run build`
-- [x] Tests pass: `npm run test:unit` (86 tests, including 11 building tests)
+- [x] Tests pass: `npm run test:unit` (91 tests, including 16 building tests)
 
 ---
 
@@ -204,13 +220,26 @@ InteractionHandler: dispatch 'vc-log-place-request'
     ↓
 VoxelTerrain: handleLogPlaceRequest()
     ↓
-useBuildingPlacement: placeLog() returns { success, position, rotation }
+useBuildingPlacement: placeLog() returns { success, position, rotation, isVertical }
     ↓
-VoxelTerrain: setLogs([...prev, { ...carriedLog, isPlaced: true }])
+VoxelTerrain: setLogs([...prev, { ...carriedLog, isPlaced: true, isVertical }])
     ↓
 CarryingStore: drop() clears carried log
     ↓
 AudioManager: plays 'wood_hit' placement sound
+```
+
+### Event Flow for Rotation Toggle
+```
+User scrolls mouse wheel while carrying
+    ↓
+InteractionHandler: e.preventDefault() + dispatch 'vc-building-rotation-toggle'
+    ↓
+useBuildingPlacement: setPreferHorizontal(prev => !prev)
+    ↓
+useFrame: recalculates placement (vertical vs horizontal based on preference + support availability)
+    ↓
+GhostLog: renders with updated rotation
 ```
 
 ---
@@ -220,8 +249,13 @@ AudioManager: plays 'wood_hit' placement sound
 ### Unit Tests (`src/tests/building.test.ts`)
 - CarryingStore: pickup, drop, state transitions
 - Grid snapping: position calculations
-- Snap detection: adjacent and stacking positions
-- State shapes: dropped vs placed logs
+- Vertical placement height calculations
+- Vertical stacking position calculations
+- Adjacent placement position calculations
+- Horizontal support detection (gap tolerance)
+- Horizontal beam placement at midpoint
+- State shapes: dropped vs placed logs (isPlaced, isVertical)
+- Log rotation values: vertical vs horizontal
 
 ### Smoke Tests (Manual - `npm run dev`)
 1. Start with `?debug` to get pre-crafted tools
@@ -229,6 +263,12 @@ AudioManager: plays 'wood_hit' placement sound
 3. Switch to SAW, cut fallen tree (3-4 hits)
 4. Press Q to pick up a log
 5. Walk around (should be slow)
-6. Look at terrain, verify ghost preview appears
-7. Right-click to place log (should turn kinematic)
-8. Pick up and place more logs adjacent to first
+6. Look at terrain, verify **vertical** ghost preview appears (upright fence post)
+7. Right-click to place log (should turn kinematic, standing upright)
+8. Pick up another log, look at top of placed log → should show stacking preview
+9. Place stacked log (wall going up)
+10. Pick up another log, look beside placed log → should show adjacent preview
+11. Place two vertical logs ~2.5 units apart (LOG_LENGTH + LOG_DIAMETER)
+12. Pick up another log, look between the two supports
+13. Scroll mouse wheel → ghost should switch to horizontal (roof beam)
+14. Right-click to place horizontal beam across the two supports

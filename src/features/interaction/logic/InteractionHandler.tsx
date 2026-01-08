@@ -117,6 +117,26 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [camera, world, rapier]);
 
+  // Mouse wheel rotation toggle for building placement
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      // Only handle wheel when carrying a log (prevents inventory switching)
+      const carryingState = useCarryingStore.getState();
+      if (!carryingState.isCarrying()) return;
+      if (!document.pointerLockElement) return;
+
+      // Prevent default to stop inventory scrolling
+      e.preventDefault();
+
+      // Dispatch rotation toggle event (wheel direction doesn't matter, just toggles)
+      window.dispatchEvent(new CustomEvent('vc-building-rotation-toggle'));
+    };
+
+    // Use passive: false to allow preventDefault
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
   // Mouse Input Logic
   useEffect(() => {
     const tryThrowSelected = (): boolean => {

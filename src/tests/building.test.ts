@@ -98,13 +98,17 @@ describe('Debug Mode Tools', () => {
     });
 });
 
-describe('Building System - Placement Logic', () => {
-    // These tests verify the pure logic functions used in building placement
-    // The actual placement hook requires R3F/Rapier which can't run in Vitest
+describe('Building System - Vertical-First Placement Logic', () => {
+    // Constants matching useBuildingPlacement.ts
+    const LOG_LENGTH = 2.0;
+    const LOG_RADIUS = 0.25;
+    const LOG_DIAMETER = LOG_RADIUS * 2;
+    const VERTICAL_STACK_GAP = 0.05;
+    const ADJACENT_GAP = 0.08;
+    const GRID_SNAP = 0.25;
+    const MIN_GROUND_CLEARANCE = 0.1;
 
     it('should calculate grid-snapped positions correctly', () => {
-        const GRID_SNAP = 0.25;
-
         // Test grid snapping logic
         const snapToGrid = (value: number) => Math.round(value / GRID_SNAP) * GRID_SNAP;
 
@@ -113,6 +117,31 @@ describe('Building System - Placement Logic', () => {
         expect(snapToGrid(1.13)).toBe(1.25);
         expect(snapToGrid(1.37)).toBe(1.25);
         expect(snapToGrid(1.38)).toBe(1.5);
+    });
+
+    it('should calculate vertical placement height correctly', () => {
+        // Vertical log center should be at LOG_LENGTH/2 + clearance above ground
+        const groundY = 10.0;
+        const expectedCenterY = groundY + LOG_LENGTH / 2 + MIN_GROUND_CLEARANCE;
+
+        expect(expectedCenterY).toBeCloseTo(11.1); // 10 + 1.0 + 0.1
+    });
+
+    it('should calculate vertical stack position correctly', () => {
+        // Stacking: new log center at existing top + LOG_LENGTH/2 + gap
+        const existingLogY = 11.1; // Center of first vertical log
+        const existingTop = existingLogY + LOG_LENGTH / 2; // 12.1
+        const stackedCenterY = existingLogY + LOG_LENGTH + VERTICAL_STACK_GAP;
+
+        expect(stackedCenterY).toBeCloseTo(13.15); // 11.1 + 2.0 + 0.05
+    });
+
+    it('should calculate adjacent placement position correctly', () => {
+        // Adjacent logs for wall building
+        const existingX = 10.0;
+        const adjacentX = existingX + LOG_DIAMETER + ADJACENT_GAP;
+
+        expect(adjacentX).toBeCloseTo(10.58); // 10 + 0.5 + 0.08
     });
 
     it('should detect nearby logs within radius', () => {
@@ -138,63 +167,48 @@ describe('Building System - Placement Logic', () => {
         expect(isNearby(log1, log3, SNAP_DISTANCE * 2)).toBe(false);
     });
 
-    it('should calculate adjacent snap positions', () => {
-        const LOG_RADIUS = 0.25;
-        const GAP = 0.05;
+    it('should detect valid horizontal support configuration', () => {
+        // Two vertical logs at correct spacing can support a horizontal beam
+        const SUPPORT_TOLERANCE = 0.3;
 
-        // Adjacent placement calculation
-        const calculateAdjacentPosition = (
-            existingPos: [number, number, number],
-            direction: [number, number, number]
-        ): [number, number, number] => {
-            const offset = LOG_RADIUS * 2 + GAP;
-            return [
-                existingPos[0] + direction[0] * offset,
-                existingPos[1] + direction[1] * offset,
-                existingPos[2] + direction[2] * offset,
-            ];
+        const checkSupportSpacing = (dist: number): boolean => {
+            const gap = dist - LOG_DIAMETER;
+            return Math.abs(gap - LOG_LENGTH) <= SUPPORT_TOLERANCE;
         };
 
-        const existingLog = [10, 5, 10] as [number, number, number];
+        // Perfect spacing: LOG_DIAMETER + LOG_LENGTH = 0.5 + 2.0 = 2.5
+        expect(checkSupportSpacing(2.5)).toBe(true);
 
-        // Place adjacent in +X direction
-        const adjacentX = calculateAdjacentPosition(existingLog, [1, 0, 0]);
-        expect(adjacentX[0]).toBeCloseTo(10.55); // 10 + 0.5 + 0.05
-        expect(adjacentX[1]).toBe(5);
-        expect(adjacentX[2]).toBe(10);
+        // Within tolerance
+        expect(checkSupportSpacing(2.3)).toBe(true); // gap = 1.8, |1.8 - 2.0| = 0.2 < 0.3
+        expect(checkSupportSpacing(2.7)).toBe(true); // gap = 2.2, |2.2 - 2.0| = 0.2 < 0.3
 
-        // Place adjacent in +Z direction
-        const adjacentZ = calculateAdjacentPosition(existingLog, [0, 0, 1]);
-        expect(adjacentZ[0]).toBe(10);
-        expect(adjacentZ[2]).toBeCloseTo(10.55);
+        // Outside tolerance
+        expect(checkSupportSpacing(1.5)).toBe(false); // gap = 1.0, |1.0 - 2.0| = 1.0 > 0.3
+        expect(checkSupportSpacing(3.5)).toBe(false); // gap = 3.0, |3.0 - 2.0| = 1.0 > 0.3
     });
 
-    it('should detect stacking position above existing log', () => {
-        const LOG_RADIUS = 0.25;
-        const GAP = 0.05;
+    it('should calculate horizontal beam placement at midpoint between supports', () => {
+        const log1Pos = [10, 5, 10] as [number, number, number];
+        const log2Pos = [12.5, 5, 10] as [number, number, number]; // 2.5 units apart (perfect spacing)
 
-        // Stack calculation
-        const calculateStackPosition = (
-            existingPos: [number, number, number]
-        ): [number, number, number] => {
-            return [
-                existingPos[0],
-                existingPos[1] + LOG_RADIUS * 2 + GAP,
-                existingPos[2],
-            ];
-        };
+        // Midpoint calculation
+        const midX = (log1Pos[0] + log2Pos[0]) / 2;
+        const midZ = (log1Pos[2] + log2Pos[2]) / 2;
 
-        const bottomLog = [10, 5, 10] as [number, number, number];
-        const stackedLog = calculateStackPosition(bottomLog);
+        expect(midX).toBe(11.25);
+        expect(midZ).toBe(10);
 
-        expect(stackedLog[0]).toBe(10);
-        expect(stackedLog[1]).toBeCloseTo(5.55); // 5 + 0.5 + 0.05
-        expect(stackedLog[2]).toBe(10);
+        // Beam Y position: on top of supports
+        const supportTopY = Math.max(log1Pos[1], log2Pos[1]) + LOG_LENGTH / 2;
+        const beamCenterY = supportTopY + LOG_RADIUS + VERTICAL_STACK_GAP;
+
+        expect(beamCenterY).toBeCloseTo(6.3); // 5 + 1.0 + 0.25 + 0.05
     });
 });
 
 describe('Log State Transitions', () => {
-    it('should track isPlaced flag correctly', () => {
+    it('should track isPlaced and isVertical flags correctly', () => {
         // This tests the state shape for logs
         interface LogState {
             id: string;
@@ -202,28 +216,70 @@ describe('Log State Transitions', () => {
             treeType: number;
             seed: number;
             isPlaced: boolean;
+            isVertical: boolean;
         }
 
-        // Dropped log (dynamic, can roll)
+        // Dropped log (dynamic, can roll) - no orientation tracked yet
         const droppedLog: LogState = {
             id: 'dropped-log-1',
             position: [10, 5, 10],
             treeType: 1,
             seed: 42,
-            isPlaced: false
+            isPlaced: false,
+            isVertical: true // Default to vertical
         };
 
         expect(droppedLog.isPlaced).toBe(false);
+        expect(droppedLog.isVertical).toBe(true);
 
-        // Placed log (kinematic, frozen)
-        const placedLog: LogState = {
-            id: 'placed-log-1',
-            position: [10, 5.55, 10],
+        // Placed vertical log (kinematic, fence post)
+        const placedVerticalLog: LogState = {
+            id: 'placed-vertical-1',
+            position: [10, 6.1, 10],
             treeType: 1,
             seed: 42,
-            isPlaced: true
+            isPlaced: true,
+            isVertical: true
         };
 
-        expect(placedLog.isPlaced).toBe(true);
+        expect(placedVerticalLog.isPlaced).toBe(true);
+        expect(placedVerticalLog.isVertical).toBe(true);
+
+        // Placed horizontal log (kinematic, roof beam)
+        const placedHorizontalLog: LogState = {
+            id: 'placed-horizontal-1',
+            position: [11.25, 6.3, 10],
+            treeType: 1,
+            seed: 42,
+            isPlaced: true,
+            isVertical: false
+        };
+
+        expect(placedHorizontalLog.isPlaced).toBe(true);
+        expect(placedHorizontalLog.isVertical).toBe(false);
+    });
+});
+
+describe('Log Rotation Values', () => {
+    it('should use correct rotation for vertical logs', () => {
+        // Vertical: cylinder axis aligned with Y (no Z rotation)
+        const seed = 0.5;
+        const yRot = (seed % 1) * Math.PI * 2;
+
+        const verticalRotation = [0, yRot, 0] as [number, number, number];
+
+        expect(verticalRotation[0]).toBe(0); // No X rotation
+        expect(verticalRotation[2]).toBe(0); // No Z rotation
+    });
+
+    it('should use correct rotation for horizontal logs', () => {
+        // Horizontal: cylinder tilted 90 degrees (PI/2 Z rotation)
+        const seed = 0.5;
+        const yRot = (seed % 1) * Math.PI * 2;
+
+        const horizontalRotation = [0, yRot, Math.PI / 2] as [number, number, number];
+
+        expect(horizontalRotation[0]).toBe(0); // No X rotation
+        expect(horizontalRotation[2]).toBeCloseTo(Math.PI / 2); // 90 degree Z rotation
     });
 });

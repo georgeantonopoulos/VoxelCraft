@@ -28,6 +28,7 @@ export interface LogProps {
     treeType: number;
     seed: number;
     isPlaced?: boolean;  // Kinematic when placed for building
+    isVertical?: boolean; // Vertical (fence post) or horizontal (beam)
     onInteract?: (id: string) => void;
 }
 
@@ -37,6 +38,7 @@ export const Log: React.FC<LogProps> = ({
     treeType,
     seed,
     isPlaced = false,
+    isVertical = true, // Default to vertical (fence post)
     onInteract
 }) => {
     const bodyRef = useRef<any>(null);
@@ -107,11 +109,17 @@ export const Log: React.FC<LogProps> = ({
         });
     }, []);
 
-    // Initial rotation based on seed for variety
+    // Rotation based on orientation and seed
     const initialRotation = useMemo(() => {
-        const r = (seed % 1) * Math.PI * 2;
-        return [0, r, Math.PI / 2] as [number, number, number]; // Horizontal orientation
-    }, [seed]);
+        const yRot = (seed % 1) * Math.PI * 2; // Random Y rotation for variety
+        if (isVertical) {
+            // Vertical: cylinder axis aligned with world Y (upright fence post)
+            return [0, yRot, 0] as [number, number, number];
+        } else {
+            // Horizontal: cylinder axis perpendicular to Y (laying flat like a beam)
+            return [0, yRot, Math.PI / 2] as [number, number, number];
+        }
+    }, [seed, isVertical]);
 
     return (
         <RigidBody

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
 import * as THREE from 'three';
@@ -7,12 +7,18 @@ import { useCarryingStore } from '@/state/CarryingStore';
 // Log dimensions (must match Log.tsx)
 const LOG_LENGTH = 2.0;
 const LOG_RADIUS = 0.25;
+const LOG_DIAMETER = LOG_RADIUS * 2;
 
 // Placement constants
 const PLACEMENT_DISTANCE = 4.0; // Max distance to place a log
-const SNAP_DISTANCE = 0.5; // Distance to snap to adjacent logs
+const VERTICAL_STACK_GAP = 0.05; // Small gap between stacked logs
+const ADJACENT_GAP = 0.08; // Gap between adjacent logs for walls
 const MIN_GROUND_CLEARANCE = 0.1; // Minimum height above ground
 const GRID_SNAP = 0.25; // Snap positions to grid (smoother placement)
+
+// For horizontal roof beam detection
+const SUPPORT_TOLERANCE = 0.3; // How close log length must match support gap
+const SUPPORT_HEIGHT_TOLERANCE = 0.2; // Y position tolerance for supports
 
 export interface PlacementState {
     /** World position for placement preview */
@@ -23,36 +29,54 @@ export interface PlacementState {
     isValid: boolean;
     /** Whether we should show the ghost preview */
     showPreview: boolean;
-    /** Nearby placed logs for snapping (future feature) */
-    nearbyLogs: Array<{ id: string; position: THREE.Vector3; rotation: THREE.Euler }>;
+    /** Whether the log will be placed vertically */
+    isVertical: boolean;
+    /** Whether horizontal placement is available (for UI feedback) */
+    canBeHorizontal: boolean;
+    /** Nearby placed logs for snapping */
+    nearbyLogs: Array<{ id: string; position: THREE.Vector3; isVertical: boolean }>;
 }
 
 export interface PlacementResult {
     success: boolean;
     position?: THREE.Vector3;
     rotation?: THREE.Euler;
+    isVertical?: boolean;
+}
+
+export interface LogData {
+    id: string;
+    position: THREE.Vector3;
+    isPlaced: boolean;
+    isVertical?: boolean;
 }
 
 /**
- * useBuildingPlacement - Hook for managing log placement preview and validation.
+ * useBuildingPlacement - Hook for managing vertical-first log placement.
  *
  * Features:
- * - Raycasts against terrain to find placement position
- * - Shows ghost preview when carrying a log
- * - Validates placement (minimum clearance, terrain intersection)
- * - Returns placement position/rotation on right-click
+ * - VERTICAL placement by default (fence post style)
+ * - Vertical stacking for building walls upward
+ * - Adjacent vertical placement for wall extension
+ * - HORIZONTAL only when bridging gap between two vertical supports (roof beams)
+ * - Mouse wheel toggles between vertical/horizontal when both are valid
  */
-export function useBuildingPlacement(placedLogs: Array<{ id: string; position: THREE.Vector3; isPlaced: boolean }>) {
+export function useBuildingPlacement(placedLogs: LogData[]) {
     const { camera } = useThree();
     const { world, rapier } = useRapier();
     const isCarrying = useCarryingStore(state => state.isCarrying());
 
+    // User preference for orientation (toggled by mouse wheel)
+    const [preferHorizontal, setPreferHorizontal] = useState(false);
+
     // Placement state
     const [placementState, setPlacementState] = useState<PlacementState>({
         position: new THREE.Vector3(),
-        rotation: new THREE.Euler(0, 0, Math.PI / 2), // Horizontal by default
+        rotation: new THREE.Euler(0, 0, 0), // Vertical by default (Y-axis aligned)
         isValid: false,
         showPreview: false,
+        isVertical: true,
+        canBeHorizontal: false,
         nearbyLogs: []
     });
 
@@ -60,7 +84,23 @@ export function useBuildingPlacement(placedLogs: Array<{ id: string; position: T
     const rayOrigin = useRef(new THREE.Vector3());
     const rayDirection = useRef(new THREE.Vector3());
     const hitPoint = useRef(new THREE.Vector3());
-    const hitNormal = useRef(new THREE.Vector3());
+
+    // Listen for rotation toggle events from mouse wheel
+    useEffect(() => {
+        const handleRotationToggle = () => {
+            setPreferHorizontal(prev => !prev);
+        };
+
+        window.addEventListener('vc-building-rotation-toggle', handleRotationToggle);
+        return () => window.removeEventListener('vc-building-rotation-toggle', handleRotationToggle);
+    }, []);
+
+    // Reset preference when starting to carry a new log
+    useEffect(() => {
+        if (isCarrying) {
+            setPreferHorizontal(false); // Always start with vertical
+        }
+    }, [isCarrying]);
 
     // Update placement preview every frame when carrying
     useFrame(() => {
@@ -89,57 +129,57 @@ export function useBuildingPlacement(placedLogs: Array<{ id: string; position: T
             // Calculate hit point
             hitPoint.current.copy(rayOrigin.current).addScaledVector(rayDirection.current, hit.timeOfImpact);
 
-            // Get surface normal from the shape (approximate - use up vector for flat placement)
-            // For now, assume placement on relatively flat surfaces
-            hitNormal.current.set(0, 1, 0);
-
-            // Calculate placement position (log center above hit point)
-            // Log is horizontal, so we offset by radius + clearance
-            const placementY = hitPoint.current.y + LOG_RADIUS + MIN_GROUND_CLEARANCE;
-
-            // Snap to grid for cleaner placement
-            const placementX = Math.round(hitPoint.current.x / GRID_SNAP) * GRID_SNAP;
-            const placementZ = Math.round(hitPoint.current.z / GRID_SNAP) * GRID_SNAP;
-
-            // Calculate rotation - log lies along the camera's horizontal direction
+            // Get camera facing direction for Y rotation
             const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
             cameraForward.y = 0;
             cameraForward.normalize();
-
-            // Log rotation: roll it to be horizontal (Z-axis rotation), then face camera direction
             const yRotation = Math.atan2(cameraForward.x, cameraForward.z);
 
-            // Find nearby placed logs for potential snapping
-            const nearbyLogs = findNearbyPlacedLogs(
-                new THREE.Vector3(placementX, placementY, placementZ),
-                placedLogs,
-                SNAP_DISTANCE * 4
-            );
+            // Find nearby placed logs
+            const nearbyLogs = findNearbyPlacedLogs(hitPoint.current, placedLogs, LOG_LENGTH * 2);
 
-            // Check for snap points with nearby placed logs
-            const snapResult = checkSnapPoints(
-                new THREE.Vector3(placementX, placementY, placementZ),
-                yRotation,
-                nearbyLogs
-            );
+            // Check if horizontal placement is possible (two vertical supports)
+            const horizontalSupports = findHorizontalSupports(hitPoint.current, placedLogs, yRotation);
+            const canBeHorizontal = horizontalSupports !== null;
 
-            // Validate placement (check for collision with existing objects)
-            const isValid = validatePlacement(
-                snapResult.position,
-                snapResult.rotation,
-                world,
-                rapier
-            );
+            // Determine final orientation based on preference and availability
+            const useHorizontal = preferHorizontal && canBeHorizontal;
+
+            // Calculate placement position based on orientation
+            let finalPosition: THREE.Vector3;
+            let finalRotation: THREE.Euler;
+
+            if (useHorizontal && horizontalSupports) {
+                // Horizontal roof beam placement
+                const { position, rotation } = calculateHorizontalPlacement(horizontalSupports);
+                finalPosition = position;
+                finalRotation = rotation;
+            } else {
+                // Vertical placement (default)
+                const { position, rotation } = calculateVerticalPlacement(
+                    hitPoint.current,
+                    yRotation,
+                    nearbyLogs,
+                    placedLogs
+                );
+                finalPosition = position;
+                finalRotation = rotation;
+            }
+
+            // Validate placement
+            const isValid = validatePlacement(finalPosition, !useHorizontal, world, rapier);
 
             setPlacementState({
-                position: snapResult.position.clone(),
-                rotation: new THREE.Euler(0, snapResult.rotation, Math.PI / 2),
+                position: finalPosition.clone(),
+                rotation: finalRotation.clone(),
                 isValid,
                 showPreview: true,
+                isVertical: !useHorizontal,
+                canBeHorizontal,
                 nearbyLogs: nearbyLogs.map(log => ({
                     id: log.id,
                     position: log.position.clone(),
-                    rotation: new THREE.Euler(0, 0, Math.PI / 2)
+                    isVertical: log.isVertical ?? true
                 }))
             });
         } else {
@@ -159,7 +199,8 @@ export function useBuildingPlacement(placedLogs: Array<{ id: string; position: T
         return {
             success: true,
             position: placementState.position.clone(),
-            rotation: placementState.rotation.clone()
+            rotation: placementState.rotation.clone(),
+            isVertical: placementState.isVertical
         };
     }, [placementState]);
 
@@ -170,89 +211,238 @@ export function useBuildingPlacement(placedLogs: Array<{ id: string; position: T
 }
 
 /**
- * Find placed logs within a certain radius for snapping
+ * Calculate vertical placement position with snapping to existing logs
  */
-function findNearbyPlacedLogs(
-    position: THREE.Vector3,
-    allLogs: Array<{ id: string; position: THREE.Vector3; isPlaced: boolean }>,
-    radius: number
-): Array<{ id: string; position: THREE.Vector3 }> {
-    const radiusSq = radius * radius;
-    return allLogs
-        .filter(log => log.isPlaced && position.distanceToSquared(log.position) < radiusSq)
-        .map(log => ({ id: log.id, position: log.position }));
-}
-
-/**
- * Check for snap points with nearby placed logs.
- * Returns adjusted position and rotation if snapping is appropriate.
- */
-function checkSnapPoints(
-    position: THREE.Vector3,
+function calculateVerticalPlacement(
+    hitPoint: THREE.Vector3,
     yRotation: number,
-    nearbyLogs: Array<{ id: string; position: THREE.Vector3 }>
-): { position: THREE.Vector3; rotation: number } {
-    if (nearbyLogs.length === 0) {
-        return { position, rotation: yRotation };
-    }
+    nearbyLogs: LogData[],
+    allLogs: LogData[]
+): { position: THREE.Vector3; rotation: THREE.Euler } {
+    // For vertical log, center is at half the log length above hit point
+    const baseY = hitPoint.y + LOG_LENGTH / 2 + MIN_GROUND_CLEARANCE;
 
-    // Find the closest placed log
-    let closestLog = nearbyLogs[0];
-    let closestDistSq = position.distanceToSquared(closestLog.position);
+    // Snap X/Z to grid for cleaner placement
+    let placementX = Math.round(hitPoint.x / GRID_SNAP) * GRID_SNAP;
+    let placementZ = Math.round(hitPoint.z / GRID_SNAP) * GRID_SNAP;
+    let placementY = baseY;
 
-    for (let i = 1; i < nearbyLogs.length; i++) {
-        const distSq = position.distanceToSquared(nearbyLogs[i].position);
-        if (distSq < closestDistSq) {
-            closestDistSq = distSq;
-            closestLog = nearbyLogs[i];
+    // Check for vertical stacking (placing on top of existing vertical log)
+    const stackTarget = findStackTarget(
+        new THREE.Vector3(placementX, hitPoint.y, placementZ),
+        allLogs.filter(l => l.isPlaced && (l.isVertical ?? true))
+    );
+
+    if (stackTarget) {
+        // Stack on top of existing vertical log
+        placementX = stackTarget.position.x;
+        placementZ = stackTarget.position.z;
+        placementY = stackTarget.position.y + LOG_LENGTH + VERTICAL_STACK_GAP;
+    } else {
+        // Check for adjacent placement (wall building)
+        const adjacentTarget = findAdjacentTarget(
+            new THREE.Vector3(placementX, placementY, placementZ),
+            nearbyLogs.filter(l => l.isVertical ?? true)
+        );
+
+        if (adjacentTarget) {
+            // Place adjacent to existing log
+            const dir = new THREE.Vector3()
+                .subVectors(new THREE.Vector3(placementX, 0, placementZ),
+                           new THREE.Vector3(adjacentTarget.position.x, 0, adjacentTarget.position.z))
+                .normalize();
+
+            placementX = adjacentTarget.position.x + dir.x * (LOG_DIAMETER + ADJACENT_GAP);
+            placementZ = adjacentTarget.position.z + dir.z * (LOG_DIAMETER + ADJACENT_GAP);
+            // Match the Y level of the adjacent log for consistent wall height
+            placementY = adjacentTarget.position.y;
         }
     }
 
-    const closestDist = Math.sqrt(closestDistSq);
-
-    // If close enough, snap adjacent (side by side for wall building)
-    if (closestDist < SNAP_DISTANCE * 2) {
-        // Calculate direction from existing log to new position
-        const dir = new THREE.Vector3().subVectors(position, closestLog.position);
-        dir.y = 0; // Keep horizontal
-        dir.normalize();
-
-        // Snap position: place adjacent with gap equal to 2 * radius
-        const snapPos = closestLog.position.clone();
-        snapPos.addScaledVector(dir, LOG_RADIUS * 2 + 0.05); // Small gap for visual clarity
-        snapPos.y = position.y; // Keep original height
-
-        return { position: snapPos, rotation: yRotation };
-    }
-
-    // If slightly further, check for stacking (roof building)
-    if (closestDist < SNAP_DISTANCE * 3 && position.y > closestLog.position.y + LOG_RADIUS) {
-        // Stacking: place on top
-        const stackPos = new THREE.Vector3(
-            position.x,
-            closestLog.position.y + LOG_RADIUS * 2 + 0.05,
-            position.z
-        );
-
-        return { position: stackPos, rotation: yRotation };
-    }
-
-    return { position, rotation: yRotation };
+    return {
+        position: new THREE.Vector3(placementX, placementY, placementZ),
+        rotation: new THREE.Euler(0, yRotation, 0) // Vertical: Y-axis aligned
+    };
 }
 
 /**
- * Validate that the placement doesn't intersect with other objects.
- * Returns true if placement is valid.
+ * Find a vertical log that we can stack on top of
+ */
+function findStackTarget(
+    cursorPos: THREE.Vector3,
+    verticalLogs: LogData[]
+): LogData | null {
+    const STACK_XZ_TOLERANCE = LOG_RADIUS * 1.5;
+
+    let bestTarget: LogData | null = null;
+    let bestDistSq = STACK_XZ_TOLERANCE * STACK_XZ_TOLERANCE;
+
+    for (const log of verticalLogs) {
+        // Check XZ distance (must be nearly aligned)
+        const dxz = Math.sqrt(
+            Math.pow(cursorPos.x - log.position.x, 2) +
+            Math.pow(cursorPos.z - log.position.z, 2)
+        );
+
+        if (dxz > STACK_XZ_TOLERANCE) continue;
+
+        // Check if cursor is above this log's top
+        const logTop = log.position.y + LOG_LENGTH / 2;
+        if (cursorPos.y < logTop - 0.5) continue; // Must be near or above top
+
+        const distSq = dxz * dxz;
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            bestTarget = log;
+        }
+    }
+
+    return bestTarget;
+}
+
+/**
+ * Find an adjacent vertical log for wall extension
+ */
+function findAdjacentTarget(
+    cursorPos: THREE.Vector3,
+    verticalLogs: LogData[]
+): LogData | null {
+    const ADJACENT_DISTANCE = LOG_DIAMETER * 3; // Max distance to consider adjacent
+
+    let bestTarget: LogData | null = null;
+    let bestDist = ADJACENT_DISTANCE;
+
+    for (const log of verticalLogs) {
+        // Check horizontal distance
+        const dx = cursorPos.x - log.position.x;
+        const dz = cursorPos.z - log.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+
+        // Must be close but not overlapping
+        if (dist < LOG_DIAMETER * 1.5 || dist > ADJACENT_DISTANCE) continue;
+
+        // Prefer closer logs
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestTarget = log;
+        }
+    }
+
+    return bestTarget;
+}
+
+/**
+ * Find two vertical support logs that could support a horizontal roof beam
+ */
+function findHorizontalSupports(
+    hitPoint: THREE.Vector3,
+    allLogs: LogData[],
+    facingAngle: number
+): { log1: LogData; log2: LogData } | null {
+    // Get vertical placed logs only
+    const verticalLogs = allLogs.filter(l => l.isPlaced && (l.isVertical ?? true));
+    if (verticalLogs.length < 2) return null;
+
+    // Direction perpendicular to facing (for beam orientation)
+    const beamDir = new THREE.Vector3(
+        Math.sin(facingAngle + Math.PI / 2),
+        0,
+        Math.cos(facingAngle + Math.PI / 2)
+    );
+
+    // Find pairs of logs that could support a beam
+    for (let i = 0; i < verticalLogs.length; i++) {
+        for (let j = i + 1; j < verticalLogs.length; j++) {
+            const log1 = verticalLogs[i];
+            const log2 = verticalLogs[j];
+
+            // Check if they're at similar heights
+            const yDiff = Math.abs(log1.position.y - log2.position.y);
+            if (yDiff > SUPPORT_HEIGHT_TOLERANCE) continue;
+
+            // Check distance between logs (should be close to LOG_LENGTH)
+            const dx = log2.position.x - log1.position.x;
+            const dz = log2.position.z - log1.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            // Gap between supports (subtracting their radii)
+            const gap = dist - LOG_DIAMETER;
+
+            // Gap should be close to LOG_LENGTH for a beam to fit
+            if (Math.abs(gap - LOG_LENGTH) > SUPPORT_TOLERANCE) continue;
+
+            // Check if cursor is near the line between these logs
+            const midpoint = new THREE.Vector3(
+                (log1.position.x + log2.position.x) / 2,
+                Math.max(log1.position.y, log2.position.y) + LOG_LENGTH / 2,
+                (log1.position.z + log2.position.z) / 2
+            );
+
+            const distToMidpoint = hitPoint.distanceTo(midpoint);
+            if (distToMidpoint < LOG_LENGTH) {
+                return { log1, log2 };
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Calculate horizontal beam placement between two supports
+ */
+function calculateHorizontalPlacement(
+    supports: { log1: LogData; log2: LogData }
+): { position: THREE.Vector3; rotation: THREE.Euler } {
+    const { log1, log2 } = supports;
+
+    // Position at midpoint between supports, on top of them
+    const topY = Math.max(log1.position.y, log2.position.y) + LOG_LENGTH / 2;
+    const position = new THREE.Vector3(
+        (log1.position.x + log2.position.x) / 2,
+        topY + LOG_RADIUS + VERTICAL_STACK_GAP,
+        (log1.position.z + log2.position.z) / 2
+    );
+
+    // Rotation to point from log1 to log2
+    const dx = log2.position.x - log1.position.x;
+    const dz = log2.position.z - log1.position.z;
+    const yRotation = Math.atan2(dx, dz);
+
+    // Horizontal: rotate 90 degrees around X or Z to lay flat
+    // CylinderGeometry axis is Y, so rotation [0, yRot, PI/2] lays it horizontal
+    return {
+        position,
+        rotation: new THREE.Euler(0, yRotation, Math.PI / 2)
+    };
+}
+
+/**
+ * Find placed logs within a certain radius
+ */
+function findNearbyPlacedLogs(
+    position: THREE.Vector3,
+    allLogs: LogData[],
+    radius: number
+): LogData[] {
+    const radiusSq = radius * radius;
+    return allLogs.filter(log =>
+        log.isPlaced &&
+        position.distanceToSquared(log.position) < radiusSq
+    );
+}
+
+/**
+ * Validate that the placement doesn't intersect with other objects
  */
 function validatePlacement(
     position: THREE.Vector3,
-    _rotation: number,
+    isVertical: boolean,
     world: any,
     rapier: any
 ): boolean {
-    // Use a sphere intersection test at the placement position
-    // The sphere radius should be slightly smaller than the log to allow tight fits
-    const testRadius = LOG_RADIUS * 0.9;
+    // Use a capsule/sphere test at the placement position
+    const testRadius = LOG_RADIUS * 0.8;
 
     let hasCollision = false;
 
@@ -265,24 +455,26 @@ function validatePlacement(
             const type = userData?.type;
 
             // Collision with anything except terrain invalidates placement
-            // (terrain collision is expected and OK)
             if (type !== 'terrain' && type !== 'player') {
                 hasCollision = true;
                 return false; // Stop iteration
             }
-            return true; // Continue checking
+            return true;
         }
     );
 
-    // Also ensure we're not placing inside terrain
-    // A simple downward ray should hit terrain within a reasonable distance
-    const downRay = new rapier.Ray(position, { x: 0, y: -1, z: 0 });
-    const downHit = world.castRay(downRay, LOG_RADIUS + 1.0, true, undefined, undefined, undefined, undefined, (collider: any) => {
-        return collider.parent()?.userData?.type === 'terrain';
-    });
+    // For vertical logs, ensure we're not placing inside terrain
+    if (isVertical) {
+        const downRay = new rapier.Ray(position, { x: 0, y: -1, z: 0 });
+        const downHit = world.castRay(downRay, LOG_LENGTH, true, undefined, undefined, undefined, undefined, (collider: any) => {
+            return collider.parent()?.userData?.type === 'terrain';
+        });
 
-    // Valid if no collisions and we found ground below
-    return !hasCollision && downHit !== null;
+        // Valid if ground is found below
+        return !hasCollision && downHit !== null;
+    }
+
+    return !hasCollision;
 }
 
 export default useBuildingPlacement;

@@ -719,7 +719,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
-  const [logs, setLogs] = useState<Array<{ id: string; position: THREE.Vector3; treeType: number; seed: number; isPlaced: boolean }>>([]);
+  const [logs, setLogs] = useState<Array<{ id: string; position: THREE.Vector3; treeType: number; seed: number; isPlaced: boolean; isVertical?: boolean }>>([]);
 
   // Building placement hook - shows ghost preview and handles placement validation
   const { placementState, placeLog } = useBuildingPlacement(logs);
@@ -804,7 +804,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             position: result.position!.clone(),
             treeType: carriedLog.treeType,
             seed: carriedLog.seed,
-            isPlaced: true // Kinematic - won't roll
+            isPlaced: true, // Kinematic - won't roll
+            isVertical: result.isVertical ?? true // Track orientation
           }
         ]);
 
@@ -2146,6 +2147,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           treeType={log.treeType}
           seed={log.seed}
           isPlaced={log.isPlaced}
+          isVertical={log.isVertical}
         />
       ))}
       {/* Ghost log preview for building placement */}
