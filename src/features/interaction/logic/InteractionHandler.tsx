@@ -323,8 +323,16 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         return;
       }
 
-      // Right Click: BUILD or Throw
+      // Right Click: BUILD or Throw or Place Log
       if (e.button === 2) {
+        // If carrying a log, attempt to place it
+        const carryingState = useCarryingStore.getState();
+        if (carryingState.isCarrying()) {
+          // Dispatch placement request event - VoxelTerrain handles the actual placement
+          window.dispatchEvent(new CustomEvent('vc-log-place-request'));
+          return;
+        }
+
         // BUILD with pickaxe or digging tools
         if (pickaxeSelected || capabilities.canDig) {
           setInteractionAction('BUILD');

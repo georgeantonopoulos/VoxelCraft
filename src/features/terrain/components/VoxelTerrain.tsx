@@ -17,6 +17,9 @@ import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree, LogSpawnData } from '@features/flora/components/FallingTree';
 import { Log } from '@features/building/components/Log';
+import { GhostLog } from '@features/building/components/GhostLog';
+import { useBuildingPlacement } from '@features/building/hooks/useBuildingPlacement';
+import { useCarryingStore } from '@/state/CarryingStore';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
@@ -718,6 +721,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
   const [logs, setLogs] = useState<Array<{ id: string; position: THREE.Vector3; treeType: number; seed: number; isPlaced: boolean }>>([]);
 
+  // Building placement hook - shows ghost preview and handles placement validation
+  const { placementState, placeLog } = useBuildingPlacement(logs);
+
   // Callbacks for terrain interaction hook
   const handleParticle = useCallback((state: Partial<ParticleState> & { burstId?: number }) => {
     setParticleState(prev => ({
@@ -757,7 +763,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     setLeafPickup({ position, color: color || '#4CAF50' }); // Default to green
   }, []);
 
-  // Log pickup/drop event handlers
+  // Log pickup/drop/place event handlers
   useEffect(() => {
     const handleLogPickup = (e: CustomEvent<{ logId: string }>) => {
       const { logId } = e.detail;
@@ -778,14 +784,47 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       ]);
     };
 
+    // Handle right-click placement request while carrying a log
+    const handleLogPlaceRequest = () => {
+      const result = placeLog();
+      if (result.success && result.position && result.rotation) {
+        // Get the carried log data and clear carrying state
+        const carryingState = useCarryingStore.getState();
+        const carriedLog = carryingState.carriedLog;
+        if (!carriedLog) return;
+
+        // Clear carrying state
+        carryingState.drop();
+
+        // Add the placed log to the world
+        setLogs(prev => [
+          ...prev,
+          {
+            id: `placed-${carriedLog.id}-${Date.now()}`,
+            position: result.position!.clone(),
+            treeType: carriedLog.treeType,
+            seed: carriedLog.seed,
+            isPlaced: true // Kinematic - won't roll
+          }
+        ]);
+
+        // Play placement sound
+        window.dispatchEvent(new CustomEvent('vc-audio-play', {
+          detail: { soundId: 'wood_hit', options: { volume: 0.5, pitch: 0.8 } }
+        }));
+      }
+    };
+
     window.addEventListener('vc-log-pickup', handleLogPickup as EventListener);
     window.addEventListener('vc-log-drop', handleLogDrop as EventListener);
+    window.addEventListener('vc-log-place-request', handleLogPlaceRequest);
 
     return () => {
       window.removeEventListener('vc-log-pickup', handleLogPickup as EventListener);
       window.removeEventListener('vc-log-drop', handleLogDrop as EventListener);
+      window.removeEventListener('vc-log-place-request', handleLogPlaceRequest);
     };
-  }, []);
+  }, [placeLog]);
 
   // Use extracted terrain interaction hook
   useTerrainInteraction(
@@ -2109,6 +2148,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           isPlaced={log.isPlaced}
         />
       ))}
+      {/* Ghost log preview for building placement */}
+      <GhostLog
+        position={placementState.position}
+        rotation={placementState.rotation}
+        isValid={placementState.isValid}
+        visible={placementState.showPreview}
+      />
       {leafPickup && (
         <LeafPickupEffect
           start={leafPickup.position}

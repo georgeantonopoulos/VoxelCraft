@@ -37,6 +37,43 @@ const getDebugModeEnabled = (): boolean => {
 
 const INITIAL_FLORA_COUNT = getDebugModeEnabled() ? 10 : 0;
 
+// Pre-crafted tools for debug mode testing
+const getDebugModeTools = (): { tools: Record<string, CustomTool>; ids: string[] } => {
+  if (!getDebugModeEnabled()) return { tools: {}, ids: [] };
+
+  // Create pre-crafted AXE: blade_1 + blade_2 + side_right (shards)
+  const debugAxe: CustomTool = {
+    id: 'tool_debug_axe',
+    baseType: ItemType.STICK,
+    attachments: {
+      blade_1: ItemType.SHARD,
+      blade_2: ItemType.SHARD,
+      side_right: ItemType.SHARD,
+    }
+  };
+
+  // Create pre-crafted SAW: blade_1 + blade_2 + blade_3 (shards)
+  const debugSaw: CustomTool = {
+    id: 'tool_debug_saw',
+    baseType: ItemType.STICK,
+    attachments: {
+      blade_1: ItemType.SHARD,
+      blade_2: ItemType.SHARD,
+      blade_3: ItemType.SHARD,
+    }
+  };
+
+  return {
+    tools: {
+      [debugAxe.id]: debugAxe,
+      [debugSaw.id]: debugSaw,
+    },
+    ids: [debugAxe.id, debugSaw.id]
+  };
+};
+
+const DEBUG_TOOLS = getDebugModeTools();
+
 const computeSlots = (state: {
   inventoryCount: number;
   torchCount: number;
@@ -122,8 +159,9 @@ export const useInventoryStore = create<GameState>((set, get) => ({
   hasAxe: false,
   currentTool: ItemType.PICKAXE,
 
-  customTools: {},
-  customToolIds: [],
+  // Initialize with debug tools if in debug mode
+  customTools: DEBUG_TOOLS.tools,
+  customToolIds: DEBUG_TOOLS.ids,
 
   inventorySlots: computeSlots({
     inventoryCount: INITIAL_FLORA_COUNT,
@@ -133,7 +171,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
     shardCount: 0,
     hasPickaxe: false,
     hasAxe: false,
-    customToolIds: []
+    customToolIds: DEBUG_TOOLS.ids
   }),
   selectedSlotIndex: 0,
 

@@ -13,494 +13,160 @@ This feature introduces "The Saw", a new advanced tool for wood processing and c
 
 ---
 
-## 2. Phase 1: SAW Tool Functionality
+## 2. Implementation Progress
 
-### 2.1. Enable SAW to Cut Trees
-**File**: [useTerrainInteraction.ts](src/features/terrain/hooks/useTerrainInteraction.ts)
+### ✅ Phase 1: SAW Tool Functionality - COMPLETE
+- SAW can be crafted and renders correctly in first-person
+- SAW pose added to `HeldItemPoses.ts`
+- SAW **cannot** chop standing trees (intentional - only AXE can fell trees)
+- SAW is specifically for cutting fallen trees into logs
 
-**Problem**: Line 216 guards tree damage with `if (!capabilities.canChop)`, but SAW has `canSaw` instead.
+### ✅ Phase 2: FallingTree to Log Conversion - COMPLETE
+- FallingTree component has `userData` for interaction detection
+- **Dual registry system** implemented for reliable physics raycasting:
+  - `fallingTreeRegistry` (RigidBody handles)
+  - `fallingTreeColliderRegistry` (Collider handles) - **Key fix: raycasts return collider handles, not rigidbody handles**
+- SAW sawing damage system: 3-4 hits required to convert fallen tree to logs
+- Particle effects (wood sawdust) during sawing
+- Audio: Uses `playSound('wood_hit', ...)` via new AudioManager event system
 
-**Solution**: Update the capability check to allow both chopping and sawing tools:
-```typescript
-// Line 216: Change from:
-if (!capabilities.canChop) {
-// To:
-if (!capabilities.canChop && !capabilities.canSaw) {
-```
+### ✅ Phase 3: Log Entity - COMPLETE
+- `Log.tsx` component created in `src/features/building/components/`
+- Log physics with `RigidBody` and `CylinderCollider`
+- Wood material with bark texture
+- End caps showing cut grain
+- Logs tracked in VoxelTerrain state
 
-This allows SAW to damage standing trees (with its higher woodDamage of 8.0).
+### ✅ Phase 4: Log Carrying System - COMPLETE
+- `CarryingStore` manages carried log state
+- Q key picks up / drops logs (via `InteractionHandler.tsx`)
+- Movement speed reduced to 33% while carrying (`CARRYING_SPEED_MULTIPLIER`)
+- Carried log visual in `FirstPersonTools.tsx` (cylinder mesh in first-person view)
+- `vc-log-pickup` / `vc-log-drop` events for VoxelTerrain state sync
 
-### 2.2. Add SAW Held Item Pose
-**File**: [HeldItemPoses.ts](src/features/interaction/logic/HeldItemPoses.ts)
-
-Add a pose for the SAW tool. Since it's similar to a stick-based tool, derive from `STICK` pose:
-```typescript
-[ItemType.SAW]: {
-  x: PICKAXE_POSE.x,
-  xOffset: 0.27,
-  y: -0.457,
-  z: -0.789,
-  scale: 1.234,
-  rot: {
-    x: THREE.MathUtils.degToRad(-18.0),
-    y: THREE.MathUtils.degToRad(89.0),
-    z: THREE.MathUtils.degToRad(162.0)
-  }
-}
-```
-
-### 2.3. Add SAW to FirstPersonTools Rendering
-**File**: [FirstPersonTools.tsx](src/features/interaction/components/FirstPersonTools.tsx)
-
-Ensure the SAW tool type is handled in the tool rendering switch/conditional. It should render as a stick with 3 shards attached (like the crafting preview).
-
----
-
-## 3. Phase 2: FallingTree to Log Conversion
-
-### 3.1. Modify FallingTree Component
-**File**: [FallingTree.tsx](src/features/flora/components/FallingTree.tsx)
-
-**Current State**: FallingTree is a physics-enabled tree that spawns when a standing tree's health reaches 0. It uses `RigidBody` with `CylinderCollider`.
-
-**Changes**:
-1. Add interaction detection for SAW tool
-2. When SAW hits a fallen tree, convert it to Log entities
-3. Track "fallen" state (rotation or ground contact)
-
-**Implementation**:
-```typescript
-// Add to FallingTreeProps
-interface FallingTreeProps {
-    position: THREE.Vector3;
-    type: number;
-    seed: number;
-    onConvertToLogs?: (logs: LogData[]) => void;  // NEW
-}
-
-// Add userData for interaction detection
-<RigidBody
-    userData={{ type: 'fallen_tree', treeType: type, seed }}
-    // ... existing props
->
-```
-
-### 3.2. Sawing Interaction on Fallen Trees
-**File**: [useTerrainInteraction.ts](src/features/terrain/hooks/useTerrainInteraction.ts)
-
-Add a new case for SAW interacting with fallen trees:
-```typescript
-// In the physics hit detection section (around line 168)
-if (userData.type === 'fallen_tree') {
-    const capabilities = getToolCapabilities(currentTool);
-    if (!capabilities.canSaw) {
-        audioPool.play(clunkUrl, 0.3, 1.5);
-        return;
-    }
-
-    // Spawn 2-3 logs at the fallen tree's position
-    const logCount = 2 + Math.floor(Math.random());
-    for (let i = 0; i < logCount; i++) {
-        // Call callback to spawn Log entity
-        callbacks.onLogSpawn({
-            position: fallingTreePosition.clone().add(new THREE.Vector3(i * 0.5, 0, 0)),
-            treeType: userData.treeType,
-            seed: userData.seed + i
-        });
-    }
-
-    // Remove the FallingTree entity
-    callbacks.onFallingTreeRemove(userData.id);
-}
-```
+### ✅ Phase 5: Building System - COMPLETE
+- **GhostLog.tsx** - Semi-transparent wireframe preview for placement
+  - Green when valid placement, red when invalid
+  - Dual rendering (solid + wireframe) for visibility
+- **useBuildingPlacement.ts** hook - Manages placement state and validation
+  - Raycasts against terrain to find hit point
+  - Grid snapping (0.25 unit increments) for clean alignment
+  - Adjacent log snapping for wall building
+  - Stack detection for roof building
+  - Sphere intersection test for collision validation
+- **Right-click placement** - Places kinematic log at preview position
+  - `vc-log-place-request` event from InteractionHandler
+  - VoxelTerrain handles placement and state updates
+  - Audio feedback on placement
+- **Debug mode tools** - Pre-crafted AXE and SAW in inventory for testing
+  - `?debug` URL param adds both tools to inventory automatically
+  - Defined in `InventoryStore.ts` via `getDebugModeTools()`
 
 ---
 
-## 4. Phase 3: Log Entity
+## 3. Bug Fixes Applied
 
-### 4.1. Create Log Component
-**New File**: `src/features/building/components/Log.tsx`
+### BUG 1: SAW was chopping standing trees
+**Root cause**: `useTerrainInteraction.ts` checked `capabilities.canChop || capabilities.canSaw` for tree damage.
+**Fix**: Changed to only allow `canChop` tools (AXE) to damage standing trees. SAW is for fallen trees only.
 
-```typescript
-import React, { useMemo } from 'react';
-import * as THREE from 'three';
-import { RigidBody, CylinderCollider } from '@react-three/rapier';
-import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
-import { getNoiseTexture } from '@core/memory/sharedResources';
+### BUG 2: SAW did nothing to fallen trees (raycasts not detecting)
+**Root cause (complex)**:
+1. Initially thought: Registry was using RigidBody handle but raycast returns Collider handle
+2. Real root cause: **Player's RigidBody had no `userData`**, so player capsule passed raycast filter (`undefined !== 'terrain'`) and blocked all raycasts to fallen trees
 
-export interface LogProps {
-    id: string;
-    position: THREE.Vector3;
-    treeType: number;
-    seed: number;
-    isPlaced?: boolean;  // Kinematic when placed
-    onPickup?: (id: string) => void;
-}
+**Fix**:
+1. Added `userData={{ type: 'player' }}` to `Player.tsx` RigidBody
+2. Updated raycast filter to exclude both `'terrain'` AND `'player'` types
+3. Added dual registry (`fallingTreeColliderRegistry`) keyed by collider handle
 
-export const Log: React.FC<LogProps> = ({
-    id,
-    position,
-    treeType,
-    seed,
-    isPlaced = false,
-    onPickup
-}) => {
-    // Log dimensions (shorter than tree trunk)
-    const LOG_LENGTH = 2.0;
-    const LOG_RADIUS = 0.25;
+### BUG 3: Log pickup sphere animation + disappearing logs
+**Root cause**: `isPhysicsItemCollider` in `raycastUtils.ts` returned `true` for LOG type, so pressing E on a log triggered the generic physics item pickup flow (sphere animation, add to inventory) instead of the CarryingStore flow.
+**Fix**: Added explicit exclusion `itemType !== ItemType.LOG` in `isPhysicsItemCollider`
 
-    // Wood material (simplified from FallingTree wood shader)
-    const woodMaterial = useMemo(() => {
-        return new CustomShaderMaterial({
-            baseMaterial: THREE.MeshStandardMaterial,
-            vertexShader: `
-                varying vec3 vPos;
-                void main() {
-                    vPos = position;
-                    csm_Position = position;
-                }
-            `,
-            fragmentShader: `
-                precision highp sampler3D;
-                varying vec3 vPos;
-                uniform vec3 uColorBase;
-                uniform sampler3D uNoiseTexture;
-
-                void main() {
-                    float nBark = texture(uNoiseTexture, vPos * 0.8).r;
-                    vec3 col = uColorBase * mix(0.85, 1.1, nBark);
-                    csm_DiffuseColor = vec4(col, 1.0);
-                }
-            `,
-            uniforms: {
-                uColorBase: { value: new THREE.Color('#5D4037') },
-                uNoiseTexture: { value: getNoiseTexture() },
-            },
-            roughness: 0.85,
-        });
-    }, []);
-
-    // Cut ring texture for log ends (visible grain pattern)
-    const endMaterial = useMemo(() => {
-        return new THREE.MeshStandardMaterial({
-            color: '#8D6E63',
-            roughness: 0.9,
-        });
-    }, []);
-
-    return (
-        <RigidBody
-            position={position}
-            type={isPlaced ? 'kinematicPosition' : 'dynamic'}
-            mass={50}
-            friction={2.0}
-            linearDamping={4.0}
-            angularDamping={6.0}
-            userData={{ type: 'log', id, treeType }}
-        >
-            <CylinderCollider
-                args={[LOG_LENGTH / 2, LOG_RADIUS]}
-                rotation={[0, 0, Math.PI / 2]}  // Horizontal orientation
-            />
-
-            {/* Main log cylinder */}
-            <mesh material={woodMaterial} castShadow receiveShadow>
-                <cylinderGeometry args={[LOG_RADIUS, LOG_RADIUS, LOG_LENGTH, 12]} />
-            </mesh>
-
-            {/* End caps with visible rings */}
-            <mesh
-                position={[LOG_LENGTH / 2, 0, 0]}
-                rotation={[0, 0, Math.PI / 2]}
-                material={endMaterial}
-            >
-                <circleGeometry args={[LOG_RADIUS, 12]} />
-            </mesh>
-            <mesh
-                position={[-LOG_LENGTH / 2, 0, 0]}
-                rotation={[0, 0, -Math.PI / 2]}
-                material={endMaterial}
-            >
-                <circleGeometry args={[LOG_RADIUS, 12]} />
-            </mesh>
-        </RigidBody>
-    );
-};
-```
-
-### 4.2. Log State Management
-**File**: [WorldStore.ts](src/state/WorldStore.ts) or new `LogStore.ts`
-
-Add state for tracking logs in the world:
-```typescript
-interface LogState {
-    id: string;
-    position: [number, number, number];
-    rotation: [number, number, number];
-    treeType: number;
-    isPlaced: boolean;
-}
-
-// In WorldStore or new LogStore
-logs: Map<string, LogState>;
-addLog: (log: LogState) => void;
-removeLog: (id: string) => void;
-updateLog: (id: string, updates: Partial<LogState>) => void;
-```
+### BUG 4: `audioPool is not defined` runtime error after merge
+**Root cause**: Merged main branch which removed `audioPool` in favor of AudioManager events, but kept the reference in VoxelTerrain/useTerrainInteraction interface.
+**Fix**: Removed `audioPool` from `InteractionCallbacks` interface and VoxelTerrain call site. Sawing sounds now use `playSound('wood_hit', ...)`.
 
 ---
 
-## 5. Phase 4: Log Carrying System
+## 4. Key Technical Lessons
 
-### 5.1. Player State Extension
-**File**: [Player.tsx](src/features/player/Player.tsx)
+### Physics Raycast Pitfalls (Documented in AGENTS.md)
+1. **All RigidBodies need explicit `userData.type`** - Without it, filter functions like `userData?.type !== 'terrain'` return `true` for `undefined`, letting unintended colliders pass through.
 
-Add carrying state and speed modifier:
-```typescript
-// Constants
-const CARRYING_SPEED_MULTIPLIER = 0.33;  // 33% speed when carrying
+2. **Rapier raycasts return Collider handles, not RigidBody handles** - If you need to look up entity data by handle, use a registry keyed by `collider.handle`, not `rigidBody.handle`.
 
-// State
-const [isCarrying, setIsCarrying] = useState<string | null>(null);  // Log ID
+3. **Player capsule intercepts raycasts** - The player is always between the camera and the world. Must explicitly filter out player collider in raycast filters.
 
-// In movement calculation (around line 200-201)
-const carryMul = isCarrying ? CARRYING_SPEED_MULTIPLIER : 1.0;
-const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul * carryMul);
-```
+### Audio System Migration
+- Old system: `audioPool.play(url, volume, pitch)`
+- New system: `playSound(soundId, { volume, pitch })` dispatches `vc-audio-play` events
+- Sound IDs registered in `src/core/audio/soundRegistry.ts`
 
-### 5.2. Carrying Input Handling
-**File**: [usePlayerInput.ts](src/features/player/usePlayerInput.ts) or [InteractionHandler.tsx](src/features/interaction/logic/InteractionHandler.tsx)
-
-Add Q key to pick up/drop logs:
-```typescript
-// In InteractionHandler or new hook
-useEffect(() => {
-    const handlePickup = (e: KeyboardEvent) => {
-        if (e.code !== 'KeyQ') return;
-
-        if (isCarrying) {
-            // Drop the log
-            dropLog(isCarrying, playerPosition);
-            setIsCarrying(null);
-        } else {
-            // Raycast for nearby log
-            const logHit = raycastForLog();
-            if (logHit) {
-                setIsCarrying(logHit.id);
-                removeLogFromWorld(logHit.id);
-            }
-        }
-    };
-
-    window.addEventListener('keydown', handlePickup);
-    return () => window.removeEventListener('keydown', handlePickup);
-}, [isCarrying]);
-```
-
-### 5.3. Carried Log Visual
-**File**: [FirstPersonTools.tsx](src/features/interaction/components/FirstPersonTools.tsx)
-
-When carrying a log, render the log end in first-person view:
-```typescript
-// Add carried log visual when isCarrying is set
-{isCarrying && (
-    <group position={[0.5, -0.6, -0.8]}>
-        {/* Log end (circular) with slight sway animation */}
-        <mesh>
-            <cylinderGeometry args={[0.15, 0.15, 0.3, 12]} />
-            <meshStandardMaterial color="#5D4037" />
-        </mesh>
-    </group>
-)}
-```
+### Building Placement System
+- **Grid snapping**: `Math.round(value / GRID_SNAP) * GRID_SNAP` for clean alignment
+- **Validation**: Sphere intersection test with Rapier to detect collisions
+- **State flow**: `vc-log-place-request` event → `placeLog()` → `setLogs()` → `isPlaced: true`
 
 ---
 
-## 6. Phase 5: Building System (Hut Construction)
+## 5. Files Modified/Created
 
-### 6.1. Create Building Placement Hook
-**New File**: `src/features/building/hooks/useBuildingPlacement.ts`
-
-```typescript
-import { useState, useEffect, useMemo } from 'react';
-import * as THREE from 'three';
-import { useThree } from '@react-three/fiber';
-import { useRapier } from '@react-three/rapier';
-
-interface SnapPosition {
-    position: THREE.Vector3;
-    rotation: THREE.Euler;
-    type: 'wall' | 'roof';
-}
-
-export function useBuildingPlacement(isCarrying: boolean) {
-    const { camera } = useThree();
-    const { world, rapier } = useRapier();
-
-    const [ghostPosition, setGhostPosition] = useState<SnapPosition | null>(null);
-    const [canPlace, setCanPlace] = useState(false);
-
-    useEffect(() => {
-        if (!isCarrying) {
-            setGhostPosition(null);
-            return;
-        }
-
-        // Raycast forward from camera
-        const origin = camera.position.clone();
-        const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const ray = new rapier.Ray(origin, direction);
-
-        // Check for existing placed logs
-        const hit = world.castRay(ray, 8.0, true, undefined, undefined, undefined, undefined,
-            (collider) => collider.parent()?.userData?.type === 'log'
-        );
-
-        if (hit) {
-            // Calculate snap position adjacent to hit log
-            const hitPoint = ray.pointAt(hit.timeOfImpact);
-            const snapPos = calculateSnapPosition(hitPoint, hit.collider);
-            setGhostPosition(snapPos);
-            setCanPlace(true);
-        } else {
-            // Ground placement
-            const groundHit = world.castRay(ray, 8.0, true);
-            if (groundHit) {
-                setGhostPosition({
-                    position: new THREE.Vector3().copy(ray.pointAt(groundHit.timeOfImpact)),
-                    rotation: new THREE.Euler(0, 0, 0),
-                    type: 'wall'
-                });
-                setCanPlace(true);
-            }
-        }
-    }, [isCarrying, camera.position]);
-
-    return { ghostPosition, canPlace };
-}
-```
-
-### 6.2. Ghost Preview Component
-**New File**: `src/features/building/components/GhostLog.tsx`
-
-```typescript
-import React from 'react';
-import * as THREE from 'three';
-
-interface GhostLogProps {
-    position: THREE.Vector3;
-    rotation: THREE.Euler;
-    canPlace: boolean;
-}
-
-export const GhostLog: React.FC<GhostLogProps> = ({ position, rotation, canPlace }) => {
-    return (
-        <group position={position} rotation={rotation}>
-            <mesh>
-                <cylinderGeometry args={[0.25, 0.25, 2.0, 8]} />
-                <meshBasicMaterial
-                    color={canPlace ? '#00ff00' : '#ff0000'}
-                    transparent
-                    opacity={0.5}
-                    wireframe
-                />
-            </mesh>
-            {/* Bounding box outline */}
-            <lineSegments>
-                <edgesGeometry args={[new THREE.BoxGeometry(0.5, 2.0, 0.5)]} />
-                <lineBasicMaterial color={canPlace ? '#00ff00' : '#ff0000'} />
-            </lineSegments>
-        </group>
-    );
-};
-```
-
-### 6.3. Snap Logic Constants
-```typescript
-// Building constants
-const LOG_DIAMETER = 0.5;
-const LOG_LENGTH = 2.0;
-const SNAP_THRESHOLD = 0.3;  // Distance to trigger snap
-
-// Wall snap: Adjacent logs side-by-side
-// Roof snap: Perpendicular on top, requires 2+ wall logs with gap
-```
-
----
-
-## 7. File Summary
-
-### Files to Modify
-| File | Changes |
-|------|---------|
-| [useTerrainInteraction.ts](src/features/terrain/hooks/useTerrainInteraction.ts) | Add `canSaw` check for tree damage; Add fallen tree sawing logic |
-| [HeldItemPoses.ts](src/features/interaction/logic/HeldItemPoses.ts) | Add SAW pose |
-| [FirstPersonTools.tsx](src/features/interaction/components/FirstPersonTools.tsx) | Add SAW rendering; Add carried log visual |
-| [FallingTree.tsx](src/features/flora/components/FallingTree.tsx) | Add userData for sawing; Add conversion callback |
-| [Player.tsx](src/features/player/Player.tsx) | Add carrying state and speed modifier |
-| [WorldStore.ts](src/state/WorldStore.ts) | Add log state management |
-| [InteractionHandler.tsx](src/features/interaction/logic/InteractionHandler.tsx) | Add Q key log pickup |
-
-### New Files to Create
+### New Files (Phase 5)
 | File | Purpose |
 |------|---------|
-| `src/features/building/components/Log.tsx` | Log entity with physics |
-| `src/features/building/components/GhostLog.tsx` | Building preview ghost |
-| `src/features/building/hooks/useBuildingPlacement.ts` | Snap placement logic |
+| `src/features/building/components/GhostLog.tsx` | Semi-transparent placement preview |
+| `src/features/building/hooks/useBuildingPlacement.ts` | Placement state, validation, snapping |
+| `src/tests/building.test.ts` | Unit tests for CarryingStore and placement logic |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `FallingTree.tsx` | Dual registry (RigidBody + Collider), removed debug logs |
+| `useTerrainInteraction.ts` | Raycast filter excludes player, registry lookup by collider handle, damage system, migrated to AudioManager |
+| `Player.tsx` | Added `userData={{ type: 'player' }}` |
+| `InteractionHandler.tsx` | Q key log pickup uses CarryingStore, Right-click dispatches `vc-log-place-request` |
+| `raycastUtils.ts` | `isPhysicsItemCollider` excludes LOG type |
+| `VoxelTerrain.tsx` | Building placement hook integration, GhostLog rendering, place request handler |
+| `InventoryStore.ts` | Debug mode pre-crafted AXE and SAW tools |
+| `AGENTS.md` | Added pitfalls for physics raycasting |
 
 ---
 
-## 8. Implementation Order
+## 6. Future Enhancements
 
-### Phase 1: SAW Basic Functionality (30 min)
-1. Update `useTerrainInteraction.ts` line 216 to accept `canSaw`
-2. Add SAW pose to `HeldItemPoses.ts`
-3. Test: Craft SAW, equip, chop trees
-
-### Phase 2: Fallen Tree Sawing (45 min)
-1. Add `userData` to `FallingTree.tsx`
-2. Add sawing interaction in `useTerrainInteraction.ts`
-3. Test: Fell tree with AXE, saw with SAW to get logs
-
-### Phase 3: Log Entity (45 min)
-1. Create `Log.tsx` component
-2. Add log state to `WorldStore.ts`
-3. Integrate log spawning from fallen trees
-4. Test: Logs spawn and have physics
-
-### Phase 4: Carrying System (45 min)
-1. Add carrying state to `Player.tsx`
-2. Add Q key handler in `InteractionHandler.tsx`
-3. Add carried log visual to `FirstPersonTools.tsx`
-4. Test: Pick up log, move slower, drop log
-
-### Phase 5: Building System (60 min)
-1. Create `useBuildingPlacement.ts` hook
-2. Create `GhostLog.tsx` component
-3. Add placement input (Right Click while carrying)
-4. Test: Build walls, snap logs together
+### Not Yet Implemented
+1. **Sawing animation** - Tool animation during sawing action
+2. **Sawing sound** - Dedicated rhythmic saw sound (currently uses `wood_hit`)
+3. **Log variants** - Different wood colors based on tree type
+4. **Log persistence** - Save/load placed logs in IndexedDB
+5. **Advanced snapping** - Perpendicular roof placement on wall tops
+6. **Log rotation** - R key to rotate placement preview
 
 ---
 
-## 9. Verification Checklist
+## 7. Verification Checklist
 
-- [ ] SAW can be crafted (3 shards on left side)
-- [ ] SAW shows correct held pose in first-person
-- [ ] SAW can damage standing trees (woodDamage: 8.0)
-- [ ] SAW can cut fallen trees into logs
-- [ ] Logs spawn with physics (roll, collide)
-- [ ] Q key picks up nearby log
-- [ ] Movement speed reduced to 33% while carrying
-- [ ] Carried log visible in first-person
-- [ ] Right Click places log (vertical by default)
-- [ ] Ghost preview shows green when valid placement
-- [ ] Logs snap adjacent to existing placed logs
-- [ ] Build passes: `npm run build && npm run test:unit`
-- [ ] Smoke test: Full flow from crafting to building
+- [x] SAW can be crafted (3 shards on left side)
+- [x] SAW shows correct held pose in first-person
+- [x] SAW **cannot** damage standing trees (AXE only)
+- [x] SAW can cut fallen trees into logs (3-4 hits)
+- [x] Logs spawn with physics (roll, collide)
+- [x] Q key picks up nearby log
+- [x] Movement speed reduced to 33% while carrying
+- [x] Carried log visible in first-person
+- [x] Right-click places log (horizontal by default)
+- [x] Ghost preview shows green when valid, red when invalid
+- [x] Logs snap to grid (0.25 unit increments)
+- [x] Adjacent log snapping for wall building
+- [x] Debug mode (`?debug`) includes pre-crafted AXE and SAW
+- [x] Build passes: `npm run build`
+- [x] Tests pass: `npm run test:unit` (86 tests, including 11 building tests)
 
 ---
 
-## 10. Technical Notes
+## 8. Technical Notes
 
 ### Interaction Priority
 The raycast system needs priority ordering:
@@ -511,12 +177,58 @@ The raycast system needs priority ordering:
 
 ### Performance Considerations
 - Log entities use simplified cylinder geometry (12 segments)
-- Ghost preview uses wireframe to minimize draw calls
+- Ghost preview uses wireframe + transparent solid for clarity
 - Placed logs become kinematic (no physics simulation cost)
 - Consider log entity pooling if many logs spawn
+- Grid snapping reduces placement calculation complexity
 
-### Audio Suggestions
-- Sawing sound: New asset (rhythmic wood cutting)
-- Log pickup: Existing `clunk.wav` with lower pitch
-- Log placement: Solid "thunk" sound
-- Snap feedback: Subtle confirmation sound
+### Audio System
+All sounds go through AudioManager via events:
+```typescript
+// Play a sound
+playSound('wood_hit', { volume: 0.4, pitch: 0.7 });
+
+// Internal: dispatches event
+window.dispatchEvent(new CustomEvent('vc-audio-play', {
+  detail: { soundId: 'wood_hit', options: { volume: 0.4, pitch: 0.7 } }
+}));
+```
+
+Sound IDs must be registered in `src/core/audio/soundRegistry.ts`.
+
+### Event Flow for Building
+```
+User right-clicks while carrying
+    ↓
+InteractionHandler: dispatch 'vc-log-place-request'
+    ↓
+VoxelTerrain: handleLogPlaceRequest()
+    ↓
+useBuildingPlacement: placeLog() returns { success, position, rotation }
+    ↓
+VoxelTerrain: setLogs([...prev, { ...carriedLog, isPlaced: true }])
+    ↓
+CarryingStore: drop() clears carried log
+    ↓
+AudioManager: plays 'wood_hit' placement sound
+```
+
+---
+
+## 9. Testing
+
+### Unit Tests (`src/tests/building.test.ts`)
+- CarryingStore: pickup, drop, state transitions
+- Grid snapping: position calculations
+- Snap detection: adjacent and stacking positions
+- State shapes: dropped vs placed logs
+
+### Smoke Tests (Manual - `npm run dev`)
+1. Start with `?debug` to get pre-crafted tools
+2. Find a tree, use AXE to fell it
+3. Switch to SAW, cut fallen tree (3-4 hits)
+4. Press Q to pick up a log
+5. Walk around (should be slow)
+6. Look at terrain, verify ghost preview appears
+7. Right-click to place log (should turn kinematic)
+8. Pick up and place more logs adjacent to first
