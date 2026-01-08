@@ -29,6 +29,7 @@ export interface LogProps {
     seed: number;
     isPlaced?: boolean;  // Kinematic when placed for building
     isVertical?: boolean; // Vertical (fence post) or horizontal (beam)
+    rotation?: THREE.Euler; // Explicit rotation for placed logs (overrides isVertical)
     onInteract?: (id: string) => void;
 }
 
@@ -39,6 +40,7 @@ export const Log: React.FC<LogProps> = ({
     seed,
     isPlaced = false,
     isVertical = true, // Default to vertical (fence post)
+    rotation, // Explicit rotation (used for placed logs)
     onInteract
 }) => {
     const bodyRef = useRef<any>(null);
@@ -109,8 +111,13 @@ export const Log: React.FC<LogProps> = ({
         });
     }, []);
 
-    // Rotation based on orientation and seed
+    // Rotation: use explicit rotation if provided, otherwise calculate from isVertical
     const initialRotation = useMemo(() => {
+        if (rotation) {
+            // Use explicit rotation (from placement system)
+            return [rotation.x, rotation.y, rotation.z] as [number, number, number];
+        }
+        // Fallback: calculate from isVertical for dynamic logs
         const yRot = (seed % 1) * Math.PI * 2; // Random Y rotation for variety
         if (isVertical) {
             // Vertical: cylinder axis aligned with world Y (upright fence post)
@@ -119,7 +126,7 @@ export const Log: React.FC<LogProps> = ({
             // Horizontal: cylinder axis perpendicular to Y (laying flat like a beam)
             return [0, yRot, Math.PI / 2] as [number, number, number];
         }
-    }, [seed, isVertical]);
+    }, [seed, isVertical, rotation]);
 
     return (
         <RigidBody
