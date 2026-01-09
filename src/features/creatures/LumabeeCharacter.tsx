@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useGLTF, useAnimations } from '@react-three/drei';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { TerrainService } from '@features/terrain/logic/terrainService';
 
 // Import model as URL (Vite will handle bundling)
 import lumabeeUrl from '@/assets/models/lumabee.glb?url';
@@ -23,7 +24,8 @@ export enum BeeState {
 interface LumabeeProps {
   id: string;
   position: THREE.Vector3;
-  treePosition?: THREE.Vector3;  // Home tree position
+  treePosition?: THREE.Vector3;  // Home tree position (ground level)
+  treeHeight?: number;            // Height of the tree (for canopy targeting)
   seed: number;
   onHarvest?: (position: THREE.Vector3) => void;
   onStateChange?: (state: BeeState) => void;
@@ -34,21 +36,27 @@ interface LumabeeGLTF extends GLTF {
   materials: Record<string, THREE.Material>;
 }
 
+// Dev mode check
+const isDev = () => import.meta.env.DEV;
+
 /**
  * LumabeeCharacter - Single bee instance with AI and animation
  *
  * Features:
  * - GLB model loading with animations
- * - State machine AI (idle, patrol, harvest, flee, wander)
+ * - State machine AI (approach, idle, patrol, harvest, return, flee, wander)
  * - Smooth flight physics with banking and momentum
- * - Tree-seeking behavior for nectar extraction
- * - Player avoidance
+ * - Tree-seeking behavior for nectar extraction at canopy level
+ * - Player avoidance with flee behavior
  * - Emissive glow effects
+ * - Material cleanup to prevent memory leaks
+ * - Terrain-aware height clamping
  */
 export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   id,
   position: initialPosition,
   treePosition,
+  treeHeight = 15.0,  // Default tree height if not provided
   seed,
   onHarvest,
   onStateChange
@@ -57,9 +65,10 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   const { scene, animations } = useGLTF(lumabeeUrl) as LumabeeGLTF;
   const { actions, mixer } = useAnimations(animations, groupRef);
 
-  // AI State
-  const [state, setState] = useState<BeeState>(BeeState.IDLE);
+  // AI State - start in APPROACH for dramatic entrance
+  const [state, setState] = useState<BeeState>(BeeState.APPROACH);
   const stateTimeRef = useRef(0);
+  const stateThresholdRef = useRef(0);  // Cache transition thresholds
   const targetRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const velocityRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const lookDirRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 1));
@@ -67,6 +76,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   // Flight parameters
   const flightParams = useMemo(() => ({
     maxSpeed: 3.5 + Math.sin(seed * 100) * 0.5,
+    approachSpeed: 5.0,  // Faster speed during initial approach
     acceleration: 8.0,
     deceleration: 5.0,
     turnSpeed: 4.0,
@@ -75,11 +85,13 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     bankAngle: Math.PI / 6, // 30 degrees max bank
     patrolRadius: 8.0 + Math.sin(seed * 200) * 2.0,
     fleeDistance: 12.0,
-    harvestDistance: 1.5,
-    wanderRadius: 15.0
+    harvestDistance: 2.5,  // Horizontal XZ distance
+    wanderRadius: 15.0,
+    minHeight: 2.0,  // Minimum height above terrain
+    maxHeight: 50.0  // Maximum flight height
   }), [seed]);
 
-  // Pseudo-random generator for this bee
+  // Pseudo-random generator for this bee (cached)
   const random = useMemo(() => {
     let s = seed * 9301 + 49297;
     return () => {
@@ -116,6 +128,22 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     return clone;
   }, [scene]);
 
+  // Cleanup materials on unmount to prevent memory leak
+  useEffect(() => {
+    return () => {
+      modelClone.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach(mat => mat.dispose());
+          } else {
+            mesh.material.dispose();
+          }
+        }
+      });
+    };
+  }, [modelClone]);
+
   // Initialize position
   useEffect(() => {
     if (groupRef.current) {
@@ -124,18 +152,42 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     }
   }, [initialPosition]);
 
-  // State machine transitions
+  // State machine transitions with cached thresholds
   const transitionState = (newState: BeeState) => {
     if (newState === state) return;
+
+    if (isDev()) {
+      console.log(`[Lumabee ${id}] ${state} → ${newState}`);
+    }
+
     setState(newState);
     stateTimeRef.current = 0;
     onStateChange?.(newState);
 
-    // Play appropriate animation
+    // Cache transition threshold for this state
+    switch (newState) {
+      case BeeState.IDLE:
+        stateThresholdRef.current = 2.0 + random() * 2.0;
+        break;
+      case BeeState.PATROL:
+        stateThresholdRef.current = 8.0 + random() * 4.0;
+        break;
+      case BeeState.HARVEST:
+        stateThresholdRef.current = 3.0 + random() * 2.0;
+        break;
+      case BeeState.WANDER:
+        stateThresholdRef.current = 5.0 + random() * 3.0;
+        break;
+      default:
+        stateThresholdRef.current = 0;
+    }
+
+    // Play appropriate animation with fallback
     if (actions) {
       Object.values(actions).forEach(action => action?.fadeOut(0.2));
 
       const animMap: Record<BeeState, string> = {
+        [BeeState.APPROACH]: 'Fly',
         [BeeState.IDLE]: 'Idle',
         [BeeState.PATROL]: 'Fly',
         [BeeState.HARVEST]: 'Harvest',
@@ -151,8 +203,24 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
 
       if (action) {
         action.reset().fadeIn(0.2).play();
+      } else {
+        // Fallback to first available animation
+        if (isDev()) {
+          console.warn(`[Lumabee ${id}] Animation "${animName}" not found, using fallback`);
+        }
+        const fallback = Object.values(actions)[0];
+        if (fallback) fallback.reset().fadeIn(0.2).play();
       }
     }
+  };
+
+  // Calculate canopy position (70% up the tree)
+  const getCanopyPosition = (basePos: THREE.Vector3): THREE.Vector3 => {
+    return new THREE.Vector3(
+      basePos.x,
+      basePos.y + treeHeight * 0.7,
+      basePos.z
+    );
   };
 
   // AI behavior update
@@ -169,11 +237,33 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
 
     // State machine logic
     switch (state) {
+      case BeeState.APPROACH:
+        // Fly toward tree from spawn (dramatic entrance)
+        if (playerClose) {
+          transitionState(BeeState.FLEE);
+        } else if (!treePosition) {
+          transitionState(BeeState.WANDER);
+        } else {
+          // Check horizontal distance to tree
+          const dx = position.x - treePosition.x;
+          const dz = position.z - treePosition.z;
+          const horizDist = Math.sqrt(dx * dx + dz * dz);
+
+          if (horizDist < flightParams.patrolRadius * 1.5) {
+            // Reached tree - transition to patrol
+            transitionState(BeeState.PATROL);
+          } else {
+            // Keep flying toward canopy
+            targetRef.current.copy(getCanopyPosition(treePosition));
+          }
+        }
+        break;
+
       case BeeState.IDLE:
         // Hover in place with gentle bobbing
         if (playerClose) {
           transitionState(BeeState.FLEE);
-        } else if (stateTimeRef.current > 2.0 + random() * 2.0) {
+        } else if (stateTimeRef.current > stateThresholdRef.current) {
           if (treePosition && random() > 0.3) {
             transitionState(BeeState.PATROL);
           } else {
@@ -183,46 +273,52 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
         break;
 
       case BeeState.PATROL:
-        // Circle around tree
+        // Circle around tree at canopy level
         if (playerClose) {
           transitionState(BeeState.FLEE);
         } else if (!treePosition) {
           transitionState(BeeState.WANDER);
-        } else if (stateTimeRef.current > 8.0 + random() * 4.0) {
+        } else if (stateTimeRef.current > stateThresholdRef.current) {
           if (random() > 0.5) {
             transitionState(BeeState.HARVEST);
           } else {
             transitionState(BeeState.IDLE);
           }
         } else {
-          // Update patrol target
+          // Update patrol target - circle at canopy level
           const angle = stateTimeRef.current * 0.5 + seed * Math.PI * 2;
           const radius = flightParams.patrolRadius;
+          const canopyY = treePosition.y + treeHeight * 0.7;
+
           targetRef.current.set(
             treePosition.x + Math.cos(angle) * radius,
-            treePosition.y + 5.0 + Math.sin(stateTimeRef.current * 1.5) * 2.0,
+            canopyY + Math.sin(stateTimeRef.current * 1.5) * 2.0,
             treePosition.z + Math.sin(angle) * radius
           );
         }
         break;
 
       case BeeState.HARVEST:
-        // Approach tree and extract nectar
+        // Approach tree canopy and extract nectar
         if (playerClose) {
           transitionState(BeeState.FLEE);
         } else if (!treePosition) {
           transitionState(BeeState.WANDER);
         } else {
-          const distToTree = position.distanceTo(treePosition);
-          if (distToTree < flightParams.harvestDistance) {
+          // Use horizontal distance check (XZ plane only)
+          const dx = position.x - treePosition.x;
+          const dz = position.z - treePosition.z;
+          const horizDist = Math.sqrt(dx * dx + dz * dz);
+
+          if (horizDist < flightParams.harvestDistance) {
             // At harvest position - hover and extract
-            if (stateTimeRef.current > 3.0 + random() * 2.0) {
+            if (stateTimeRef.current > stateThresholdRef.current) {
               onHarvest?.(position.clone());
               transitionState(BeeState.RETURN);
             }
           } else {
-            // Move toward tree
-            targetRef.current.copy(treePosition).setY(treePosition.y + 8.0);
+            // Move toward canopy
+            targetRef.current.copy(getCanopyPosition(treePosition));
           }
         }
         break;
@@ -232,11 +328,14 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
         if (playerClose) {
           transitionState(BeeState.FLEE);
         } else if (treePosition) {
-          const distToTree = position.distanceTo(treePosition);
-          if (distToTree < flightParams.patrolRadius * 1.5) {
+          const dx = position.x - treePosition.x;
+          const dz = position.z - treePosition.z;
+          const horizDist = Math.sqrt(dx * dx + dz * dz);
+
+          if (horizDist < flightParams.patrolRadius * 1.5) {
             transitionState(BeeState.PATROL);
           } else {
-            targetRef.current.copy(treePosition).setY(treePosition.y + 6.0);
+            targetRef.current.copy(getCanopyPosition(treePosition));
           }
         } else {
           transitionState(BeeState.IDLE);
@@ -263,7 +362,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
           transitionState(BeeState.FLEE);
         } else if (treePosition && random() > 0.98) {
           transitionState(BeeState.PATROL);
-        } else if (stateTimeRef.current > 5.0 || position.distanceTo(targetRef.current) < 2.0) {
+        } else if (stateTimeRef.current > stateThresholdRef.current ||
+                   position.distanceTo(targetRef.current) < 2.0) {
           // Pick new wander target
           const angle = random() * Math.PI * 2;
           const distance = random() * flightParams.wanderRadius;
@@ -282,12 +382,19 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     const distToTarget = toTarget.length();
 
     if (distToTarget > 0.1) {
+      // Use faster speed during APPROACH state
+      const maxSpeed = state === BeeState.APPROACH
+        ? flightParams.approachSpeed
+        : flightParams.maxSpeed;
+
       const desiredVel = toTarget.normalize().multiplyScalar(
-        Math.min(flightParams.maxSpeed, distToTarget)
+        Math.min(maxSpeed, distToTarget)
       );
 
-      // Smooth acceleration
-      const accel = state === BeeState.FLEE ? flightParams.acceleration * 1.5 : flightParams.acceleration;
+      // Smooth acceleration (faster when fleeing or approaching)
+      const accel = (state === BeeState.FLEE || state === BeeState.APPROACH)
+        ? flightParams.acceleration * 1.5
+        : flightParams.acceleration;
       velocityRef.current.lerp(desiredVel, 1.0 - Math.pow(0.001, dt * accel));
     } else {
       // Decelerate when near target
@@ -301,6 +408,14 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     const hoverOffset = Math.sin(frameState.clock.elapsedTime * flightParams.hoverFrequency + seed * 10)
       * flightParams.hoverAmplitude;
     position.y += hoverOffset * dt;
+
+    // Terrain-aware height clamping
+    const terrainHeight = TerrainService.getHeightAt(position.x, position.z);
+    position.y = THREE.MathUtils.clamp(
+      position.y,
+      terrainHeight + flightParams.minHeight,
+      flightParams.maxHeight
+    );
 
     // Rotation - look in flight direction with banking
     if (velocityRef.current.lengthSq() > 0.01) {
