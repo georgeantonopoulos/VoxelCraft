@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
@@ -17,6 +17,8 @@ interface NectarVFXProps {
  * - Glowing trail effect
  * - Pulsing emissive light
  * - Automatic lifecycle (fades in/out)
+ * - Proper GPU resource disposal
+ * - Deterministic particle sizing
  */
 export const NectarVFX: React.FC<NectarVFXProps> = ({
   position,
@@ -31,6 +33,14 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
 
   const particleCount = 50;
   const lifetime = 2.0; // seconds
+
+  // Deterministic particle size lookup (golden ratio variation)
+  const getParticleSize = (index: number): number => {
+    // Use golden ratio for deterministic variation
+    const phi = 1.618033988749895;
+    const frac = (index * phi) % 1.0;
+    return 0.1 + frac * 0.15;
+  };
 
   // Particle system geometry
   const { geometry, initialPositions } = useMemo(() => {
@@ -48,14 +58,15 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       positions[i3 + 1] = position.y;
       positions[i3 + 2] = position.z;
 
-      // Golden glow with variation
-      const variation = 0.8 + Math.random() * 0.4;
+      // Golden glow with deterministic variation (use index-based, not random)
+      const phi = 1.618033988749895;
+      const variation = 0.8 + ((i * phi) % 1.0) * 0.4;
       colors[i3] = goldColor.r * variation;
       colors[i3 + 1] = goldColor.g * variation;
       colors[i3 + 2] = goldColor.b * variation;
 
-      // Varying sizes
-      sizes[i] = 0.1 + Math.random() * 0.15;
+      // Deterministic sizes
+      sizes[i] = getParticleSize(i);
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -68,6 +79,13 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
     };
   }, [position.x, position.y, position.z]);
 
+  // Dispose geometry on unmount to prevent GPU memory leak
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
+
   const material = useMemo(() => {
     return new THREE.PointsMaterial({
       size: 0.15,
@@ -79,6 +97,13 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       sizeAttenuation: true
     });
   }, []);
+
+  // Dispose material on unmount to prevent GPU memory leak
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
 
   useFrame((state, dt) => {
     if (!active) return;
@@ -120,8 +145,8 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
         positions[i3 + 1] = y + Math.sin(timeRef.current * 8.0 + i) * 0.1;
         positions[i3 + 2] = z + Math.sin(spiralAngle) * spiralRadius;
 
-        // Fade size as particles near bee
-        const baseSz = 0.1 + Math.random() * 0.15;
+        // Fade size as particles near bee (deterministic)
+        const baseSz = getParticleSize(i);
         sizes[i] = baseSz * (1 - t * 0.7);
       } else {
         // Particle not yet spawned
@@ -144,7 +169,7 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
   });
 
   // Reset when active changes
-  React.useEffect(() => {
+  useEffect(() => {
     if (active) {
       timeRef.current = 0;
       lifetimeRef.current = 0;
@@ -155,8 +180,17 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
 
   return (
     <group>
-      <points ref={particlesRef} geometry={geometry} material={material}>
-        <pointsMaterial ref={materialRef} attach="material" {...material} />
+      <points ref={particlesRef} geometry={geometry}>
+        <pointsMaterial
+          ref={materialRef}
+          size={0.15}
+          vertexColors
+          transparent
+          opacity={0.8}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          sizeAttenuation
+        />
       </points>
 
       {/* Glowing point light at extraction point */}

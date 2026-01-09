@@ -46,6 +46,8 @@ const estimateTreeHeight = (seed: number): number => {
  * - Staggered spawning for natural appearance
  * - OFF-SCREEN spawning (40-80 units away) for dramatic entrance
  * - Tree height support for canopy targeting
+ * - Atomic state updates to prevent race conditions
+ * - Cached vectors to prevent GC pressure
  */
 export const BeeManager: React.FC<BeeManagerProps> = ({
   enabled = true,
@@ -61,6 +63,10 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
   const nextBeeIdRef = useRef(0);
   const lastUpdateRef = useRef(0);
   const treeBeeCounts = useRef<Map<string, number>>(new Map());
+
+  // Cached vectors to prevent allocations
+  const playerPosRef = useRef(new THREE.Vector3());
+  const treePosRef = useRef(new THREE.Vector3());
 
   // Spawn configuration
   const config = useMemo(() => ({
@@ -84,9 +90,8 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
   }, []);
 
   // Spawn a new bee for a specific tree - OFF SCREEN for dramatic entrance
+  // Uses functional setState to atomically check and update bee count
   const spawnBee = (tree: { x: number; z: number; grownAt: number }, treeId: string) => {
-    if (bees.length >= maxTotalBees) return;
-
     const currentCount = treeBeeCounts.current.get(treeId) || 0;
     if (currentCount >= maxBeesPerTree) return;
 
@@ -114,12 +119,21 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
       state: BeeState.APPROACH  // Start in APPROACH for dramatic entrance
     };
 
-    setBees(prev => [...prev, newBee]);
-    treeBeeCounts.current.set(treeId, currentCount + 1);
+    // ATOMIC UPDATE: Check bee count inside functional setState to prevent race condition
+    setBees(prev => {
+      // Re-check limit with current state
+      if (prev.length >= maxTotalBees) {
+        return prev;
+      }
+      // Safe to add
+      treeBeeCounts.current.set(treeId, currentCount + 1);
 
-    if (isDev()) {
-      console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree`);
-    }
+      if (isDev()) {
+        console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree (total: ${prev.length + 1})`);
+      }
+
+      return [...prev, newBee];
+    });
   };
 
   // Update bee populations based on tree state
@@ -131,7 +145,9 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     lastUpdateRef.current = now;
 
     const grownTrees = getGrownTrees();
-    const playerPos = new THREE.Vector3(playerParams.x, playerParams.y, playerParams.z);
+    // Reuse cached vector instead of allocating
+    playerPosRef.current.set(playerParams.x, playerParams.y, playerParams.z);
+    const playerPos = playerPosRef.current;
     const currentTime = Date.now();
 
     // Despawn bees far from player (LOD)
@@ -155,8 +171,9 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
 
     // Spawn bees for nearby trees
     grownTrees.forEach((tree) => {
-      const treePos = new THREE.Vector3(tree.x, 0, tree.z);
-      const distToPlayer = treePos.distanceTo(playerPos);
+      // Reuse cached vector
+      treePosRef.current.set(tree.x, 0, tree.z);
+      const distToPlayer = treePosRef.current.distanceTo(playerPos);
 
       if (distToPlayer > spawnRadius) return;
 
@@ -167,20 +184,14 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
       const currentCount = treeBeeCounts.current.get(treeId) || 0;
 
       // Spawn bees gradually (staggered)
-      if (currentCount < maxBeesPerTree && bees.length < maxTotalBees) {
+      // Note: We check bees.length in the closure, but atomic check happens in spawnBee
+      if (currentCount < maxBeesPerTree) {
         if (random() > 0.7) { // 30% chance per check = gradual spawning
           spawnBee(tree, treeId);
         }
       }
     });
   });
-
-  // Bee state change handler
-  const handleBeeStateChange = (beeId: string, newState: BeeState) => {
-    setBees(prev => prev.map(bee =>
-      bee.id === beeId ? { ...bee, state: newState } : bee
-    ));
-  };
 
   // Harvest handler - triggers nectar VFX
   const handleHarvest = (beeId: string, position: THREE.Vector3) => {
@@ -207,7 +218,6 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
           treeHeight={bee.treeHeight}
           seed={bee.seed}
           onHarvest={(pos) => handleHarvest(bee.id, pos)}
-          onStateChange={(state) => handleBeeStateChange(bee.id, state)}
         />
       ))}
     </group>

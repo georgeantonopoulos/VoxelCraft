@@ -21,7 +21,7 @@ export enum BeeState {
   WANDER = 'WANDER'        // Exploring area
 }
 
-interface LumabeeProps {
+export interface LumabeeProps {
   id: string;
   position: THREE.Vector3;
   treePosition?: THREE.Vector3;  // Home tree position (ground level)
@@ -72,6 +72,10 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   const targetRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const velocityRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const lookDirRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 1));
+
+  // Temp vectors for calculations (prevents allocations in hot paths)
+  const tempVec1 = useRef<THREE.Vector3>(new THREE.Vector3());
+  const tempVec2 = useRef<THREE.Vector3>(new THREE.Vector3());
 
   // Flight parameters
   const flightParams = useMemo(() => ({
@@ -347,8 +351,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
         if (playerDist > flightParams.fleeDistance * 2.0) {
           transitionState(treePosition ? BeeState.PATROL : BeeState.WANDER);
         } else {
-          // Flee away from player
-          const fleeDir = new THREE.Vector3()
+          // Flee away from player (use cached temp vector)
+          const fleeDir = tempVec1.current
             .subVectors(position, camera.position)
             .normalize();
           targetRef.current.copy(position).addScaledVector(fleeDir, 10.0);
@@ -377,8 +381,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
         break;
     }
 
-    // Flight physics - smooth movement toward target
-    const toTarget = new THREE.Vector3().subVectors(targetRef.current, position);
+    // Flight physics - smooth movement toward target (use cached temp vector)
+    const toTarget = tempVec2.current.subVectors(targetRef.current, position);
     const distToTarget = toTarget.length();
 
     if (distToTarget > 0.1) {
