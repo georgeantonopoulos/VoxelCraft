@@ -34,20 +34,11 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
   const particleCount = 50;
   const lifetime = 2.0; // seconds
 
-  // Deterministic particle size lookup (golden ratio variation)
-  const getParticleSize = (index: number): number => {
-    // Use golden ratio for deterministic variation
-    const phi = 1.618033988749895;
-    const frac = (index * phi) % 1.0;
-    return 0.1 + frac * 0.15;
-  };
-
   // Particle system geometry
-  const { geometry, initialPositions } = useMemo(() => {
+  const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-    const sizes = new Float32Array(particleCount);
+    const colors = new Float32Array(particleCount);
 
     const goldColor = new THREE.Color('#ffcc00');
 
@@ -64,19 +55,12 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       colors[i3] = goldColor.r * variation;
       colors[i3 + 1] = goldColor.g * variation;
       colors[i3 + 2] = goldColor.b * variation;
-
-      // Deterministic sizes
-      sizes[i] = getParticleSize(i);
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
-    return {
-      geometry: geo,
-      initialPositions: positions.slice()
-    };
+    return geo;
   }, [position.x, position.y, position.z]);
 
   // Dispose geometry on unmount to prevent GPU memory leak

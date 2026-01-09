@@ -65,8 +65,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   const { scene, animations } = useGLTF(lumabeeUrl) as LumabeeGLTF;
   const { actions, mixer } = useAnimations(animations, groupRef);
 
-  // AI State - start in APPROACH for dramatic entrance
-  const [state, setState] = useState<BeeState>(BeeState.APPROACH);
+  // AI State - use ref instead of useState to avoid reconciliation in useFrame
+  const stateRef = useRef<BeeState>(BeeState.APPROACH);
   const stateTimeRef = useRef(0);
   const stateThresholdRef = useRef(0);  // Cache transition thresholds
   const targetRef = useRef<THREE.Vector3>(new THREE.Vector3());
@@ -158,13 +158,13 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
 
   // State machine transitions with cached thresholds
   const transitionState = (newState: BeeState) => {
-    if (newState === state) return;
+    if (newState === stateRef.current) return;
 
     if (isDev()) {
-      console.log(`[Lumabee ${id}] ${state} → ${newState}`);
+      console.log(`[Lumabee ${id}] ${stateRef.current} → ${newState}`);
     }
 
-    setState(newState);
+    stateRef.current = newState;
     stateTimeRef.current = 0;
     onStateChange?.(newState);
 
@@ -218,9 +218,9 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     }
   };
 
-  // Calculate canopy position (70% up the tree)
-  const getCanopyPosition = (basePos: THREE.Vector3): THREE.Vector3 => {
-    return new THREE.Vector3(
+  // Calculate canopy position (70% up the tree) - writes to output vector to avoid allocations
+  const getCanopyPosition = (basePos: THREE.Vector3, output: THREE.Vector3): THREE.Vector3 => {
+    return output.set(
       basePos.x,
       basePos.y + treeHeight * 0.7,
       basePos.z
@@ -240,7 +240,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     const playerClose = playerDist < flightParams.fleeDistance;
 
     // State machine logic
-    switch (state) {
+    switch (stateRef.current) {
       case BeeState.APPROACH:
         // Fly toward tree from spawn (dramatic entrance)
         if (playerClose) {
@@ -257,8 +257,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
             // Reached tree - transition to patrol
             transitionState(BeeState.PATROL);
           } else {
-            // Keep flying toward canopy
-            targetRef.current.copy(getCanopyPosition(treePosition));
+            // Keep flying toward canopy (writes directly to targetRef to avoid allocation)
+            getCanopyPosition(treePosition, targetRef.current);
           }
         }
         break;
@@ -321,8 +321,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
               transitionState(BeeState.RETURN);
             }
           } else {
-            // Move toward canopy
-            targetRef.current.copy(getCanopyPosition(treePosition));
+            // Move toward canopy (writes directly to targetRef to avoid allocation)
+            getCanopyPosition(treePosition, targetRef.current);
           }
         }
         break;
@@ -339,7 +339,8 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
           if (horizDist < flightParams.patrolRadius * 1.5) {
             transitionState(BeeState.PATROL);
           } else {
-            targetRef.current.copy(getCanopyPosition(treePosition));
+            // Fly back to canopy (writes directly to targetRef to avoid allocation)
+            getCanopyPosition(treePosition, targetRef.current);
           }
         } else {
           transitionState(BeeState.IDLE);
@@ -387,7 +388,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
 
     if (distToTarget > 0.1) {
       // Use faster speed during APPROACH state
-      const maxSpeed = state === BeeState.APPROACH
+      const maxSpeed = stateRef.current === BeeState.APPROACH
         ? flightParams.approachSpeed
         : flightParams.maxSpeed;
 
@@ -396,7 +397,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
       );
 
       // Smooth acceleration (faster when fleeing or approaching)
-      const accel = (state === BeeState.FLEE || state === BeeState.APPROACH)
+      const accel = (stateRef.current === BeeState.FLEE || stateRef.current === BeeState.APPROACH)
         ? flightParams.acceleration * 1.5
         : flightParams.acceleration;
       velocityRef.current.lerp(desiredVel, 1.0 - Math.pow(0.001, dt * accel));
@@ -423,8 +424,9 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
 
     // Rotation - look in flight direction with banking
     if (velocityRef.current.lengthSq() > 0.01) {
+      // Reuse tempVec2 to avoid allocation (copy and normalize velocity)
       lookDirRef.current.lerp(
-        velocityRef.current.clone().normalize(),
+        tempVec2.current.copy(velocityRef.current).normalize(),
         1.0 - Math.pow(0.0001, dt * flightParams.turnSpeed)
       );
 
@@ -447,7 +449,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
       <primitive object={modelClone} scale={0.15} />
 
       {/* Glow effect for nectar trail */}
-      {state === BeeState.HARVEST && (
+      {stateRef.current === BeeState.HARVEST && (
         <pointLight
           intensity={0.8}
           distance={3.0}

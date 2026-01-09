@@ -89,54 +89,8 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     };
   }, []);
 
-  // Spawn a new bee for a specific tree - OFF SCREEN for dramatic entrance
-  // Uses functional setState to atomically check and update bee count
-  const spawnBee = (tree: { x: number; z: number; grownAt: number }, treeId: string) => {
-    const currentCount = treeBeeCounts.current.get(treeId) || 0;
-    if (currentCount >= maxBeesPerTree) return;
-
-    // Spawn 40-80 units away in a random direction (OFF-SCREEN)
-    const angle = random() * Math.PI * 2;
-    const distance = config.minSpawnDistance + random() * (config.maxSpawnDistance - config.minSpawnDistance);
-    const spawnHeight = config.spawnHeightMin + random() * (config.spawnHeightMax - config.spawnHeightMin);
-
-    // Estimate tree height for canopy targeting
-    const treeHeight = estimateTreeHeight(tree.x + tree.z);
-    const treePos = new THREE.Vector3(tree.x, 0, tree.z);
-
-    const newBee: BeeInstance = {
-      id: `bee-${nextBeeIdRef.current++}`,
-      position: new THREE.Vector3(
-        tree.x + Math.cos(angle) * distance,
-        spawnHeight,
-        tree.z + Math.sin(angle) * distance
-      ),
-      treeId,
-      treePosition: treePos,
-      treeHeight,
-      seed: random() * 1000,
-      spawnedAt: Date.now(),
-      state: BeeState.APPROACH  // Start in APPROACH for dramatic entrance
-    };
-
-    // ATOMIC UPDATE: Check bee count inside functional setState to prevent race condition
-    setBees(prev => {
-      // Re-check limit with current state
-      if (prev.length >= maxTotalBees) {
-        return prev;
-      }
-      // Safe to add
-      treeBeeCounts.current.set(treeId, currentCount + 1);
-
-      if (isDev()) {
-        console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree (total: ${prev.length + 1})`);
-      }
-
-      return [...prev, newBee];
-    });
-  };
-
   // Update bee populations based on tree state
+  // BATCHED UPDATE: Collect all spawns and despawns, apply in single setState
   useFrame((state) => {
     if (!enabled) return;
 
@@ -150,46 +104,89 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     const playerPos = playerPosRef.current;
     const currentTime = Date.now();
 
-    // Despawn bees far from player (LOD)
+    // Track despawned bees and new bees to spawn
+    const despawnedBeeIds = new Set<string>();
+    const newBeesToSpawn: BeeInstance[] = [];
+
+    // PHASE 1: Identify bees to despawn (LOD)
     setBees(prev => {
-      const filtered = prev.filter(bee => {
+      // Check which bees are too far
+      prev.forEach(bee => {
         const distToPlayer = bee.position.distanceTo(playerPos);
         if (distToPlayer > config.despawnDistance) {
-          // Update tree count
-          const treeCount = treeBeeCounts.current.get(bee.treeId) || 0;
-          treeBeeCounts.current.set(bee.treeId, Math.max(0, treeCount - 1));
-
+          despawnedBeeIds.add(bee.id);
           if (isDev()) {
             console.log(`[BeeManager] Despawned bee ${bee.id} (distance: ${distToPlayer.toFixed(1)}m)`);
           }
-          return false;
         }
-        return true;
       });
-      return filtered;
+
+      // PHASE 2: Identify new bees to spawn
+      grownTrees.forEach((tree) => {
+        // Reuse cached vector
+        treePosRef.current.set(tree.x, 0, tree.z);
+        const distToPlayer = treePosRef.current.distanceTo(playerPos);
+
+        if (distToPlayer > spawnRadius) return;
+
+        const treeAge = (currentTime - tree.grownAt) / 1000; // seconds
+        if (treeAge < config.minTreeAge) return;
+
+        const treeId = `tree-${tree.x.toFixed(1)}-${tree.z.toFixed(1)}`;
+        const currentCount = treeBeeCounts.current.get(treeId) || 0;
+
+        // Spawn bees gradually (staggered)
+        if (currentCount < maxBeesPerTree && prev.length < maxTotalBees) {
+          if (random() > 0.7) { // 30% chance per check = gradual spawning
+            // Create new bee instance
+            const angle = random() * Math.PI * 2;
+            const distance = config.minSpawnDistance + random() * (config.maxSpawnDistance - config.minSpawnDistance);
+            const spawnHeight = config.spawnHeightMin + random() * (config.spawnHeightMax - config.spawnHeightMin);
+            const treeHeight = estimateTreeHeight(tree.x + tree.z);
+            const treePos = new THREE.Vector3(tree.x, 0, tree.z);
+
+            const newBee: BeeInstance = {
+              id: `bee-${nextBeeIdRef.current++}`,
+              position: new THREE.Vector3(
+                tree.x + Math.cos(angle) * distance,
+                spawnHeight,
+                tree.z + Math.sin(angle) * distance
+              ),
+              treeId,
+              treePosition: treePos,
+              treeHeight,
+              seed: random() * 1000,
+              spawnedAt: Date.now(),
+              state: BeeState.APPROACH
+            };
+
+            newBeesToSpawn.push(newBee);
+
+            if (isDev()) {
+              console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree`);
+            }
+          }
+        }
+      });
+
+      // PHASE 3: Apply all changes atomically
+      // Filter out despawned bees and add new bees
+      const filtered = prev.filter(bee => !despawnedBeeIds.has(bee.id));
+      return [...filtered, ...newBeesToSpawn];
     });
 
-    // Spawn bees for nearby trees
-    grownTrees.forEach((tree) => {
-      // Reuse cached vector
-      treePosRef.current.set(tree.x, 0, tree.z);
-      const distToPlayer = treePosRef.current.distanceTo(playerPos);
-
-      if (distToPlayer > spawnRadius) return;
-
-      const treeAge = (currentTime - tree.grownAt) / 1000; // seconds
-      if (treeAge < config.minTreeAge) return;
-
-      const treeId = `tree-${tree.x.toFixed(1)}-${tree.z.toFixed(1)}`;
-      const currentCount = treeBeeCounts.current.get(treeId) || 0;
-
-      // Spawn bees gradually (staggered)
-      // Note: We check bees.length in the closure, but atomic check happens in spawnBee
-      if (currentCount < maxBeesPerTree) {
-        if (random() > 0.7) { // 30% chance per check = gradual spawning
-          spawnBee(tree, treeId);
-        }
+    // Update tree counts outside setState (after state commits)
+    despawnedBeeIds.forEach((beeId) => {
+      // Find the tree this bee belonged to
+      const bee = bees.find(b => b.id === beeId);
+      if (bee) {
+        const treeCount = treeBeeCounts.current.get(bee.treeId) || 0;
+        treeBeeCounts.current.set(bee.treeId, Math.max(0, treeCount - 1));
       }
+    });
+    newBeesToSpawn.forEach(bee => {
+      const currentCount = treeBeeCounts.current.get(bee.treeId) || 0;
+      treeBeeCounts.current.set(bee.treeId, currentCount + 1);
     });
   });
 
