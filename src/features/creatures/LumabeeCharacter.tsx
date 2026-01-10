@@ -96,7 +96,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   onStateChange
 }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const { scene } = useGLTF(lumabeeUrl) as LumabeeGLTF;
+  const { scene } = useGLTF(lumabeeUrl) as unknown as LumabeeGLTF;
   // NOTE: This GLB has NO embedded animations - it's a static mesh
   // We'll use procedural animation (rotation/bobbing) instead
 
@@ -533,13 +533,10 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
     // NOTE: No mixer/animation speed update - model has no embedded animations
   });
 
-  // Model orientation offset - adjust if GLB model has different forward axis
-  // Common offsets: 0 = -Z forward (Three.js default), PI = +Z forward, PI/2 = +X forward
-  // After inspecting model hierarchy in console, adjust this value if bee faces wrong way
-  // TODO: CRITICAL ASSUMPTION - 0 offset assumes -Z is forward
-  // TODO: If bee flies backward, try Math.PI. If sideways, try Math.PI/2 or -Math.PI/2
-  // TODO: Requires visual testing - run npm run dev and watch bee flight direction
-  const MODEL_YAW_OFFSET = 0; // Radians - rotate model to face -Z (flight direction)
+  // Model orientation offset - GLB model was authored with +Z forward (Blender convention)
+  // Math.PI rotates 180° so the model faces -Z (Three.js forward direction)
+  // Tuned via ?debug=bee interface on 2026-01-10
+  const MODEL_YAW_OFFSET = Math.PI; // Radians - rotate model to face -Z (flight direction)
 
   return (
     <group ref={groupRef}>

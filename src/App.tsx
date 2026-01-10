@@ -1,5 +1,6 @@
 import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MapDebug } from '@/ui/MapDebug';
+import { BeeDebugScene } from '@features/creatures/BeeDebugScene';
 import { Canvas, useThree } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
@@ -225,6 +226,7 @@ const App: React.FC = () => {
   // Flags from URL
   const skipPost = useMemo(() => new URLSearchParams(window.location.search).has('noPP'), []);
   const debugMode = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
+  const debugBeeMode = useMemo(() => new URLSearchParams(window.location.search).get('debug') === 'bee', []);
   const mapMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'map', []);
   const autoStart = useMemo(() => new URLSearchParams(window.location.search).has('autostart'), []);
 
@@ -280,6 +282,7 @@ const App: React.FC = () => {
   }, []);
 
   if (mapMode) return <MapDebug />;
+  if (debugBeeMode) return <BeeDebugScene />;
 
   return (
     <div className="w-full h-full relative bg-sky-300">
