@@ -70,8 +70,11 @@ interface LumabeeGLTF extends GLTF {
   materials: Record<string, THREE.Material>;
 }
 
-// Dev mode check
-const isDev = () => import.meta.env.DEV;
+// Profile mode check - gate debug logs behind ?profile to avoid dev perf overhead
+const shouldProfile = () =>
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('profile');
 
 /**
  * LumabeeCharacter - Single bee instance with AI and animation
@@ -96,6 +99,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   onStateChange
 }) => {
   const groupRef = useRef<THREE.Group>(null);
+  const harvestLightRef = useRef<THREE.PointLight>(null);
   const { scene } = useGLTF(lumabeeUrl) as unknown as LumabeeGLTF;
   // NOTE: This GLB has NO embedded animations - it's a static mesh
   // We'll use procedural animation (rotation/bobbing) instead
@@ -116,6 +120,11 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   const currentQuat = useRef<THREE.Quaternion>(new THREE.Quaternion());
   const targetQuat = useRef<THREE.Quaternion>(new THREE.Quaternion());
   const tempEuler = useRef<THREE.Euler>(new THREE.Euler(0, 0, 0, 'YXZ'));
+
+  // Terrain height caching - avoid expensive getHeightAt calls every frame
+  const cachedTerrainHeightRef = useRef<number>(0);
+  const lastHeightCheckPosRef = useRef<{ x: number; z: number }>({ x: Infinity, z: Infinity });
+  const TERRAIN_CHECK_THRESHOLD = 2.0; // Only re-query if moved > 2 units XZ
 
   // Flight parameters
   // TODO: These values are ASSUMED - need visual testing to verify they feel right
@@ -200,7 +209,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   // Log model structure once on mount (only first bee in dev mode)
   const hasLoggedModel = useRef(false);
   useEffect(() => {
-    if (isDev() && scene && !hasLoggedModel.current && id === 'bee-0') {
+    if (shouldProfile() && scene && !hasLoggedModel.current && id === 'bee-0') {
       hasLoggedModel.current = true;
 
       console.log(`\n========== LUMABEE MODEL INSPECTION ==========`);
@@ -238,7 +247,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   const transitionState = (newState: BeeState) => {
     if (newState === stateRef.current) return;
 
-    if (isDev()) {
+    if (shouldProfile()) {
       console.log(`[Lumabee ${id}] ${stateRef.current} → ${newState}`);
     }
 
@@ -492,11 +501,21 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
       * flightParams.hoverAmplitude;
     position.y += hoverOffset * dt;
 
-    // Terrain-aware height clamping
-    const terrainHeight = TerrainService.getHeightAt(position.x, position.z);
+    // Terrain-aware height clamping with caching to avoid per-frame noise queries
+    // Only re-query terrain height when bee has moved significantly in XZ plane
+    const dx = position.x - lastHeightCheckPosRef.current.x;
+    const dz = position.z - lastHeightCheckPosRef.current.z;
+    const distMovedSq = dx * dx + dz * dz;
+
+    if (distMovedSq > TERRAIN_CHECK_THRESHOLD * TERRAIN_CHECK_THRESHOLD) {
+      cachedTerrainHeightRef.current = TerrainService.getHeightAt(position.x, position.z);
+      lastHeightCheckPosRef.current.x = position.x;
+      lastHeightCheckPosRef.current.z = position.z;
+    }
+
     position.y = THREE.MathUtils.clamp(
       position.y,
-      terrainHeight + flightParams.minHeight,
+      cachedTerrainHeightRef.current + flightParams.minHeight,
       flightParams.maxHeight
     );
 
@@ -530,6 +549,11 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
       // Apply to group
       groupRef.current.quaternion.copy(currentQuat.current);
     }
+
+    // Update harvest glow visibility imperatively (refs don't trigger re-renders)
+    if (harvestLightRef.current) {
+      harvestLightRef.current.visible = stateRef.current === BeeState.HARVEST;
+    }
     // NOTE: No mixer/animation speed update - model has no embedded animations
   });
 
@@ -547,15 +571,15 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
         <primitive object={modelClone} scale={0.15} />
       </group>
 
-      {/* Glow effect for nectar trail */}
-      {stateRef.current === BeeState.HARVEST && (
-        <pointLight
-          intensity={0.8}
-          distance={3.0}
-          color="#ffcc00"
-          castShadow={false}
-        />
-      )}
+      {/* Glow effect for nectar trail - visibility controlled imperatively in useFrame */}
+      <pointLight
+        ref={harvestLightRef}
+        visible={false}
+        intensity={0.8}
+        distance={3.0}
+        color="#ffcc00"
+        castShadow={false}
+      />
     </group>
   );
 };

@@ -57,6 +57,8 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
   const materialRef = useRef<THREE.PointsMaterial>(null);
   const timeRef = useRef(0);
   const lifetimeRef = useRef(0);
+  // Completion latch - prevents onComplete from firing repeatedly if parent leaves active=true
+  const hasCompletedRef = useRef(false);
 
   const particleCount = 50;
   const lifetime = 2.0; // seconds
@@ -130,15 +132,17 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
   useFrame((_state, dt) => {
     if (!active) return;
     if (!particlesRef.current) return;
+    // Skip if already completed this activation cycle
+    if (hasCompletedRef.current) return;
 
     timeRef.current += dt;
     lifetimeRef.current += dt;
 
-    // Auto-complete after lifetime
+    // Auto-complete after lifetime (with latch to prevent repeated calls)
     if (lifetimeRef.current > lifetime) {
+      hasCompletedRef.current = true; // Latch: only fire once per activation
       onComplete?.();
-      lifetimeRef.current = 0;
-      timeRef.current = 0;
+      // Don't reset timers here - wait for active to toggle off/on
       return;
     }
 
@@ -190,11 +194,12 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
     }
   });
 
-  // Reset when active changes
+  // Reset when active changes - clear latch on new activation
   useEffect(() => {
     if (active) {
       timeRef.current = 0;
       lifetimeRef.current = 0;
+      hasCompletedRef.current = false; // Reset latch for new activation
     }
   }, [active]);
 

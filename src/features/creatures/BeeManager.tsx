@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
@@ -59,8 +59,11 @@ interface BeeManagerProps {
   maxTotalBees?: number;
 }
 
-// Dev mode check
-const isDev = () => import.meta.env.DEV;
+// Profile mode check - gate debug logs behind ?profile to avoid dev perf overhead
+const shouldProfile = () =>
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('profile');
 
 // Estimate tree height based on growth time (approximation)
 // FractalTrees grow with varying heights - we estimate 12-18 units
@@ -124,7 +127,8 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
   }, []);
 
   // Update bee populations based on tree state
-  // BATCHED UPDATE: Collect all spawns and despawns, apply in single setState
+  // CONCURRENCY-SAFE: All side effects (random(), ref increments, logging) happen
+  // OUTSIDE the setState updater to ensure pure state transitions
   useFrame((state) => {
     if (!enabled) return;
 
@@ -138,81 +142,91 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     const playerPos = playerPosRef.current;
     const currentTime = Date.now();
 
-    // Track despawned bees and new bees to spawn
+    // PHASE 1: Pre-compute which bees to despawn (read current state from ref)
+    // We use bees from the last render to identify despawns
+    const currentBees = bees;
     const despawnedBeeIds = new Set<string>();
-    const newBeesToSpawn: BeeInstance[] = [];
 
-    // PHASE 1: Identify bees to despawn (LOD)
-    setBees(prev => {
-      // Check which bees are too far
-      prev.forEach(bee => {
-        const distToPlayer = bee.position.distanceTo(playerPos);
-        if (distToPlayer > config.despawnDistance) {
-          despawnedBeeIds.add(bee.id);
-          if (isDev()) {
-            console.log(`[BeeManager] Despawned bee ${bee.id} (distance: ${distToPlayer.toFixed(1)}m)`);
-          }
+    currentBees.forEach(bee => {
+      const distToPlayer = bee.position.distanceTo(playerPos);
+      if (distToPlayer > config.despawnDistance) {
+        despawnedBeeIds.add(bee.id);
+        if (shouldProfile()) {
+          console.log(`[BeeManager] Despawned bee ${bee.id} (distance: ${distToPlayer.toFixed(1)}m)`);
         }
-      });
-
-      // PHASE 2: Identify new bees to spawn
-      grownTrees.forEach((tree) => {
-        // Reuse cached vector
-        treePosRef.current.set(tree.x, 0, tree.z);
-        const distToPlayer = treePosRef.current.distanceTo(playerPos);
-
-        if (distToPlayer > spawnRadius) return;
-
-        const treeAge = (currentTime - tree.grownAt) / 1000; // seconds
-        if (treeAge < config.minTreeAge) return;
-
-        const treeId = `tree-${tree.x.toFixed(1)}-${tree.z.toFixed(1)}`;
-        const currentCount = treeBeeCounts.current.get(treeId) || 0;
-
-        // Spawn bees gradually (staggered)
-        if (currentCount < maxBeesPerTree && prev.length < maxTotalBees) {
-          if (random() > 0.7) { // 30% chance per check = gradual spawning
-            // Create new bee instance
-            const angle = random() * Math.PI * 2;
-            const distance = config.minSpawnDistance + random() * (config.maxSpawnDistance - config.minSpawnDistance);
-            const spawnHeight = config.spawnHeightMin + random() * (config.spawnHeightMax - config.spawnHeightMin);
-            const treeHeight = estimateTreeHeight(tree.x + tree.z);
-            const treePos = new THREE.Vector3(tree.x, 0, tree.z);
-
-            const newBee: BeeInstance = {
-              id: `bee-${nextBeeIdRef.current++}`,
-              position: new THREE.Vector3(
-                tree.x + Math.cos(angle) * distance,
-                spawnHeight,
-                tree.z + Math.sin(angle) * distance
-              ),
-              treeId,
-              treePosition: treePos,
-              treeHeight,
-              seed: random() * 1000,
-              spawnedAt: Date.now(),
-              state: BeeState.APPROACH
-            };
-
-            newBeesToSpawn.push(newBee);
-
-            if (isDev()) {
-              console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree`);
-            }
-          }
-        }
-      });
-
-      // PHASE 3: Apply all changes atomically
-      // Filter out despawned bees and add new bees
-      const filtered = prev.filter(bee => !despawnedBeeIds.has(bee.id));
-      return [...filtered, ...newBeesToSpawn];
+      }
     });
 
-    // Update tree counts outside setState (after state commits)
+    // PHASE 2: Pre-compute new bees to spawn BEFORE setState
+    // All random() calls and ref increments happen here (outside updater)
+    const newBeesToSpawn: BeeInstance[] = [];
+    const currentBeeCount = currentBees.length - despawnedBeeIds.size;
+
+    grownTrees.forEach((tree) => {
+      // Check if we've hit max total bees (accounting for pending spawns)
+      if (currentBeeCount + newBeesToSpawn.length >= maxTotalBees) return;
+
+      // Reuse cached vector
+      treePosRef.current.set(tree.x, 0, tree.z);
+      const distToPlayer = treePosRef.current.distanceTo(playerPos);
+
+      if (distToPlayer > spawnRadius) return;
+
+      const treeAge = (currentTime - tree.grownAt) / 1000; // seconds
+      if (treeAge < config.minTreeAge) return;
+
+      const treeId = `tree-${tree.x.toFixed(1)}-${tree.z.toFixed(1)}`;
+      const currentCount = treeBeeCounts.current.get(treeId) || 0;
+
+      // Spawn bees gradually (staggered)
+      if (currentCount < maxBeesPerTree) {
+        // Random check happens OUTSIDE setState updater
+        if (random() > 0.7) { // 30% chance per check = gradual spawning
+          // All random() calls and ref increments happen here
+          const angle = random() * Math.PI * 2;
+          const distance = config.minSpawnDistance + random() * (config.maxSpawnDistance - config.minSpawnDistance);
+          const spawnHeight = config.spawnHeightMin + random() * (config.spawnHeightMax - config.spawnHeightMin);
+          const treeHeight = estimateTreeHeight(tree.x + tree.z);
+          const treePos = new THREE.Vector3(tree.x, 0, tree.z);
+          const beeSeed = random() * 1000;
+          const beeId = `bee-${nextBeeIdRef.current++}`;
+
+          const newBee: BeeInstance = {
+            id: beeId,
+            position: new THREE.Vector3(
+              tree.x + Math.cos(angle) * distance,
+              spawnHeight,
+              tree.z + Math.sin(angle) * distance
+            ),
+            treeId,
+            treePosition: treePos,
+            treeHeight,
+            seed: beeSeed,
+            spawnedAt: Date.now(),
+            state: BeeState.APPROACH
+          };
+
+          newBeesToSpawn.push(newBee);
+
+          if (shouldProfile()) {
+            console.log(`[BeeManager] Spawned bee ${newBee.id} at distance ${distance.toFixed(1)}m from tree`);
+          }
+        }
+      }
+    });
+
+    // PHASE 3: Apply all changes with PURE updater (no side effects)
+    // The updater only returns a new array - no mutations, no side effects
+    if (despawnedBeeIds.size > 0 || newBeesToSpawn.length > 0) {
+      setBees(prev => {
+        const filtered = prev.filter(bee => !despawnedBeeIds.has(bee.id));
+        return [...filtered, ...newBeesToSpawn];
+      });
+    }
+
+    // PHASE 4: Update tree counts (after state is scheduled)
     despawnedBeeIds.forEach((beeId) => {
-      // Find the tree this bee belonged to
-      const bee = bees.find(b => b.id === beeId);
+      const bee = currentBees.find(b => b.id === beeId);
       if (bee) {
         const treeCount = treeBeeCounts.current.get(bee.treeId) || 0;
         treeBeeCounts.current.set(bee.treeId, Math.max(0, treeCount - 1));
@@ -237,7 +251,7 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     //   detail: { soundId: 'bee_harvest', options: { volume: 0.3 } }
     // }));
 
-    if (isDev()) {
+    if (shouldProfile()) {
       console.log(`[BeeManager] Bee ${beeId} harvested nectar at`, position);
     }
   };
