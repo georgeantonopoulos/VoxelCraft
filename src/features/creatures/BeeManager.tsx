@@ -3,6 +3,40 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
 import { LumabeeCharacter, BeeState } from './LumabeeCharacter';
+// TODO: Import and integrate NectarVFX when bees harvest
+// import { NectarVFX } from './NectarVFX';
+
+/*
+ * ===========================================================================
+ * BEE MANAGER - CONNECTION MAP & ASSUMPTIONS
+ * ===========================================================================
+ *
+ * CONNECTIONS TO OTHER FILES:
+ * ----------------------------
+ * 1. LumabeeCharacter.tsx (src/features/creatures/LumabeeCharacter.tsx)
+ *    - Spawned as child components
+ *    - Receives: id, position, treePosition, treeHeight, seed, onHarvest
+ *
+ * 2. NectarVFX.tsx (src/features/creatures/NectarVFX.tsx)
+ *    - TODO: NOT YET INTEGRATED - handleHarvest exists but doesn't spawn VFX
+ *
+ * 3. WorldStore.ts (src/state/WorldStore.ts)
+ *    - getGrownTrees() returns all GROWN_TREE entities with x, z, grownAt
+ *    - playerParams provides player position for LOD culling
+ *
+ * 4. FractalTree.tsx (src/features/flora/components/FractalTree.tsx)
+ *    - Registers GROWN_TREE entities when tree finishes growing
+ *    - TODO: Should also provide actual tree height and canopy radius
+ *
+ * ASSUMPTIONS:
+ * ------------
+ * - estimateTreeHeight() uses seed-based approximation (12-18 units)
+ *   TODO: FractalTree should pass actual height when registering GROWN_TREE
+ * - Tree ground level (y=0) is assumed
+ *   TODO: Trees on hills/slopes may have different base Y
+ *
+ * ===========================================================================
+ */
 
 /**
  * Bee instance data
@@ -191,6 +225,12 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
   });
 
   // Harvest handler - triggers nectar VFX
+  // TODO: MISSING INTEGRATION - This should spawn a NectarVFX instance
+  // TODO: Need to:
+  //   1. Add state: const [vfxInstances, setVfxInstances] = useState<VFXInstance[]>([])
+  //   2. Find the bee's treePosition to use as VFX source
+  //   3. Spawn NectarVFX with position=treePos, target=beePos, active=true
+  //   4. Remove VFX instance when onComplete fires
   const handleHarvest = (beeId: string, position: THREE.Vector3) => {
     // TODO: Dispatch event for audio when bee sound files are available
     // window.dispatchEvent(new CustomEvent('vc-audio-play', {

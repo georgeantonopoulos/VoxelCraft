@@ -2,6 +2,33 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
+/*
+ * ===========================================================================
+ * NECTAR VFX - CONNECTION MAP & ASSUMPTIONS
+ * ===========================================================================
+ *
+ * CONNECTIONS TO OTHER FILES:
+ * ----------------------------
+ * 1. BeeManager.tsx (src/features/creatures/BeeManager.tsx)
+ *    - TODO: NOT YET INTEGRATED - BeeManager has handleHarvest but doesn't spawn NectarVFX
+ *    - TODO: BeeManager needs to maintain a list of active NectarVFX instances
+ *    - TODO: When bee's onHarvest fires, spawn NectarVFX from tree to bee position
+ *
+ * 2. LumabeeCharacter.tsx (src/features/creatures/LumabeeCharacter.tsx)
+ *    - Provides harvest position via onHarvest callback
+ *    - Bee position updates each frame - NectarVFX target should track bee
+ *
+ * HOW TO INTEGRATE:
+ * -----------------
+ * In BeeManager.tsx:
+ *   1. Add state: const [vfxInstances, setVfxInstances] = useState<VFXInstance[]>([])
+ *   2. In handleHarvest, add: setVfxInstances(prev => [...prev, { id, treePos, beePos }])
+ *   3. Render: {vfxInstances.map(vfx => <NectarVFX key={vfx.id} ... />)}
+ *   4. Handle onComplete to remove from list
+ *
+ * ===========================================================================
+ */
+
 interface NectarVFXProps {
   position: THREE.Vector3;
   target: THREE.Vector3; // Where nectar flows to (usually the bee)
@@ -34,11 +61,18 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
   const particleCount = 50;
   const lifetime = 2.0; // seconds
 
+  // Deterministic particle size based on index (golden ratio distribution)
+  const getParticleSize = (i: number): number => {
+    const phi = 1.618033988749895;
+    return 0.1 + ((i * phi) % 1.0) * 0.1; // Size range: 0.1 to 0.2
+  };
+
   // Particle system geometry
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount);
+    const colors = new Float32Array(particleCount * 3); // Fixed: was particleCount, needs *3 for RGB
+    const sizes = new Float32Array(particleCount);
 
     const goldColor = new THREE.Color('#ffcc00');
 
@@ -55,10 +89,14 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       colors[i3] = goldColor.r * variation;
       colors[i3 + 1] = goldColor.g * variation;
       colors[i3 + 2] = goldColor.b * variation;
+
+      // Initialize sizes
+      sizes[i] = getParticleSize(i);
     }
 
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
 
     return geo;
   }, [position.x, position.y, position.z]);
@@ -89,7 +127,7 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
     };
   }, [material]);
 
-  useFrame((state, dt) => {
+  useFrame((_state, dt) => {
     if (!active) return;
     if (!particlesRef.current) return;
 
