@@ -441,3 +441,23 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
   - **Issue**: Root Hollows were either clustered or non-existent due to a random "designated spot" logic in the super-grid de-duplication.
   - **Fix**: Replaced random super-grid sampling with Local Maximum Detection. Now, each sample point checks if it is the "peak" of the grove noise compared to its neighbors.
   - **Result**: Exactly one Root Hollow is placed at the absolute center of each Sacred Grove, consistent across chunk boundaries.
+
+- 2026-01-10: **Lumabee Orientation and Debug Interface**.
+  - **Goal**: Correct the orientation of the Lumabee model and provide a way to tune creature parameters interactively.
+  - **Implementation**:
+    1. Created `BeeDebugScene.tsx`: A dedicated debug interface for tuning bee orientation (yaw/pitch/roll), hover animations, and flight behavior using Leva.
+    2. Integrated `?debug=bee` route in `App.tsx`: Allows quick access to the debug scene.
+    3. Updated `LumabeeCharacter.tsx`: Set `MODEL_YAW_OFFSET` to `Math.PI`. This corrects for the Blender +Z forward convention to Three.js -Z forward.
+    4. Fixed TypeScript cast: Added `unknown` cast when using `useGLTF` to avoid type errors with custom models.
+  - **Result**: Lumabee now correctly faces its flight direction. The debug scene is available for future creature/animation tuning.
+  - **Files**: `BeeDebugScene.tsx` (new), `App.tsx`, `LumabeeCharacter.tsx`, `CLAUDE.md`.
+
+- 2026-01-10: **Lumabee Performance and Stability Optimizations**.
+  - **Goal**: Reduce per-frame overhead and improve animation stability for the Lumabee feature.
+  - **Implementation**:
+    1. **Terrain Caching**: Added `cachedTerrainHeightRef` in `LumabeeCharacter.tsx` to skip `getHeightAt` (noise) queries unless the bee moves > 2 units.
+    2. **Imperative Lighting**: Switched harvest glow from conditional rendering to `harvestLightRef.current.visible = true/false` in `useFrame` to bypass React's reconciler.
+    3. **Log Gating**: Introduced `?profile` URL flag and `shouldProfile()` helper to silence high-frequency debug logs in normal dev mode.
+    4. **VFX Latch**: Added `hasCompletedRef` to `NectarVFX.tsx` to prevent duplicate completion events.
+  - **Result**: Significant reduction in main-thread frame spikes during active bee flight. Improved stability of the nectar harvesting animation.
+  - **Files**: `LumabeeCharacter.tsx`, `BeeManager.tsx`, `NectarVFX.tsx`.

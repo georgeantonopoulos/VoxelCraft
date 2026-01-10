@@ -12,7 +12,16 @@ npm run test:unit    # Run Vitest tests
 npm run preview      # Preview production build
 ```
 
-**Before finishing work**: Always run `npm run build` and `npm run test:unit`, then do a quick `npm run dev` smoke test.
+## General Instructions
+
+- **Exploration**: Use `ls -R`, `grep`, and `cat` to fully understand the existing architecture and patterns before proposing changes.
+- **Incremental Development**: Break complex tasks into small, logical steps. Verify each step by running tests or builds.
+- **Verification**: Always run `npm run test:unit` and `npm run build` after modifications. If changes affect the UI, suggest a manual smoke test via `npm run dev`.
+- **Clarification**: If an instruction is ambiguous or contradicts the existing architecture, stop and ask for clarification rather than making assumptions.
+- **Code Standards**: Adhere to the "Senior Software Architect" persona. Use strict TypeScript (avoid `any`), maintain existing documentation, and follow the project's established modular patterns.
+- **Safety**: Do not modify `.env` files or core infrastructure configs unless explicitly directed.
+
+
 
 ## Architecture Overview
 
