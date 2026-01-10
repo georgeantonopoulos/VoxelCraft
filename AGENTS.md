@@ -441,3 +441,13 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
   - **Issue**: Root Hollows were either clustered or non-existent due to a random "designated spot" logic in the super-grid de-duplication.
   - **Fix**: Replaced random super-grid sampling with Local Maximum Detection. Now, each sample point checks if it is the "peak" of the grove noise compared to its neighbors.
   - **Result**: Exactly one Root Hollow is placed at the absolute center of each Sacred Grove, consistent across chunk boundaries.
+
+- 2026-01-10: **Lumabee Orientation and Debug Interface**.
+  - **Goal**: Correct the orientation of the Lumabee model and provide a way to tune creature parameters interactively.
+  - **Implementation**:
+    1. Created `BeeDebugScene.tsx`: A dedicated debug interface for tuning bee orientation (yaw/pitch/roll), hover animations, and flight behavior using Leva.
+    2. Integrated `?debug=bee` route in `App.tsx`: Allows quick access to the debug scene.
+    3. Updated `LumabeeCharacter.tsx`: Set `MODEL_YAW_OFFSET` to `Math.PI`. This corrects for the Blender +Z forward convention to Three.js -Z forward.
+    4. Fixed TypeScript cast: Added `unknown` cast when using `useGLTF` to avoid type errors with custom models.
+  - **Result**: Lumabee now correctly faces its flight direction. The debug scene is available for future creature/animation tuning.
+  - **Files**: `BeeDebugScene.tsx` (new), `App.tsx`, `LumabeeCharacter.tsx`, `CLAUDE.md`.
