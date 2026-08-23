@@ -13,84 +13,89 @@ const calculateOrbitAngle = (t: number, speed: number, offset: number = 0): numb
     return calculateOrbitAngleCore(t, speed, offset);
 };
 
-const getSunColor = (sunY: number, radius: number): THREE.Color => {
+// Immutable palette entries are shared; frame loops write into caller-owned scratch colors.
+const SUN_NIGHT = new THREE.Color(0x3a4a6a);
+const SUN_SUNSET = new THREE.Color(0xff6a33);
+const SUN_MIDDAY = new THREE.Color(0xfffdf5);
+const SUN_GOLDEN = new THREE.Color(0xffd580);
+const GLOW_NIGHT = new THREE.Color(0x4a5a7a);
+const GLOW_WARM = new THREE.Color(0xffb070);
+const GLOW_DAY = new THREE.Color(0xfff4d6);
+const SKY_NIGHT_TOP = new THREE.Color(0x020210);
+const SKY_NIGHT_BOTTOM = new THREE.Color(0x101025);
+const SKY_SUNSET_TOP = new THREE.Color(0x2c3e50);
+const SKY_SUNSET_BOTTOM = new THREE.Color(0xff8c42);
+const SKY_DAY_TOP = new THREE.Color(0x1e90ff);
+const SKY_DAY_BOTTOM = new THREE.Color(0x87CEEB);
+
+const getSunColor = (sunY: number, radius: number, out: THREE.Color): THREE.Color => {
     const normalizedHeight = sunY / radius;
-    const nightColor = new THREE.Color(0x3a4a6a);
-    const sunriseSunsetColor = new THREE.Color(0xff6a33);
-    const middayColor = new THREE.Color(0xfffdf5);
-    const goldenHourColor = new THREE.Color(0xffd580);
 
     if (normalizedHeight < -0.15) {
-        return nightColor;
+        return out.copy(SUN_NIGHT);
     } else if (normalizedHeight < 0.0) {
         const t = (normalizedHeight + 0.15) / 0.15;
-        return new THREE.Color().lerpColors(nightColor, sunriseSunsetColor, t);
+        return out.lerpColors(SUN_NIGHT, SUN_SUNSET, t);
     } else if (normalizedHeight < 0.25) {
         const t = normalizedHeight / 0.25;
-        return new THREE.Color().lerpColors(sunriseSunsetColor, goldenHourColor, t);
+        return out.lerpColors(SUN_SUNSET, SUN_GOLDEN, t);
     } else if (normalizedHeight < 0.5) {
         const t = (normalizedHeight - 0.25) / 0.25;
-        return new THREE.Color().lerpColors(goldenHourColor, middayColor, t);
+        return out.lerpColors(SUN_GOLDEN, SUN_MIDDAY, t);
     } else {
-        return middayColor;
+        return out.copy(SUN_MIDDAY);
     }
 };
 
-const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color): THREE.Color => {
-    const glowColor = sunColor.clone();
-    const nightGlow = new THREE.Color(0x4a5a7a);
-    const warmGlow = new THREE.Color(0xffb070); // Less saturated orange
-    const dayHighlight = new THREE.Color(0xfff4d6);
+const getSunGlowColor = (normalizedHeight: number, sunColor: THREE.Color, out: THREE.Color): THREE.Color => {
+    const glowColor = out.copy(sunColor);
 
     if (normalizedHeight < -0.15) {
-        glowColor.lerp(nightGlow, 0.7).multiplyScalar(0.45);
+        glowColor.lerp(GLOW_NIGHT, 0.7).multiplyScalar(0.45);
         return glowColor;
     }
     if (normalizedHeight < 0.0) {
         const t = THREE.MathUtils.clamp((normalizedHeight + 0.15) / 0.15, 0, 1);
-        glowColor.lerp(nightGlow, 1 - t).multiplyScalar(0.5 + 0.4 * t);
+        glowColor.lerp(GLOW_NIGHT, 1 - t).multiplyScalar(0.5 + 0.4 * t);
         return glowColor;
     }
     // Sunset warm glow - reduced intensity and narrower range
     if (normalizedHeight < 0.15) {
         // Fade out warm glow as sun rises (0.0 -> 0.15)
         const warmFade = 1.0 - THREE.MathUtils.smoothstep(normalizedHeight, 0.0, 0.15);
-        glowColor.lerp(warmGlow, 0.2 * warmFade).multiplyScalar(1.0 + 0.1 * warmFade);
+        glowColor.lerp(GLOW_WARM, 0.2 * warmFade).multiplyScalar(1.0 + 0.1 * warmFade);
         return glowColor;
     }
     if (normalizedHeight < 0.3) {
         // Transition zone - minimal warm tint
-        glowColor.lerp(dayHighlight, 0.15).multiplyScalar(1.02);
+        glowColor.lerp(GLOW_DAY, 0.15).multiplyScalar(1.02);
         return glowColor;
     }
-    return glowColor.lerp(dayHighlight, 0.2).multiplyScalar(1.05);
+    return glowColor.lerp(GLOW_DAY, 0.2).multiplyScalar(1.05);
 };
 
-const getSkyGradient = (sunY: number, radius: number): { top: THREE.Color, bottom: THREE.Color } => {
+const getSkyGradient = (
+    sunY: number,
+    radius: number,
+    outTop: THREE.Color,
+    outBottom: THREE.Color
+): void => {
     const normalizedHeight = sunY / radius;
-    const nightTop = new THREE.Color(0x020210);
-    const nightBottom = new THREE.Color(0x101025);
-    const sunsetTop = new THREE.Color(0x2c3e50);
-    const sunsetBottom = new THREE.Color(0xff8c42);
-    const dayTop = new THREE.Color(0x1e90ff);
-    const dayBottom = new THREE.Color(0x87CEEB);
 
     if (normalizedHeight < -0.15) {
-        return { top: nightTop, bottom: nightBottom };
+        outTop.copy(SKY_NIGHT_TOP);
+        outBottom.copy(SKY_NIGHT_BOTTOM);
     } else if (normalizedHeight < 0.0) {
         const t = (normalizedHeight + 0.15) / 0.15;
-        return {
-            top: new THREE.Color().lerpColors(nightTop, sunsetTop, t),
-            bottom: new THREE.Color().lerpColors(nightBottom, sunsetBottom, t)
-        };
+        outTop.lerpColors(SKY_NIGHT_TOP, SKY_SUNSET_TOP, t);
+        outBottom.lerpColors(SKY_NIGHT_BOTTOM, SKY_SUNSET_BOTTOM, t);
     } else if (normalizedHeight < 0.3) {
         const t = normalizedHeight / 0.3;
-        return {
-            top: new THREE.Color().lerpColors(sunsetTop, dayTop, t),
-            bottom: new THREE.Color().lerpColors(sunsetBottom, dayBottom, t)
-        };
+        outTop.lerpColors(SKY_SUNSET_TOP, SKY_DAY_TOP, t);
+        outBottom.lerpColors(SKY_SUNSET_BOTTOM, SKY_DAY_BOTTOM, t);
     } else {
-        return { top: dayTop, bottom: dayBottom };
+        outTop.copy(SKY_DAY_TOP);
+        outBottom.copy(SKY_DAY_BOTTOM);
     }
 };
 
@@ -296,6 +301,9 @@ export const SunFollower: React.FC<{
         const tmpLightOffset = useRef(new THREE.Vector3());
         const tmpVisualOffset = useRef(new THREE.Vector3());
         const tmpTargetSunPos = useRef(new THREE.Vector3());
+        const tmpSunColor = useRef(new THREE.Color());
+        const tmpSunMeshColor = useRef(new THREE.Color());
+        const tmpGlowColor = useRef(new THREE.Color());
 
         useEffect(() => {
             lastCameraPos.current.copy(camera.position);
@@ -337,7 +345,7 @@ export const SunFollower: React.FC<{
                 }
 
                 const sy = tmpLightOffset.current.y;
-                const sunColor = getSunColor(sy, radius);
+                const sunColor = getSunColor(sy, radius, tmpSunColor.current);
                 lightRef.current.color.copy(sunColor);
 
                 const normalizedHeight = sy / radius;
@@ -364,7 +372,7 @@ export const SunFollower: React.FC<{
                     sunMeshRef.current.visible = directVis > 0.02;
 
                     if (sunMaterialRef.current) {
-                        const sunMeshColor = sunColor.clone();
+                        const sunMeshColor = tmpSunMeshColor.current.copy(sunColor);
                         if (normalizedHeight < -0.15) sunMeshColor.multiplyScalar(0.4);
                         else if (normalizedHeight < 0.0) sunMeshColor.multiplyScalar(0.4 + (1.2 - 0.4) * ((normalizedHeight + 0.15) / 0.15));
                         else sunMeshColor.multiplyScalar(5.0);
@@ -391,7 +399,7 @@ export const SunFollower: React.FC<{
                         const glowOpacity = glowOpacityBase * THREE.MathUtils.lerp(1.0, 0.25, depthFade3) * THREE.MathUtils.clamp(directVis, 0, 1);
 
                         glowMeshRef.current.scale.setScalar(glowScale);
-                        const glowColor = getSunGlowColor(normalizedHeight, sunColor);
+                        const glowColor = getSunGlowColor(normalizedHeight, sunColor, tmpGlowColor.current);
                         glowMaterialRef.current.uniforms.uColor.value.copy(glowColor);
                         glowMaterialRef.current.uniforms.uOpacity.value = glowOpacity;
                         glowMaterialRef.current.uniforms.uTime.value = t;
@@ -604,7 +612,7 @@ export const MoonFollower: React.FC<{
     };
 
 export const AtmosphereController: React.FC<{
-    orbitConfig: { speed: number; offset: number };
+    orbitConfig: { radius: number; speed: number; offset: number };
     hazeAmount: number;
     brightness: number;
 }> = ({ orbitConfig, hazeAmount, brightness }) => {
@@ -618,14 +626,14 @@ export const AtmosphereController: React.FC<{
         frameProfiler.begin('atmosphere-controller');
         const t = clock.getElapsedTime();
         const angle = calculateOrbitAngle(t, orbitConfig.speed, orbitConfig.offset);
-        const radius = 300;
+        const radius = orbitConfig.radius;
         const sunY = Math.cos(angle) * radius;
-        const grads = getSkyGradient(sunY, radius);
+        getSkyGradient(sunY, radius, gradientRef.current.top, gradientRef.current.bottom);
         const clampedBrightness = Math.max(0, brightness ?? 1.0);
         const clampedHaze = THREE.MathUtils.clamp(hazeAmount ?? 0.0, 0.0, 1.0);
 
-        tunedTop.current.copy(grads.top).multiplyScalar(clampedBrightness);
-        tunedBottom.current.copy(grads.bottom).multiplyScalar(clampedBrightness);
+        tunedTop.current.copy(gradientRef.current.top).multiplyScalar(clampedBrightness);
+        tunedBottom.current.copy(gradientRef.current.bottom).multiplyScalar(clampedBrightness);
 
         if (clampedHaze > 0) {
             hazeBlend.current.copy(tunedBottom.current).lerp(tunedTop.current, 0.25);

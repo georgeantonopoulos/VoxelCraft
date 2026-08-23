@@ -128,6 +128,18 @@ export const TouchControls: React.FC = () => {
       {/* Action Buttons Overlay */}
       <div className="absolute bottom-8 right-8 flex flex-col gap-4 pointer-events-auto">
         <div className="flex gap-4">
+          {/* PICK UP (Q) */}
+          <button
+            aria-label="Pick up item"
+            className="w-16 h-16 rounded-full bg-cyan-500/50 border-2 border-cyan-300 text-white text-xs font-bold backdrop-blur-sm active:bg-cyan-500/80 active:scale-95 transition-all flex items-center justify-center"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              window.dispatchEvent(new Event('vc-item-pickup-request'));
+            }}
+          >
+            PICK UP
+          </button>
+
           {/* DIG (Left Click) */}
           <button
             className="w-16 h-16 rounded-full bg-red-500/50 border-2 border-red-400 text-white font-bold backdrop-blur-sm active:bg-red-500/80 active:scale-95 transition-all flex items-center justify-center"

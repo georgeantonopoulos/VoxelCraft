@@ -230,6 +230,10 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 - `npm run dev` (confirm server starts; stop it once ready)
 - 'npm run test:unit' (confirm tests pass)
 
+## Worklog (short)
+
+- 2026-08-23: Stabilized inventory/entity lifecycles, extracted Q pickup from `VoxelTerrain.tsx`, added touch pickup, and removed remesh/postprocessing/startup/atmosphere overhead. Verified 82 tests plus native-GPU gameplay after a 10-second settle; captured movement/settings/touch-look/lazy routes (`output/web-game/native/`) and exercised the touch pickup control.
+
 ## Worklog (last 5 entries)
 
 - 2026-01-07: **Centralized Audio System (AudioManager)**.

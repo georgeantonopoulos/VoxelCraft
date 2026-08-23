@@ -107,6 +107,10 @@ export default defineConfig(({ mode }) => {
       port: 3000,
     },
     plugins: [react(), vcPoseWriterPlugin(), coopCoepPlugin()],
+    test: {
+      // Nested Git worktrees are separate checkouts and must not duplicate this suite.
+      exclude: ['worktrees/**', '**/node_modules/**', '**/.git/**'],
+    },
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
