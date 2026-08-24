@@ -141,6 +141,7 @@ export const HUD: React.FC = () => {
 
   const [crosshairHit, setCrosshairHit] = useState(false);
   const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');
+  const [pickupFeedback, setPickupFeedback] = useState<{ id: number; name: string; color: string; amount: number } | null>(null);
   const [placementDebug, setPlacementDebug] = useState<string>('');
   const debugMode = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -153,6 +154,28 @@ export const HUD: React.FC = () => {
       viaStorage = false;
     }
     return viaQuery || viaWindow || viaStorage;
+  }, []);
+
+  // Confirm successful pickups without permanently adding more HUD chrome.
+  useEffect(() => {
+    let timeoutId: number | null = null;
+    const handlePickup = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { name?: string; color?: string; amount?: number } | undefined;
+      setPickupFeedback({
+        id: performance.now(),
+        name: detail?.name ?? 'Item',
+        color: detail?.color ?? '#ffffff',
+        amount: detail?.amount ?? 1,
+      });
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(() => setPickupFeedback(null), 900);
+    };
+
+    window.addEventListener('vc-item-picked-up', handlePickup as EventListener);
+    return () => {
+      window.removeEventListener('vc-item-picked-up', handlePickup as EventListener);
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+    };
   }, []);
 
   // Placement debugging (enabled with ?debug).
@@ -206,6 +229,16 @@ export const HUD: React.FC = () => {
       />
 
       <TargetHealthBar />
+
+      {pickupFeedback && (
+        <div
+          key={pickupFeedback.id}
+          className="pickup-feedback absolute left-1/2 top-[57%] -translate-x-1/2 rounded-full border bg-slate-950/75 px-4 py-1.5 text-sm font-semibold tracking-wide shadow-lg backdrop-blur-md"
+          style={{ color: pickupFeedback.color, borderColor: `${pickupFeedback.color}80` }}
+        >
+          +{pickupFeedback.amount} {pickupFeedback.name}
+        </div>
+      )}
 
       {/* Top Left: Controls Info */}
       <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">

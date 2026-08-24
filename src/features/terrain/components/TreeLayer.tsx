@@ -387,17 +387,17 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
                 vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);
                 vec3 col = mix(tintA, tintB, variation);
 
-                // Vein pattern - radial from center
+                // Vein pattern - softer, more organic with noise modulation
                 float radial = length(vPos.xz);
-                float veinPattern = sin(radial * 20.0 + fine * 4.0);
-                float veins = smoothstep(0.75, 1.0, veinPattern);
+                float veinPattern = sin(radial * 8.0 + fine * 6.0 + micro * 3.0);
+                float veins = smoothstep(0.6, 0.9, veinPattern);
 
-                // Darken between veins
-                col *= 0.94 + veins * 0.08;
+                // Gentle vein darkening
+                col *= 0.96 + veins * 0.05;
 
-                // Cell structure - small bright spots
-                float cells = smoothstep(0.58, 0.63, ultraFine);
-                col += col * cells * 0.1;
+                // Cell structure - subtle bright spots
+                float cells = smoothstep(0.55, 0.65, ultraFine);
+                col += col * cells * 0.05;
 
                 // Edge discoloration (yellowing at tips)
                 float edge = smoothstep(0.35, 0.45, radial);

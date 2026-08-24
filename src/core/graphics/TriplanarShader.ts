@@ -958,8 +958,11 @@ export const triplanarFragmentShader = `
 
           // Valley pooling: use world-space noise to create natural fog accumulation
           // Low-frequency noise simulates fog pooling in terrain depressions
-          vec4 valleyNoise = texture(uNoiseTexture, vec3(vWorldPosition.xz * 0.008, 0.1));
-          float valleyPool = valleyNoise.r * 0.4 + 0.6; // 0.6 to 1.0 range
+          float valleyPool = 1.0;
+          if (heightFactor > 0.001 && uBiomeFogEnabled > 0.5) {
+              vec4 valleyNoise = texture(uNoiseTexture, vec3(vWorldPosition.xz * 0.008, 0.1));
+              valleyPool = valleyNoise.r * 0.4 + 0.6; // 0.6 to 1.0 range
+          }
 
           // Boost factor in valleys (lower areas get more fog)
           float valleyBoost = mix(1.0, valleyPool * 1.3, heightFactor);

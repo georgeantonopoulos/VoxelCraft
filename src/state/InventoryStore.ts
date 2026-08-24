@@ -56,22 +56,28 @@ const computeSlots = (state: {
   if (state.stoneCount > 0) slots[STONE_SLOT_INDEX] = ItemType.STONE;
   if (state.shardCount > 0) slots[SHARD_SLOT_INDEX] = ItemType.SHARD;
 
-  // Fill remaining slots among the first 8 with custom tools
-  let toolIdx = 0;
-  for (let i = 0; i < FIXED_SLOT_COUNT; i++) {
-    if (slots[i] === null && toolIdx < state.customToolIds.length) {
-      slots[i] = state.customToolIds[toolIdx];
-      toolIdx++;
-    }
-  }
-
-  // Append any tools that didn't fit in the first 8 slots
-  return [...slots, ...state.customToolIds.slice(toolIdx)];
+  // Keep every documented hotkey stable even while its item is unavailable.
+  // Custom tools always start at slot 9, so gathering cannot silently move them.
+  return [...slots, ...state.customToolIds];
 };
 
 const isSlotSelectable = (index: number, item: InventoryItemId | undefined): boolean => {
   if (index === 0) return true;
   return item != null;
+};
+
+const preserveSelectedItem = (
+  previousSlots: InventoryItemId[],
+  previousIndex: number,
+  nextSlots: InventoryItemId[]
+): number => {
+  const previousItem = previousSlots[previousIndex];
+  if (previousItem == null) {
+    // A player may preselect an empty fixed hotkey before acquiring its first item.
+    return isSlotSelectable(previousIndex, nextSlots[previousIndex]) ? previousIndex : 0;
+  }
+  const nextIndex = nextSlots.indexOf(previousItem);
+  return nextIndex >= 0 ? nextIndex : 0;
 };
 
 interface GameState {
@@ -160,7 +166,8 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       hasAxe: state.hasAxe,
       customToolIds: state.customToolIds
     });
-    return { ...nextCounts, inventorySlots };
+    const selectedSlotIndex = preserveSelectedItem(state.inventorySlots, state.selectedSlotIndex, inventorySlots);
+    return { ...nextCounts, inventorySlots, selectedSlotIndex };
   }),
 
   removeItem: (item, amount = 1) => set((state) => {
@@ -187,8 +194,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       customToolIds: state.customToolIds
     });
 
-    const currentItem = inventorySlots[state.selectedSlotIndex];
-    const selectedSlotIndex = isSlotSelectable(state.selectedSlotIndex, currentItem) ? state.selectedSlotIndex : 0;
+    const selectedSlotIndex = preserveSelectedItem(state.inventorySlots, state.selectedSlotIndex, inventorySlots);
 
     return { ...nextCounts, inventorySlots, selectedSlotIndex };
   }),
@@ -233,8 +239,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       customToolIds
     });
 
-    const currentItem = inventorySlots[state.selectedSlotIndex];
-    const selectedSlotIndex = isSlotSelectable(state.selectedSlotIndex, currentItem) ? state.selectedSlotIndex : 0;
+    const selectedSlotIndex = preserveSelectedItem(state.inventorySlots, state.selectedSlotIndex, inventorySlots);
 
     return { customTools, customToolIds, inventorySlots, selectedSlotIndex };
   }),
@@ -253,9 +258,10 @@ export const useInventoryStore = create<GameState>((set, get) => ({
     return 0;
   },
 
-  addFlora: () => set((state) => ({ inventoryCount: state.inventoryCount + 1 })),
-  removeFlora: () => set((state) => ({ inventoryCount: Math.max(0, state.inventoryCount - 1) })),
-  harvestFlora: () => set((state) => ({ inventoryCount: state.inventoryCount + 1 })),
+  // Legacy flora actions route through the canonical mutation path so slots stay synchronized.
+  addFlora: () => get().addItem(ItemType.FLORA, 1),
+  removeFlora: () => get().removeItem(ItemType.FLORA, 1),
+  harvestFlora: () => get().addItem(ItemType.FLORA, 1),
 
   setHasPickaxe: (has: boolean) => set((state) => {
     const inventorySlots = computeSlots({
@@ -268,8 +274,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       hasAxe: state.hasAxe,
       customToolIds: state.customToolIds
     });
-    const currentItem = inventorySlots[state.selectedSlotIndex];
-    const selectedSlotIndex = isSlotSelectable(state.selectedSlotIndex, currentItem) ? state.selectedSlotIndex : 0;
+    const selectedSlotIndex = preserveSelectedItem(state.inventorySlots, state.selectedSlotIndex, inventorySlots);
     return { hasPickaxe: has, inventorySlots, selectedSlotIndex };
   }),
 
@@ -285,8 +290,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
       hasAxe: has,
       customToolIds: state.customToolIds
     });
-    const currentItem = inventorySlots[state.selectedSlotIndex];
-    const selectedSlotIndex = isSlotSelectable(state.selectedSlotIndex, currentItem) ? state.selectedSlotIndex : 0;
+    const selectedSlotIndex = preserveSelectedItem(state.inventorySlots, state.selectedSlotIndex, inventorySlots);
     return { hasAxe: has, currentTool: nextTool, inventorySlots, selectedSlotIndex };
   }),
 

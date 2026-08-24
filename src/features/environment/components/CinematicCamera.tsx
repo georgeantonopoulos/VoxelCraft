@@ -5,6 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 export const CinematicCamera: React.FC<{ spawnPos: [number, number, number] | null }> = ({ spawnPos }) => {
     const { camera } = useThree();
     const angle = useRef(0);
+    const targetPosition = useRef(new THREE.Vector3());
 
     useFrame((_state, delta) => {
         angle.current += delta * 0.03; // Even slower rotation
@@ -18,7 +19,8 @@ export const CinematicCamera: React.FC<{ spawnPos: [number, number, number] | nu
         const x = centerX + Math.sin(angle.current) * radius;
         const z = centerZ + Math.cos(angle.current) * radius;
 
-        camera.position.lerp(new THREE.Vector3(x, camY, z), 0.1);
+        targetPosition.current.set(x, camY, z);
+        camera.position.lerp(targetPosition.current, 0.1);
         camera.lookAt(centerX, targetY, centerZ);
     });
 

@@ -1,50 +1,38 @@
 import React, { useEffect, useRef, useState, useMemo, startTransition, useLayoutEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import { useRapier } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
-import { useInventoryStore, useInventoryStore as useGameStore } from '@state/InventoryStore';
+import { useInventoryStore } from '@state/InventoryStore';
 import { useInputStore } from '@/state/InputStore';
 import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
-import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
-import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
-import { getItemColor, getItemMetadata } from '../../interaction/logic/ItemRegistry';
+import { getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
-import { saveGroundPickup, getGroundPickups, GroundItemType } from '@state/WorldDB';
+import { getGroundPickups } from '@state/WorldDB';
 import { BiomeManager, getFogSettings, BiomeFogSettings } from '@features/terrain/logic/BiomeManager';
 
 // Extracted modules
-import {
-  rayHitsFlora,
-  rayHitsTorch,
-  rayHitsGeneratedLuminaFlora,
-  rayHitsGeneratedGroundPickup,
-  buildFloraHotspots,
-  buildChunkLocalHotspots,
-  isPhysicsItemCollider,
-} from '@features/terrain/logic/raycastUtils';
+import { buildFloraHotspots, buildChunkLocalHotspots } from '@features/terrain/logic/raycastUtils';
 import {
   useTerrainInteraction,
   ParticleState,
   ParticleKind,
   FallingTreeData,
 } from '@features/terrain/hooks/useTerrainInteraction';
-
-// Type alias for backwards compatibility
-type GroundPickupArrayKey = 'stickPositions' | 'rockPositions';
+import { useItemPickup } from '@features/terrain/hooks/useItemPickup';
+import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
 
 const LeafPickupEffect = ({
   start,
@@ -65,6 +53,7 @@ const LeafPickupEffect = ({
   const phase = useRef<'fall' | 'fly'>('fall');
   const elapsed = useRef(0);
   const tmpTarget = useMemo(() => new THREE.Vector3(), []);
+  const tmpForward = useMemo(() => new THREE.Vector3(), []);
   const pos = useRef(start.clone());
 
   useEffect(() => {
@@ -88,9 +77,8 @@ const LeafPickupEffect = ({
     } else {
       // Home toward a point slightly in front of the camera
       camera.getWorldPosition(tmpTarget);
-      const forward = new THREE.Vector3();
-      camera.getWorldDirection(forward);
-      tmpTarget.add(forward.multiplyScalar(0.6));
+      camera.getWorldDirection(tmpForward);
+      tmpTarget.add(tmpForward.multiplyScalar(0.6));
       tmpTarget.y -= 0.1;
 
       pos.current.lerp(tmpTarget, 1 - Math.pow(0.25, delta * 10));
@@ -430,7 +418,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     if (diag) diag.terrainRenders = (diag.terrainRenders || 0) + 1;
   }
   const { camera } = useThree();
-  const { world, rapier } = useRapier();
 
   // === BIOME FOG STATE ===
   // NOTE: Humidity spreading now uses vertex attributes instead of uniforms
@@ -590,10 +577,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   };
 
   // Queue a version increment (will be flushed at end of useFrame)
-  const queueVersionIncrement = (key: string) => {
+  const queueVersionIncrement = useCallback((key: string) => {
     if (pendingVersionRemovals.current.has(key)) return;
     pendingVersionUpdates.current.add(key);
-  };
+  }, []);
 
   // Queue a chunk removal (will be flushed at end of useFrame)
   const queueVersionRemoval = (key: string) => {
@@ -712,7 +699,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     active: false
   });
   const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
-  const [floraPickups, setFloraPickups] = useState<Array<{ id: string; start: THREE.Vector3; color?: string; item?: ItemType }>>([]);
+  const [floraPickups, setFloraPickups] = useState<PickupEffect[]>([]);
 
   const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
 
@@ -749,6 +736,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       manualBuildMatUntilMs,
     }
   );
+
+  // Item pickup owns its raycasts, persistence, inventory transaction, and feedback.
+  // Keeping it outside this streaming controller prevents unrelated gameplay edits from
+  // destabilizing the chunk lifecycle code below.
+  useItemPickup({
+    chunkDataRef,
+    queueVersionIncrement,
+    setPickupEffects: setFloraPickups,
+  });
 
   const lastProcessedPlayerChunk = useRef({ px: -999, pz: -999 });
 
@@ -1567,7 +1563,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {
           const isDirty = chunkDataManager.isDirty(key);
-          if (isDirty) {
+          if (isDirty && streamDebug) {
             // DEBUG: Log density values being sent to worker
             let minD = Infinity, maxD = -Infinity, negCount = 0;
             for (let j = 0; j < chunk.density.length; j++) {
@@ -1576,7 +1572,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               if (d > maxD) maxD = d;
               if (d < 0.5) negCount++;
             }
-            // console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
+            console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
           }
 
           poolRef.current.postToOne(chunk.cx + chunk.cz, {
@@ -1738,221 +1734,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     frameProfiler.end('terrain-main');
   });
 
-  useEffect(() => {
-    let lastPickupMs = 0;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'KeyQ') return;
-      // Only pick up items when in gameplay (pointer lock).
-      if (!document.pointerLockElement) return;
-      e.preventDefault();
-
-      const now = performance.now();
-      if (now - lastPickupMs < 160) return; // Debounce to avoid repeats on key hold
-      lastPickupMs = now;
-
-      const origin = camera.position.clone();
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-      const maxDist = 10.0;
-
-      // Pick a single closest target along the ray:
-      // 1) placed flora entities (WorldStore)
-      // 2) placed torches (WorldStore)
-      // 3) generated lumina flora (chunk floraPositions)
-      // 4) generated ground pickups (sticks + stones)
-      const placedId = rayHitsFlora(origin, dir, maxDist, 0.55);
-      const torchHit = rayHitsTorch(origin, dir, maxDist, 0.55);
-      const luminaHit = rayHitsGeneratedLuminaFlora(chunkDataRef.current, origin, dir, maxDist, 0.55);
-      const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current, origin, dir, maxDist, 0.55);
-
-      // Physics Item Hit (Pickaxe, Shard, Stick, Stone)
-      const physicsHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined, isPhysicsItemCollider);
-      let physicsItemHit: { id: string, type: ItemType, position: THREE.Vector3, t: number } | null = null;
-
-      if (physicsHit && physicsHit.collider) {
-        const parent = physicsHit.collider.parent();
-        const userData = parent?.userData as { type?: ItemType, id?: string };
-        if (userData && userData.id && userData.type) {
-          const t = physicsHit.timeOfImpact;
-          const point = new rapier.Ray(origin, dir).pointAt(t);
-          physicsItemHit = { id: userData.id, type: userData.type, position: new THREE.Vector3(point.x, point.y, point.z), t };
-        }
-      }
-
-      const removeLumina = (hit: NonNullable<typeof luminaHit>) => {
-        const key = hit.key;
-        const chunk = chunkDataManager.getChunk(key);
-        if (!chunk?.floraPositions) return;
-        const positions = chunk.floraPositions;
-        if (positions.length < 4) return;
-
-        // Keep array length stable and just "hide" the picked entry.
-        // This avoids reindexing artifacts for instanced rendering.
-        const next = new Float32Array(positions); // Clone
-        // stride 4: x, y, z, type
-        next[hit.index + 1] = -10000;
-
-        const updatedChunk = { ...chunk, floraPositions: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
-        chunkDataRef.current.set(key, updatedChunk);
-        chunkDataManager.replaceChunk(key, updatedChunk); // Replace entirely (don't merge)
-        chunkDataManager.markDirty(key); // Phase 2: Track flora pickup
-        queueVersionIncrement(key);
-        useWorldStore.getState().setFloraHotspots(key, buildFloraHotspots(next));
-
-        // Persist pickup to IndexedDB so it survives chunk reload
-        saveGroundPickup(chunk.cx, chunk.cz, 'flora', hit.index);
-      };
-
-      const removeGround = (hit: NonNullable<typeof groundHit>) => {
-        const chunk = chunkDataManager.getChunk(hit.key);
-        const positions = chunk?.[hit.array];
-        if (!chunk || !positions || positions.length < 8) return;
-        const next = new Float32Array(positions);
-
-        // Synchronize visuals for optimized layers
-        let updatedVisuals: Partial<ChunkState> = {};
-        const variant = next[hit.index + 6];
-        const seed = next[hit.index + 7];
-        // Also store the local position for more reliable matching
-        const hitX = next[hit.index + 0];
-        const hitY = next[hit.index + 1];
-        const hitZ = next[hit.index + 2];
-
-        const updateBuffer = (buf: Float32Array | undefined) => {
-          if (!buf) return undefined;
-          const nb = new Float32Array(buf);
-          // Visual buffer has stride 7: x, y, z, nx, ny, nz, seed
-          for (let i = 0; i < nb.length; i += 7) {
-            // Match by both seed AND position for reliability
-            // (seed alone may have floating-point issues or duplicates)
-            const seedMatch = Math.abs(nb[i + 6] - seed) < 0.001;
-            const posMatch = Math.abs(nb[i] - hitX) < 0.1 &&
-                             Math.abs(nb[i + 1] - hitY) < 0.1 &&
-                             Math.abs(nb[i + 2] - hitZ) < 0.1;
-            if (seedMatch && posMatch) {
-              nb[i + 1] = -10000;
-              break;
-            }
-          }
-          return nb;
-        };
-
-        if (hit.array === 'stickPositions') {
-          if (variant === 0) updatedVisuals.drySticks = updateBuffer(chunk.drySticks);
-          else updatedVisuals.jungleSticks = updateBuffer(chunk.jungleSticks);
-        } else if (hit.array === 'rockPositions' && chunk.rockDataBuckets) {
-          const v = variant as RockVariant;
-          updatedVisuals.rockDataBuckets = {
-            ...chunk.rockDataBuckets,
-            [v]: updateBuffer(chunk.rockDataBuckets[v])!
-          };
-        }
-
-        next[hit.index + 1] = -10000;
-        const updatedChunk = { ...chunk, ...updatedVisuals, [hit.array]: next, visualVersion: (chunk.visualVersion ?? 0) + 1 };
-        chunkDataRef.current.set(hit.key, updatedChunk);
-        chunkDataManager.replaceChunk(hit.key, updatedChunk); // Replace entirely (don't merge)
-        chunkDataManager.markDirty(hit.key); // Phase 2: Track stick/rock pickup
-        queueVersionIncrement(hit.key);
-
-        if (hit.array === 'stickPositions') {
-          useWorldStore.getState().setStickHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
-        } else {
-          useWorldStore.getState().setRockHotspots(hit.key, buildChunkLocalHotspots(chunk.cx, chunk.cz, next));
-        }
-
-        // Persist pickup to IndexedDB so it survives chunk reload
-        const itemType: GroundItemType = hit.array === 'stickPositions' ? 'stick' : 'rock';
-        saveGroundPickup(chunk.cx, chunk.cz, itemType, hit.index);
-      };
-
-      let pickedStart: THREE.Vector3 | null = null;
-      let pickedItem: ItemType | null = null;
-
-      // Determine closest along ray (torch vs flora vs lumina).
-      const tTorch = torchHit?.t ?? Infinity;
-      const tPhysics = physicsItemHit?.t ?? Infinity;
-
-      const entPlaced = placedId ? useWorldStore.getState().entities.get(placedId) : null;
-      const pPlaced = entPlaced?.bodyRef?.current ? entPlaced.bodyRef.current.translation() : entPlaced?.position;
-      const placedPos = pPlaced ? new THREE.Vector3(pPlaced.x, pPlaced.y, pPlaced.z) : null;
-      const tPlaced = placedPos ? placedPos.clone().sub(origin).dot(dir) : Infinity;
-      const tLumina = luminaHit?.t ?? Infinity;
-      const tGround = groundHit?.t ?? Infinity;
-
-      if (tPhysics <= tTorch && tPhysics <= tPlaced && tPhysics <= tLumina && tPhysics <= tGround && physicsItemHit) {
-        // Physics Item Pickup
-        pickedStart = physicsItemHit.position;
-        const physicsStore = usePhysicsItemStore.getState();
-        const itemData = physicsStore.items.find(i => i.id === physicsItemHit!.id);
-
-        physicsStore.removeItem(physicsItemHit.id);
-
-        if (itemData?.customToolData) {
-          useGameStore.getState().addCustomTool(itemData.customToolData);
-          const effectId = `${Date.now()}-${Math.random()}`;
-          setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: getItemColor(itemData.customToolData!.baseType) }]);
-          return;
-        } else if (physicsItemHit.type === ItemType.PICKAXE) {
-          useGameStore.getState().setHasPickaxe(true);
-          const effectId = `${Date.now()}-${Math.random()}`;
-          setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart!, color: '#aaaaaa' }]);
-          return;
-        } else {
-          pickedItem = physicsItemHit.type;
-        }
-      }
-      else if (tTorch <= tPlaced && tTorch <= tLumina && tTorch <= tGround && torchHit) {
-        pickedItem = ItemType.TORCH;
-        pickedStart = torchHit.position;
-        useWorldStore.getState().removeEntity(torchHit.id);
-      } else if (tGround <= tPlaced && tGround <= tLumina && groundHit) {
-        pickedStart = groundHit.position;
-        pickedItem = groundHit.array === 'stickPositions' ? ItemType.STICK : ItemType.STONE;
-        removeGround(groundHit);
-      } else if (placedId && luminaHit) {
-        if (placedPos) {
-          if (tPlaced <= luminaHit.t) {
-            pickedStart = placedPos;
-            pickedItem = ItemType.FLORA;
-            useWorldStore.getState().removeEntity(placedId);
-          } else {
-            pickedStart = luminaHit.position;
-            pickedItem = ItemType.FLORA;
-            removeLumina(luminaHit);
-          }
-        } else {
-          // Fallback: treat as lumina if we can't read the placed entity position.
-          pickedStart = luminaHit.position;
-          pickedItem = ItemType.FLORA;
-          removeLumina(luminaHit);
-        }
-      } else if (placedId) {
-        const ent = useWorldStore.getState().entities.get(placedId);
-        const p = ent?.bodyRef?.current ? ent.bodyRef.current.translation() : ent?.position;
-        if (p) {
-          pickedStart = new THREE.Vector3(p.x, p.y, p.z);
-        }
-        pickedItem = ItemType.FLORA;
-        useWorldStore.getState().removeEntity(placedId);
-      } else if (luminaHit) {
-        pickedStart = luminaHit.position;
-        pickedItem = ItemType.FLORA;
-        removeLumina(luminaHit);
-      }
-
-      if (pickedStart && pickedItem) {
-        // Add item to inventory and play a fly-to-player pickup effect.
-        useGameStore.getState().addItem(pickedItem as any, 1);
-        const effectId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const color = getItemColor(pickedItem);
-        setFloraPickups((prev) => [...prev, { id: effectId, start: pickedStart, color, item: pickedItem! }]);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [camera]);
 
   // NOTE: Terrain interaction (dig, build, chop, smash) is now handled by
   // the useTerrainInteraction hook called earlier in this component.

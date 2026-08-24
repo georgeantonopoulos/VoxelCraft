@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+@keyframes pickup-feedback {
+  0% { opacity: 0; transform: translate(-50%, 8px) scale(0.92); }
+  18% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  72% { opacity: 1; transform: translate(-50%, -4px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -14px) scale(0.97); }
+}
+
+.pickup-feedback {
+  animation: pickup-feedback 900ms ease-out both;
+}

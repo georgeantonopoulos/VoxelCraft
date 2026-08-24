@@ -595,10 +595,10 @@ export class TerrainService {
                 let patchThreshold = -0.2; // Default clearing size (noise is -1 to 1)
 
                 if (biome === 'JUNGLE') {
-                    treeThreshold = -0.4;
+                    treeThreshold = -0.25; // Reduced density by ~15% (was -0.4)
                     patchThreshold = -0.8;
                 } else if (biome === 'THE_GROVE') {
-                    treeThreshold = 0.2; // Slightly higher to reduce density (performance)
+                    treeThreshold = 0.35; // Reduced density by ~15% (was 0.2)
                     patchThreshold = -0.3; // Slightly higher to reduce forest patch size
                 } else if (biome === 'SAVANNA') {
                     treeThreshold = 0.7;

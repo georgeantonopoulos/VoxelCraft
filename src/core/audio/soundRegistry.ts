@@ -98,6 +98,16 @@ export const SOUND_REGISTRY: SoundDefinition[] = [
     poolSize: 4
   },
 
+  // Soft confirmation for Q pickups, reusing the clunk asset through the interaction mix.
+  {
+    id: 'pickup_item',
+    url: clunkUrl,
+    category: SoundCategory.SFX_INTERACT,
+    baseVolume: 0.24,
+    pitchVariation: 0.08,
+    poolSize: 3
+  },
+
   // === AMBIENT SOUNDS ===
   // Fire loop (NEW: fire.mp3)
   {
@@ -112,10 +122,34 @@ export const SOUND_REGISTRY: SoundDefinition[] = [
 
   // === INTERACTION SOUNDS (Future) ===
   // These IDs are reserved for future implementation:
-  // - 'pickup_item' - Item pickup from ground
   // - 'craft_complete' - Crafting completion
   // - 'inventory_move' - Inventory item movement
   // - 'torch_ignite' - Torch placement/ignition
+
+  // === CREATURE SOUNDS (Future) ===
+  // These IDs are reserved for Lumabee character implementation:
+  // - 'bee_buzz' - Ambient bee buzzing (loop)
+  // - 'bee_harvest' - Nectar extraction sound
+  // - 'bee_flee' - Bee fleeing sound
+  //
+  // Placeholder entries (will error if actually played without sound files):
+  // {
+  //   id: 'bee_buzz',
+  //   url: '/src/assets/sounds/bee_buzz.mp3',
+  //   category: SoundCategory.AMBIENT,
+  //   baseVolume: 0.15,
+  //   pitchVariation: 0.05,
+  //   poolSize: 10,
+  //   loop: true
+  // },
+  // {
+  //   id: 'bee_harvest',
+  //   url: '/src/assets/sounds/bee_harvest.mp3',
+  //   category: SoundCategory.SFX_INTERACT,
+  //   baseVolume: 0.25,
+  //   pitchVariation: 0.1,
+  //   poolSize: 4
+  // },
 ];
 
 /**

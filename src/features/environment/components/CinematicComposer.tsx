@@ -66,14 +66,16 @@ export const CinematicComposer: React.FC<{
                 underwaterExposure={props.exposureUnderwater}
             />
 
-            <ChromaticAberration
-                offset={[
-                    props.caOffset * 0.1 + (underwaterBlend * 0.004),
-                    props.caOffset * 0.1 + (underwaterBlend * 0.004)
-                ]}
-                radialModulation={true}
-                modulationOffset={0}
-            />
+            {(Math.abs(props.caOffset) > 0.0001 || underwaterBlend > 0.01) && (
+                <ChromaticAberration
+                    offset={[
+                        props.caOffset * 0.1 + (underwaterBlend * 0.004),
+                        props.caOffset * 0.1 + (underwaterBlend * 0.004)
+                    ]}
+                    radialModulation={true}
+                    modulationOffset={0}
+                />
+            )}
 
             <Vignette
                 eskil={false}

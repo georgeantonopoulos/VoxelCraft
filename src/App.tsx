@@ -1,5 +1,4 @@
 import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
-import { MapDebug } from '@/ui/MapDebug';
 import { Canvas, useThree } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
 import { Physics } from '@react-three/rapier';
@@ -37,7 +36,6 @@ import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
-import { DebugControls } from '@/ui/DebugControls';
 
 import { TouchCameraControls } from '@features/player/TouchCameraControls';
 import { TerrainService } from '@features/terrain/logic/terrainService';
@@ -48,9 +46,17 @@ import { WorldSeed } from '@core/WorldSeed';
 import { initializeNoise } from '@core/math/noise';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { useWorldStore } from '@state/WorldStore';
+import { useInventoryStore } from '@state/InventoryStore';
+import { useEntityHistoryStore } from '@state/EntityHistoryStore';
+import { playerState } from '@core/player/PlayerState';
 
 // Audio System
 import { audioManager, SOUND_REGISTRY } from '@core/audio';
+
+const MapDebug = React.lazy(() => import('@/ui/MapDebug').then((module) => ({ default: module.MapDebug })));
+const BeeDebugScene = React.lazy(() => import('@features/creatures/BeeDebugScene').then((module) => ({ default: module.BeeDebugScene })));
+const BeeManager = React.lazy(() => import('@features/creatures/BeeManager').then((module) => ({ default: module.BeeManager })));
+const DebugControls = React.lazy(() => import('@/ui/DebugControls').then((module) => ({ default: module.DebugControls })));
 
 // Keyboard Map
 const keyboardMap = [
@@ -95,7 +101,10 @@ const App: React.FC = () => {
   const [terrainLoaded, setTerrainLoaded] = useState(false);
   const [collidersReady, setCollidersReady] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
-  const [worldType, setWorldType] = useState<WorldType | null>(null);
+  // The autostart route is a repeatable fast path for profiling and browser smoke tests.
+  const [worldType, setWorldType] = useState<WorldType | null>(() =>
+    new URLSearchParams(window.location.search).has('autostart') ? WorldType.DEFAULT : null
+  );
   const [worldSeed, setWorldSeed] = useState<number>(() => WorldSeed.fromURLOrRandom());
 
   // Handler for restarting with a new world (returns to world selection)
@@ -104,6 +113,7 @@ const App: React.FC = () => {
     // This ensures the new world doesn't spawn on stale terrain
     chunkDataManager.clear();
     useWorldStore.getState().resetAll();
+    useEntityHistoryStore.getState().reset();
 
     // Reset all React state to return to world selection
     setGameStarted(false);
@@ -125,6 +135,48 @@ const App: React.FC = () => {
       audioManager.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    // Defeated entities remain visible briefly for hit feedback, then leave the
+    // global history so long sessions do not accumulate dead health-bar records.
+    const cleanupHandle = window.setInterval(() => {
+      useEntityHistoryStore.getState().clearDeadEntities();
+    }, 1000);
+    return () => window.clearInterval(cleanupHandle);
+  }, []);
+
+  // Concise live state for automated gameplay checks and accessibility tooling.
+  useEffect(() => {
+    (window as any).advanceTime = (ms: number) => new Promise<void>((resolve) => {
+      window.setTimeout(resolve, Math.max(0, ms));
+    });
+    (window as any).render_game_to_text = () => {
+      const inventory = useInventoryStore.getState();
+      return JSON.stringify({
+        coordinateSystem: 'Y is up; X/Z are the ground plane; player rotation is radians around Y.',
+        mode: !worldType ? 'world-selection' : gameStarted ? 'playing' : terrainLoaded ? 'ready' : 'loading',
+        worldType,
+        player: gameStarted ? {
+          x: Number(playerState.x.toFixed(2)),
+          y: Number(playerState.y.toFixed(2)),
+          z: Number(playerState.z.toFixed(2)),
+          rotation: Number(playerState.rotation.toFixed(3)),
+        } : null,
+        inventory: {
+          flora: inventory.inventoryCount,
+          sticks: inventory.stickCount,
+          stones: inventory.stoneCount,
+          shards: inventory.shardCount,
+          torches: inventory.torchCount,
+          selectedSlot: inventory.selectedSlotIndex + 1,
+        },
+      });
+    };
+    return () => {
+      delete (window as any).advanceTime;
+      delete (window as any).render_game_to_text;
+    };
+  }, [gameStarted, terrainLoaded, worldType]);
 
   useEffect(() => {
     if (terrainLoaded && !collidersReady) {
@@ -224,6 +276,7 @@ const App: React.FC = () => {
   // Flags from URL
   const skipPost = useMemo(() => new URLSearchParams(window.location.search).has('noPP'), []);
   const debugMode = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
+  const debugBeeMode = useMemo(() => new URLSearchParams(window.location.search).get('debug') === 'bee', []);
   const mapMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'map', []);
   const autoStart = useMemo(() => new URLSearchParams(window.location.search).has('autostart'), []);
 
@@ -278,7 +331,8 @@ const App: React.FC = () => {
     // console.log('[App] Pointer unlocked');
   }, []);
 
-  if (mapMode) return <MapDebug />;
+  if (mapMode) return <Suspense fallback={null}><MapDebug /></Suspense>;
+  if (debugBeeMode) return <Suspense fallback={null}><BeeDebugScene /></Suspense>;
 
   return (
     <div className="w-full h-full relative bg-sky-300">
@@ -290,7 +344,8 @@ const App: React.FC = () => {
         theme={{ sizes: { rootWidth: `${levaWidth}px` }, fontSizes: { root: '14px' } }}
       />
       {debugMode && (
-        <DebugControls
+        <Suspense fallback={null}>
+          <DebugControls
           setDebugShadowsEnabled={setDebugShadowsEnabled}
           setTriplanarDetail={setTriplanarDetail}
           setPostProcessingEnabled={setPostProcessingEnabled}
@@ -358,7 +413,8 @@ const App: React.FC = () => {
           setGiEnabled={setGiEnabled}
           setGiIntensity={setGiIntensity}
           setTerrainSaturation={setTerrainSaturation}
-        />
+          />
+        </Suspense>
       )}
 
       {!worldType ? (
@@ -413,6 +469,11 @@ const App: React.FC = () => {
               {gameStarted && spawnPos && collidersReady && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
               <AmbientLife enabled={gameStarted} />
+              {gameStarted && (
+                <Suspense fallback={null}>
+                  <BeeManager enabled />
+                </Suspense>
+              )}
               {worldType && (
                 <VoxelTerrain
                   sunDirection={sunDirection}
