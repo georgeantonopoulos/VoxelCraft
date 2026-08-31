@@ -12,3 +12,10 @@ Original prompt: Understand this game well and spend one hour improving it on al
 
 - Profile collider mounting and vegetation matrix preparation in a longer roaming session.
 - Consider extracting terrain streaming orchestration from `VoxelTerrain.tsx` as the next structural refactor.
+
+## 2026-08-31 terrain visibility and collision fix
+
+- Corrected Rapier heightfield dimensions: 32x32 subdivisions backed by the existing 33x33 sample grid.
+- Removed the duplicate per-chunk collider delay after `VoxelTerrain` has authorized mounting.
+- Raised initial spawn clearance above the maximum procedural overhang so the camera cannot start inside terrain.
+- Added a regression test that creates the generated heightfield in a real Rapier world.

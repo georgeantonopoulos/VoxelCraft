@@ -65,6 +65,9 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
 // above the top of the chunk volume, the column can become "all solid" and the surface won't
 // be extracted by the mesher. Keep a small margin for overhang noise near the surface.
 const MAX_SURFACE_Y = MESH_Y_OFFSET + (CHUNK_SIZE_Y - 1) - 7; // topVisible(=offset+127) minus ~max overhang
+const MAX_CLIFF_OVERHANG = 6;
+const SKY_ISLAND_CENTER_Y = 40;
+const SKY_ISLAND_HEIGHT = 30;
 function clampSurfaceHeight(h: number): number {
     return Math.min(h, MAX_SURFACE_Y);
 }
@@ -77,7 +80,7 @@ export class TerrainService {
     static getHeightAt(wx: number, wz: number): number {
         const biome = BiomeManager.getBiomeAt(wx, wz);
         if (biome === 'SKY_ISLANDS') {
-            return 40; // islandCenterY from generation logic
+            return SKY_ISLAND_CENTER_Y;
         }
 
         let { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
@@ -97,6 +100,17 @@ export class TerrainService {
         const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
         return clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
+    }
+
+    // Spawn above the highest possible procedural surface detail; getHeightAt intentionally
+    // remains the base surface used by vegetation and other terrain-following systems.
+    static getSafeSpawnHeightAt(wx: number, wz: number): number {
+        const biome = BiomeManager.getBiomeAt(wx, wz);
+        if (biome === 'SKY_ISLANDS') {
+            // At maximum 3D noise, ISO_LEVEL bounds the island surface to 75% of its radius.
+            return SKY_ISLAND_CENTER_Y + SKY_ISLAND_HEIGHT * (1 - ISO_LEVEL / 2);
+        }
+        return TerrainService.getHeightAt(wx, wz) + MAX_CLIFF_OVERHANG;
     }
 
     static generateChunk(cx: number, cz: number, modifications: ChunkModification[] = []): {
@@ -201,8 +215,8 @@ export class TerrainService {
 
                     if (isSkyIsland) {
                         // --- Sky Archipelago Logic ---
-                        const islandCenterY = 40;
-                        const islandHeight = 30; // Radius roughly
+                        const islandCenterY = SKY_ISLAND_CENTER_Y;
+                        const islandHeight = SKY_ISLAND_HEIGHT; // Radius roughly
 
                         const n3d = noise3D(wx * 0.05, wy * 0.05, wz * 0.05);
                         // Gradient: 1.0 at center, 0.0 at edges
@@ -242,7 +256,7 @@ export class TerrainService {
                         // Cliff/Overhang noise
                         const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
                         // Apply Sacred Grove flattening to overhangs
-                        overhang = cliffNoise * 6 * sacredGroveMod.overhangMultiplier;
+                        overhang = cliffNoise * MAX_CLIFF_OVERHANG * sacredGroveMod.overhangMultiplier;
 
                         d = surfaceHeight - wy + overhang;
 

@@ -36,4 +36,20 @@ describe('TerrainService', () => {
 
         expect(material[idx]).toBe(MaterialType.BEDROCK);
     });
+
+    it('should choose a spawn height above generated terrain', () => {
+        const wx = 16;
+        const wz = 16;
+        const { density } = TerrainService.generateChunk(0, 0);
+        const x = wx + PAD;
+        const z = wz + PAD;
+        let highestSolidY = MESH_Y_OFFSET;
+
+        for (let y = PAD; y < TOTAL_SIZE_Y - PAD; y++) {
+            const idx = x + y * TOTAL_SIZE_XZ + z * TOTAL_SIZE_XZ * TOTAL_SIZE_Y;
+            if (density[idx] > 0.5) highestSolidY = (y - PAD) + MESH_Y_OFFSET;
+        }
+
+        expect(TerrainService.getSafeSpawnHeightAt(wx, wz)).toBeGreaterThanOrEqual(highestSolidY);
+    });
 });

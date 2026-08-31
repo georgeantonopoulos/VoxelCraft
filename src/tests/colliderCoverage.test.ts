@@ -9,6 +9,8 @@ import {
   MESH_Y_OFFSET,
 } from '@/constants';
 import { MaterialType, MeshData } from '@/types';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { createTerrainHeightfieldArgs } from '@features/terrain/logic/colliderUtils';
 
 const SIZE = TOTAL_SIZE_XZ * TOTAL_SIZE_Y * TOTAL_SIZE_XZ;
 
@@ -256,6 +258,22 @@ describe('Collider Coverage', () => {
 
       expect(minHeight).toBeGreaterThanOrEqual(MESH_Y_OFFSET);
       expect(maxHeight).toBeLessThanOrEqual(MESH_Y_OFFSET + CHUNK_SIZE_Y);
+    });
+
+    it('should construct the generated heightfield in Rapier', async () => {
+      await RAPIER.init({});
+      const { density, material } = createFlatTerrain(30);
+      const mesh = generateMesh(density, material);
+      const args = createTerrainHeightfieldArgs(mesh.colliderHeightfield!);
+      const world = new RAPIER.World({ x: 0, y: -20, z: 0 });
+
+      expect(() => {
+        const descriptor = RAPIER.ColliderDesc.heightfield(...args);
+        world.createCollider(descriptor);
+      }).not.toThrow();
+
+      expect(world.colliders.len()).toBe(1);
+      world.free();
     });
   });
 

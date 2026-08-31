@@ -13,6 +13,7 @@ import { BladeGrassLayer } from './BladeGrassLayer';
 import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
+import { createTerrainHeightfieldArgs } from '../logic/colliderUtils';
 
 // Profiling flag - enable via ?profile URL param or console: window.__vcChunkProfile = true
 const shouldProfile = () => typeof window !== 'undefined' && (
@@ -53,12 +54,7 @@ const ProfiledRigidBody: React.FC<{
       {useHeightfield ? (
         colliderHeightfield ? (
           <HeightfieldCollider
-            args={[
-              CHUNK_SIZE_XZ + 1,
-              CHUNK_SIZE_XZ + 1,
-              colliderHeightfield as any,
-              { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
-            ]}
+            args={createTerrainHeightfieldArgs(colliderHeightfield) as any}
             position={[CHUNK_SIZE_XZ * 0.5, 0, CHUNK_SIZE_XZ * 0.5]}
           />
         ) : null
@@ -220,33 +216,13 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     return tex;
   }, [chunk.meshWaterShoreMask]);
 
-  const [deferredColliderEnabled, setDeferredColliderEnabled] = React.useState(false);
   const colliderEnabled = !collidersDisabled && lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
 
-  useEffect(() => {
-    if (colliderEnabled) {
-      // Initial load chunks (spawnedAt === 0) need immediate colliders so player doesn't fall through
-      const isInitialLoadChunk = chunk.spawnedAt === 0;
-      if (isInitialLoadChunk) {
-        setDeferredColliderEnabled(true);
-        return;
-      }
-      // LOD 0 chunks (player is standing in them) need colliders ASAP to prevent falling through
-      // LOD 1 chunks can have a small delay since player isn't there yet
-      if (lodLevel === 0) {
-        // Player chunk - enable immediately
-        setDeferredColliderEnabled(true);
-        return;
-      }
-      // Adjacent chunks: short delay to stagger BVH construction but not so long player falls through
-      const baseDelay = 100 + lodLevel * 100;
-      const jitter = Math.random() * 100;
-      const handle = setTimeout(() => setDeferredColliderEnabled(true), baseDelay + jitter);
-      return () => clearTimeout(handle);
-    } else {
-      setDeferredColliderEnabled(false);
-    }
-  }, [colliderEnabled, lodLevel, chunk.spawnedAt]);
+  // Initial load chunks (spawnedAt === 0) need immediate colliders so player doesn't fall through.
+  // LOD 0 chunks (player is standing in them) need colliders ASAP to prevent falling through.
+  // LOD 1 chunks previously had a second delay here, after VoxelTerrain had already throttled them.
+  // Mount immediately once the streaming queue authorizes a collider so visuals and physics stay aligned.
+  const mountCollider = colliderEnabled;
 
   useEffect(() => {
     return () => {
@@ -262,7 +238,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
   return (
     <group position={[chunk.cx * CHUNK_SIZE_XZ, 0, chunk.cz * CHUNK_SIZE_XZ]} frustumCulled={false}>
-      {deferredColliderEnabled && (
+      {mountCollider && (
         <ProfiledRigidBody
           colliderKey={colliderKey}
           chunkKey={chunk.key}
