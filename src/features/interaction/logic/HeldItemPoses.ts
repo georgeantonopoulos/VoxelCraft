@@ -77,5 +77,29 @@ export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>>
     z: -0.789,
     scale: 1.234,
     rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
+  },
+  [ItemType.SAW]: {
+    x: PICKAXE_POSE.x,
+    xOffset: 0.27,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: {
+      x: THREE.MathUtils.degToRad(-18.0),
+      y: THREE.MathUtils.degToRad(89.0),
+      z: THREE.MathUtils.degToRad(162.0)
+    }
+  },
+  [ItemType.AXE]: {
+    x: PICKAXE_POSE.x,
+    xOffset: 0.27,
+    y: -0.457,
+    z: -0.789,
+    scale: 1.234,
+    rot: {
+      x: THREE.MathUtils.degToRad(-18.0),
+      y: THREE.MathUtils.degToRad(89.0),
+      z: THREE.MathUtils.degToRad(162.0)
+    }
   }
 };

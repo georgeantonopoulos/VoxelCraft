@@ -108,12 +108,15 @@ export const isTerrainCollider = (collider: Collider): boolean => {
 
 /**
  * Check if a Rapier collider belongs to a physics item (pickaxe, shard, etc).
+ * Excludes LOG since logs have their own pickup mechanic (Q key with CarryingStore).
  */
 export const isPhysicsItemCollider = (collider: Collider): boolean => {
   const parent = collider.parent();
   const userData = parent?.userData as { type?: string } | undefined;
   // PhysicsItems have ItemType enum values in userData.type
-  return Object.values(ItemType).includes(userData?.type as ItemType);
+  // Exclude LOG - logs use CarryingStore pickup via Q key, not inventory
+  const itemType = userData?.type as ItemType;
+  return itemType !== ItemType.LOG && Object.values(ItemType).includes(itemType);
 };
 
 // ============================================================================

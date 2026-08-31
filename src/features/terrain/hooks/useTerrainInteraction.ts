@@ -32,6 +32,7 @@ import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilitie
 import { emitSpark } from '@features/interaction/components/SparkSystem';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
+import { fallingTreeRegistry, fallingTreeColliderRegistry } from '@features/flora/components/FallingTree';
 
 import {
   getMaterialColor,
@@ -82,6 +83,12 @@ export interface FallingTreeData {
   seed: number;
 }
 
+export interface LogSpawnData {
+  position: THREE.Vector3;
+  treeType: number;
+  seed: number;
+}
+
 export interface InteractionCallbacks {
   /** Called to trigger particle effects */
   onParticle: (state: Partial<ParticleState> & { burstId?: number | 'increment' }) => void;
@@ -95,6 +102,10 @@ export interface InteractionCallbacks {
   queueRemesh: (key: string) => void;
   /** Reference to chunk data map for raycasting */
   chunkDataRef: React.RefObject<Map<string, ChunkState>>;
+  /** Called when logs are spawned from sawing a fallen tree */
+  onLogSpawn?: (treeId: string, logs: LogSpawnData[]) => void;
+  /** Called to remove a falling tree (e.g., after sawing) */
+  onFallingTreeRemove?: (treeId: string) => void;
 }
 
 export interface InteractionConfig {
@@ -180,17 +191,40 @@ export function useTerrainInteraction(
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
     if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
-      // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
+      // Filter out terrain and player colliders - we want to hit physics items (trees, stones, etc.)
       const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
         const userData = collider.parent()?.userData as any;
-        // Include physics items and flora trees, exclude terrain
-        return userData?.type !== 'terrain';
+        // Include physics items and flora trees, exclude terrain and player
+        return userData?.type !== 'terrain' && userData?.type !== 'player';
       });
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
-        const userData = parent?.userData as any;
+        let userData = parent?.userData as any;
 
-        if (parent && userData) {
+        // Check fallingTreeColliderRegistry if userData is not available via collider.parent()
+        // This works around @react-three/rapier's userData not being accessible in raycasts
+        // We use the COLLIDER handle directly since that's what raycast returns
+        const colliderHandle = physicsHit.collider.handle;
+
+        if (!userData) {
+          // First try collider registry (most reliable - direct match)
+          const colliderRegistryData = fallingTreeColliderRegistry.get(colliderHandle);
+          if (colliderRegistryData) {
+            userData = colliderRegistryData;
+          } else {
+            // Fallback: try parent handle in rigid body registry
+            const parentHandle = parent?.handle;
+            if (parentHandle !== undefined) {
+              const rbRegistryData = fallingTreeRegistry.get(parentHandle);
+              if (rbRegistryData) {
+                userData = rbRegistryData;
+              }
+            }
+          }
+        }
+
+        // Note: parent may be null for fallen trees when userData came from registry
+        if (userData) {
           // --- FLORA TREE ---
           if (userData.type === 'flora_tree') {
             // Skip physics tree hit if terrain is closer - let terrain-based proximity detection
@@ -226,7 +260,8 @@ export function useTerrainInteraction(
                 : (selectedItem as ItemType);
               const capabilities = getToolCapabilities(currentTool);
 
-              // Guard: Only tools with canChop capability can damage trees
+              // Guard: Only tools with canChop capability can damage standing trees
+              // SAW cannot chop standing trees - it only works on fallen trees
               if (!capabilities.canChop) {
                 playSound('wood_hit', { pitch: 1.5 });
                 return;
@@ -343,6 +378,81 @@ export function useTerrainInteraction(
                 }
               }
             }
+            return;
+          }
+
+          // --- FALLEN TREE (for sawing into logs) ---
+          if (userData.type === 'fallen_tree') {
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const selectedItem = inventorySlots[selectedSlotIndex];
+            const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+              ? customTools[selectedItem as string]
+              : (selectedItem as ItemType);
+            const capabilities = getToolCapabilities(currentTool);
+
+            // Only SAW can cut fallen trees into logs
+            if (!capabilities.canSaw) {
+              playSound('wood_hit', { volume: 0.3, pitch: 1.5 });
+              return;
+            }
+
+            const hitPointRaw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const hitPoint = new THREE.Vector3(hitPointRaw.x, hitPointRaw.y, hitPointRaw.z);
+            const { id: fallenTreeId, treeType, seed, scale } = userData;
+
+            // Calculate max health based on tree scale (larger trees need more sawing)
+            const maxHealth = Math.floor((scale || 1) * 30); // ~24-36 HP depending on scale
+            const sawDamage = capabilities.woodDamage; // SAW has 8.0 woodDamage
+
+            // Apply damage and track health
+            const damageStore = useEntityHistoryStore.getState();
+            const currentHealth = damageStore.damageEntity(fallenTreeId, sawDamage, maxHealth, 'Fallen Tree');
+
+            // Particle and sound for sawing
+            emitParticle({
+              pos: hitPoint,
+              dir: direction.clone().multiplyScalar(-1),
+              kind: 'debris',
+              color: '#D2691E' // Wood sawdust color
+            });
+            playSound('wood_hit', { volume: 0.4, pitch: 0.7 });
+
+            // Only convert to logs when health reaches 0
+            if (currentHealth <= 0) {
+              // Convert to logs (2-3 logs depending on tree scale)
+              const logCount = Math.floor(2 + (scale || 1) * 0.5);
+              const spawnedLogs: LogSpawnData[] = [];
+
+              // Get the fallen tree's physics position (may have moved from original)
+              // Use parent.translation() if available, otherwise use hit point as fallback
+              let treeBasePos: THREE.Vector3;
+              if (parent) {
+                const treePos = parent.translation();
+                treeBasePos = new THREE.Vector3(treePos.x, treePos.y, treePos.z);
+              } else {
+                // Fallback to hit point (less accurate but functional)
+                treeBasePos = hitPoint.clone();
+              }
+
+              for (let i = 0; i < logCount; i++) {
+                // Offset logs along the tree's length
+                const offset = (i - (logCount - 1) / 2) * 1.5;
+                spawnedLogs.push({
+                  position: treeBasePos.clone().add(new THREE.Vector3(offset * 0.3, 0.5 + i * 0.2, offset * 0.3)),
+                  treeType: treeType,
+                  seed: seed + i
+                });
+              }
+
+              // Call the interaction callbacks to spawn logs and remove the fallen tree
+              if (callbacks.onLogSpawn) {
+                callbacks.onLogSpawn(fallenTreeId, spawnedLogs);
+              }
+              if (callbacks.onFallingTreeRemove) {
+                callbacks.onFallingTreeRemove(fallenTreeId);
+              }
+            }
+
             return;
           }
         }
@@ -528,7 +638,8 @@ export function useTerrainInteraction(
                   : (selectedItem as ItemType);
                 const capabilities = getToolCapabilities(currentTool);
 
-                // Guard: Only tools with canChop capability can damage trees
+                // Guard: Only tools with canChop capability can damage standing trees
+                // SAW cannot chop standing trees - it only works on fallen trees
                 // Non-chopping tools can still shake/interact but deal no damage
                 if (!capabilities.canChop) {
                   // SMASH/SHAKE Animation for non-chopping tools

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useInventoryStore } from '@state/InventoryStore';
+import { useCarryingStore } from '@state/CarryingStore';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -18,6 +19,10 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
     const handleWheel = (e: WheelEvent) => {
       // Inventory scrolling is a gameplay input; only respond when pointer is locked.
       if (!document.pointerLockElement) return;
+
+      // LOCK inventory cycling when carrying a log - wheel is used for rotation toggle
+      if (useCarryingStore.getState().isCarrying()) return;
+
       // Prevent the page from scrolling while in pointer lock on some browsers.
       e.preventDefault();
       const direction = e.deltaY > 0 ? 1 : -1;

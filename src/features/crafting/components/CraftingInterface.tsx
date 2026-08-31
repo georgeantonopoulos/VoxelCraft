@@ -32,10 +32,20 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
     for (const recipe of RECIPES) {
       const recipeSlots = [...recipe.ingredients].sort();
       if (filledSlots.length === recipeSlots.length &&
-          filledSlots.every((slot, i) => slot === recipeSlots[i])) {
-        // Check if all ingredients are shards (for pickaxe/axe recognition)
-        const allShards = Object.values(attachedItems).every(t => t === ItemType.SHARD);
-        if (allShards) return recipe.result;
+        filledSlots.every((slot, i) => slot === recipeSlots[i])) {
+
+        // Pickaxe/Saw recognition (all shards)
+        if (recipe.result === ItemType.PICKAXE || recipe.result === ItemType.SAW) {
+          const allShards = Object.values(attachedItems).every(t => t === ItemType.SHARD);
+          if (allShards) return recipe.result;
+        }
+
+        // Axe recognition (2 shards on left, 1 stone on right)
+        if (recipe.result === ItemType.AXE) {
+          const shardsOnLeft = (attachedItems['blade_1'] === ItemType.SHARD) && (attachedItems['blade_2'] === ItemType.SHARD);
+          const stoneOnRight = attachedItems['side_right'] === ItemType.STONE;
+          if (shardsOnLeft && stoneOnRight) return recipe.result;
+        }
       }
     }
     return null;
