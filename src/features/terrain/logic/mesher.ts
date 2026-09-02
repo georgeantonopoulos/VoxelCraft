@@ -793,11 +793,13 @@ export function generateMesh(
   const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms);
 
   const water = generateWaterSurfaceMesh(density, material);
-  const collider = generateColliderData(density);
+  const terrainPositions = new Float32Array(tVerts);
+  const terrainIndices = new Uint32Array(tInds);
+  const collider = generateColliderData(density, terrainPositions, terrainIndices);
 
   return {
-    positions: new Float32Array(tVerts),
-    indices: new Uint32Array(tInds),
+    positions: terrainPositions,
+    indices: terrainIndices,
     normals: new Float32Array(smoothedNormals),
     matWeightsA: new Float32Array(tWa),
     matWeightsB: new Float32Array(tWb),
@@ -819,15 +821,24 @@ export function generateMesh(
 
 /**
  * Strategy: Optimize collision by using a Heightfield where possible,
- * or a high-accuracy simplified trimesh where caves or overhangs exist.
+ * or an exact copy of the rendered trimesh where caves or overhangs exist.
  */
-function generateColliderData(density: Float32Array) {
+function generateColliderData(
+  density: Float32Array,
+  visualPositions: Float32Array,
+  visualIndices: Uint32Array
+) {
   const isHf = isHeightfieldCompatible(density);
   if (isHf) {
     return { isHeightfield: true, colliderHeightfield: extractHeightfield(density) };
   }
-  const simple = generateSimplifiedTrimesh(density);
-  return { isHeightfield: false, colliderPositions: simple.positions, colliderIndices: simple.indices };
+  // Separate buffers are required because render and collider data are both
+  // transferred out of the worker.
+  return {
+    isHeightfield: false,
+    colliderPositions: new Float32Array(visualPositions),
+    colliderIndices: new Uint32Array(visualIndices),
+  };
 }
 
 /**

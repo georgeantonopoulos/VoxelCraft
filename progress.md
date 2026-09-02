@@ -19,3 +19,9 @@ Original prompt: Understand this game well and spend one hour improving it on al
 - Removed the duplicate per-chunk collider delay after `VoxelTerrain` has authorized mounting.
 - Raised initial spawn clearance above the maximum procedural overhang so the camera cannot start inside terrain.
 - Added a regression test that creates the generated heightfield in a real Rapier world.
+
+## 2026-09-02 shard collision regression
+
+- Replaced simplified complex-terrain colliders with exact copies of the rendered terrain mesh so small physics items cannot slip through mismatched triangles.
+- Shards created from generated and physics rocks now query the terrain collider and start with 0.3 units of clearance above its surface.
+- Verified focused collider/shard tests, production build, the previously timed-out biome test in isolation, and four settled native-browser views with slope movement and jumping. The supplied SwiftShader Playwright client still stalled before its first capture.

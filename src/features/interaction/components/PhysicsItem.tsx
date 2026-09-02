@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { getSafeShardSpawnPosition } from '@features/terrain/logic/terrainPhysicsUtils';
 import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
@@ -64,12 +65,13 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
     // Helper to shatter a rock at a position (used for both self and target)
     const shatterRock = (position: { x: number; y: number; z: number }, targetId: string) => {
+      const shardSpawnPosition = getSafeShardSpawnPosition(world, rapier.Ray, position);
       // Spawn 3 Shards
       for (let i = 0; i < 3; i++) {
         const vx = (Math.random() - 0.5) * 4;
         const vy = (Math.random() * 3) + 2;
         const vz = (Math.random() - 0.5) * 4;
-        spawnItem(ItemType.SHARD, [position.x, position.y + 0.5, position.z], [vx, vy, vz]);
+        spawnItem(ItemType.SHARD, shardSpawnPosition, [vx, vy, vz]);
       }
 
       // Play shatter sound (NEW: using stone_hit.mp3)

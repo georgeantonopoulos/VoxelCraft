@@ -195,6 +195,8 @@ describe('Collider Coverage', () => {
       expect(mesh.isHeightfield).toBe(false);
       expect(mesh.colliderPositions).toBeDefined();
       expect(mesh.colliderIndices).toBeDefined();
+      expect(mesh.colliderPositions).toEqual(mesh.positions);
+      expect(mesh.colliderIndices).toEqual(mesh.indices);
 
       const { valid, issues } = validateColliderData(mesh);
       expect(issues).toEqual([]);

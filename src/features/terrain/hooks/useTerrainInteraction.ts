@@ -25,6 +25,7 @@ import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 
 import { TerrainService } from '@features/terrain/logic/terrainService';
+import { getSafeShardSpawnPosition } from '@features/terrain/logic/terrainPhysicsUtils';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager } from '@features/flora/logic/SimulationManager';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
@@ -542,11 +543,12 @@ export function useTerrainInteraction(
               removeGround(groundHit);
 
               const physicsStore = usePhysicsItemStore.getState();
+              const shardSpawnPosition = getSafeShardSpawnPosition(world, rapier.Ray, hitPoint);
               const count = 2 + Math.floor(Math.random() * 2);
               for (let i = 0; i < count; i++) {
-                // Spawn shards higher up (0.4 units above hit point) to prevent
-                // them from falling through terrain
-                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
+                // Spawn above the collider surface because visual ground items
+                // intentionally sit partially inside the rendered terrain.
+                physicsStore.spawnItem(ItemType.SHARD, shardSpawnPosition, [
                   (Math.random() - 0.5) * 3,
                   2 + Math.random() * 2,
                   (Math.random() - 0.5) * 3
