@@ -82,7 +82,9 @@ export class TreeGeometryFactory {
                 else leafGeo.scale(1.2, 0.8, 1.2);
             } else {
                 // Octahedron (8 faces) or Tetrahedron (4 faces)
-                leafGeo = simplified ? new THREE.TetrahedronGeometry(0.5) : new THREE.OctahedronGeometry(0.4, 0);
+                leafGeo = simplified ? new THREE.TetrahedronGeometry(0.85) : new THREE.IcosahedronGeometry(0.72, 0);
+                // Broad overlapping crowns preserve the stylized silhouette without more instances.
+                leafGeo.scale(1.25, 0.85, 1.1);
             }
         }
 

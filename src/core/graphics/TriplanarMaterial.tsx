@@ -34,7 +34,7 @@ const getSharedTerrainMaterial = () => {
   const materialUniforms = {
     uNoiseTexture: { value: PLACEHOLDER_NOISE_3D },
     uColorStone: { value: new THREE.Color('#888c8d') },
-    uColorGrass: { value: new THREE.Color('#41a024') },
+    uColorGrass: { value: new THREE.Color('#648b38') },
     uColorDirt: { value: new THREE.Color('#755339') },
     uColorSand: { value: new THREE.Color('#ebd89f') },
     uColorSnow: { value: new THREE.Color('#ffffff') },

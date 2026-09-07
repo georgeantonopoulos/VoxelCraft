@@ -118,6 +118,7 @@ export const HUD: React.FC = () => {
   const stickCount = useGameStore((state) => state.stickCount);
   const stoneCount = useGameStore((state) => state.stoneCount);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
+  const inputMode = useSettingsStore(s => s.inputMode);
 
   // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
   // This keeps the UI responsive without constant re-renders.
@@ -241,27 +242,27 @@ export const HUD: React.FC = () => {
       )}
 
       {/* Top Left: Controls Info */}
-      <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
+      <div className="field-guide absolute top-5 left-5 text-stone-100 px-4 py-3 rounded-xl backdrop-blur-md max-w-[245px]">
         <div className="flex items-center justify-between mb-1">
-          <h1 className="font-semibold text-sm text-emerald-700">Organic Voxel Engine</h1>
+          <h1 className="font-semibold text-sm tracking-[0.24em] uppercase text-stone-100">VoxelCraft</h1>
         </div>
-        <div className="space-y-0.5 text-xs font-medium leading-tight">
-          <p>WASD + Space to move</p>
-          <p>Left Click: <span className="text-red-500 font-semibold">DIG</span> (pickaxe selected)</p>
-          <p>Right Click: <span className="text-emerald-600 font-semibold">USE</span> (place/throw)</p>
+        <div className="mt-3 space-y-1 text-[11px] font-medium leading-relaxed text-stone-300">
+          <p>{inputMode === 'touch' ? 'Drag left to move · drag right to look' : 'WASD + Space to move'}</p>
+          <p>Left Click: <span className="text-amber-200 font-semibold">DIG</span> (pickaxe selected)</p>
+          <p>Right Click: <span className="text-emerald-200 font-semibold">USE</span> (place/throw)</p>
           <p>
-            Q: <span className="text-cyan-600 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})
+            Q: <span className="text-emerald-200 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})
           </p>
-          <p>Scroll / 1-9: <span className="text-amber-500 font-semibold">Inventory</span></p>
+          <p>Scroll / 1-9: <span className="text-amber-200 font-semibold">Inventory</span></p>
         </div>
         {debugMode && placementDebug && (
           <div className="mt-1 text-[10px] font-mono text-slate-700">
             place: {placementDebug}
           </div>
         )}
-        <div className="mt-2 pt-2 border-t border-slate-300 text-[10px] font-mono opacity-80">
+        {debugMode && <div className="mt-2 pt-2 border-t border-white/10 text-[10px] font-mono opacity-80">
           POS: {coords.x.toFixed(1)}, {coords.y.toFixed(1)}, {coords.z.toFixed(1)}
-        </div>
+        </div>}
       </div>
 
       {/* Bottom Left: Inventory Bar */}

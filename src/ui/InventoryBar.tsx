@@ -3,11 +3,13 @@ import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
 import { ItemType } from '@/types';
+import { useSettingsStore } from '@/state/SettingsStore';
 import { ItemThumbnail } from '@/features/interaction/components/ItemThumbnail';
 
 export const InventoryBar: React.FC = React.memo(() => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
     const selectedSlotIndex = useInventoryStore(state => state.selectedSlotIndex);
+    const inputMode = useSettingsStore(state => state.inputMode);
 
     // Subscribe to counts individually for stability and reactivity
     const floraCount = useInventoryStore(state => state.inventoryCount);
@@ -43,7 +45,7 @@ export const InventoryBar: React.FC = React.memo(() => {
     };
 
     return (
-        <div className={`absolute bottom-6 left-6 flex gap-2 p-2 bg-slate-900/80 backdrop-blur-md rounded-xl border border-white/10 shadow-xl pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] scale-110 translate-x-4 -translate-y-4' : 'z-50'}`}>
+        <div className={`inventory-dock ${inputMode === 'touch' ? 'touch-inventory' : ''} absolute bottom-6 left-6 flex gap-2 p-2 backdrop-blur-md rounded-xl border border-white/10 shadow-xl pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] scale-110 translate-x-4 -translate-y-4' : 'z-50'}`}>
             {inventorySlots.map((item, index) => {
                 const isSelected = index === selectedSlotIndex;
                 const metadata = item ? getItemMetadata(item) : null;
@@ -58,8 +60,8 @@ export const InventoryBar: React.FC = React.memo(() => {
                         onDragStart={() => item && handleDragStart(item)}
                         onDragEnd={handleDragEnd}
                         className={`
-              relative w-12 h-12 flex items-center justify-center rounded-lg border-2 transition-all duration-200
-              ${isSelected ? 'border-amber-400 bg-white/10 scale-105 shadow-[0_0_10px_rgba(251,191,36,0.5)]' : 'border-white/20 bg-black/40'}
+              relative w-12 h-12 shrink-0 flex items-center justify-center rounded-lg border-2 transition-all duration-200
+              ${isSelected ? 'border-amber-200/80 bg-amber-100/10 -translate-y-1 shadow-[0_4px_18px_rgba(0,0,0,0.2)]' : 'border-white/10 bg-black/20'}
               ${isCraftingOpen && !!item && (count > 0 || isCustom) ? 'cursor-grab active:cursor-grabbing' : ''}
             `}
                     >

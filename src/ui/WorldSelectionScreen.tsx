@@ -1,3 +1,4 @@
+import { WorldPreview } from './WorldPreview';
 import React, { useState, useCallback } from 'react';
 import { WorldType } from '@features/terrain/logic/BiomeManager';
 import { WorldSeed } from '@core/WorldSeed';
@@ -58,11 +59,12 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
     const parsedSeed = parseInt(seedInput, 10) || 1337;
 
     return (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-zinc-900 text-white select-none overflow-hidden">
+        <div className="world-selection absolute inset-0 z-50 flex flex-col items-center text-white select-none overflow-y-auto">
 
             {/* Header */}
-            <div className="mb-8 text-center animate-fade-in-down">
-                <h1 className="text-4xl font-bold tracking-[0.2em] text-white/90 mb-2 uppercase">Select World Type</h1>
+            <div className="mt-12 mb-6 text-center animate-fade-in-down">
+                <p className="text-[11px] tracking-[0.4em] uppercase text-stone-400 mb-3">VoxelCraft</p>
+                <h1 className="text-3xl sm:text-4xl font-light tracking-wide text-stone-100 mb-3">Select World Type</h1>
                 <p className="text-zinc-400 tracking-wide">Choose your reality</p>
             </div>
 
@@ -98,22 +100,25 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
             </div>
 
             {/* Cards Container */}
-            <div className="flex flex-wrap gap-6 justify-center max-w-6xl px-8 mb-16">
+            <div className="world-cards grid gap-4 px-6 mb-8 w-full">
                 {OPTIONS.map((opt) => (
-                    <div
+                    <button
                         key={opt.type}
+                        type="button"
+                        aria-pressed={selected === opt.type}
                         onClick={() => setSelected(opt.type)}
                         className={`
-              relative w-64 h-80 rounded-xl p-6 cursor-pointer transition-all duration-300 border-2
+              world-card relative h-80 rounded-xl p-5 cursor-pointer text-left overflow-hidden transition-all duration-300 border
               flex flex-col justify-end
               ${selected === opt.type
-                                ? 'border-white scale-105 shadow-[0_0_30px_rgba(255,255,255,0.2)]'
-                                : 'border-white/10 hover:border-white/40 hover:-translate-y-2 bg-zinc-800/50'
+                                ? 'border-amber-100/80 -translate-y-1 shadow-[0_12px_32px_rgba(0,0,0,0.35)]'
+                                : 'border-white/10 hover:border-white/40 hover:-translate-y-1 bg-zinc-800/50'
                             }
             `}
                     >
                         {/* Background Color Indicator */}
-                        <div className={`absolute inset-0 opacity-20 ${opt.color} rounded-xl`} />
+                        <WorldPreview type={opt.type} />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#101c1c] via-[#101c1c]/30 to-transparent" />
 
                         {/* Content */}
                         <div className="relative z-10">
@@ -130,19 +135,19 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
                                 ✓
                             </div>
                         )}
-                    </div>
+                    </button>
                 ))}
             </div>
 
             {/* Action Button */}
-            <div className="h-24 flex flex-col items-center gap-2">
+            <div className="min-h-24 pb-10 flex flex-col items-center gap-2">
                 {selected && (
                     <>
                         <button
                             onClick={() => onSelect(selected, parsedSeed)}
                             className="px-16 py-4 text-xl font-bold tracking-[0.1em] uppercase
-                             bg-white text-black rounded hover:bg-zinc-200
-                             shadow-[0_0_20px_rgba(255,255,255,0.3)]
+                             bg-[#d9dec3] text-[#172720] rounded-lg hover:bg-[#edf0df]
+                             shadow-lg
                              transition-all duration-300 animate-fade-in-up"
                         >
                             Enter World

@@ -2,6 +2,8 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
+import { useSettingsStore } from '@state/SettingsStore';
+import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { calculateOrbitAngle as calculateOrbitAngleCore, getOrbitOffset } from '@core/graphics/celestial';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 
@@ -25,8 +27,8 @@ const SKY_NIGHT_TOP = new THREE.Color(0x020210);
 const SKY_NIGHT_BOTTOM = new THREE.Color(0x101025);
 const SKY_SUNSET_TOP = new THREE.Color(0x2c3e50);
 const SKY_SUNSET_BOTTOM = new THREE.Color(0xff8c42);
-const SKY_DAY_TOP = new THREE.Color(0x1e90ff);
-const SKY_DAY_BOTTOM = new THREE.Color(0x87CEEB);
+const SKY_DAY_TOP = new THREE.Color(0x467fbd);
+const SKY_DAY_BOTTOM = new THREE.Color(0xb6d4df);
 
 const getSunColor = (sunY: number, radius: number, out: THREE.Color): THREE.Color => {
     const normalizedHeight = sunY / radius;
@@ -103,25 +105,52 @@ const getSkyGradient = (
  * Components
  */
 
-export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
+export const AmbientController: React.FC<{
+    intensityMul?: number;
+    orbitConfig: { speed: number; offset: number };
+}> = ({ intensityMul = 1.0, orbitConfig }) => {
     const ambientRef = useRef<THREE.AmbientLight>(null);
+    const skyFillRef = useRef<THREE.HemisphereLight>(null);
     const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
     const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
     const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
     const lastBlend = useRef(-1);
+    const lastIntensity = useRef(-1);
+    const skyVisibility = useRef(0);
+    const lastSkyQuery = useRef(-1);
 
-    useFrame(() => {
+    useFrame(({ clock, camera }) => {
         frameProfiler.begin('ambient-controller');
+        // Query real voxel occlusion at 4Hz; the legacy environment blend is not maintained.
+        // Unknown streaming data retains the last sample, starting dark rather than leaking light.
+        const now = clock.getElapsedTime();
+        if (now - lastSkyQuery.current >= 0.25) {
+            lastSkyQuery.current = now;
+            const visibility = terrainRuntime.estimateSkyVisibility(
+                camera.position.x, camera.position.y, camera.position.z,
+                { maxDistance: 32, step: 1 }
+            );
+            if (visibility != null) skyVisibility.current = visibility;
+        }
+        // Soft sky/ground bounce preserves shape in direct-light shadows.
+        // Fade by time of day and cave depth, rather than lifting the entire exposure.
+        const sunHeight = Math.cos(calculateOrbitAngle(clock.getElapsedTime(), orbitConfig.speed, orbitConfig.offset));
+        const daylight = THREE.MathUtils.smoothstep(sunHeight, -0.18, 0.25);
+        if (skyFillRef.current) {
+            skyFillRef.current.intensity = (0.06 + daylight * 0.85) *
+                (1.0 - undergroundBlend) * THREE.MathUtils.smoothstep(skyVisibility.current, 0.1, 0.65) * intensityMul;
+        }
         if (!ambientRef.current) {
             frameProfiler.end('ambient-controller');
             return;
         }
         // Skip update if blend hasn't changed significantly (reduces per-frame work)
-        if (Math.abs(undergroundBlend - lastBlend.current) < 0.01) {
+        if (Math.abs(undergroundBlend - lastBlend.current) < 0.01 && intensityMul === lastIntensity.current) {
             frameProfiler.end('ambient-controller');
             return;
         }
         lastBlend.current = undergroundBlend;
+        lastIntensity.current = intensityMul;
         // With voxel-based GI, ambient light is greatly reduced (GI handles indirect lighting)
         // Surface: 0.10 (was 0.08), Cave: 0.05 (was 0.04)
         ambientRef.current.intensity = THREE.MathUtils.lerp(0.10, 0.05, undergroundBlend) * intensityMul;
@@ -129,20 +158,26 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
         frameProfiler.end('ambient-controller');
     });
 
-    return <ambientLight ref={ambientRef} intensity={0.10} color="#ccccff" />;
+    return <>
+        <ambientLight ref={ambientRef} intensity={0.10} color="#ccccff" />
+        <hemisphereLight ref={skyFillRef} args={['#c3dbeb', '#776b47', 0]} />
+    </>;
 };
 
 export const SkyDomeRefLink: React.FC<{
     gradientRef: React.MutableRefObject<{ top: THREE.Color, bottom: THREE.Color }>;
-    orbitConfig: { speed: number; offset: number };
+    orbitConfig: { radius: number; speed: number; offset: number };
 }> = ({ gradientRef, orbitConfig }) => {
     const meshRef = useRef<THREE.Mesh>(null);
+    const qualityPreset = useSettingsStore(s => s.qualityPreset);
     const uniforms = useMemo(() => ({
         uTopColor: { value: new THREE.Color('#87CEEB') },
         uBottomColor: { value: new THREE.Color('#87CEEB') },
         uExponent: { value: 0.6 },
         uTime: { value: 0 },
-        uNightMix: { value: 0 }
+        uNightMix: { value: 0 },
+        uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+        uCloudQuality: { value: 2 }
     }), []);
 
     useFrame((state) => {
@@ -152,8 +187,10 @@ export const SkyDomeRefLink: React.FC<{
             uniforms.uTopColor.value.copy(gradientRef.current.top);
             uniforms.uBottomColor.value.copy(gradientRef.current.bottom);
             uniforms.uTime.value = state.clock.getElapsedTime();
+            uniforms.uCloudQuality.value = qualityPreset === 'low' ? 0 : qualityPreset === 'medium' ? 1 : 2;
             const angle = calculateOrbitAngle(state.clock.getElapsedTime(), orbitConfig.speed, orbitConfig.offset);
             const sunHeight = Math.cos(angle);
+            getOrbitOffset(uniforms.uSunDir.value, angle, orbitConfig.radius, 0, 30).normalize();
             uniforms.uNightMix.value = 1.0 - THREE.MathUtils.smoothstep(sunHeight, -0.4, -0.1);
         }
         frameProfiler.end('sky-dome');
@@ -181,6 +218,8 @@ export const SkyDomeRefLink: React.FC<{
           uniform float uExponent;
           uniform float uTime;
           uniform float uNightMix;
+          uniform vec3 uSunDir;
+          uniform float uCloudQuality;
           varying vec3 vWorldPosition;
 
           float hash(vec3 p) {
@@ -222,12 +261,34 @@ export const SkyDomeRefLink: React.FC<{
           }
 
           void main() {
-            vec3 skyDir = normalize(vWorldPosition);
+            // Camera-relative direction keeps clouds and stars stable while walking.
+            vec3 skyDir = normalize(vWorldPosition - cameraPosition);
             vec3 skyPos = rotateY(-uTime * 0.01) * skyDir;
             float h = skyDir.y;
-            float p = max(0.0, (h + 0.2) / 1.2);
+            // Match the fog color exactly at the horizon; avoid a hard band above distant terrain.
+            float p = max(0.0, h);
             p = pow(p, uExponent);
             vec3 finalColor = mix(uBottomColor, uTopColor, p);
+
+            // A projected cloud deck: three noise octaves, no volume raymarch or extra draw calls.
+            // Fade the projection before the horizon to prevent stretched cloud streaks.
+            float daylight = smoothstep(-0.18, 0.2, uSunDir.y);
+            float sunFacing = max(dot(skyDir, uSunDir), 0.0);
+            vec3 warmLight = mix(vec3(1.0, 0.57, 0.29), vec3(1.0, 0.97, 0.88),
+                                 smoothstep(0.0, 0.45, uSunDir.y));
+            finalColor += warmLight * pow(sunFacing, 12.0) * 0.12 * daylight;
+            if (h > 0.025 && uCloudQuality > 0.5) {
+              vec2 cloudUV = skyDir.xz / (h + 0.22) * 1.7 + vec2(uTime * 0.004, uTime * 0.001);
+              float body = fbm(vec3(cloudUV, 0.7));
+              float wisps = uCloudQuality > 1.5 ? fbm(vec3(cloudUV * 2.1 + 5.0, 1.8)) : 0.4;
+              float density = smoothstep(0.40, 0.66, body + wisps * 0.13);
+              float horizonFade = smoothstep(0.025, 0.18, h);
+              float silver = pow(sunFacing, 8.0) * pow(1.0 - density, 2.0);
+              vec3 cloudShade = mix(uBottomColor * 0.58, warmLight * 1.22,
+                                   smoothstep(0.42, 0.72, body) * 0.65 + silver * 0.35);
+              cloudShade = mix(uBottomColor * 0.65, cloudShade, daylight);
+              finalColor = mix(finalColor, cloudShade, density * horizonFade * 0.88);
+            }
 
             if (uNightMix > 0.01) {
               vec3 starCoord = skyPos * 350.0;
@@ -679,7 +740,7 @@ export const AtmosphereManager: React.FC<{
         <>
             <color attach="background" args={['#87CEEB']} />
             <fog attach="fog" args={['#87CEEB', props.fogNear, props.fogFar * props.viewDistance]} />
-            <AmbientController intensityMul={props.ambientIntensityMul} />
+            <AmbientController intensityMul={props.ambientIntensityMul} orbitConfig={props.orbitConfig} />
             <AtmosphereController
                 orbitConfig={props.orbitConfig}
                 hazeAmount={props.hazeAmount}

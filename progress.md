@@ -25,3 +25,11 @@ Original prompt: Understand this game well and spend one hour improving it on al
 - Replaced simplified complex-terrain colliders with exact copies of the rendered terrain mesh so small physics items cannot slip through mismatched triangles.
 - Shards created from generated and physics rocks now query the terrain collider and start with 0.3 units of clearance above its surface.
 - Verified focused collider/shard tests, production build, the previously timed-out biome test in isolation, and four settled native-browser views with slope movement and jumping. The supplied SwiftShader Playwright client still stalled before its first capture.
+
+## 2026-09-08 landscape graphics upgrade
+- Budget baseline: weekly Codex usage 45%; requested approximately 5–10 percentage points.
+- Art direction: layered procedural clouds, stable camera-relative sky, restrained bloom, sage terrain, fuller tree crowns, reflective rippled water, and expedition-style HUD.
+- Preserve existing physics, terrain generation, item poses, and unrelated output/worktrees.
+- Verified production build, dev smoke-start on port 3010, full 112-test unit suite plus 4 new sky-visibility cases and a 14-test focused rerun. Supplied web-game client completed movement/jump capture without an error artifact.
+- Native Chrome: settled forest, grass, shoreline, underwater and mobile gameplay; illustrated world selection and mobile controls inspected. Screenshots: output/web-game/graphics-native/ and output/web-game/graphics-release-client/.
+- Independent review led to cave-aware hemisphere fill and preservation of the inexpensive far-tree mesh. Water uses analytic sky reflection, not scene reflections. Native automation cannot acquire pointer lock; touch-look provided angle verification. Full night-cycle and extended performance profiling remain outside this pass.

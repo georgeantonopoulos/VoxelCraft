@@ -36,8 +36,8 @@ const WaterMeshShader = shaderMaterial(
   {
     uTime: 0,
     uSunDir: new THREE.Vector3(0, 1, 0),
-    uColorShallow: new THREE.Color('#3ea7d6'),
-    uColorDeep: new THREE.Color('#0b3e63'),
+    uColorShallow: new THREE.Color('#52b5aa'),
+    uColorDeep: new THREE.Color('#123e51'),
     uNoiseTexture: PLACEHOLDER_NOISE_3D,
     uShoreMask: FALLBACK_SHORE_MASK,
     uShoreEdge: 0.06,
@@ -131,7 +131,13 @@ const WaterMeshShader = shaderMaterial(
         vec3 p2 = pos * scale - vec3(time * speed * 0.08, 0.0, time * speed * 0.06);
         float n1 = texture(uNoiseTexture, p1 * 0.2).r;
         float n2 = texture(uNoiseTexture, p2 * 0.2).g;
-        return normalize(baseNormal + vec3(n1-0.5, n2-0.5, (n1+n2)*0.1) * 0.5);
+        // Crossed world-space ripples stay continuous across chunk boundaries.
+        float waveA = dot(pos.xz, vec2(0.85, 0.52)) * 1.8 + time * 1.2;
+        float waveB = dot(pos.xz, vec2(-0.38, 0.92)) * 3.1 - time * 1.5;
+        vec2 slope = vec2(0.85, 0.52) * cos(waveA) * 0.065
+                   + vec2(-0.38, 0.92) * cos(waveB) * 0.035;
+        return normalize(baseNormal + vec3(slope.x + (n1 - 0.5) * 0.16, 0.0,
+                                           slope.y + (n2 - 0.5) * 0.16));
     }
 
     void main() {
@@ -170,7 +176,8 @@ const WaterMeshShader = shaderMaterial(
         vec3 lightDir = normalize(uSunDir);
         vec3 halfVec = normalize(lightDir + viewDir);
         float NdotH = max(dot(normal, halfVec), 0.0);
-        float specular = pow(NdotH, 100.0) * 1.0;
+        float daylight = smoothstep(-0.12, 0.15, lightDir.y);
+        float specular = (pow(NdotH, 180.0) * 2.4 + pow(NdotH, 24.0) * 0.12) * daylight;
         float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.0);
 
         vec3 texP = vec3(vWorldPos.xz * uTexScale, 0.25);
@@ -188,7 +195,14 @@ const WaterMeshShader = shaderMaterial(
         float foam = (1.0 - smoothstep(0.0, 1.0, shoreT));
         foam *= (0.6 + 0.4 * nTex.b);
 
-        vec3 shaded = albedo + vec3(specular);
+        // Analytic sky reflection gives grazing water a luminous horizon without a reflection pass.
+        vec3 reflected = reflect(-viewDir, normal);
+        vec3 skyReflection = mix(uFogColor, uFogColor * vec3(0.48, 0.68, 0.86),
+                                 smoothstep(0.0, 0.8, reflected.y));
+        vec3 sunTint = mix(vec3(1.0, 0.61, 0.32), vec3(1.0, 0.97, 0.88),
+                           smoothstep(0.0, 0.45, lightDir.y));
+        vec3 shaded = mix(albedo * (0.22 + 0.78 * daylight), skyReflection,
+                          0.08 + fresnel * 0.72) + sunTint * specular;
         shaded = mix(shaded, vec3(1.0), foam * uFoamStrength);
         shaded = mix(uFogColor, shaded, uFade);
 

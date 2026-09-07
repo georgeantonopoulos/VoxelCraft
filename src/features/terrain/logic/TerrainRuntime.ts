@@ -165,6 +165,9 @@ export class TerrainRuntime {
         const sy = wy + dir.y * d;
         const sz = wz + dir.z * d;
 
+        // Above the finite voxel volume is known open sky, not an unloaded chunk.
+        // This keeps mountain-top sky fill from going dark when rays exit the Y grid.
+        if (sy >= MESH_Y_OFFSET + TOTAL_SIZE_Y - PAD) break;
         const chunk = this.getChunkAtWorld(sx, sz);
         if (!chunk) {
           unknown = true;

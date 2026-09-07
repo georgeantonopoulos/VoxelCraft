@@ -234,6 +234,8 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 
 ## Worklog (short)
 
+- 2026-09-08: Upgraded sky/clouds, cave-aware fill, foliage, grass, water and responsive HUD/world selection. Verified build/dev smoke, 112-test suite plus 4 sky tests, automated movement/jump and four settled native gameplay views (`output/web-game/graphics-native/`).
+
 - 2026-09-02: Made complex-terrain collision use the exact rendered mesh and lifted rock shards above the queried terrain surface. Verified focused physics tests, build, unit suite retry, and four settled native-browser views while moving/jumping across slopes.
 - 2026-08-31: Fixed invalid Rapier heightfield subdivision counts, removed duplicate collider mount delay, and kept spawn above procedural overhangs. Verified 100 tests plus four settled gameplay captures across varied terrain (`output/web-game/terrain-collider-final-*/`).
 - 2026-08-23: Stabilized inventory/entity lifecycles, extracted Q pickup from `VoxelTerrain.tsx`, added touch pickup, and removed remesh/postprocessing/startup/atmosphere overhead. Verified 82 tests plus native-GPU gameplay after a 10-second settle; captured movement/settings/touch-look/lazy routes (`output/web-game/native/`) and exercised the touch pickup control.

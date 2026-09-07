@@ -69,8 +69,8 @@ export const CinematicComposer: React.FC<{
             {(Math.abs(props.caOffset) > 0.0001 || underwaterBlend > 0.01) && (
                 <ChromaticAberration
                     offset={[
-                        props.caOffset * 0.1 + (underwaterBlend * 0.004),
-                        props.caOffset * 0.1 + (underwaterBlend * 0.004)
+                        props.caOffset * 0.1 + (underwaterBlend * 0.00065),
+                        props.caOffset * 0.1 + (underwaterBlend * 0.00065)
                     ]}
                     radialModulation={true}
                     modulationOffset={0}

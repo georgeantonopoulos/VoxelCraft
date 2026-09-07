@@ -9,7 +9,7 @@ function createGrassGeo(bladeCount: number, height: number, width: number) {
     const uvs: number[] = [];
 
     let idx = 0;
-    const SEGMENTS = 2; // Reduced segments for cleaner look
+    const SEGMENTS = 3; // Reduced segments for cleaner look; one extra bend smooths the silhouette.
 
     for (let i = 0; i < bladeCount; i++) {
         const angle = (i / bladeCount) * Math.PI * 2 + (Math.random() * 0.5);
@@ -65,13 +65,12 @@ function createGrassGeo(bladeCount: number, height: number, width: number) {
         // Indices for quads between segments
         for (let j = 0; j < SEGMENTS; j++) {
             const base = idx + j * 2;
-            indices.push(
-                base, base + 1, base + 2,
-                base + 2, base + 1, base + 3,
-                // Back face
-                base + 1, base, base + 2,
-                base + 1, base + 2, base + 3
-            );
+            indices.push(base, base + 1, base + 2);
+            // The tip converges to one point; omit its zero-area second triangle.
+            if (j < SEGMENTS - 1) indices.push(base + 2, base + 1, base + 3);
+            // Back face
+            // DoubleSide on the vegetation material renders the reverse side already.
+            // Duplicating coplanar backfaces produces alternating dark triangles.
         }
 
         idx += (SEGMENTS + 1) * 2;

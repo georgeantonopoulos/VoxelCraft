@@ -1,3 +1,4 @@
+import { LANDSCAPE_LOOK } from '@core/graphics/landscapeLook';
 import React, { useState, Suspense, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { PointerLockControls, KeyboardControls } from '@react-three/drei';
@@ -220,7 +221,7 @@ const App: React.FC = () => {
   const [terrainWireframeEnabled, setTerrainWireframeEnabled] = useState(false);
   const [terrainWeightsView, setTerrainWeightsView] = useState('off');
   const [caOffset, setCaOffset] = useState(0.00001);
-  const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
+  const [vignetteDarkness, setVignetteDarkness] = useState<number>(LANDSCAPE_LOOK.vignetteDarkness);
 
   const [fogNear, setFogNear] = useState(40);
   const [fogFar, setFogFar] = useState(85);
@@ -229,11 +230,11 @@ const App: React.FC = () => {
   const [sunIntensityMul, setSunIntensityMul] = useState(4.8);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
-  const [exposureSurface, setExposureSurface] = useState(0.6);
+  const [exposureSurface, setExposureSurface] = useState<number>(LANDSCAPE_LOOK.exposureSurface);
   const [exposureCaveMax, setExposureCaveMax] = useState(1.3);
   const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
-  const [bloomIntensity, setBloomIntensity] = useState(0.6);
-  const [bloomThreshold, setBloomThreshold] = useState(0.4);
+  const [bloomIntensity, setBloomIntensity] = useState<number>(LANDSCAPE_LOOK.bloomIntensity);
+  const [bloomThreshold, setBloomThreshold] = useState<number>(LANDSCAPE_LOOK.bloomThreshold);
 
   const [heightFogEnabled, setHeightFogEnabled] = useState(true);
   const [heightFogStrength, setHeightFogStrength] = useState(0.35);
@@ -312,6 +313,19 @@ const App: React.FC = () => {
     if (requestedBiome) {
       const hit = findSpawnForBiome(requestedBiome);
       if (hit) { targetX = hit.x; targetZ = hit.z; }
+    }
+
+    // Repeatable graphics QA locations, restricted to explicit test/debug routes.
+    if (params.has('autostart') || params.has('debug')) {
+      const requestedX = params.get('vcSpawnX');
+      const requestedZ = params.get('vcSpawnZ');
+      if (requestedX !== null && requestedZ !== null) {
+        const x = Number(requestedX), z = Number(requestedZ);
+        if (Number.isFinite(x) && Number.isFinite(z) && Math.abs(x) <= 100000 && Math.abs(z) <= 100000) {
+          targetX = x;
+          targetZ = z;
+        }
+      }
     }
 
     // Instant surface scan

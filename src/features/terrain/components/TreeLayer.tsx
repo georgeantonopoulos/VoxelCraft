@@ -310,6 +310,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
             attribute float aLeafRand;
             varying vec3 vPos;
             varying vec3 vWorldNormal;
+            varying vec3 vLeafWorldPosition;
             varying vec3 vNoisePos;
             varying float vLeafRand;
             varying float vTreeSeed;
@@ -322,7 +323,8 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
 
             void main() {
                 vPos = position;
-                vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                vWorldNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
+                vLeafWorldPosition = (modelMatrix * instanceMatrix * vec4(position, 1.0)).xyz;
                 vTreeSeed = fract(sin(dot(instanceMatrix[3].xyz, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
                 vec3 treeNoiseOffset = vec3(vTreeSeed * 50.0, vTreeSeed * 37.0, vTreeSeed * 23.0);
                 vNoisePos = position + treeNoiseOffset;
@@ -355,10 +357,12 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
             varying float vHueSin;
             varying float vLeafRand;
             varying vec3 vWorldNormal;
+            varying vec3 vLeafWorldPosition;
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
             uniform float uTime;
             uniform float uLeafLodAlpha;
+            uniform vec3 uSunDir;
 
             vec3 hueRotateCS(vec3 color, float c, float s) {
                 vec3 k = vec3(0.57735026919);
@@ -425,7 +429,12 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
                 csm_DiffuseColor = vec4(col, 1.0);
 
                 // Subtle emissive with vein modulation
-                csm_Emissive = uColorTip * (0.04 + veins * 0.02);
+                // Thin foliage transmits warm sunlight when viewed toward the sun.
+                float daylight = smoothstep(-0.12, 0.2, uSunDir.y);
+                vec3 leafView = normalize(cameraPosition - vLeafWorldPosition);
+                float backlight = pow(max(dot(leafView, -uSunDir), 0.0), 3.0);
+                float edgeLight = 1.0 - abs(dot(normalize(vWorldNormal), leafView));
+                csm_Emissive = col * daylight * (0.035 + backlight * 0.28 + edgeLight * 0.025);
 
                 // Variable roughness
                 float rough = 0.55 + veins * 0.08 - cells * 0.08 + drySpot * 0.15;
