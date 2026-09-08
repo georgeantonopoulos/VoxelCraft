@@ -472,7 +472,8 @@ export const triplanarFragmentShader = `
     // Sample triplanar noise FIRST (we need this for colors anyway)
     vec4 nMid = getTriplanarNoise(N, 0.15);
     float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
-    vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
+    float highBlend = 1.0 - smoothstep(576.0, 1024.0, distSq);
+    vec4 nHigh = lowDetail ? nMid : mix(nMid, getTriplanarNoise(N, highScale), highBlend);
 
     // === FINE DETAIL: Sample at very high scale for close-up ground texture ===
     // This is the key to AAA terrain - fine grain visible when looking at your feet
@@ -485,20 +486,22 @@ export const triplanarFragmentShader = `
     vec4 nUltraFine = (closeUp && distSq < 100.0) ? mix(nFine, getTriplanarNoise(N, 0.9), ultraBlend) : nFine;
 
     // === PHASE 1: Multi-frequency normal perturbation ===
-    if (uFragmentNormalStrength > 0.01 && distSq < 4096.0) {
-        float distFade = 1.0 - smoothstep(256.0, 4096.0, distSq);
-        float effectiveStrength = uFragmentNormalStrength * distFade;
-
-        if (effectiveStrength > 0.01) {
-            float flatness = clamp(N.y, 0.0, 1.0);
-
             // Use fine detail samples for close-up perturbation
-            vec4 detailNoise = closeUp ? nFine : nHigh;
-            vec4 microNoise = (closeUp && distSq < 100.0) ? nUltraFine : detailNoise;
-
-            N = getMicroDetailNormal(N, detailNoise, microNoise, vWorldPosition, effectiveStrength * uFragmentNormalScale, flatness);
-        }
-    }
+    // Derive a world-space surface gradient from one coherent height field.
+    // Evaluate derivatives outside distance branches so neighboring fragments agree.
+    float bumpHeight = nFine.r * 0.06 + nUltraFine.r * 0.015 * ultraBlend;
+    vec3 dpdx = dFdx(vWorldPosition);
+    vec3 dpdy = dFdy(vWorldPosition);
+    vec3 rx = cross(dpdy, N);
+    vec3 ry = cross(N, dpdx);
+    float determinant = dot(dpdx, rx);
+    vec3 heightGradient = (rx * dFdx(bumpHeight) + ry * dFdy(bumpHeight))
+        * sign(determinant) / max(abs(determinant), 0.000001);
+    float bumpFade = 1.0 - smoothstep(256.0, 1024.0, distSq);
+    N = safeNormalize(N - heightGradient * uFragmentNormalStrength * uFragmentNormalScale * bumpFade);
+    // CSM expects the fragment normal in view space; assigning only local N
+    // changes material masks but never the actual Three.js light response.
+    csm_FragNormal = safeNormalize(mat3(viewMatrix) * N);
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
 

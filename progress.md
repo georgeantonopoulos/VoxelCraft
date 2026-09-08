@@ -41,3 +41,7 @@ Original prompt: Understand this game well and spend one hour improving it on al
 ## 2026-09-08 ground texture quick win
 - Luna shader review confirmed packed-noise frequency multiplication. Reduced close detail UV scales from 2.5/6.0 to 0.35/0.9 and blended detail out near distance cutoffs, without extra samples or shared texture changes.
 - Build/dev smoke and 116 tests passed. Four settled native ground views plus before capture: output/web-game/ground-texture/. No native shader errors; automated client completed but captured a dark view, so native Chrome is the visual proof. Pointer-lock automation limitation remains; touch-look used.
+
+## 2026-09-08 bump lighting and detail boundary
+- Blended the 32m high-detail switch; routed a coherent height-gradient normal to CSM fragment lighting instead of the unused local noise perturbation. Existing texture samples reused.
+- Build/dev smoke, 116 tests, client smoke and four settled native angles passed; screenshots output/web-game/bump-fix/. Native pointer lock is unsupported by automation; touch-look used. Bump shading does not add silhouette displacement.
