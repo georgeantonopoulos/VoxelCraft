@@ -248,7 +248,7 @@ export const HUD: React.FC = () => {
         </div>
         <div className="mt-3 space-y-1 text-[11px] font-medium leading-relaxed text-stone-300">
           <p>{inputMode === 'touch' ? 'Drag left to move · drag right to look' : 'WASD + Space to move'}</p>
-          <p>Left Click: <span className="text-amber-200 font-semibold">DIG</span> (pickaxe selected)</p>
+          <p>{inputMode === 'touch' ? 'Action button' : 'Left Click'}: <span className="text-amber-200 font-semibold">INTERACT</span> (dig/chop/hit)</p>
           <p>Right Click: <span className="text-emerald-200 font-semibold">USE</span> (place/throw)</p>
           <p>
             Q: <span className="text-emerald-200 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})

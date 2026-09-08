@@ -33,3 +33,7 @@ Original prompt: Understand this game well and spend one hour improving it on al
 - Verified production build, dev smoke-start on port 3010, full 112-test unit suite plus 4 new sky-visibility cases and a 14-test focused rerun. Supplied web-game client completed movement/jump capture without an error artifact.
 - Native Chrome: settled forest, grass, shoreline, underwater and mobile gameplay; illustrated world selection and mobile controls inspected. Screenshots: output/web-game/graphics-native/ and output/web-game/graphics-release-client/.
 - Independent review led to cave-aware hemisphere fill and preservation of the inexpensive far-tree mesh. Water uses analytic sky reflection, not scene reflections. Native automation cannot acquire pointer lock; touch-look provided angle verification. Full night-cycle and extended performance profiling remain outside this pass.
+
+## 2026-09-08 HUD hint correction
+- Replaced hardcoded DIG (pickaxe selected) with a general INTERACT (dig/chop/hit) control hint, using Action button in touch mode. No inventory or interaction behavior changes.
+- Verified empty inventory in native Chrome and desktop/touch hint transitions; build, dev smoke and all 116 unit tests passed. Four movement-state captures stored under output/web-game/hud-hint-fix/.
