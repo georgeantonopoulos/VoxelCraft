@@ -159,6 +159,23 @@ function computeAreaWeightedNormals(
       result[i * 3 + 1] = originalNormals[i * 3 + 1];
       result[i * 3 + 2] = originalNormals[i * 3 + 2];
     }
+
+    // Adjacent chunks contain different face subsets at their duplicated edge
+    // vertices. Use their identical padded density gradients there, and blend
+    // back to face averages inside the chunk to avoid a second shading boundary.
+    const x = positions[i * 3], z = positions[i * 3 + 2];
+    const edgeDistance = Math.min(x, z, CHUNK_SIZE_XZ - x, CHUNK_SIZE_XZ - z);
+    const t = Math.max(0, Math.min(1, (edgeDistance - 1) / 2));
+    const faceWeight = t * t * (3 - 2 * t);
+    const bx = originalNormals[i * 3] * (1 - faceWeight) + result[i * 3] * faceWeight;
+    const by = originalNormals[i * 3 + 1] * (1 - faceWeight) + result[i * 3 + 1] * faceWeight;
+    const bz = originalNormals[i * 3 + 2] * (1 - faceWeight) + result[i * 3 + 2] * faceWeight;
+    const blendLength = Math.hypot(bx, by, bz);
+    if (blendLength > 0.0001) {
+      result[i * 3] = bx / blendLength;
+      result[i * 3 + 1] = by / blendLength;
+      result[i * 3 + 2] = bz / blendLength;
+    }
   }
 
   return result;
@@ -583,7 +600,9 @@ export function generateMesh(
 
             // Central difference normal calculation - simpler and faster than trilinear interpolation
             // with minimal visual quality loss. Uses 6 density samples instead of 8 lerps.
-            const sx = clampSampleCoord(centerX, SIZE_X), sy = clampSampleCoord(centerY, SIZE_Y), sz = clampSampleCoord(centerZ, SIZE_Z);
+            // Floor keeps the shared outer half-cell inside both padded grids;
+            // rounding can clamp one side to a different world-space sample.
+            const sx = clampSampleCoord(Math.floor(avgX), SIZE_X), sy = clampSampleCoord(Math.floor(avgY), SIZE_Y), sz = clampSampleCoord(Math.floor(avgZ), SIZE_Z);
             const nx = getVal(density, sx - 1, sy, sz) - getVal(density, sx + 1, sy, sz);
             const ny = getVal(density, sx, sy - 1, sz) - getVal(density, sx, sy + 1, sz);
             const nz = getVal(density, sx, sy, sz - 1) - getVal(density, sx, sy, sz + 1);

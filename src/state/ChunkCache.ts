@@ -65,7 +65,7 @@ export interface CachedChunk {
 }
 
 // BUMP THIS VERSION when chunk format/generation changes to invalidate old cache
-export const CACHE_VERSION = 2; // Bumped to force regeneration after material fix
+export const CACHE_VERSION = 3; // Regenerate cached meshes with continuous chunk-edge normals
 
 /**
  * Clear all cached chunks (for debugging)

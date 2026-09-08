@@ -45,3 +45,8 @@ Original prompt: Understand this game well and spend one hour improving it on al
 ## 2026-09-08 bump lighting and detail boundary
 - Blended the 32m high-detail switch; routed a coherent height-gradient normal to CSM fragment lighting instead of the unused local noise perturbation. Existing texture samples reused.
 - Build/dev smoke, 116 tests, client smoke and four settled native angles passed; screenshots output/web-game/bump-fix/. Native pointer lock is unsupported by automation; touch-look used. Bump shading does not add silhouette displacement.
+
+## 2026-09-08 correction of failed seam fix
+- Previous bump-gradient change introduced artifacts and did not resolve the reported line. Restored TriplanarShader.ts exactly to 151eed7. More realistic bump rendering remains unfinished.
+- Native raycast placed the reported boundary around x=32, y=16.7, z=-4. Matching vertex positions and light values had different normals between chunks. Fixed area-normal edge averaging using density gradients and fixed floor-vs-rounded padding samples. Bumped pristine cache version.
+- Regression test first failed, then passed; 117 full tests, build/dev smoke and native captures passed. Actual duplicate normals are now identical in the running world. Four views in output/web-game/seam-correction/. Earlier claim of seam completion was not adequately verified.

@@ -234,7 +234,7 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 
 ## Worklog (short)
 
-- 2026-09-08: Blended the 32m texture cutoff and connected coherent bump gradients to `csm_FragNormal` in `TriplanarShader.ts`. Verified build/dev, 116 tests and four settled native views (`output/web-game/bump-fix/`).
+- 2026-09-08 correction: The previous bump/cutoff change did not fix the reported seam and was reverted. Fixed mismatched chunk-edge normals in `mesher.ts` with shared density samples and cache invalidation; verified 117 tests and four native views (`output/web-game/seam-correction/`).
 
 - 2026-09-08: Corrected packed-noise sampling scales and distance fades in `TriplanarShader.ts`; verified build/dev, 116 tests and four settled native ground views (`output/web-game/ground-texture/`).
 
