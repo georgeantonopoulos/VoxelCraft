@@ -37,3 +37,7 @@ Original prompt: Understand this game well and spend one hour improving it on al
 ## 2026-09-08 HUD hint correction
 - Replaced hardcoded DIG (pickaxe selected) with a general INTERACT (dig/chop/hit) control hint, using Action button in touch mode. No inventory or interaction behavior changes.
 - Verified empty inventory in native Chrome and desktop/touch hint transitions; build, dev smoke and all 116 unit tests passed. Four movement-state captures stored under output/web-game/hud-hint-fix/.
+
+## 2026-09-08 ground texture quick win
+- Luna shader review confirmed packed-noise frequency multiplication. Reduced close detail UV scales from 2.5/6.0 to 0.35/0.9 and blended detail out near distance cutoffs, without extra samples or shared texture changes.
+- Build/dev smoke and 116 tests passed. Four settled native ground views plus before capture: output/web-game/ground-texture/. No native shader errors; automated client completed but captured a dark view, so native Chrome is the visual proof. Pointer-lock automation limitation remains; touch-look used.

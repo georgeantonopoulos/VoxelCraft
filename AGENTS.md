@@ -234,6 +234,8 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 
 ## Worklog (short)
 
+- 2026-09-08: Corrected packed-noise sampling scales and distance fades in `TriplanarShader.ts`; verified build/dev, 116 tests and four settled native ground views (`output/web-game/ground-texture/`).
+
 - 2026-09-08: Removed the hardcoded equipped-pickaxe claim in `src/ui/HUD.tsx`; verified empty inventory and touch wording, build/dev smoke and 116 unit tests. Gameplay captures: `output/web-game/hud-hint-fix/`.
 
 - 2026-09-08: Upgraded sky/clouds, cave-aware fill, foliage, grass, water and responsive HUD/world selection. Verified build/dev smoke, 112-test suite plus 4 sky tests, automated movement/jump and four settled native gameplay views (`output/web-game/graphics-native/`).

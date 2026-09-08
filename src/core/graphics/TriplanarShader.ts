@@ -476,9 +476,13 @@ export const triplanarFragmentShader = `
 
     // === FINE DETAIL: Sample at very high scale for close-up ground texture ===
     // This is the key to AAA terrain - fine grain visible when looking at your feet
-    // Scale of 2.5 gives ~0.4 world unit detail cycles, 5.0 gives ~0.2 world unit
-    vec4 nFine = closeUp ? getTriplanarNoise(N, 2.5) : nHigh;
-    vec4 nUltraFine = (closeUp && distSq < 100.0) ? getTriplanarNoise(N, 6.0) : nFine;
+    // UV repeats are not noise cycles: the packed texture already contains
+    // 6.4 / 12.8 / 25.6 / 51.2 cycles per tile. Lower scales keep soil detail
+    // readable instead of averaging it away through the mip chain.
+    float fineBlend = 1.0 - smoothstep(225.0, 400.0, distSq);
+    float ultraBlend = 1.0 - smoothstep(49.0, 100.0, distSq);
+    vec4 nFine = closeUp ? mix(nHigh, getTriplanarNoise(N, 0.35), fineBlend) : nHigh;
+    vec4 nUltraFine = (closeUp && distSq < 100.0) ? mix(nFine, getTriplanarNoise(N, 0.9), ultraBlend) : nFine;
 
     // === PHASE 1: Multi-frequency normal perturbation ===
     if (uFragmentNormalStrength > 0.01 && distSq < 4096.0) {
@@ -596,7 +600,7 @@ export const triplanarFragmentShader = `
 
         // Ultra-fine grain for very close (within 10 units)
         if (distSq < 100.0) {
-            brightnessVar += microGrain * 0.05;
+            brightnessVar += microGrain * 0.05 * ultraBlend;
         }
 
         col *= brightnessVar;
