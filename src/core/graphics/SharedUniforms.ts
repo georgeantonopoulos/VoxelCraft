@@ -108,7 +108,7 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
     if (params.wetnessEnabled !== undefined) sharedUniforms.uWetnessEnabled.value = params.wetnessEnabled ? 1.0 : 0.0;
     if (params.mossEnabled !== undefined) sharedUniforms.uMossEnabled.value = params.mossEnabled ? 1.0 : 0.0;
     if (params.roughnessMin !== undefined) sharedUniforms.uRoughnessMin.value = params.roughnessMin;
-    if (params.weightsView !== undefined) sharedUniforms.uWeightsView.value = params.weightsView;
+    if (params.weightsView !== undefined) sharedUniforms.uWeightsView.value = terrainViewOverride ?? params.weightsView;
 
     // Biome fog parameters
     if (params.biomeFogDensityMul !== undefined) sharedUniforms.uBiomeFogDensityMul.value = params.biomeFogDensityMul;
@@ -130,3 +130,17 @@ export const updateSharedUniforms = (state: { clock: THREE.Clock }, params?: Sha
 
     // NOTE: Humidity spreading now uses vertex attributes - no uniform updates needed
 };
+
+/**
+ * Debug: window.__terrainView(n) forces a terrain debug view (null restores):
+ * 1 snow, 2 grass, 3 snow-grass, 4 dominant channel,
+ * 5 baked GI light, 6 albedo (unlit), 7 shading normal (world).
+ * Views 5-7 are emissive-only so scene lighting does not alter them.
+ */
+let terrainViewOverride: number | null = null;
+if (typeof window !== 'undefined') {
+  (window as unknown as { __terrainView?: (n: number | null) => void }).__terrainView = (n) => {
+    terrainViewOverride = n;
+    if (n !== null) sharedUniforms.uWeightsView.value = n;
+  };
+}

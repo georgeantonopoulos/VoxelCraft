@@ -3,6 +3,7 @@ import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LE
 import { noise as noise3D, hash01 } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, getCaveSettings } from './BiomeManager';
+import { columnInfo, ColumnInfo, MAX_SURFACE_Y, overhangFade } from './terrainShape';
 import { RockVariant } from './GroundItemKinds';
 
 export const MATERIAL_HARDNESS: Record<number, number> = {
@@ -71,10 +72,6 @@ const OVERHANG_BAND_BELOW = 24;
 /** treePositions stride: x, y, z, type, scale. */
 const TREE_STRIDE = 5;
 
-const MAX_SURFACE_Y = MESH_Y_OFFSET + (CHUNK_SIZE_Y - 1) - 7; // topVisible(=offset+127) minus ~max overhang
-function clampSurfaceHeight(h: number): number {
-    return Math.min(h, MAX_SURFACE_Y);
-}
 
 export class TerrainService {
 
@@ -87,30 +84,15 @@ export class TerrainService {
             return 40; // islandCenterY from generation logic
         }
 
-        let { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParameters(wx, wz);
-
-        // Apply Sacred Grove terrain flattening (must match generateChunk logic)
-        const sacredGroveMod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
-        amp *= sacredGroveMod.ampMultiplier;
-        warp *= sacredGroveMod.warpMultiplier;
-
-        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
-        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
-
-        const px = wx + qx;
-        const pz = wz + qz;
-
-        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
-        const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
-
-        const h = clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
+        // Same column model as generateChunk (terrainShape.ts).
+        const { height: h, groveMod: sacredGroveMod } = columnInfo(wx, wz);
 
         // generateChunk adds an overhang term (|overhang| <= ~6.3) to the density,
         // which moves the real surface by several voxels. Solve for the topmost
         // ISO crossing of the same density (caves ignored) so creatures, fireflies
         // and spawns sit on the actual ground instead of floating or buried.
         const overhangMul = 6 * sacredGroveMod.overhangMultiplier;
-        const densityAt = (y: number) => h - y + noise3D(wx * 0.06, y * 0.08, wz * 0.06) * overhangMul;
+        const densityAt = (y: number) => h - y + noise3D(wx * 0.06, y * 0.08, wz * 0.06) * overhangMul * overhangFade(y, h);
         const top = Math.ceil(h + OVERHANG_BAND_ABOVE);
         let prevD = densityAt(top);
         for (let y = top - 1; y >= Math.floor(h - OVERHANG_BAND_ABOVE); y--) {
@@ -159,41 +141,33 @@ export class TerrainService {
         // If we need to avoid exact-ISO degenerates, use a tiny deterministic nudge instead.
         const ISO_NUDGE = 0.0001;
 
+        // Column surface heights on a grid one cell wider than the chunk, so every
+        // column also knows its slope (steep ground exposes bare rock).
+        const GRID = sizeX + 2;
+        const gridInfo: ColumnInfo[] = new Array(GRID * GRID);
+        for (let gz = 0; gz < GRID; gz++) {
+            for (let gx = 0; gx < GRID; gx++) {
+                gridInfo[gx + gz * GRID] = columnInfo(gx - 1 - PAD + worldOffsetX, gz - 1 - PAD + worldOffsetZ);
+            }
+        }
+
         for (let z = 0; z < sizeZ; z++) {
             for (let x = 0; x < sizeX; x++) {
                 // Column Setup
                 const wx = (x - PAD) + worldOffsetX;
                 const wz = (z - PAD) + worldOffsetZ;
 
-                // 1. Get Climate & Terrain Params (Column-Constant)
-                const climate = BiomeManager.getClimate(wx, wz);
-
-                // Use new metrics-based params (includes Continentalness/Erosion logic)
-                let { baseHeight, amp, freq, warp } = BiomeManager.getTerrainParametersFromMetrics(
-                    climate.temp,
-                    climate.humid,
-                    climate.continent,
-                    climate.erosion
-                );
-
-                // --- Sacred Grove Terrain Modification ---
-                // Sacred Groves are flat, barren clearings where Root Hollows spawn
-                const sacredGroveMod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
-
-                // Apply flattening multipliers for Sacred Grove zones
-                amp *= sacredGroveMod.ampMultiplier;
-                warp *= sacredGroveMod.warpMultiplier;
-
-                // --- Column-constant standard terrain (hoisted out of the Y loop) ---
-                // These only depend on (wx, wz); evaluating them once per column instead of
-                // once per voxel removes ~5 noise lookups x 132 voxels per column.
-                const colQx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
-                const colQz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
-                const colPx = wx + colQx;
-                const colPz = wz + colQz;
-                const colBaseNoise = noise3D(colPx * 0.01 * freq, 0, colPz * 0.01 * freq);
-                const colDetail = noise3D(colPx * 0.05, 0, colPz * 0.05) * (amp * 0.1);
-                const colSurfaceHeight = clampSurfaceHeight(baseHeight + (colBaseNoise * amp) + colDetail);
+                const col = gridInfo[(x + 1) + (z + 1) * GRID];
+                const climate = col.climate;
+                // Sacred Groves are flat, barren clearings where Root Hollows spawn.
+                const sacredGroveMod = col.groveMod;
+                const colSurfaceHeight = col.height;
+                const colSlope = Math.hypot(
+                    gridInfo[(x + 2) + (z + 1) * GRID].height - gridInfo[x + (z + 1) * GRID].height,
+                    gridInfo[(x + 1) + (z + 2) * GRID].height - gridInfo[(x + 1) + z * GRID].height
+                ) * 0.5;
+                // 0 on gentle ground, 1 on cliffs (~50 degrees and up).
+                const colRockiness = sacredGroveMod.useBarrenMaterial ? 0 : Math.min(1, Math.max(0, (colSlope - 0.85) / 0.5));
                 const colNormBreach = (noise3D(wx * 0.005, 0, wz * 0.005) + 1) * 0.5;
                 // Overhang noise can only change a decision within this band around the
                 // surface: |overhang| <= ~6.3, so above the band d < ISO regardless, and
@@ -273,7 +247,7 @@ export class TerrainService {
                             ? noise3D(wx * 0.06, wy * 0.08, wz * 0.06)
                             : 0;
                         // Apply Sacred Grove flattening to overhangs
-                        overhang = cliffNoise * 6 * sacredGroveMod.overhangMultiplier;
+                        overhang = cliffNoise * 6 * sacredGroveMod.overhangMultiplier * overhangFade(wy, surfaceHeight);
 
                         d = surfaceHeight - wy + overhang;
 
@@ -382,7 +356,10 @@ export class TerrainService {
 
                             } else {
                                 // --- SURFACE SOIL ---
-                                if (sacredGroveMod.useBarrenMaterial) {
+                                if (colRockiness > 0 && colRockiness + soilNoise * 0.25 > 0.5) {
+                                    // Steep slopes and cliffs shed soil (and snow): bare rock.
+                                    material[idx] = BiomeManager.getUndergroundMaterials(biome).primary;
+                                } else if (sacredGroveMod.useBarrenMaterial) {
                                     // Sacred Grove: Barren desert-like surface
                                     // Deeper layers use terracotta for visual variety
                                     material[idx] = MaterialType.RED_SAND;

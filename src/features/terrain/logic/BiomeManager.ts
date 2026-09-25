@@ -546,7 +546,9 @@ export class BiomeManager {
       // Drop height significantly to create water bodies
       // Smooth transition at the edge
       const depth = -continent; // 0.3 to 1.0
-      heightMod = -30 * (depth + 0.5); // -24 to -45
+      // Continuous with the coast branch (-20 at continent = -0.3); the old
+      // -30 * (depth + 0.5) started at -24, a 4 m step along every coastline.
+      heightMod = -20 - 30 * (depth - 0.3); // -20 to -41
       params.amp *= 0.3; // Flatter ocean floor
     } else if (continent < 0.1) {
       // Coast Transition

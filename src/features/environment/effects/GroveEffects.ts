@@ -112,12 +112,21 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
 }
 `;
 
+/**
+ * ?nandebug: every pass that scrubs NaN/Inf paints it magenta instead of black.
+ * (The first scrubbing pass, usually SunShafts, would otherwise hide NaNs from
+ * later passes.)
+ */
+function nanDebugDefines(): Array<[string, string]> {
+  const on = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nandebug');
+  return on ? [['NAN_DEBUG', '1']] : [];
+}
+
 export class GroveGradeEffect extends Effect {
   constructor() {
-    const nanDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nandebug');
     super('GroveGradeEffect', GRADE_FRAGMENT, {
       blendFunction: BlendFunction.SRC,
-      defines: nanDebug ? new Map([['NAN_DEBUG', '1']]) : new Map(),
+      defines: new Map(nanDebugDefines()),
       uniforms: new Map<string, THREE.Uniform>([
         ['uExposure', new THREE.Uniform(1.0)],
         ['uVitality', new THREE.Uniform(0.3)],
@@ -165,7 +174,11 @@ float shaftHash(vec2 p) {
 
 vec3 scrub(vec3 c) {
   // NaN/Inf from any material would be smeared across the whole frame by bloom.
+#ifdef NAN_DEBUG
+  return (any(isnan(c)) || any(isinf(c))) ? vec3(1.0, 0.0, 1.0) : min(c, vec3(65000.0));
+#else
   return (any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : min(c, vec3(65000.0));
+#endif
 }
 
 void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
@@ -203,7 +216,7 @@ export class SunShaftsEffect extends Effect {
     super('SunShaftsEffect', SHAFT_FRAGMENT, {
       blendFunction: BlendFunction.SRC,
       attributes: EffectAttribute.DEPTH | EffectAttribute.CONVOLUTION,
-      defines: new Map([['SHAFT_STEPS', String(Math.max(8, Math.round(steps)))]]),
+      defines: new Map([['SHAFT_STEPS', String(Math.max(8, Math.round(steps)))], ...nanDebugDefines()]),
       uniforms: new Map<string, THREE.Uniform>([
         ['uSunUv', new THREE.Uniform(new THREE.Vector2(0.5, 0.5))],
         ['uStrength', new THREE.Uniform(0.0)],
@@ -241,7 +254,11 @@ const SCRUB_FRAGMENT = /* glsl */ `
 void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
   vec3 c = inputColor.rgb;
   bool bad = any(isnan(c)) || any(isinf(c));
+#ifdef NAN_DEBUG
+  outputColor = vec4(bad ? vec3(1.0, 0.0, 1.0) : min(c, vec3(65000.0)), inputColor.a);
+#else
   outputColor = vec4(bad ? vec3(0.0) : min(c, vec3(65000.0)), inputColor.a);
+#endif
 }
 `;
 
@@ -249,6 +266,7 @@ export class ScrubEffect extends Effect {
   constructor() {
     super('ScrubEffect', SCRUB_FRAGMENT, {
       blendFunction: BlendFunction.SRC,
+      defines: new Map(nanDebugDefines()),
       attributes: EffectAttribute.CONVOLUTION,
     });
   }

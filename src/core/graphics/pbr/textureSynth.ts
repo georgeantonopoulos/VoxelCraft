@@ -16,7 +16,7 @@ export const PBR_TEXTURE_SIZE = 512;
  * Bump whenever synthesis output changes: generated layers are cached in
  * IndexedDB under this version (TerrainTextureArrays.ts).
  */
-export const PBR_SYNTH_VERSION = 1;
+export const PBR_SYNTH_VERSION = 3;
 export const PBR_LAYER_COUNT = 16;
 
 /** World size (metres) covered by one repeat of each layer's texture. */
@@ -272,7 +272,7 @@ function sandPixel(u: number, v: number, out: Float32Array, seed: number, base: 
   const grain = hash2(Math.floor(u * 512), Math.floor(v * 512), seed + 3);
   const grain2 = hash2(Math.floor(u * 256), Math.floor(v * 256), seed + 4);
   const dunes = fbm(u, v, 4, 4, seed + 5);
-  mixRGB(out, shade, base, clamp01(0.55 + 0.35 * ripple + 0.15 * dunes));
+  mixRGB(out, shade, base, clamp01(0.62 + 0.2 * ripple + 0.15 * dunes));
   mulRGB(out, 0.94 + 0.08 * grain + 0.05 * grain2);
   if (grain > 0.985) blendTo(out, [0.2, 0.18, 0.16], 0.6); // dark mineral grains
   if (grain2 > 0.99) blendTo(out, [1, 0.98, 0.92], 0.5); // quartz
@@ -291,7 +291,7 @@ const PAL = {
   moss: hex('#4f7030'), mossLight: hex('#7a9a3e'),
   redSand: hex('#c8663e'), redSandShade: hex('#8e4128'),
   ice: hex('#bfe3f7'), iceDeep: hex('#6fa9d4'),
-  jungleDark: hex('#17391b'), jungleLight: hex('#3f8a2c'), jungleDry: hex('#6b6a2a'),
+  jungleDark: hex('#23502a'), jungleLight: hex('#4f9a38'), jungleDry: hex('#7a7832'),
   obsidian: hex('#0c0a12'), obsidianSheen: hex('#2a2238'),
 } as const;
 

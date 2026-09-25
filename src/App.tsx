@@ -265,7 +265,7 @@ const App: React.FC = () => {
   const [fogFar, setFogFar] = useState(85);
   const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
   const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
-  const [sunIntensityMul, setSunIntensityMul] = useState(4.8);
+  const [sunIntensityMul, setSunIntensityMul] = useState(4.6);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
   const [exposureSurface, setExposureSurface] = useState(1.0);

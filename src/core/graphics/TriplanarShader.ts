@@ -428,6 +428,18 @@ export const triplanarFragmentShader = `
     w1 = max(w1 - w2, 0.0);
     if (w0 < 0.001) { c0 = 2; w0 = 1.0; }
 
+    if (uWeightsView >= 5) {
+      // Emissive-only debug views (window.__terrainView): unaffected by lights.
+      vec3 dbgE = vec3(0.0);
+      if (uWeightsView == 5) dbgE = getGILight();
+      else if (uWeightsView == 6 || uWeightsView == 7) {
+        vec3 twD = pow(abs(N), vec3(6.0)); twD /= max(dot(twD, vec3(1.0)), 1e-5);
+        vec4 aD; vec3 nD; float rD; float oD;
+        samplePbrLayer(c0, vWorldPosition, N, twD, aD, nD, rD, oD);
+        dbgE = uWeightsView == 6 ? aD.rgb : nD * 0.5 + 0.5;
+      }
+      csm_DiffuseColor = vec4(0.0, 0.0, 0.0, uOpacity); csm_Emissive = dbgE; csm_Roughness = 1.0; csm_Metalness = 0.0; return;
+    }
     if (uWeightsView != 0) {
       float grassW = vWb.x; float snowW = vWb.z; vec3 dbg = vec3(0.5);
       if (uWeightsView == 1) dbg = vec3(snowW);
@@ -453,7 +465,8 @@ export const triplanarFragmentShader = `
       // Height blend: the taller texel wins near the boundary (stones poke out of
       // grass, sand fills cracks) instead of a soft cross-fade.
       // Noise-jittered weights break up boundaries that follow the voxel grid.
-      float jitter = (texture(uNoiseTexture, P * 0.21 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 0.5;
+      float jitter = (texture(uNoiseTexture, P * 0.07 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 0.9
+                   + (texture(uNoiseTexture, P * 0.31 + vec3(0.8, 0.4, 0.2)).b - 0.5) * 0.35;
       float b0 = clamp(w0 / wSum + jitter, 0.0, 1.0), b1 = 1.0 - b0;
       float h0 = A0.a + b0, h1 = A1.a + b1;
       float top = max(h0, h1) - 0.25;
@@ -471,7 +484,9 @@ export const triplanarFragmentShader = `
     if (!lowDetail || distSq < 9216.0) {
       vec3 twd = step(max(tw.yzx, tw.zxy), tw); // dominant axis
       vec2 uvd = (twd.x > 0.5 ? P.zy : (twd.y > 0.5 ? P.xz : P.xy)) * uPbrScale[c0] * 0.29 + vec2(0.37, 0.61);
-      vec3 far = texture(uPbrA, vec3(uvd, float(c0))).rgb;
+      // Mip bias keeps only broad colour variation (fine ripples/cracks at 3.5x
+      // scale read as giant stripes).
+      vec3 far = texture(uPbrA, vec3(uvd, float(c0)), 3.0).rgb;
       float mixK = smoothstep(0.35, 0.75, nMacro.g) * 0.45;
       albedoH.rgb = mix(albedoH.rgb, far, mixK);
     }
@@ -613,7 +628,8 @@ export const triplanarFragmentShader = `
     csm_Roughness = accRoughness;
     // Per-pixel normal from the PBR maps (view space) and texture AO for indirect light.
     csm_FragNormal = normalize((viewMatrix * vec4(N, 0.0)).xyz);
-    csm_AO = ao;
+    // CSM semantics: csm_AO is the occlusion AMOUNT (indirectDiffuse *= 1 - csm_AO).
+    csm_AO = 1.0 - ao;
     csm_Metalness = 0.0;
   }
 `;

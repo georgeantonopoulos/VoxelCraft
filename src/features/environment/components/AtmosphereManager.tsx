@@ -10,7 +10,7 @@ import { sharedUniforms } from '@core/graphics/SharedUniforms';
 const SHADOW_UPDATE_HZ = 15;
 
 /** Hemisphere sky-fill intensities (see AmbientController). */
-const SKY_FILL_DAY = 0.9;
+const SKY_FILL_DAY = 1.2;
 const SKY_FILL_NIGHT = 0.12;
 const SKY_FILL_CAVE = 0.05;
 
