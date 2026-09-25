@@ -185,6 +185,17 @@ Gameplay layer that gives the world a goal: restore dormant Root Hollows.
 - `AdaptiveResolution.tsx`: dynamic DPR (50/58 FPS hysteresis, min 0.55× of user resolution). Debug: `window.__vcDynamicResolution`.
 - Presets low/medium/high/ultra in `SettingsStore` (`godRays`, `antialias`, `dynamicResolution`, `aoQuality`).
 
+### Engineering Guard Rails (added 2026-09)
+
+- **Golden terrain test** (`src/tests/terrainGolden.test.ts`): fingerprints voxel signs, materials, placements and meshes. Performance refactors must keep it green. Intentional generator changes: bump `GEN_VERSION` (src/constants.ts) and re-record with `UPDATE_GOLDEN=1 npx vitest run src/tests/terrainGolden.test.ts`.
+- **Generation invariants** (`src/tests/generationInvariants.test.ts`): no NaN placements, sticks near trees, flora owned by one chunk, cave rocks exist, world types behave.
+- **Benchmark**: `npm run bench` (src/bench/terrainPipeline.bench.ts) - per-chunk generate/light/mesh timings. Not part of test:unit.
+- **World-scoped persistence**: IndexedDB chunk ids are `<seed>:<worldType>:g<GEN_VERSION>|cx,cz` (`src/state/worldKey.ts`). Main thread sets it in VoxelTerrain, workers on CONFIGURE.
+- **ChunkDataManager.addChunk returns the canonical chunk** (merged for dirty chunks). Render/register that, never raw worker output. Merges keep only PLAYER_OWNED_FIELDS from the existing chunk.
+- **Point lights**: use `<PooledPointLight>` (src/core/graphics/PointLightPool.tsx) for world lights, never raw `<pointLight>` in the main scene; the pool keeps the real light count constant so lit shaders never recompile. Separate canvases (thumbnails, crafting) may use `<pointLight>`.
+- **Placement randomness**: use `hash01` (uniform, seeded) from `@core/math/noise`; map coherent Perlin through `noiseToUniform` before comparing to probability thresholds (raw Perlin sigma is ~0.25).
+- **Worker pool**: `postBulk` for generation, `postPriority` for remeshes; workers must always reply (ERROR on failure).
+
 ## Critical Constants (src/constants.ts)
 
 ```
@@ -197,7 +208,7 @@ Light Grid (GI):
 LIGHT_CELL_SIZE = 4 (each cell = 4×4×4 voxels)
 LIGHT_GRID_SIZE_XZ = 8, LIGHT_GRID_SIZE_Y = 32 (2048 cells/chunk)
 LIGHT_PROPAGATION_ITERATIONS = 6
-LIGHT_FALLOFF = 0.82, SKY_LIGHT_ATTENUATION = 0.7
+LIGHT_FALLOFF = 0.82, SKY_LIGHT_ATTENUATION = 0.15 (retained per SOLID cell; air passes sky light fully)
 ```
 
 Changing these breaks mesher output dimensions and worker communication. Light grid dimensions must divide evenly into chunk size.
@@ -218,7 +229,7 @@ Changing these breaks mesher output dimensions and worker communication. Light g
 - `window.__fpsBenchmarkResult` - Access last benchmark results (avgFps, minFps, p1Fps, passed)
 - `window.__audioManager.getStats()` - View audio pool stats (totalSounds, totalInstances, activeLoops, categories)
 
-**GI Tuning**: uGIEnabled (0/1 toggle), uGIIntensity (multiplier, default 1.2) accessible via debug panel.
+**GI Tuning**: uGIEnabled (0/1 toggle), uGIIntensity (multiplier, default 1.0: baked open-sky light is ~1.0, so albedo is neutral in the open and darkens in enclosed spaces) accessible via debug panel.
 
 ## Key Invariants
 
@@ -417,22 +428,17 @@ See `AGENTS.md` for:
 
 ## Known Bugs
 
-### Root Hollow placement tests time out (pre-existing)
-`biome.test.ts > Root Hollow Placement` (4 tests) exceed the 15s timeout on current hardware, before and after the Grove rework.
+Resolved in the 2026-09 rework (kept here so they are not reintroduced):
+- FractalTree never growing: RootHollow memoised on a fresh `position` array each render, restarting the 10s timer forever. Key memos on scalar coordinates.
+- Root Hollow persistence: restored hollows persist in GroveStore (per seed); interrupted charging completes the restoration.
+- Digs/builds never saved: `markDirty` must receive voxel indices (`TerrainService.brushVoxelIndices`).
 
-### FractalTree Not Growing (Identified 2026-01-05)
-**Status**: Active bug - FractalTree component does not visually grow when RootHollow transitions to GROWING state.
-**Location**: `src/features/flora/components/FractalTree.tsx`, `src/features/flora/components/RootHollow.tsx`
-**Symptoms**: RootHollow absorbs flora item, swarm particles appear, but tree never becomes visible.
-**Investigation needed**: Check if worker is generating geometry, verify `active`/`visible` props are triggering correctly.
-
-### Root Hollow / FractalTree Persistence (Identified 2026-01-05)
-**Status**: Needs investigation - Root Hollows and grown FractalTrees may not persist correctly to IndexedDB.
-**Location**: `src/state/WorldDB.ts`, `src/features/flora/components/RootHollow.tsx`
-**Investigation needed**:
-- Verify Root Hollow positions are saved/loaded with chunk data
-- Verify FractalTree growth state persists across chunk unload/reload
-- Check if ChunkDataManager dirty tracking includes flora state changes
+Open (lower priority, from the 2026-09 audit):
+- Shading seams at chunk borders: border-vertex normals/cavity differ per side (area-weighted normals only see own triangles; blend kernel radius 2 reaches past PAD=2).
+- Water sheet shows through caves/pits crossing y=4.5 (shore mask disabled in WaterMaterial).
+- Blade grass textures are not rebuilt after digging (grass floats over holes).
+- Tree felling / large-rock removal is not persisted (only voxels and ground pickups are).
+- LuminaFlora shares one material across instances, so per-instance uSeed/uColor are last-writer-wins.
 
 ## Future Features (TODO)
 
