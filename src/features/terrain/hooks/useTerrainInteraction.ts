@@ -754,6 +754,7 @@ export function useTerrainInteraction(
       let anyModified = false;
       let primaryMat = MaterialType.DIRT;
       const affectedChunks: string[] = [];
+      const touchedVoxels = new Map<string, number[]>();
       // Smart build: if user hasn't manually selected a material recently, build what you're looking at.
       const nowMs = Date.now();
       const allowAutoMat = nowMs > manualBuildMatUntilMs.current;
@@ -798,6 +799,7 @@ export function useTerrainInteraction(
             if (modified) {
               anyModified = true;
               affectedChunks.push(key);
+              touchedVoxels.set(key, TerrainService.brushVoxelIndices({ x: localX, y: localY, z: localZ }, radius));
 
               if (Math.abs(hitPoint.x - ((cx + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2 &&
                 Math.abs(hitPoint.z - ((cz + 0.5) * CHUNK_SIZE_XZ)) < CHUNK_SIZE_XZ / 2) {
@@ -810,8 +812,9 @@ export function useTerrainInteraction(
       }
 
       if (anyModified) {
-        // Mark chunks as dirty in ChunkDataManager (for future persistence)
-        affectedChunks.forEach(key => chunkDataManager.markDirty(key));
+        // Mark dirty WITH the touched voxel indices: persistence only saves tracked
+        // voxels, and without indices no dig/build was ever written to IndexedDB.
+        affectedChunks.forEach(key => chunkDataManager.markDirty(key, touchedVoxels.get(key)));
 
         // Trigger version updates for all affected chunks to re-render
         affectedChunks.forEach(key => queueVersionIncrement(key));

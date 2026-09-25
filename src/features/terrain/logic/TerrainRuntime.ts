@@ -51,6 +51,11 @@ export class TerrainRuntime {
     this.chunks.delete(key);
   }
 
+  /** Unregister every chunk (world restart). */
+  clear(): void {
+    this.chunks.clear();
+  }
+
   private getChunkAtWorld(wx: number, wz: number): RuntimeChunkData | null {
     const cx = Math.floor(wx / CHUNK_SIZE_XZ);
     const cz = Math.floor(wz / CHUNK_SIZE_XZ);

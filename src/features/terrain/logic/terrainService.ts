@@ -1470,6 +1470,31 @@ export class TerrainService {
      * @param radius - Brush radius
      * @param liquidMaterial - Material to paint (WATER or ICE)
      */
+    /**
+     * Padded-grid voxel indices a brush edit (modifyChunk / paintLiquid) can touch.
+     * Mirrors modifyChunk's bounding box (+1 margin), so persisting these indices
+     * captures every changed voxel. Unchanged voxels in the box are harmless to
+     * persist: they store their current value.
+     */
+    static brushVoxelIndices(localPoint: { x: number, y: number, z: number }, radius: number): number[] {
+        const hx = localPoint.x + PAD;
+        const hy = localPoint.y - MESH_Y_OFFSET + PAD;
+        const hz = localPoint.z + PAD;
+        const iRad = Math.ceil(radius + 2.0);
+        const minX = Math.max(0, Math.floor(hx - iRad)), maxX = Math.min(TOTAL_SIZE_XZ - 1, Math.ceil(hx + iRad));
+        const minY = Math.max(0, Math.floor(hy - iRad)), maxY = Math.min(TOTAL_SIZE_Y - 1, Math.ceil(hy + iRad));
+        const minZ = Math.max(0, Math.floor(hz - iRad)), maxZ = Math.min(TOTAL_SIZE_XZ - 1, Math.ceil(hz + iRad));
+        const out: number[] = [];
+        for (let z = minZ; z <= maxZ; z++) {
+            for (let y = minY; y <= maxY; y++) {
+                for (let x = minX; x <= maxX; x++) {
+                    out.push(x + y * TOTAL_SIZE_XZ + z * TOTAL_SIZE_XZ * TOTAL_SIZE_Y);
+                }
+            }
+        }
+        return out;
+    }
+
     static paintLiquid(
         density: Float32Array,
         materialData: Uint8Array,

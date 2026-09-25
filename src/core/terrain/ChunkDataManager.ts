@@ -19,7 +19,12 @@ import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_O
 import { saveChunkModificationsBulk, getChunkModifications } from '@/state/WorldDB';
 
 // Event types emitted by ChunkDataManager
-export type ChunkEventType = 'chunk-ready' | 'chunk-updated' | 'chunk-remove' | 'chunk-dirty';
+/**
+ * - chunk-ready: first time a key enters the cache.
+ * - chunk-generated: fresh generator output was stored (first load or regeneration);
+ *   listeners re-apply persisted player state (e.g. ground pickups).
+ */
+export type ChunkEventType = 'chunk-ready' | 'chunk-generated' | 'chunk-updated' | 'chunk-remove' | 'chunk-dirty';
 
 export interface ChunkEventData {
   key: string;
@@ -34,9 +39,26 @@ interface CacheEntry {
   lastAccess: number;
   isDirty: boolean;
   modifiedVoxels: Set<number>; // Track which voxel indices were modified
+  /** True once the view layer unloaded it (out of render distance). */
+  hidden: boolean;
 }
 
-class ChunkDataManager {
+/**
+ * Chunk fields that carry player state for dirty chunks and must survive a
+ * merge with regenerated data: voxels (digs/builds) and generated-item arrays
+ * where pickups/chops hide entries in place.
+ */
+const PLAYER_OWNED_FIELDS: ReadonlySet<string> = new Set([
+  'key', 'cx', 'cz',
+  'density', 'material',
+  'stickPositions', 'drySticks', 'jungleSticks', 'stickHotspots',
+  'rockPositions', 'rockDataBuckets', 'rockHotspots',
+  'floraPositions', 'floraHotspots',
+  'treePositions', 'treeInstanceBatches', 'largeRockPositions',
+  'terrainVersion', 'visualVersion',
+]);
+
+export class ChunkDataManager {
   // Main chunk storage
   private chunks = new Map<string, CacheEntry>();
 
@@ -86,12 +108,18 @@ class ChunkDataManager {
    * Add or update a chunk.
    * Called when worker produces new chunk data.
    */
-  addChunk(key: string, chunk: ChunkState): void {
+  /**
+   * @param fromGenerator true when `chunk` is fresh worker GENERATE output.
+   * @returns the canonical chunk now stored (the merged one for dirty chunks).
+   *          Callers must render/register this, not the argument.
+   */
+  addChunk(key: string, chunk: ChunkState, fromGenerator: boolean = false): ChunkState {
     const existing = this.chunks.get(key);
     const now = performance.now();
 
     if (existing) {
       // Merge: if existing is dirty, preserve player modifications
+      existing.hidden = false;
       if (existing.isDirty) {
         this.mergeChunkData(existing.chunk, chunk);
         existing.lastAccess = now;
@@ -102,6 +130,8 @@ class ChunkDataManager {
         existing.lastAccess = now;
         this.emit('chunk-updated', { key, chunk });
       }
+      if (fromGenerator) this.emit('chunk-generated', { key, chunk: existing.chunk });
+      return existing.chunk;
     } else {
       // New chunk
       this.chunks.set(key, {
@@ -109,11 +139,14 @@ class ChunkDataManager {
         lastAccess: now,
         isDirty: false,
         modifiedVoxels: new Set(),
+        hidden: false,
       });
       this.emit('chunk-ready', { key, chunk });
+      if (fromGenerator) this.emit('chunk-generated', { key, chunk });
 
       // Check if we need to evict old chunks
       this.evictIfNeeded();
+      return chunk;
     }
   }
 
@@ -129,6 +162,7 @@ class ChunkDataManager {
     if (existing) {
       existing.chunk = chunk;
       existing.lastAccess = now;
+      existing.hidden = false;
       this.emit('chunk-updated', { key, chunk });
     } else {
       this.chunks.set(key, {
@@ -136,6 +170,7 @@ class ChunkDataManager {
         lastAccess: now,
         isDirty: false,
         modifiedVoxels: new Set(),
+        hidden: false,
       });
       this.emit('chunk-ready', { key, chunk });
       this.evictIfNeeded();
@@ -176,6 +211,7 @@ class ChunkDataManager {
   hideChunk(key: string): void {
     // If dirty, ensure it's queued for persistence
     const entry = this.chunks.get(key);
+    if (entry) entry.hidden = true;
     if (entry?.isDirty) {
       this.queuePersistence(key);
     }
@@ -289,33 +325,24 @@ class ChunkDataManager {
   private evictIfNeeded(): void {
     if (this.chunks.size <= this.maxCacheSize) return;
 
-    // Find eviction candidates (clean chunks only)
-    const candidates: Array<{ key: string; lastAccess: number }> = [];
+    // Only chunks the view layer has unloaded are candidates: evicting a visible
+    // chunk made later digs/collider updates on it silently no-op. Dirty chunks
+    // are evictable once their edits are flushed to IndexedDB (generation
+    // re-applies them), otherwise pickups alone pinned chunks forever.
+    const candidates: Array<{ key: string; lastAccess: number; dirty: boolean }> = [];
     for (const [key, entry] of this.chunks) {
-      if (!entry.isDirty) {
-        candidates.push({ key, lastAccess: entry.lastAccess });
-      }
+      if (!entry.hidden) continue;
+      if (entry.isDirty && this.persistenceQueue.has(key)) continue;
+      candidates.push({ key, lastAccess: entry.lastAccess, dirty: entry.isDirty });
     }
 
-    // Sort by last access (oldest first)
-    candidates.sort((a, b) => a.lastAccess - b.lastAccess);
+    // Clean chunks first, then oldest.
+    candidates.sort((a, b) => (Number(a.dirty) - Number(b.dirty)) || (a.lastAccess - b.lastAccess));
 
-    // Evict oldest until under capacity
     const toEvict = this.chunks.size - this.maxCacheSize;
     for (let i = 0; i < toEvict && i < candidates.length; i++) {
-      const key = candidates[i].key;
-      this.chunks.delete(key);
-      // Note: We don't emit 'chunk-remove' here because the view layer
-      // should have already hidden these chunks when they went out of range.
-      // This is just memory cleanup.
-    }
-
-    if (toEvict > candidates.length) {
-      console.warn(
-        `[ChunkDataManager] Cannot evict enough chunks. ` +
-        `Need to evict ${toEvict} but only ${candidates.length} clean chunks available. ` +
-        `${this.getDirtyCount()} dirty chunks in memory.`
-      );
+      this.chunks.delete(candidates[i].key);
+      // No 'chunk-remove' here: the view layer already hid these chunks.
     }
   }
 
@@ -358,9 +385,9 @@ class ChunkDataManager {
     const keys = [...this.persistenceQueue];
     this.persistenceQueue.clear();
 
-    for (const key of keys) {
-      await this.persistChunk(key);
-    }
+    // Start every write now: persistChunk snapshots voxel values synchronously,
+    // so a chunk evicted while earlier writes are in flight can't lose its edits.
+    await Promise.all(keys.map((key) => this.persistChunk(key)));
   }
 
   /**
@@ -488,58 +515,19 @@ class ChunkDataManager {
    * Preserves player modifications while updating mesh data.
    */
   private mergeChunkData(existing: ChunkState, incoming: ChunkState): void {
-    // For a dirty chunk, we keep the existing density/material (player modifications)
-    // but update the mesh data and other derived fields
-
-    // Update mesh data (this will be regenerated anyway based on density)
-    existing.meshPositions = incoming.meshPositions;
-    existing.meshIndices = incoming.meshIndices;
-    existing.meshNormals = incoming.meshNormals;
-    existing.meshMatWeightsA = incoming.meshMatWeightsA;
-    existing.meshMatWeightsB = incoming.meshMatWeightsB;
-    existing.meshMatWeightsC = incoming.meshMatWeightsC;
-    existing.meshMatWeightsD = incoming.meshMatWeightsD;
-    existing.meshWetness = incoming.meshWetness;
-    existing.meshMossiness = incoming.meshMossiness;
-    existing.meshCavity = incoming.meshCavity;
-
-    // Update water mesh
-    existing.meshWaterPositions = incoming.meshWaterPositions;
-    existing.meshWaterIndices = incoming.meshWaterIndices;
-    existing.meshWaterShoreMask = incoming.meshWaterShoreMask;
-
-    // Update collider data
-    existing.colliderPositions = incoming.colliderPositions;
-    existing.colliderIndices = incoming.colliderIndices;
-    existing.colliderHeightfield = incoming.colliderHeightfield;
-    existing.isHeightfield = incoming.isHeightfield;
-
-    // Update vegetation/flora (these don't change with player modifications)
-    existing.vegetationData = incoming.vegetationData;
-    existing.treePositions = incoming.treePositions;
-    existing.treeInstanceBatches = incoming.treeInstanceBatches;
-    existing.floraPositions = incoming.floraPositions;
-    existing.lightPositions = incoming.lightPositions;
-    existing.rootHollowPositions = incoming.rootHollowPositions;
-    // NOTE: Do NOT overwrite ground item arrays (drySticks, jungleSticks, rockDataBuckets)
-    // These ARE player modifications (pickup removes items by setting y=-10000)
-    // Overwriting them would restore "removed" items when chunk is remeshed
-    existing.largeRockPositions = incoming.largeRockPositions;
-
-    // Firefly registry
-    existing.fireflyPositions = incoming.fireflyPositions;
-
-    // Update LOD
-    existing.lodLevel = incoming.lodLevel;
-
-    // Update version numbers to trigger React re-renders
-    // These are bumped by the caller when creating the incoming chunk
-    if (incoming.terrainVersion !== undefined) {
-      existing.terrainVersion = incoming.terrainVersion;
+    // Take every field from the incoming data EXCEPT the ones the player owns.
+    // (An explicit copy list silently dropped newer derived fields such as
+    // meshLightColors, lightGrid, humidity and colliderEnabled, leaving light
+    // colour buffers whose length no longer matched the vertices.)
+    const target = existing as unknown as Record<string, unknown>;
+    const source = incoming as unknown as Record<string, unknown>;
+    for (const field of Object.keys(source)) {
+      if (PLAYER_OWNED_FIELDS.has(field)) continue;
+      target[field] = source[field];
     }
-    if (incoming.visualVersion !== undefined) {
-      existing.visualVersion = incoming.visualVersion;
-    }
+    // Versions only move forward: stale-response checks compare against them.
+    existing.terrainVersion = Math.max(existing.terrainVersion ?? 0, incoming.terrainVersion ?? 0);
+    existing.visualVersion = Math.max(existing.visualVersion ?? 0, incoming.visualVersion ?? 0);
   }
 
   // === DEBUG ===
@@ -582,6 +570,13 @@ class ChunkDataManager {
     if (this.persistenceTimer !== null) {
       clearTimeout(this.persistenceTimer);
       this.persistenceTimer = null;
+    }
+
+    // Flush unsaved edits before forgetting them. persistChunk snapshots the
+    // voxel values and resolves the world-scoped DB key synchronously, so these
+    // writes land under the outgoing world even though we clear right after.
+    for (const [key, entry] of this.chunks) {
+      if (entry.isDirty && entry.modifiedVoxels.size > 0) void this.persistChunk(key);
     }
 
     this.chunks.clear();

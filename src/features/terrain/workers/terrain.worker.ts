@@ -2,6 +2,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh, generateWaterSurfaceMesh, HumidityConfig } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
 import { getChunkModifications, makeWorldKey, setWorldKey } from '@/state/WorldDB';
+import { initializeNoise } from '@core/math/noise';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
@@ -349,7 +350,8 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (seed !== undefined) {
                 BiomeManager.reinitialize(seed);
                 // Also reinitialize Perlin noise for terrain generation
-                const { initializeNoise } = await import('@core/math/noise');
+                // Static import: awaiting a dynamic import here let a GENERATE that
+                // arrived meanwhile run with the previous seed and world key.
                 initializeNoise(seed);
                 (self as any).worldSeed = seed;
             }
@@ -533,5 +535,18 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'REMESHED', payload: response }, transfers);
         }
-    } catch (error) { console.error('Worker Error:', error); }
+    } catch (error) {
+        console.error('Worker Error:', error);
+        // Always answer: the main thread tracks the job as in flight until a reply
+        // arrives, and silent failures eventually stalled all streaming.
+        const cx = payload?.cx, cz = payload?.cz;
+        ctx.postMessage({
+            type: 'ERROR',
+            payload: {
+                jobType: type,
+                key: payload?.key ?? (cx !== undefined && cz !== undefined ? `${cx},${cz}` : undefined),
+                message: String((error as Error)?.message ?? error),
+            },
+        });
+    }
 };

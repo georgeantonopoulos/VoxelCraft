@@ -35,3 +35,11 @@ export function forEachChunkFireflies(cb: (key: string, data: Float32Array) => v
   chunkFireflies.forEach((data, key) => cb(key, data));
 }
 
+
+/** Forget every chunk's fireflies (world restart). */
+export function clearAllFireflies() {
+  if (chunkFireflies.size > 0) {
+    chunkFireflies.clear();
+    version++;
+  }
+}

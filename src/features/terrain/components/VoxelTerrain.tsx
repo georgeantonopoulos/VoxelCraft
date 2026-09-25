@@ -7,7 +7,7 @@ import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationMa
 import { useInventoryStore } from '@state/InventoryStore';
 import { useInputStore } from '@/state/InputStore';
 import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
-import { CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
+import { CHUNK_SIZE_XZ, RENDER_DISTANCE, ISO_LEVEL } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { emitGroveEvent } from '@features/grove/groveEvents';
@@ -777,9 +777,24 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     simulationManager.setCallback((updates: SimUpdate[]) => {
       updates.forEach(update => {
         const chunk = chunkDataManager.getChunk(update.key);
-        if (chunk) {
-          chunk.material.set(update.material);
-          remeshQueue.current.add(update.key);
+        if (chunk && chunkDataRef.current.has(update.key)) {
+          // The simulation works on a material snapshot taken when the chunk was
+          // (re)added. Copying it wholesale reverted builds/digs made since then.
+          // Accept only re-skins (e.g. moss growth) that agree with the current
+          // solid/empty state of each voxel.
+          const current = chunk.material;
+          const density = chunk.density;
+          const next = update.material;
+          let changed = false;
+          for (let i = 0; i < next.length; i++) {
+            const m = next[i];
+            if (m === current[i]) continue;
+            const simSolid = m !== MaterialType.AIR && m !== MaterialType.WATER;
+            if (simSolid !== (density[i] > ISO_LEVEL)) continue;
+            current[i] = m;
+            changed = true;
+          }
+          if (changed) remeshQueue.current.add(update.key);
         }
       });
     });
@@ -787,7 +802,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Terrain worker pool: sized to the machine, load-aware dispatch, and a
     // priority lane so REMESH after digging never waits behind GENERATE jobs.
     const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), {
-      completionTypes: ['GENERATED', 'REMESHED'],
+      completionTypes: ['GENERATED', 'REMESHED', 'ERROR'],
     });
     poolRef.current = pool;
 
@@ -808,9 +823,15 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       // Track if this is an error message indicating allocation failure
-      if (e.data.type === 'ERROR' || (e.data.error && String(e.data.error).includes('allocation'))) {
-        allocationFailures.current += 3;
-        console.warn('[VoxelTerrain] Worker reported allocation error');
+      if (e.data.type === 'ERROR') {
+        const { key, message } = (e.data.payload ?? {}) as { key?: string; message?: string };
+        if (key) {
+          // Free the slot so streaming can re-request the chunk later.
+          inFlightGenerations.current.delete(key);
+          pendingChunks.current.delete(key);
+        }
+        if (message && message.toLowerCase().includes('allocation')) allocationFailures.current += 3;
+        console.warn('[VoxelTerrain] Worker job failed', key, message);
         return;
       }
 
@@ -861,10 +882,16 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Apply persisted ground item pickups when a new chunk is loaded
     // This restores the "picked up" state for sticks, rocks, and flora
-    const unsubReady = chunkDataManager.on('chunk-ready', async ({ key, chunk }) => {
+    // Runs on every generation (not only first load): regenerated or re-cached chunks
+    // otherwise brought picked-up items back, and they could be picked up again.
+    const unsubReady = chunkDataManager.on('chunk-generated', async ({ key, chunk: generated }) => {
       try {
-        const pickups = await getGroundPickups(chunk.cx, chunk.cz);
+        const pickups = await getGroundPickups(generated.cx, generated.cz);
         if (pickups.length === 0) return;
+
+        // Apply to the latest data (the chunk may have changed or unloaded during the DB read).
+        const chunk = chunkDataManager.getChunk(key);
+        if (!chunk || !chunkDataRef.current.has(key)) return;
 
         let modified = false;
         const updatedChunk = { ...chunk };
@@ -1340,14 +1367,13 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
       const { type, payload } = msg as { type: string; payload: any };
       if (type === 'GENERATED') {
-        const { key, cx, cz, fireflyPositions, metadata, material, density } = payload;
+        const { key, cx, cz, fireflyPositions, metadata } = payload;
         pendingChunks.current.delete(key);
         inFlightGenerations.current.delete(key);
 
         if (neededKeysRef.current.has(key)) {
           if (metadata) {
             metadataDB.initChunk(key, metadata);
-            simulationManager.addChunk(key, cx, cz, material, metadata.wetness, metadata.mossiness);
           }
 
           useWorldStore.getState().setChunkHotspots(
@@ -1375,11 +1401,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           };
 
           setChunkFireflies(key, fireflyPositions);
-          terrainRuntime.registerChunk(key, cx, cz, density, material);
-          chunkDataRef.current.set(key, newChunk);
 
-          // Phase 1: Also track in ChunkDataManager for future persistence/LRU
-          chunkDataManager.addChunk(key, newChunk);
+          // ChunkDataManager owns chunk data. For a chunk the player already modified
+          // it merges (keeping edited voxels/pickups), so render and register the
+          // canonical result, never the raw worker output.
+          const canonical = chunkDataManager.addChunk(key, newChunk, true);
+          terrainRuntime.registerChunk(key, cx, cz, canonical.density, canonical.material);
+          if (metadata) {
+            // Seed the simulation with the player-edited materials, not raw generator output.
+            simulationManager.addChunk(key, cx, cz, canonical.material, metadata.wetness, metadata.mossiness);
+          }
+          chunkDataRef.current.set(key, canonical);
+          if (chunkDataManager.isDirty(key)) {
+            // Worker meshed unmodified voxels; rebuild the mesh from the edited ones.
+            remeshQueue.current.add(key);
+          }
 
           if (!initialLoadTriggered.current) {
             // During initial load, use queueVersionAdd directly for new chunks
@@ -1414,6 +1450,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         }
       } else if (type === 'REMESHED') {
         const { key, version: payloadVersion } = payload;
+        // A chunk unloaded while its remesh was in flight must stay unloaded
+        // (re-adding it left an invisible, collider-less hole).
+        if (!chunkDataRef.current.has(key)) continue;
         const current = chunkDataManager.getChunk(key);
         const currentVersion = current?.terrainVersion ?? 0;
 
@@ -1561,11 +1600,14 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
       while (removedCount < MAX_REMOVALS && removeQueue.current.length > 0) {
         const key = removeQueue.current.shift();
+        // The player may have walked back before the throttled queue drained.
+        if (key && neededKeysRef.current.has(key)) continue;
         if (key && chunkDataRef.current.has(key)) {
           simulationManager.removeChunk(key);
           useWorldStore.getState().clearChunkHotspots(key);
           deleteChunkFireflies(key);
           terrainRuntime.unregisterChunk(key);
+          metadataDB.removeChunk(key);
           chunkDataRef.current.delete(key);
           queueVersionRemoval(key);
 
@@ -1585,6 +1627,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         const key = iterator.next().value as string | undefined;
         if (!key) break;
         remeshQueue.current.delete(key);
+        if (!chunkDataRef.current.has(key)) continue; // unloaded since it was queued
         const chunk = chunkDataManager.getChunk(key);
         const metadata = metadataDB.getChunk(key);
         if (chunk && metadata && poolRef.current) {

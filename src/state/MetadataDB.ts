@@ -21,6 +21,16 @@ export class MetadataDB {
     this.defaultValues.set(name, defaultValue);
   }
 
+  /** Drop a chunk's layers when it unloads (~340KB each; previously never freed). */
+  removeChunk(key: string): void {
+    this.chunks.delete(key);
+  }
+
+  /** Forget every chunk (world restart). */
+  clear(): void {
+    this.chunks.clear();
+  }
+
   getChunk(key: string): ChunkMetadata | undefined {
     return this.chunks.get(key);
   }

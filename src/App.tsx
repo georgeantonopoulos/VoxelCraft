@@ -49,6 +49,9 @@ import { BiomeManager, BiomeType, WorldType } from '@features/terrain/logic/Biom
 import { WorldSeed } from '@core/WorldSeed';
 import { initializeNoise } from '@core/math/noise';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
+import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { metadataDB } from '@state/MetadataDB';
+import { clearAllFireflies } from '@features/environment/fireflyRegistry';
 import { useWorldStore } from '@state/WorldStore';
 import { useInventoryStore } from '@state/InventoryStore';
 import { useEntityHistoryStore } from '@state/EntityHistoryStore';
@@ -115,7 +118,10 @@ const App: React.FC = () => {
   const handleRestartWorld = useCallback(() => {
     // Clear all cached data from singletons FIRST, before resetting React state
     // This ensures the new world doesn't spawn on stale terrain
-    chunkDataManager.clear();
+    chunkDataManager.clear(); // flushes pending edits under the outgoing world key
+    terrainRuntime.clear();
+    metadataDB.clear();
+    clearAllFireflies();
     useWorldStore.getState().resetAll();
     useEntityHistoryStore.getState().reset();
     useGroveStore.getState().resetWorld();

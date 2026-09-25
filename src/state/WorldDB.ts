@@ -94,9 +94,9 @@ export async function saveModification(
   material: MaterialType,
   density: number
 ) {
-  await worldDBReady;
-
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
 
   // Optimized Upsert using put()
   // Because we defined [chunkId+voxelIndex] as the primary key in version(2),
@@ -115,9 +115,9 @@ export async function saveModification(
  * Designed to be called by the Web Worker.
  */
 export async function getChunkModifications(cx: number, cz: number): Promise<ChunkModification[]> {
-  await worldDBReady;
-
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   return await worldDB.modifications.where('chunkId').equals(chunkId).toArray();
 }
 
@@ -130,9 +130,9 @@ export async function saveChunkModificationsBulk(
   cz: number,
   modifications: Array<{ voxelIndex: number; material: MaterialType; density: number }>
 ): Promise<void> {
-  await worldDBReady;
-
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   const entries = modifications.map(mod => ({
     chunkId,
     voxelIndex: mod.voxelIndex,
@@ -148,9 +148,9 @@ export async function saveChunkModificationsBulk(
  * Clear all modifications for a chunk.
  */
 export async function clearChunkModifications(cx: number, cz: number): Promise<void> {
-  await worldDBReady;
-
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   await worldDB.modifications.where('chunkId').equals(chunkId).delete();
 }
 
@@ -167,8 +167,9 @@ export async function saveGroundPickup(
   itemType: GroundItemType,
   index: number
 ): Promise<void> {
-  await worldDBReady;
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   await worldDB.groundPickups.put({ chunkId, itemType, index });
 }
 
@@ -176,8 +177,9 @@ export async function saveGroundPickup(
  * Get all ground item pickups for a chunk.
  */
 export async function getGroundPickups(cx: number, cz: number): Promise<GroundItemPickup[]> {
-  await worldDBReady;
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   return await worldDB.groundPickups.where('chunkId').equals(chunkId).toArray();
 }
 
@@ -185,7 +187,8 @@ export async function getGroundPickups(cx: number, cz: number): Promise<GroundIt
  * Clear all ground pickups for a chunk (e.g., world reset).
  */
 export async function clearGroundPickups(cx: number, cz: number): Promise<void> {
-  await worldDBReady;
+  // Resolve the world-scoped id before awaiting: the active world may change meanwhile.
   const chunkId = scopedChunkId(cx, cz);
+  await worldDBReady;
   await worldDB.groundPickups.where('chunkId').equals(chunkId).delete();
 }
