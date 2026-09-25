@@ -5,7 +5,7 @@ import { getChunkModifications, makeWorldKey, setWorldKey } from '@/state/WorldD
 import { initializeNoise } from '@core/math/noise';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
-import { noise } from '@core/math/noise';
+import { noise, noiseToUniform } from '@core/math/noise';
 import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
 import { generateLightGrid, extractLuminaLights, getSkyLightConfig } from '@core/lighting/lightPropagation';
 
@@ -445,7 +445,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                             // Slope sink to match Surface Nets mesh positioning
                             const slopeSink = slopeSinkFactor(nyV);
                             let numPlants = (biome === 'JUNGLE' || biome === 'THE_GROVE') ? 3 : 1;
-                            const vegType = getVegetationForBiome(biome, (noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100) + 1) * 0.5);
+                            const vegType = getVegetationForBiome(biome, noiseToUniform(noise(worldX * 0.1 + 100, 0, worldZ * 0.1 + 100)));
                             if (vegType !== null) {
                                 if (!vegetationBuckets[vegType]) vegetationBuckets[vegType] = [];
                                 for (let i = 0; i < numPlants; i++) {

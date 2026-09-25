@@ -1,6 +1,6 @@
 
 import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
-import { noise as noise3D } from '@core/math/noise';
+import { noise as noise3D, hash01 } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, getCaveSettings } from './BiomeManager';
 import { RockVariant } from './GroundItemKinds';
@@ -68,6 +68,9 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
 const OVERHANG_BAND_ABOVE = 8;
 const OVERHANG_BAND_BELOW = 24;
 
+/** treePositions stride: x, y, z, type, scale. */
+const TREE_STRIDE = 5;
+
 const MAX_SURFACE_Y = MESH_Y_OFFSET + (CHUNK_SIZE_Y - 1) - 7; // topVisible(=offset+127) minus ~max overhang
 function clampSurfaceHeight(h: number): number {
     return Math.min(h, MAX_SURFACE_Y);
@@ -100,7 +103,24 @@ export class TerrainService {
         const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
         const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
 
-        return clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
+        const h = clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
+
+        // generateChunk adds an overhang term (|overhang| <= ~6.3) to the density,
+        // which moves the real surface by several voxels. Solve for the topmost
+        // ISO crossing of the same density (caves ignored) so creatures, fireflies
+        // and spawns sit on the actual ground instead of floating or buried.
+        const overhangMul = 6 * sacredGroveMod.overhangMultiplier;
+        const densityAt = (y: number) => h - y + noise3D(wx * 0.06, y * 0.08, wz * 0.06) * overhangMul;
+        const top = Math.ceil(h + OVERHANG_BAND_ABOVE);
+        let prevD = densityAt(top);
+        for (let y = top - 1; y >= Math.floor(h - OVERHANG_BAND_ABOVE); y--) {
+            const d = densityAt(y);
+            if (d > ISO_LEVEL && prevD <= ISO_LEVEL) {
+                return y + (d - ISO_LEVEL) / (d - prevD);
+            }
+            prevD = d;
+        }
+        return h;
     }
 
     static generateChunk(cx: number, cz: number, modifications: ChunkModification[] = []): {
@@ -470,9 +490,14 @@ export class TerrainService {
         const maxFloraPerChunk = 60;
         let floraPlaced = 0;
 
-        // RELAXED STEP: Use a finer grid (3) to find more spots
-        for (let z = 0; z < sizeZ && floraPlaced < maxFloraPerChunk; z += 3) {
-            for (let x = 0; x < sizeX && floraPlaced < maxFloraPerChunk; x += 3) {
+        // Cluster centres sit on a WORLD-aligned 3-voxel grid and only inside this
+        // chunk's own columns [PAD, PAD+32). The old padded, chunk-relative grid
+        // overlapped the neighbour's, so ~19% of flora (and their lights) were
+        // generated twice across borders.
+        const FLORA_GRID = 3;
+        const firstAligned = (offset: number) => PAD + ((((-offset) % FLORA_GRID) + FLORA_GRID) % FLORA_GRID);
+        for (let z = firstAligned(worldOffsetZ); z < PAD + CHUNK_SIZE_XZ && floraPlaced < maxFloraPerChunk; z += FLORA_GRID) {
+            for (let x = firstAligned(worldOffsetX); x < PAD + CHUNK_SIZE_XZ && floraPlaced < maxFloraPerChunk; x += FLORA_GRID) {
                 const wx = (x - PAD) + worldOffsetX;
                 const wz = (z - PAD) + worldOffsetZ;
 
@@ -528,8 +553,8 @@ export class TerrainService {
                     const candLocalX = x + offX;
                     const candLocalZ = z + offZ;
 
-                    // Bounds check
-                    if (candLocalX < 0 || candLocalX >= sizeX || candLocalZ < 0 || candLocalZ >= sizeZ) continue;
+                    // Keep members in this chunk's own columns only (one owner per position).
+                    if (candLocalX < PAD || candLocalX >= PAD + CHUNK_SIZE_XZ || candLocalZ < PAD || candLocalZ >= PAD + CHUNK_SIZE_XZ) continue;
 
                     // SNAP TO GROUND: Raycast at the candidate position
                     // We search around the center Y index +/- 3 blocks to handle slopes
@@ -620,8 +645,11 @@ export class TerrainService {
                     treeThreshold = 0.65;
                     patchThreshold = 0.2;
                 } else if (biome === 'BEACH' || biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
-                    treeThreshold = 0.95;
-                    patchThreshold = 0.8;
+                    // Raw noise rarely exceeds ~0.55 (sigma ~0.25), so the old 0.95/0.8
+                    // gates meant palms and cacti practically never spawned. These give
+                    // sparse (~1-2% of cells) but real vegetation.
+                    treeThreshold = 0.5;
+                    patchThreshold = 0.25;
                 }
 
                 // Distribution Check
@@ -656,12 +684,16 @@ export class TerrainService {
                         if (wy < MESH_Y_OFFSET + 5) break; // Too deep
 
                         // Slope Check: Only do this once per candidate
-                        const dL = density[idx - 1] || 0;
-                        const dR = density[idx + 1] || 0;
+                        // Clamped neighbours: raw idx +/- 1 wrapped rows at the grid edge.
+                        const xL = Math.max(0, ix - 1), xR = Math.min(sizeX - 1, ix + 1);
+                        const zB = Math.max(0, iz - 1), zF = Math.min(sizeZ - 1, iz + 1);
+                        const rowBase = y * sizeX;
+                        const dL = density[xL + rowBase + iz * sizeX * sizeY] || 0;
+                        const dR = density[xR + rowBase + iz * sizeX * sizeY] || 0;
                         const dU = density[idx + sizeX] || 0;
                         const dD = density[idx - sizeX] || 0;
-                        const dF = density[idx + sizeX * sizeY] || 0;
-                        const dB = density[idx - sizeX * sizeY] || 0;
+                        const dF = density[ix + rowBase + zF * sizeX * sizeY] || 0;
+                        const dB = density[ix + rowBase + zB * sizeX * sizeY] || 0;
 
                         const nx = -(dR - dL);
                         const ny = -(dU - dD);
@@ -693,7 +725,8 @@ export class TerrainService {
                     if (biome !== 'MOUNTAINS' && groundMaterial === MaterialType.STONE && cellHash < 0.8) continue;
 
                     // 4. Variety & Placement
-                    const hash = Math.abs(noise3D(wx * 15.7, wy * 15.7, wz * 15.7));
+                    // Uniform so "> 0.95" (e.g. beach palms) means 5%, not ~never.
+                    const hash = hash01(wx, wy, wz, 7703);
                     const treeType = getTreeForBiome(biome, hash);
                     if (treeType === null) continue;
 
@@ -901,11 +934,7 @@ export class TerrainService {
         //
         // Data layout: stride 4 in WORLD SPACE: x, y, z, seed
         // (seed drives blink/drift in the renderer so we don't need per-frame CPU updates).
-        const hash01 = (x: number, y: number, z: number, salt: number) => {
-            // `noise3D` is deterministic and already in this module; map [-1..1] -> [0..1].
-            const n = noise3D(x * 0.011 + salt * 0.17, y * 0.017 + salt * 0.31, z * 0.013 + salt * 0.23);
-            return (n + 1) * 0.5;
-        };
+        // Placement randomness: uniform world-space hash (see noise.ts hash01).
 
         const spawnSwarm = (centerX: number, centerZ: number, baseHeightOffset: number, seedSalt: number) => {
             const surfaceY = TerrainService.getHeightAt(centerX, centerZ);
@@ -944,7 +973,7 @@ export class TerrainService {
         // Limit per-chunk to keep draw cost and worker time predictable.
         let treeSwarms = 0;
         const MAX_TREE_SWARMS = 4;
-        for (let i = 0; i < treeCandidates.length && treeSwarms < MAX_TREE_SWARMS; i += 4) {
+        for (let i = 0; i < treeCandidates.length && treeSwarms < MAX_TREE_SWARMS; i += TREE_STRIDE) {
             const tx = treeCandidates[i + 0] + worldOffsetX;
             const tz = treeCandidates[i + 2] + worldOffsetZ;
             const biome = BiomeManager.getBiomeAt(tx, tz);
@@ -1021,10 +1050,7 @@ export class TerrainService {
         // - stickPositions: stride 8: x, y, z, nx, ny, nz, variant, seed
         // - rockPositions:  stride 8: x, y, z, nx, ny, nz, variant, seed
         // - largeRockPositions: stride 6: x, y, z, radius, variant, seed
-        const hash01p = (x: number, y: number, z: number, salt: number) => {
-            const n = noise3D(x * 0.011 + salt * 0.17, y * 0.017 + salt * 0.31, z * 0.013 + salt * 0.23);
-            return (n + 1) * 0.5;
-        };
+        const hash01p = hash01;
 
         const isRockyMaterial = (m: number): boolean => (
             m === MaterialType.STONE ||
@@ -1040,7 +1066,7 @@ export class TerrainService {
 
         // 5.1 Sticks (near trees, biased to high-tree biomes)
         // NOTE: treeCandidates are chunk-local (XZ) and world-space Y.
-        for (let i = 0; i < treeCandidates.length && stickCandidates.length / 8 < MAX_STICKS; i += 4) {
+        for (let i = 0; i < treeCandidates.length && stickCandidates.length / 8 < MAX_STICKS; i += TREE_STRIDE) {
             const txLocal = treeCandidates[i + 0];
             const tyWorld = treeCandidates[i + 1];
             const tzLocal = treeCandidates[i + 2];
@@ -1085,6 +1111,9 @@ export class TerrainService {
                 const lx = txLocal + Math.cos(angle) * r;
                 const lz = tzLocal + Math.sin(angle) * r;
 
+                // Outside the padded grid findGroundNear would clamp to the edge column
+                // and place the stick at the wrong height.
+                if (lx < -PAD || lz < -PAD || lx >= CHUNK_SIZE_XZ + PAD || lz >= CHUNK_SIZE_XZ + PAD) continue;
                 const hit = findGroundNear(lx, lz, centerYIdx, 6, 1);
                 if (!hit) continue;
                 if (hit.worldY <= WATER_LEVEL + 0.15) continue;
@@ -1189,9 +1218,13 @@ export class TerrainService {
             const surfaceYIdx = clampi(Math.floor((top.worldY - MESH_Y_OFFSET) + PAD), 2, sizeY - 3);
 
             // Search for a deeper floor (air cell with solid below) well below the surface.
+            // The scan runs top-down and returns the first floor it meets, so it must
+            // START below the surface (it used to start above it and always found the
+            // surface itself, which the depth check then rejected: zero cave rocks).
             const minDepthCells = 12;
-            const center = surfaceYIdx - minDepthCells;
-            const floor = findGroundNear(lx, lz, center, 36, 2);
+            const scanRange = 18;
+            const center = surfaceYIdx - minDepthCells - scanRange;
+            const floor = findGroundNear(lx, lz, center, scanRange, 2);
             if (!floor) continue;
 
             // Must be meaningfully underground and on/near rock.

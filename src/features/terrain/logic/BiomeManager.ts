@@ -182,6 +182,23 @@ const lerp = (start: number, end: number, t: number) => start * (1 - t) + end * 
 // Helper to smooth the noise input (removes harsh linearity)
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
+/**
+ * Seeded PRNG stream (mulberry32) for one noise field. makeNoise2D pulls many
+ * values to shuffle its permutation; the old `() => hash(seed + n)` returned
+ * the same number every call (almost no entropy, and seed s's humidity field
+ * equalled seed s+1's temperature field).
+ */
+function seededRandom(seed: number, field: number): () => number {
+  let a = (Math.imul(seed | 0, 0x9e3779b1) ^ Math.imul(field, 0x85ebca77)) >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class BiomeManager {
   // World seed - configurable for different world generation
   private static seed = 1337;
@@ -211,11 +228,11 @@ export class BiomeManager {
     this.seed = normalizedSeed;
 
     // Recreate all noise functions with the new seed
-    this.tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
-    this.humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
-    this.continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
-    this.erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
-    this.sacredGroveNoise = makeNoise2D(() => this.hash(this.seed + 5));
+    this.tempNoise = makeNoise2D(seededRandom(this.seed, 1));
+    this.humidNoise = makeNoise2D(seededRandom(this.seed, 2));
+    this.continentalNoise = makeNoise2D(seededRandom(this.seed, 3));
+    this.erosionNoise = makeNoise2D(seededRandom(this.seed, 4));
+    this.sacredGroveNoise = makeNoise2D(seededRandom(this.seed, 5));
 
     // console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
   }
@@ -234,16 +251,16 @@ export class BiomeManager {
   }
 
   // 2D Noise functions for macro-climate
-  private static tempNoise = makeNoise2D(() => this.hash(this.seed + 1));
-  private static humidNoise = makeNoise2D(() => this.hash(this.seed + 2));
+  private static tempNoise = makeNoise2D(seededRandom(this.seed, 1));
+  private static humidNoise = makeNoise2D(seededRandom(this.seed, 2));
 
   // Physical Reality noise layers
   // ContinentalNoise: Low frequency, defines Ocean vs Land.
-  private static continentalNoise = makeNoise2D(() => this.hash(this.seed + 3));
+  private static continentalNoise = makeNoise2D(seededRandom(this.seed, 3));
   // ErosionNoise: Defines "Flatness" vs "Mountainous".
-  private static erosionNoise = makeNoise2D(() => this.hash(this.seed + 4));
+  private static erosionNoise = makeNoise2D(seededRandom(this.seed, 4));
   // SacredGroveNoise: Creates isolated pocket clearings for Root Hollows
-  private static sacredGroveNoise = makeNoise2D(() => this.hash(this.seed + 5));
+  private static sacredGroveNoise = makeNoise2D(seededRandom(this.seed, 5));
 
   // Scales - Adjusted for larger, more realistic features
   static readonly TEMP_SCALE = 0.0008; // (Was 0.0013)
@@ -257,10 +274,6 @@ export class BiomeManager {
   static readonly SACRED_GROVE_RADIUS = 32; // Radius of barren zone around Root Hollow center
 
   // Simple pseudo-random for seeding
-  private static hash(n: number): number {
-    n = Math.sin(n) * 43758.5453123;
-    return n - Math.floor(n);
-  }
 
   // --- 1. Biome Classification ---
 
@@ -312,7 +325,14 @@ export class BiomeManager {
     // Mix: 70% Base, 30% Noise (Adjusted for chaos)
     let temp = baseTemp * 0.7 + noiseTemp * 0.3;
 
-    if (this.currentWorldType === WorldType.CHAOS) {
+    // Forced climates are applied AFTER the mix: mixing first squashed FROZEN
+    // into [-0.54,-0.30] (mostly temperate grove, ~5% snow) and kept LUSH out
+    // of the hot band entirely.
+    if (this.currentWorldType === WorldType.FROZEN) {
+      temp = -0.75 + noiseTemp * 0.3;   // ~[-1.05, -0.45]: snow & ice spikes
+    } else if (this.currentWorldType === WorldType.LUSH) {
+      temp = 0.35 + noiseTemp * 0.35;   // ~[0, 0.7]: temperate through jungle
+    } else if (this.currentWorldType === WorldType.CHAOS) {
       temp = noiseTemp; // Pure noise for chaos
     }
 
