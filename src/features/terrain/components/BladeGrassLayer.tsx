@@ -2,7 +2,7 @@
  * BladeGrassLayer.tsx
  *
  * High-quality grass rendering using a single InstancedMesh per chunk.
- * Replaces the multi-layer ProceduralGrassLayer with a more efficient
+ * Replaces the former multi-layer grass layer with a more efficient
  * and visually superior approach.
  *
  * Key improvements:
@@ -23,6 +23,7 @@ import {
 } from '../shaders/BladeGrassShader';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { getNoiseTexture } from '@core/memory/sharedResources';
+import { LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 
 interface BladeGrassLayerProps {
   heightTex: Float32Array;
@@ -36,9 +37,6 @@ interface BladeGrassLayerProps {
   lodLevel: number;
 }
 
-// Light grid dimensions
-const LIGHT_GRID_SIZE_XZ = 8;
-const LIGHT_GRID_SIZE_Y = 32;
 
 /**
  * Get instance count based on LOD level

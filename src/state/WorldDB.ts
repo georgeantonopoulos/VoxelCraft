@@ -1,10 +1,11 @@
 import Dexie, { Table } from 'dexie';
 import { MaterialType } from '@/types';
+import { scopedChunkId } from './worldKey';
 
 // Defines the shape of a modification entry
 export interface ChunkModification {
   id?: number; // Not used with composite key, but good to keep optional
-  chunkId: string; // "cx,cz"
+  chunkId: string; // scopedChunkId(): "<worldKey>|cx,cz"
   voxelIndex: number; // Flat index in the chunk array
   material: MaterialType;
   density: number;
@@ -13,7 +14,7 @@ export interface ChunkModification {
 // Ground item pickup entry - tracks which generated items have been picked up
 export type GroundItemType = 'stick' | 'rock' | 'flora';
 export interface GroundItemPickup {
-  chunkId: string; // "cx,cz"
+  chunkId: string; // scopedChunkId(): "<worldKey>|cx,cz"
   itemType: GroundItemType;
   index: number; // Index in the source array (stickPositions, rockPositions, floraPositions)
 }
@@ -47,6 +48,9 @@ export class TheGroveDB extends Dexie {
 
 // Singleton instance
 export const worldDB = new TheGroveDB();
+
+// World scoping lives in a pure module (no IndexedDB) so it can be unit tested.
+export { makeWorldKey, setWorldKey, getWorldKey, scopedChunkId } from './worldKey';
 
 /**
  * Dexie cannot migrate primary key changes in-place. When we bump the schema to
@@ -92,7 +96,7 @@ export async function saveModification(
 ) {
   await worldDBReady;
 
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
 
   // Optimized Upsert using put()
   // Because we defined [chunkId+voxelIndex] as the primary key in version(2),
@@ -113,7 +117,7 @@ export async function saveModification(
 export async function getChunkModifications(cx: number, cz: number): Promise<ChunkModification[]> {
   await worldDBReady;
 
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   return await worldDB.modifications.where('chunkId').equals(chunkId).toArray();
 }
 
@@ -128,7 +132,7 @@ export async function saveChunkModificationsBulk(
 ): Promise<void> {
   await worldDBReady;
 
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   const entries = modifications.map(mod => ({
     chunkId,
     voxelIndex: mod.voxelIndex,
@@ -146,7 +150,7 @@ export async function saveChunkModificationsBulk(
 export async function clearChunkModifications(cx: number, cz: number): Promise<void> {
   await worldDBReady;
 
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   await worldDB.modifications.where('chunkId').equals(chunkId).delete();
 }
 
@@ -164,7 +168,7 @@ export async function saveGroundPickup(
   index: number
 ): Promise<void> {
   await worldDBReady;
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   await worldDB.groundPickups.put({ chunkId, itemType, index });
 }
 
@@ -173,7 +177,7 @@ export async function saveGroundPickup(
  */
 export async function getGroundPickups(cx: number, cz: number): Promise<GroundItemPickup[]> {
   await worldDBReady;
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   return await worldDB.groundPickups.where('chunkId').equals(chunkId).toArray();
 }
 
@@ -182,6 +186,6 @@ export async function getGroundPickups(cx: number, cz: number): Promise<GroundIt
  */
 export async function clearGroundPickups(cx: number, cz: number): Promise<void> {
   await worldDBReady;
-  const chunkId = `${cx},${cz}`;
+  const chunkId = scopedChunkId(cx, cz);
   await worldDB.groundPickups.where('chunkId').equals(chunkId).delete();
 }

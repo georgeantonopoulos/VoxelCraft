@@ -1,8 +1,7 @@
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { generateMesh, generateWaterSurfaceMesh, HumidityConfig } from '@features/terrain/logic/mesher';
 import { MeshData } from '@/types';
-import { getChunkModifications } from '@/state/WorldDB';
-import { CACHE_VERSION, getCachedChunk } from '@/state/ChunkCache';
+import { getChunkModifications, makeWorldKey, setWorldKey } from '@/state/WorldDB';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise } from '@core/math/noise';
@@ -358,6 +357,9 @@ ctx.onmessage = async (e: MessageEvent) => {
                 BiomeManager.setWorldType(worldType);
                 (self as any).worldType = worldType;
             }
+            if ((self as any).worldSeed !== undefined && (self as any).worldType !== undefined) {
+                setWorldKey(makeWorldKey((self as any).worldSeed, (self as any).worldType));
+            }
             if (profileMode) {
                 console.log(`[terrain.worker] Configured - SAB: false, profile: ${profileMode}`);
             }
@@ -368,62 +370,7 @@ ctx.onmessage = async (e: MessageEvent) => {
             const { cx, cz } = payload;
             let modifications: any[] = [];
             try { modifications = await getChunkModifications(cx, cz); } catch (err) { console.error('[terrain.worker] DB Read Error:', err); }
-            const worldType = (self as any).worldType || 'DEFAULT';
-            if (modifications.length === 0) {
-                const cached = await getCachedChunk(cx, cz, worldType, CACHE_VERSION);
-                if (cached) {
-                    const response = {
-                        key: `${cx},${cz}`, cx, cz, density: cached.density, material: cached.material, terrainVersion: 0, visualVersion: 0,
-                        metadata: { wetness: cached.meshWetness, mossiness: cached.meshMossiness },
-                        floraPositions: cached.floraPositions || new Float32Array(0),
-                        treePositions: cached.treePositions || new Float32Array(0),
-                        treeInstanceBatches: cached.treeInstanceBatches || {},
-                        rootHollowPositions: cached.rootHollowPositions || new Float32Array(0),
-                        stickPositions: cached.stickPositions || new Float32Array(0),
-                        rockPositions: cached.rockPositions || new Float32Array(0),
-                        drySticks: cached.drySticks || new Float32Array(0),
-                        jungleSticks: cached.jungleSticks || new Float32Array(0),
-                        rockDataBuckets: cached.rockDataBuckets || {},
-                        largeRockPositions: cached.largeRockPositions || new Float32Array(0),
-                        fireflyPositions: cached.fireflyPositions || new Float32Array(0),
-                        floraHotspots: cached.floraHotspots || new Float32Array(0),
-                        stickHotspots: cached.stickHotspots || new Float32Array(0),
-                        rockHotspots: cached.rockHotspots || new Float32Array(0),
-                        vegetationData: cached.vegetationData || {},
-                        meshPositions: cached.meshPositions, meshIndices: cached.meshIndices, meshMatWeightsA: cached.meshMatWeightsA, meshMatWeightsB: cached.meshMatWeightsB,
-                        meshMatWeightsC: cached.meshMatWeightsC, meshMatWeightsD: cached.meshMatWeightsD, meshNormals: cached.meshNormals, meshWetness: cached.meshWetness,
-                        meshMossiness: cached.meshMossiness, meshCavity: cached.meshCavity, meshWaterPositions: cached.meshWaterPositions, meshWaterIndices: cached.meshWaterIndices,
-                        meshWaterNormals: cached.meshWaterNormals, meshWaterShoreMask: cached.meshWaterShoreMask,
-                        colliderPositions: cached.colliderPositions, colliderIndices: cached.colliderIndices, colliderHeightfield: cached.colliderHeightfield, isHeightfield: cached.isHeightfield
-                    };
-                    const buffers: ArrayBuffer[] = [
-                        cached.density.buffer as ArrayBuffer, cached.material.buffer as ArrayBuffer, cached.meshPositions.buffer as ArrayBuffer, cached.meshIndices.buffer as ArrayBuffer,
-                        cached.meshNormals.buffer as ArrayBuffer, cached.meshMatWeightsA.buffer as ArrayBuffer, cached.meshMatWeightsB.buffer as ArrayBuffer, cached.meshMatWeightsC.buffer as ArrayBuffer,
-                        cached.meshMatWeightsD.buffer as ArrayBuffer, cached.meshWetness.buffer as ArrayBuffer, cached.meshMossiness.buffer as ArrayBuffer, cached.meshCavity.buffer as ArrayBuffer,
-                        cached.meshWaterPositions.buffer as ArrayBuffer, cached.meshWaterIndices.buffer as ArrayBuffer, cached.meshWaterNormals.buffer as ArrayBuffer, cached.meshWaterShoreMask.buffer as ArrayBuffer
-                    ];
-                    if (cached.floraPositions) buffers.push(cached.floraPositions.buffer as ArrayBuffer);
-                    if (cached.treePositions) buffers.push(cached.treePositions.buffer as ArrayBuffer);
-                    if (cached.rootHollowPositions) buffers.push(cached.rootHollowPositions.buffer as ArrayBuffer);
-                    if (cached.stickPositions) buffers.push(cached.stickPositions.buffer as ArrayBuffer);
-                    if (cached.rockPositions) buffers.push(cached.rockPositions.buffer as ArrayBuffer);
-                    if (cached.largeRockPositions) buffers.push(cached.largeRockPositions.buffer as ArrayBuffer);
-                    if (cached.drySticks) buffers.push(cached.drySticks.buffer as ArrayBuffer);
-                    if (cached.jungleSticks) buffers.push(cached.jungleSticks.buffer as ArrayBuffer);
-                    if (cached.fireflyPositions) buffers.push(cached.fireflyPositions.buffer as ArrayBuffer);
-                    if (cached.floraHotspots) buffers.push(cached.floraHotspots.buffer as ArrayBuffer);
-                    if (cached.stickHotspots) buffers.push(cached.stickHotspots.buffer as ArrayBuffer);
-                    if (cached.rockHotspots) buffers.push(cached.rockHotspots.buffer as ArrayBuffer);
-                    if (cached.colliderPositions) buffers.push(cached.colliderPositions.buffer as ArrayBuffer);
-                    if (cached.colliderIndices) buffers.push(cached.colliderIndices.buffer as ArrayBuffer);
-                    if (cached.colliderHeightfield) buffers.push(cached.colliderHeightfield.buffer as ArrayBuffer);
-                    if (cached.rockDataBuckets) { for (const b of Object.values(cached.rockDataBuckets)) buffers.push((b as any).buffer); }
-                    if (cached.vegetationData) { for (const b of Object.values(cached.vegetationData)) buffers.push((b as any).buffer); }
-                    if (cached.treeInstanceBatches) { for (const b of Object.values(cached.treeInstanceBatches as any)) { const batch = b as any; if (batch.matrices) buffers.push(batch.matrices.buffer); if (batch.originalIndices) buffers.push(batch.originalIndices.buffer); } }
-                    ctx.postMessage({ type: 'GENERATED', payload: response }, buffers);
-                    return;
-                }
-            }
+            // (The IndexedDB chunk cache read was removed: nothing ever wrote to it, so it only added a round-trip per chunk.)
             const { density, material, metadata, floraPositions, treePositions, stickPositions, rockPositions, largeRockPositions, rootHollowPositions, fireflyPositions } = TerrainService.generateChunk(cx, cz, modifications);
             let isEmpty = true;
             for (let i = 0; i < density.length; i++) { if (density[i] > ISO_LEVEL) { isEmpty = false; break; } }
@@ -557,7 +504,12 @@ ctx.onmessage = async (e: MessageEvent) => {
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'GENERATED', payload: response }, transfers);
         } else if (type === 'REMESH') {
-            const { density, material, wetness, mossiness, key, cx, cz, version } = payload;
+            const { density, material, wetness, mossiness, key, cx, cz, version, floraPositions } = payload;
+
+            // Rebuild the GI light grid: digging opens caves to the sky, so reusing the
+            // old per-vertex light (whose length no longer matches) broke dug chunks.
+            const remeshLights = extractLuminaLights(floraPositions ?? new Float32Array(0));
+            const remeshLightGrid = generateLightGrid(density, remeshLights, getSkyLightConfig(0.5));
 
             // Build humidity config for Sacred Grove tree spreading
             const humidityConfig: HumidityConfig = {
@@ -568,15 +520,15 @@ ctx.onmessage = async (e: MessageEvent) => {
             };
 
             const mesh = generateMesh(
-                density, material, wetness, mossiness, undefined,
+                density, material, wetness, mossiness, remeshLightGrid,
                 humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ
             ) as MeshData;
             const response = {
-                key, cx, cz, version, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
+                key, cx, cz, version, lightGrid: remeshLightGrid, meshLightColors: mesh.lightColors, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
                 colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
             };
             const transfers: any[] = [
-                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
+                mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors?.buffer, remeshLightGrid.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
             ].filter(Boolean);
             if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
             ctx.postMessage({ type: 'REMESHED', payload: response }, transfers);

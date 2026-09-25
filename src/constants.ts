@@ -42,6 +42,13 @@ export const LOD_DISTANCE_VEGETATION_ANY = 2; // >2: No vegetation at all
 export const LOD_DISTANCE_TREES_ANY = 3;  // >3: No trees at all
 export const WATER_LEVEL = 4.5;
 
+/**
+ * Terrain generator version. Part of the world key that scopes persisted
+ * modifications, so a generator change never stamps old edits onto new terrain.
+ * Bump whenever generateChunk output changes near the surface.
+ */
+export const GEN_VERSION = 1;
+
 // Physics
 export const GRAVITY = -15.0;
 export const PLAYER_SPEED = 6;

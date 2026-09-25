@@ -21,7 +21,7 @@ import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
-import { getGroundPickups } from '@state/WorldDB';
+import { getGroundPickups, makeWorldKey, setWorldKey } from '@state/WorldDB';
 import { BiomeManager, getFogSettings, BiomeFogSettings } from '@features/terrain/logic/BiomeManager';
 
 // Extracted modules
@@ -34,6 +34,9 @@ import {
 } from '@features/terrain/hooks/useTerrainInteraction';
 import { useItemPickup } from '@features/terrain/hooks/useItemPickup';
 import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
+
+/** How long a felled tree prop lives before it is removed from the scene. */
+const FALLING_TREE_LIFETIME_MS = 12000;
 
 const LeafPickupEffect = ({
   start,
@@ -713,8 +716,21 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }));
   }, []);
 
+  // Felled trees are transient physics props; drop them once they have settled so
+  // long sessions don't accumulate rigid bodies (previously this list only grew).
+  const fallingTreeTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  useEffect(() => () => {
+    fallingTreeTimers.current.forEach(clearTimeout);
+    fallingTreeTimers.current.clear();
+  }, []);
+
   const handleTreeFall = useCallback((tree: FallingTreeData) => {
     setFallingTrees(prev => [...prev, tree]);
+    const timer = setTimeout(() => {
+      fallingTreeTimers.current.delete(timer);
+      setFallingTrees(prev => prev.filter(t => t.id !== tree.id));
+    }, FALLING_TREE_LIFETIME_MS);
+    fallingTreeTimers.current.add(timer);
     emitGroveEvent({ type: 'tree-felled' });
   }, []);
 
@@ -771,6 +787,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Send configuration to all workers (including seed for deterministic generation)
     const profileEnabled = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('profile');
+    // Scope persisted edits/pickups to this world (main thread copy; workers set theirs on CONFIGURE).
+    setWorldKey(makeWorldKey(seed, worldType));
     pool.postToAll({ type: 'CONFIGURE', payload: { worldType, seed, profile: profileEnabled } });
 
     // Handle messages from any worker in the pool
@@ -1587,6 +1605,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               material: chunk.material,
               wetness: metadata.wetness,
               mossiness: metadata.mossiness,
+              floraPositions: chunk.floraPositions,
               version: chunk.terrainVersion
             }
           });
