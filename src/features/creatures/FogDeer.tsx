@@ -39,6 +39,12 @@ function biomeDeerFactor(biome: BiomeType): number {
  * Rendering: instanced planes + procedural SDF silhouette shader (no new textures/assets).
  * Simulation: low-frequency tick (15–30 Hz), state in refs (no per-frame React state).
  */
+/** Deterministic hash of (seed, generation, attempt) to [0, 1). */
+const hash01 = (seed: number, gen: number, attempt: number): number => {
+  const h = Math.sin(seed * 12.9898 + gen * 78.233 + attempt * 37.719) * 43758.5453;
+  return h - Math.floor(h);
+};
+
 export const FogDeer: React.FC<{
   enabled: boolean;
   playerRef: React.MutableRefObject<PlayerMovedRef>;
@@ -91,6 +97,9 @@ export const FogDeer: React.FC<{
   const mode = useRef<Uint8Array>(new Uint8Array(COUNT)); // 0 idle, 1 flee, 2 cooldown
   const cooldown = useRef<Float32Array>(new Float32Array(COUNT));
   const aliveFor = useRef<Float32Array>(new Float32Array(COUNT)); // seconds since last respawn
+  // Mixed into the spawn hash: with the per-deer seed alone every respawn landed
+  // at the same bearing and distance from the player.
+  const respawns = useRef<Uint32Array>(new Uint32Array(COUNT));
 
   // Rendering.
   const meshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -224,7 +233,7 @@ export const FogDeer: React.FC<{
 
         float d = deerSdf(p, gait);
         float aa = fwidth(d) * 1.35 + 0.01;
-        float alpha = smoothstep(aa, -aa, d);
+        float alpha = 1.0 - smoothstep(-aa, aa, d);
 
         // Soft edge dissolve (helps hide respawns and reduces popping).
         float n = hash21(vUv * 64.0 + vSeed * 10.0);
@@ -333,17 +342,18 @@ export const FogDeer: React.FC<{
     // If the player's biome doesn't support deer, keep the whole system quiet.
     if (biomeDeerFactor(baseBiome) <= 0.01) return false;
 
+    const gen = respawns.current[i]++;
     // Try a handful of random spots; if none match, we skip this deer for now.
     for (let attempt = 0; attempt < 8; attempt++) {
-      // Default: pseudo-random angle derived from seed.
-      let a = (seed.current[i] * 1000.0 + attempt * 13.37) % (Math.PI * 2);
+      // Default: pseudo-random angle from the deer's seed and respawn count.
+      let a = hash01(seed.current[i], gen, attempt) * Math.PI * 2;
       if (debugConfig.spawnFront) {
         // `playerRef.rotation` is a minimap-friendly angle; convert to world polar angle where 0 rad is +X.
         // This keeps one deer roughly "in front" at spawn for screenshot verification.
         const forwardAngle = -playerRef.current.rotation - Math.PI / 2;
         a = forwardAngle + (i - 1) * 0.45 + attempt * 0.18;
       }
-      const t = ((seed.current[i] * 997.0 + attempt * 0.73) % 1.0);
+      const t = hash01(seed.current[i] + 0.5, gen, attempt);
       const r = THREE.MathUtils.lerp(innerR, outerR, t);
 
       const wx = playerRef.current.x + Math.cos(a) * r;

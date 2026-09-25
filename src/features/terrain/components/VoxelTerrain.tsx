@@ -165,6 +165,9 @@ const Particles = ({
   const directionsAttr = useRef<THREE.InstancedBufferAttribute>(null);
   const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
   const colorsAttr = useRef<THREE.InstancedBufferAttribute>(null);
+  // Stable identity: the CSM React wrapper rebuilds its material whenever the
+  // uniforms object changes, and this component re-renders on every burst.
+  const uniforms = useMemo(() => ({ uTime: { value: 0 } }), []);
 
   const VSHADER = `
     attribute vec3 aOffset;
@@ -299,9 +302,7 @@ const Particles = ({
                 csm_DiffuseColor = vec4(vColor, 1.0);
             }
         `}
-        uniforms={{
-          uTime: { value: 0 }
-        }}
+        uniforms={uniforms}
         roughness={0.8}
         toneMapped={false}
       />

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
@@ -11,6 +11,9 @@ export const emitSpark = (position: THREE.Vector3) => {
 
 export const SparkSystem: React.FC = () => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
+    // Stable identity: the CSM React wrapper rebuilds its material whenever the
+    // uniforms object changes.
+    const uniforms = useMemo(() => ({ uTime: { value: 0 } }), []);
     const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
     const directionsAttr = useRef<THREE.InstancedBufferAttribute>(null);
     const lifeAttr = useRef<THREE.InstancedBufferAttribute>(null);
@@ -98,9 +101,7 @@ export const SparkSystem: React.FC = () => {
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshBasicMaterial}
                 vertexShader={SPARK_VSHADER}
-                uniforms={{
-                    uTime: { value: 0 }
-                }}
+                uniforms={uniforms}
                 color="#ffaa00"
                 toneMapped={false}
             />

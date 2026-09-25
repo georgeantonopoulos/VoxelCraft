@@ -76,7 +76,9 @@ const keyboardMap = [
   { name: 'right', keys: ['ArrowRight', 'd', 'D'] },
   { name: 'jump', keys: ['Space'] },
   { name: 'shift', keys: ['Shift'] },
-  { name: 'crouch', keys: ['ControlLeft', 'ControlRight'] },
+  // Not Ctrl: crouch-walking (Ctrl+W) closed the browser tab, and pages cannot
+  // intercept that shortcut.
+  { name: 'crouch', keys: ['KeyZ'] },
 ];
 
 /**
@@ -482,7 +484,7 @@ const App: React.FC = () => {
           }}
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
-          <SceneWarmup />
+          <SceneWarmup ready={gameStarted && terrainLoaded} />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}
           {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}

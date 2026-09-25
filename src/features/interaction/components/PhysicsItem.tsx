@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, Suspense } from 'react';
+import React, { useRef, useEffect, useMemo, Suspense } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier } from '@react-three/rapier';
 import { PositionalAudio } from '@react-three/drei';
@@ -250,8 +250,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           {item.type === ItemType.PICKAXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
           {item.type === ItemType.AXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
 
-          {/* Custom Tool (Stick-based) Collider Fallback */}
-          {item.customToolData && item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
+          {/* Custom stick-based tools use the STICK capsule above (a second copy doubled their mass). */}
 
           <UniversalTool item={item.customToolData || item.type} />
         </>
@@ -292,6 +291,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
 const FireParticles: React.FC = () => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  // Stable identity: the CSM React wrapper rebuilds its material whenever the
+  // uniforms object changes, and inline literals rebuilt it on every re-render.
+  const uniforms = useMemo(() => ({ uTime: { value: 0 } }), []);
   const glowRef = useRef<THREE.Mesh>(null);
   const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
   const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
@@ -349,7 +351,7 @@ const FireParticles: React.FC = () => {
         <CustomShaderMaterial
           baseMaterial={THREE.MeshBasicMaterial}
           vertexShader={FIRE_VSHADER}
-          uniforms={{ uTime: { value: 0 } }}
+          uniforms={uniforms}
           color={getItemMetadata(ItemType.FIRE)?.color || "#ffcc00"}
           toneMapped={false}
         />

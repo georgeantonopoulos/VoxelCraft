@@ -23,9 +23,23 @@ describe('Sky visibility estimate', () => {
     expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeGreaterThan(0.95);
   });
 
-  it('standing beside a cliff is still mostly open sky', () => {
+  it('standing beside a cliff is still open sky', () => {
     const rt = world((x, y) => y < 10 || (x > 18 && y < 60));
-    expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeGreaterThan(0.6);
+    expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeGreaterThan(0.9);
+  });
+
+  it('a narrow open valley is not underground', () => {
+    // Steep walls 2m either side, open above (dune trough / canyon).
+    const rt = world((x, y) => y < 10 || ((x < 14 || x > 18) && y < 40));
+    expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('a cave mouth (roof overhead, open sides) is partly lit', () => {
+    // Thin roof slab 4m above, only over the player.
+    const rt = world((x, y, z) => y < 10 || (y > 14 && y < 17 && Math.abs(x - 16) < 3 && Math.abs(z - 16) < 3));
+    const v = rt.estimateSkyVisibility(16, 11, 16)!;
+    expect(v).toBeGreaterThan(0.2);
+    expect(v).toBeLessThanOrEqual(0.5);
   });
 
   it('a cave with a roof reads as enclosed', () => {

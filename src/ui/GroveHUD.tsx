@@ -203,6 +203,7 @@ const ControlsHelp: React.FC = () => {
 
   const rows: Array<[string, string]> = [
     ['WASD / Space', 'Move · Jump (double-tap to fly)'],
+    ['Z · Shift', 'Crouch · Descend (fly/swim)'],
     ['Left Click', 'Dig · Chop · Strike'],
     ['Right Click', 'Place · Throw · Use'],
     ['Q', 'Gather what you look at'],

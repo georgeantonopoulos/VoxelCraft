@@ -5,7 +5,7 @@
  * across: held items, crafting preview, inventory thumbnails, physics items.
  */
 
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
@@ -56,6 +56,16 @@ export const StickMesh: React.FC<StickMeshProps> = ({
 }) => {
     const geometry = useMemo(() => createStickGeometry(isThumbnail), [isThumbnail]);
     const mat = STICK_MATERIALS[variant];
+    // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
+    // the uniforms object identity changes, so an inline literal recompiled it on
+    // every re-render.
+    const uniforms = useMemo(() => ({
+        uInstancing: { value: false },
+        uSeed: { value: seed },
+        uHeight: { value: height },
+        uNoiseTexture: { value: getNoiseTexture() },
+        uColor: { value: new THREE.Color(mat.color) }
+    }), [seed, height, mat.color]);
 
     // Scale height proportionally
     const heightScale = height / ITEM_DIMENSIONS.stick.height;
@@ -74,13 +84,7 @@ export const StickMesh: React.FC<StickMeshProps> = ({
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={STICK_SHADER.vertex}
                 fragmentShader={STICK_SHADER.fragment}
-                uniforms={{
-                    uInstancing: { value: false },
-                    uSeed: { value: seed },
-                    uHeight: { value: height },
-                    uNoiseTexture: { value: getNoiseTexture() },
-                    uColor: { value: new THREE.Color(mat.color) }
-                }}
+                uniforms={uniforms}
                 color={mat.color}
                 roughness={mat.roughness}
                 metalness={mat.metalness}
@@ -108,6 +112,16 @@ export const StoneMesh: React.FC<StoneMeshProps> = ({
 }) => {
     const geometry = useMemo(() => createStoneGeometry(isThumbnail), [isThumbnail]);
     const mat = STONE_MATERIALS[variant];
+    // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
+    // the uniforms object identity changes, so an inline literal recompiled it on
+    // every re-render.
+    const uniforms = useMemo(() => ({
+        uInstancing: { value: false },
+        uNoiseTexture: { value: getNoiseTexture() },
+        uSeed: { value: seed },
+        uDisplacementStrength: { value: 0.15 },
+        uColor: { value: new THREE.Color(mat.color) }
+    }), [seed, mat.color]);
 
     if (isThumbnail) {
         return (
@@ -129,13 +143,7 @@ export const StoneMesh: React.FC<StoneMeshProps> = ({
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={ROCK_SHADER.vertex}
                 fragmentShader={ROCK_SHADER.fragment}
-                uniforms={{
-                    uInstancing: { value: false },
-                    uNoiseTexture: { value: getNoiseTexture() },
-                    uSeed: { value: seed },
-                    uDisplacementStrength: { value: 0.15 },
-                    uColor: { value: new THREE.Color(mat.color) }
-                }}
+                uniforms={uniforms}
                 color={mat.color}
                 roughness={mat.roughness}
                 metalness={mat.metalness}
@@ -165,6 +173,16 @@ export const ShardMesh: React.FC<ShardMeshProps> = ({
 }) => {
     const geometry = useMemo(() => createShardGeometry(isThumbnail), [isThumbnail]);
     const mat = SHARD_MATERIALS[variant];
+    // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
+    // the uniforms object identity changes, so an inline literal recompiled it on
+    // every re-render.
+    const uniforms = useMemo(() => ({
+        uInstancing: { value: false },
+        uNoiseTexture: { value: getNoiseTexture() },
+        uSeed: { value: seed },
+        uDisplacementStrength: { value: 0.08 },
+        uColor: { value: new THREE.Color(mat.color) }
+    }), [seed, mat.color]);
 
     if (isThumbnail) {
         return (
@@ -186,13 +204,7 @@ export const ShardMesh: React.FC<ShardMeshProps> = ({
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={SHARD_SHADER.vertex}
                 fragmentShader={SHARD_SHADER.fragment}
-                uniforms={{
-                    uInstancing: { value: false },
-                    uNoiseTexture: { value: getNoiseTexture() },
-                    uSeed: { value: seed },
-                    uDisplacementStrength: { value: 0.08 },
-                    uColor: { value: new THREE.Color(mat.color) }
-                }}
+                uniforms={uniforms}
                 color={mat.color}
                 roughness={mat.roughness}
                 metalness={mat.metalness}
@@ -215,13 +227,22 @@ interface FloraMeshProps {
 
 export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = false, seed = 0 }) => {
     const config = getFloraGeometryConfig(isThumbnail);
-    const materialRef = useRef<any>(null);
+    // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
+    // the uniforms object identity changes, so an inline literal recompiled it on
+    // every re-render.
+    // All three lobes share one uTime so they pulse together (only the first
+    // lobe's material used to be animated).
+    const uniforms = useMemo(() => {
+        const uTime = { value: 0 };
+        const glow = new THREE.Color(ITEM_COLORS.flora.glow);
+        const noise = { value: getNoiseTexture() };
+        const lobe = (s: number) => ({ uTime, uSeed: { value: s }, uColor: { value: glow }, uNoiseTexture: noise });
+        return { uTime, main: lobe(seed), secondary: lobe(seed + 1.5), tertiary: lobe(seed + 3.0) };
+    }, [seed]);
 
     // Update time uniform for pulsing animation
     useFrame(({ clock }) => {
-        if (materialRef.current?.uniforms && !isThumbnail) {
-            materialRef.current.uniforms.uTime.value = clock.getElapsedTime();
-        }
+        if (!isThumbnail) uniforms.uTime.value = clock.getElapsedTime();
     });
 
     // Thumbnail uses simple material for performance
@@ -264,16 +285,10 @@ export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = f
             <mesh castShadow receiveShadow>
                 <sphereGeometry args={[config.main.radius, config.main.segments, config.main.segments]} />
                 <CustomShaderMaterial
-                    ref={materialRef}
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={FLORA_SHADER.vertex}
                     fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={{
-                        uTime: { value: 0 },
-                        uSeed: { value: seed },
-                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
-                        uNoiseTexture: { value: getNoiseTexture() }
-                    }}
+                    uniforms={uniforms.main}
                     toneMapped={false}
                 />
             </mesh>
@@ -283,12 +298,7 @@ export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = f
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={FLORA_SHADER.vertex}
                     fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={{
-                        uTime: { value: 0 },
-                        uSeed: { value: seed + 1.5 },
-                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
-                        uNoiseTexture: { value: getNoiseTexture() }
-                    }}
+                    uniforms={uniforms.secondary}
                     toneMapped={false}
                 />
             </mesh>
@@ -298,12 +308,7 @@ export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = f
                     baseMaterial={THREE.MeshStandardMaterial}
                     vertexShader={FLORA_SHADER.vertex}
                     fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={{
-                        uTime: { value: 0 },
-                        uSeed: { value: seed + 3.0 },
-                        uColor: { value: new THREE.Color(ITEM_COLORS.flora.glow) },
-                        uNoiseTexture: { value: getNoiseTexture() }
-                    }}
+                    uniforms={uniforms.tertiary}
                     toneMapped={false}
                 />
             </mesh>
@@ -390,6 +395,14 @@ interface UniversalToolProps {
     isThumbnail?: boolean;
 }
 
+// Stable across renders (see the note on memoized CSM uniforms above).
+let torchHandleUniforms: Record<string, THREE.IUniform> | null = null;
+const getTorchHandleUniforms = () => (torchHandleUniforms ??= {
+    uSeed: { value: 42.0 },
+    uColor: { value: new THREE.Color('#6b4a2f') },
+    uNoiseTexture: { value: getNoiseTexture() }
+});
+
 export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail = false }) => {
     const thumbScale = isThumbnail ? 1.2 : 1.0;
 
@@ -444,11 +457,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                                     baseMaterial={THREE.MeshStandardMaterial}
                                     vertexShader={TORCH_SHADER.vertex}
                                     fragmentShader={TORCH_SHADER.fragment}
-                                    uniforms={{
-                                        uSeed: { value: 42.0 },
-                                        uColor: { value: new THREE.Color('#6b4a2f') },
-                                        uNoiseTexture: { value: getNoiseTexture() }
-                                    }}
+                                    uniforms={getTorchHandleUniforms()}
                                     roughness={0.9}
                                 />
                             )}

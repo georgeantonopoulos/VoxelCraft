@@ -11,6 +11,9 @@ import { useSettingsStore } from '@state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
+
+/** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
+const THROW_SPAWN_CLEARANCE = 0.8;
 import { getToolCapabilities } from './ToolCapabilities';
 
 interface InteractionHandlerProps {
@@ -75,7 +78,15 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       // Calculate Throw Vector
       const origin = camera.position.clone();
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      const spawnPos = origin.add(direction.clone().multiplyScalar(0.5));
+      // Spawn clear of the player's capsule (radius 0.4): push forward along the
+      // horizontal view direction first. 0.5m along the view ray put downward
+      // throws inside the capsule, which then kicked the item or the player.
+      const flat = new THREE.Vector3(direction.x, 0, direction.z);
+      // Looking straight down: the screen's "up" axis points where the player faces.
+      if (flat.lengthSq() < 1e-6) flat.set(0, 1, 0).applyQuaternion(camera.quaternion).setY(0);
+      if (flat.lengthSq() < 1e-6) flat.set(0, 0, -1);
+      flat.normalize();
+      const spawnPos = origin.addScaledVector(flat, THROW_SPAWN_CLEARANCE).addScaledVector(direction, 0.25);
       const force = 24.0;
       const velocity = direction.multiplyScalar(force);
       velocity.y += 2.0;

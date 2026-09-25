@@ -113,7 +113,7 @@ const VEGETATION_SHADER = {
         float fogAmt = 1.0 - exp(-pow(distFactor * density, 2.0));
 
         if (uHeightFogEnabled > 0.5) {
-            float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPos.y);
+            float heightFactor = 1.0 - smoothstep(uHeightFogOffset, uHeightFogOffset + uHeightFogRange, vWorldPos.y);
             float hDistFactor = smoothstep(5.0, 25.0, fogDist);
             float heightFog = heightFactor * uHeightFogStrength * hDistFactor;
             fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);

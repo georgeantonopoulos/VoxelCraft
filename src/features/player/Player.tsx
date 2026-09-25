@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
@@ -28,6 +28,10 @@ const scratchUp = new THREE.Vector3(0, 1, 0);
 const scratchVelocity = new THREE.Vector3();
 const scratchCameraPos = new THREE.Vector3();
 const scratchPushDir = new THREE.Vector3();
+
+/** Camera wall probes only consider terrain (not items, flora, etc.). */
+const isTerrainCollider = (collider: { parent: () => { userData?: unknown } | null }): boolean =>
+  (collider.parent()?.userData as { type?: string } | undefined)?.type === 'terrain';
 
 // Camera collision constants
 const EYE_HEIGHT = 0.75;
@@ -64,6 +68,8 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
   const getInput = usePlayerInput();
   const { rapier, world } = useRapier();
+  // Reused every frame for the camera wall probes (no per-frame allocations).
+  const cameraRay = useMemo(() => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }), [rapier]);
   const [isFlying, setIsFlying] = useState(false);
   const isCrouching = useRef(false);
   const lastSpacePress = useRef<number>(0);
@@ -200,17 +206,26 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       setUnderwaterState(isFullyUnderwater, state.clock.getElapsedTime());
     }
 
-    // Handle crouching - update collider shape when crouch state changes
-    if (crouch !== isCrouching.current && collider.current && !isFlying && !inWater) {
-      isCrouching.current = crouch;
-      const newHalfHeight = crouch ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL;
-      collider.current.setHalfHeight(newHalfHeight);
-    }
+    // Crouching resizes the capsule around its centre, so shift the body by the
+    // height change to keep the feet planted (shrinking used to drop the player
+    // 0.3m every crouch and growing pushed the capsule into the ground).
+    const setCrouched = (next: boolean) => {
+      if (!collider.current || !body.current) return;
+      const delta = CAPSULE_HALF_HEIGHT_NORMAL - CAPSULE_HALF_HEIGHT_CROUCHED;
+      const t = body.current.translation();
+      if (!next) {
+        // Stand up only with headroom above the crouched capsule.
+        const top = t.y + CAPSULE_HALF_HEIGHT_CROUCHED + CAPSULE_RADIUS;
+        const ray = new rapier.Ray({ x: t.x, y: top, z: t.z }, { x: 0, y: 1, z: 0 });
+        if (world.castRay(ray, delta * 2 + 0.05, true, undefined, undefined, undefined, body.current)) return;
+      }
+      isCrouching.current = next;
+      collider.current.setHalfHeight(next ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL);
+      body.current.setTranslation({ x: t.x, y: t.y + (next ? -delta : delta), z: t.z }, true);
+    };
+    if (crouch !== isCrouching.current && !isFlying && !inWater) setCrouched(crouch);
     // Reset crouch when flying or in water
-    if ((isFlying || inWater) && isCrouching.current && collider.current) {
-      isCrouching.current = false;
-      collider.current.setHalfHeight(CAPSULE_HALF_HEIGHT_NORMAL);
-    }
+    if ((isFlying || inWater) && isCrouching.current) setCrouched(false);
 
     // Calculate rotation for minimap
     camera.getWorldDirection(scratchCamDir);
@@ -313,18 +328,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     // Raycast in multiple directions from camera position to detect nearby terrain walls
     // Push camera away from any walls that are too close
     // Filter to only hit terrain colliders (not items, flora, etc.)
-    const isTerrainCollider = (collider: any): boolean => {
-      const parent = collider.parent();
-      const userData = parent?.userData as { type?: string } | undefined;
-      return userData?.type === 'terrain';
-    };
-
     for (const dir of CAMERA_PUSH_DIRECTIONS) {
-      const ray = new rapier.Ray(
-        { x: scratchCameraPos.x, y: scratchCameraPos.y, z: scratchCameraPos.z },
-        dir
-      );
-      const hit = world.castRay(ray, CAMERA_CLIP_MARGIN, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+      cameraRay.origin.x = scratchCameraPos.x;
+      cameraRay.origin.y = scratchCameraPos.y;
+      cameraRay.origin.z = scratchCameraPos.z;
+      cameraRay.dir = dir;
+      const hit = world.castRay(cameraRay, CAMERA_CLIP_MARGIN, true, undefined, undefined, undefined, undefined, isTerrainCollider);
       if (hit && hit.timeOfImpact < CAMERA_CLIP_MARGIN) {
         // Wall is too close - push camera away from it
         const pushDistance = CAMERA_CLIP_MARGIN - hit.timeOfImpact;

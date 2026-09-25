@@ -20,6 +20,11 @@ const STUMP_CONFIG = {
     embedOffset: 0.3
 };
 
+// Stable props for FractalTree: fresh objects each render invalidated its
+// physics memo (keyed on userData) on every RootHollow re-render.
+const TREE_LOCAL_POSITION = new THREE.Vector3(0, 0, 0);
+const FLORA_TREE_USER_DATA = { type: 'flora_tree' } as const;
+
 interface RootHollowProps {
     position: [number, number, number];
     normal?: number[]; // [nx, ny, nz]
@@ -266,9 +271,9 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             {(status === 'CHARGING' || status === 'GROWING') && (
                 <FractalTree
                     seed={Math.abs(px * 31 + pz * 17)}
-                    position={new THREE.Vector3(0, 0, 0)}
+                    position={TREE_LOCAL_POSITION}
                     baseRadius={stumpRadius * 0.7}
-                    userData={{ type: 'flora_tree' }}
+                    userData={FLORA_TREE_USER_DATA}
                     orientation={quaternion}
                     worldPosition={treeWorldPosition}
                     worldQuaternion={quaternion}

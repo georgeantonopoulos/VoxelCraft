@@ -385,13 +385,10 @@ export const FirstPersonTools: React.FC = () => {
             const count = capabilities.luminaCount ?? 0;
             const intensity = isLumina ? (count * 1.5 + glowBoost.current) : 0;
 
-            if (intensity > 0) {
-                luminaLightRef.current.visible = true;
-                luminaLightRef.current.intensity = intensity;
-                luminaLightRef.current.distance = 8 + intensity * 2;
-            } else {
-                luminaLightRef.current.visible = false;
-            }
+            // Dim rather than hide: toggling `visible` changes the light count
+            // and recompiles every lit shader.
+            luminaLightRef.current.intensity = intensity;
+            if (intensity > 0) luminaLightRef.current.distance = 8 + intensity * 2;
         }
         frameProfiler.end('first-person-tools');
     });
@@ -407,12 +404,9 @@ export const FirstPersonTools: React.FC = () => {
                 color="#00FFFF"
                 distance={8}
                 decay={2}
-                visible={false}
             />
             <group ref={torchRef}>
-                <group visible={selectedItem === ItemType.TORCH}>
-                    <TorchTool />
-                </group>
+                <TorchTool active={selectedItem === ItemType.TORCH} />
             </group>
             {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
             {selectedItem === ItemType.TORCH && <TorchSound />}

@@ -306,6 +306,12 @@ export const SunFollower: React.FC<{
         const glowMeshRef = useRef<THREE.Mesh>(null);
         const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
         const target = useMemo(() => new THREE.Object3D(), []);
+        // Stable uniforms: an inline literal replaced them on every re-render.
+        const glowUniforms = useMemo(() => ({
+            uColor: { value: new THREE.Color() },
+            uOpacity: { value: 0.25 },
+            uTime: { value: 0 }
+        }), []);
 
         const smoothSunPos = useRef(new THREE.Vector3());
         const lastCameraPos = useRef(new THREE.Vector3());
@@ -321,7 +327,9 @@ export const SunFollower: React.FC<{
 
         useEffect(() => {
             lastCameraPos.current.copy(camera.position);
-            smoothSunPos.current.set(0, 0, 0);
+            // Follows the camera by accumulated deltas, so it must start at the
+            // camera (starting at the origin offset the sun by the spawn position).
+            smoothSunPos.current.copy(camera.position);
         }, [camera]);
 
         useFrame(({ clock }) => {
@@ -468,11 +476,7 @@ export const SunFollower: React.FC<{
                         depthWrite={false}
                         fog={false}
                         blending={THREE.AdditiveBlending}
-                        uniforms={{
-                            uColor: { value: new THREE.Color() },
-                            uOpacity: { value: 0.25 },
-                            uTime: { value: 0 }
-                        }}
+                        uniforms={glowUniforms}
                         vertexShader={`
             varying vec2 vUv;
             void main() {
@@ -494,7 +498,7 @@ export const SunFollower: React.FC<{
             void main() {
               vec2 centered = vUv - 0.5;
               float dist = length(centered);
-              float mask = smoothstep(0.5, 0.46, dist);
+              float mask = 1.0 - smoothstep(0.46, 0.5, dist);
               if (mask <= 0.0) discard;
               float angle = ((abs(centered.y) + abs(centered.x)) < 1e-6 ? 0.0 : atan(centered.y, centered.x));
               float t = uTime;
@@ -511,7 +515,7 @@ export const SunFollower: React.FC<{
               float rays = (rayA * 0.5 + rayB * 0.3 + rayC * 0.2);
               rays = pow(max(0.0, rays), 5.5);
               float rayLen = 0.1 + 0.08 * noise(angle * 4.0 + t * 0.1);
-              float rayMask = smoothstep(rayLen, 0.0, dist);
+              float rayMask = 1.0 - smoothstep(0.0, rayLen, dist);
               float finalGlow = core + halo + (rays * rayMask * 2.5);
               vec3 coreCol = vec3(1.0, 1.0, 0.95);
               vec3 scatteringCol = uColor;
@@ -543,6 +547,7 @@ export const MoonFollower: React.FC<{
         const moonMeshRef = useRef<THREE.Mesh>(null);
         const lightRef = useRef<THREE.DirectionalLight>(null);
         const target = useMemo(() => new THREE.Object3D(), []);
+        const moonUniforms = useMemo(() => ({ uOpacity: { value: 1.0 } }), []);
         const tmpLightOffset = useRef(new THREE.Vector3());
         const tmpVisualOffset = useRef(new THREE.Vector3());
 
@@ -599,7 +604,7 @@ export const MoonFollower: React.FC<{
                     <sphereGeometry args={[12, 32, 32]} />
                     <shaderMaterial
                         transparent
-                        uniforms={{ uOpacity: { value: 1.0 } }}
+                        uniforms={moonUniforms}
                         vertexShader={`
               varying vec2 vUv;
               varying vec3 vNormal;
@@ -630,7 +635,7 @@ export const MoonFollower: React.FC<{
                 float fresnel = pow(1.0 - max(0.0, dot(vNormal, vViewDir)), 3.0);
                 color += vec3(0.2, 0.3, 0.5) * fresnel;
                 float dist = length(vUv - 0.5);
-                float shadow = smoothstep(0.5, 0.4, dist);
+                float shadow = 1.0 - smoothstep(0.4, 0.5, dist);
                 gl_FragColor = vec4(color, uOpacity * shadow);
               }
             `}

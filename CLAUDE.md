@@ -195,6 +195,11 @@ Gameplay layer that gives the world a goal: restore dormant Root Hollows.
 - **Point lights**: use `<PooledPointLight>` (src/core/graphics/PointLightPool.tsx) for world lights, never raw `<pointLight>` in the main scene; the pool keeps the real light count constant so lit shaders never recompile. Separate canvases (thumbnails, crafting) may use `<pointLight>`.
 - **Placement randomness**: use `hash01` (uniform, seeded) from `@core/math/noise`; map coherent Perlin through `noiseToUniform` before comparing to probability thresholds (raw Perlin sigma is ~0.25).
 - **Worker pool**: `postBulk` for generation, `postPriority` for remeshes; workers must always reply (ERROR on failure).
+- **Worker construction**: always write `new Worker(new URL('./x.worker.ts', import.meta.url), { type: 'module' })` inline at the call site (`WorkerPool` takes a factory). Vite only bundles that exact form; anything else works in `npm run dev` but ships raw TypeScript in production builds, so no terrain at all. Enforced by `src/tests/workerBundling.test.ts`. Smoke-test `npm run build` output (e.g. `npx vite preview`), not just the dev server.
+- **Constant light count**: never mount/unmount or toggle `visible` on lights during play; dim them to intensity 0 instead (TorchTool, FirstPersonTools). Any change in the number of visible lights recompiles every lit shader. `SceneWarmup` precompiles the scene once with `gl.compileAsync` after load.
+- **CustomShaderMaterial (React) uniforms**: pass a memoized/module-level object, never an inline `uniforms={{...}}`. The wrapper disposes and rebuilds the material whenever the uniforms object identity changes, so a literal recompiles it on every re-render.
+- **Shared materials**: never write per-object uniform values in `onBeforeRender` on a material shared by several meshes. three.js skips material uniform uploads between consecutive draws of the same material. Pool materials per value instead (e.g. TreeLayer leaf LOD alpha).
+- **GLSL `smoothstep`**: edges must satisfy edge0 < edge1 (reversed or equal edges are undefined and can produce NaN). For a falling ramp write `1.0 - smoothstep(lo, hi, x)`. Also guard `atan(y, x)` at (0,0) and `normalize()` of possibly-zero vectors.
 
 ### Water (reworked 2026-09)
 
@@ -252,7 +257,7 @@ See `AGENTS.md` for the complete list. Most critical:
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
 9. **Item shader consistency**: GroundItemShaders.ts defines all item shaders (STICK, ROCK, SHARD, FLORA, TORCH). When adding visual detail to items, update the shader here - never copy shader code to individual components. All consumers (UniversalTool, GroundItemsLayer, LuminaFlora) must use both `vertex` AND `fragment` properties.
-10. **Audio centralization**: AudioManager (src/core/audio/AudioManager.ts) is the single source of truth for all audio playback. NEVER call `new Audio()` or play sounds directly. Always dispatch `vc-audio-play` events. Sound definitions live in soundRegistry.ts.
+10. **Audio centralization**: AudioManager (src/core/audio/AudioManager.ts) is the single source of truth for all audio playback. NEVER call `new Audio()` or play sounds directly. Always dispatch `vc-audio-play` events. Sound definitions live in soundRegistry.ts. Only exception: 3D positional sounds (campfire `FireSound` in PhysicsItem.tsx) use drei `<PositionalAudio>` with the camera's AudioListener, since AudioManager has no spatialization. Ambient loops use dedicated elements, separate from the one-shot pools.
 
 ## Logging Best Practices
 
@@ -447,6 +452,8 @@ Also resolved (2026-09, second pass):
 - Grass floating over digs: REMESH rebuilds the grass height/material/normal/cave textures; BladeGrassLayer swaps textures in place instead of recreating its material.
 - Felled trees returning: persisted as `'tree'` ground-pickup records keyed by position (`src/state/pickupKeys.ts`).
 - LuminaFlora shared uniforms: per-flora seed is a vertex attribute (`aSeed`); time comes from sharedUniforms.
+- Production builds generated no terrain: the terrain worker was constructed from a URL variable, so Vite never bundled it (see Worker construction above).
+- Crouch was on Ctrl (Ctrl+W closed the tab); it is now Z. Crouching keeps the feet planted and won't stand up under a ceiling.
 - Log depth removed (`logarithmicDepthBuffer: false`): fog ends ~100m, so standard depth with near 0.1 is precise enough, and early-Z works again. Never write gl_FragDepth in custom shaders.
 
 ## Future Features (TODO)

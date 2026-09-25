@@ -934,7 +934,7 @@ export const triplanarFragmentShader = `
     col = clamp(col, 0.0, 5.0); col += accEmission * accColor; 
     if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
-        float depthMask = smoothstep(16.0, 0.0, waterDepth); // AAA FIX: Tighter depth mask (16m)
+        float depthMask = 1.0 - smoothstep(0.0, 16.0, waterDepth); // AAA FIX: Tighter depth mask (16m)
         float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);
         float openMask = 1.0 - smoothstep(0.0, 0.3, vCavity);
         float floorMask = smoothstep(0.25, 0.65, N.y);
@@ -967,7 +967,7 @@ export const triplanarFragmentShader = `
           float biomeHeightMul = uBiomeFogEnabled > 0.5 ? uBiomeFogHeightMul : 1.0;
 
           // Base height factor: 1.0 at floor, 0.0 at ceiling
-          float heightFactor = smoothstep(uHeightFogOffset + uHeightFogRange, uHeightFogOffset, vWorldPosition.y);
+          float heightFactor = 1.0 - smoothstep(uHeightFogOffset, uHeightFogOffset + uHeightFogRange, vWorldPosition.y);
 
           // Valley pooling: use world-space noise to create natural fog accumulation
           // Low-frequency noise simulates fog pooling in terrain depressions

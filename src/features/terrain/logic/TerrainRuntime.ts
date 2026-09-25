@@ -156,17 +156,19 @@ export class TerrainRuntime {
     const maxDistance = opts?.maxDistance ?? 60;
     const step = opts?.step ?? 3;
 
-    // "Is there a roof?", not "is terrain nearby?". Each ray scores 1 if it reaches
-    // open sky, 0 if blocked. The vertical ray dominates; tilted rays only count as
-    // blocked when terrain is close (a cliff 20m away is not a ceiling). Distance-
-    // weighted scoring made standing beside a hill read as ~77% underground.
+    // "Is there a roof?", not "is terrain nearby?". The vertical ray decides:
+    // - it reaches the sky: open (a narrow canyon or dune valley costs at most 10%);
+    // - it is blocked: enclosed, brightened up to 0.5 by tilted rays that escape
+    //   (cave mouth vs. deep cave).
+    // Tilted rays only count as blocked when terrain is close (a cliff 20m away is
+    // not a ceiling). Averaging all rays equally made open valleys read ~30% underground.
     const TILTED_BLOCK_DIST = 12;
-    let sum = 0;
-    let count = 0;
+    let verticalOpen: boolean | null = null;
+    let tiltedOpen = 0;
+    let tiltedKnown = 0;
 
     for (let r = 0; r < SKY_VIS_DIRS.length; r++) {
       const dir = SKY_VIS_DIRS[r];
-      const weight = r === 0 ? 3 : 1;
       const limit = r === 0 ? maxDistance : Math.min(maxDistance, TILTED_BLOCK_DIST);
       let escaped = true;
       let unknown = false;
@@ -191,12 +193,13 @@ export class TerrainRuntime {
 
       // Missing chunks: skip this ray (callers keep their last estimate on null).
       if (unknown) continue;
-      sum += escaped ? weight : 0;
-      count += weight;
+      if (r === 0) verticalOpen = escaped;
+      else { tiltedKnown++; if (escaped) tiltedOpen++; }
     }
 
-    if (count === 0) return null;
-    return THREE.MathUtils.clamp(sum / count, 0, 1);
+    if (verticalOpen === null) return null;
+    const tiltedFrac = tiltedKnown > 0 ? tiltedOpen / tiltedKnown : (verticalOpen ? 1 : 0);
+    return verticalOpen ? 0.9 + 0.1 * tiltedFrac : 0.5 * tiltedFrac;
   }
 }
 

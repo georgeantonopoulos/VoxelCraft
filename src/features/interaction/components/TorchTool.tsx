@@ -12,7 +12,16 @@ import * as THREE from 'three';
  *
  * Keep particle count low and avoid allocations per-frame for performance.
  */
-export const TorchTool: React.FC = () => {
+export interface TorchToolProps {
+  /**
+   * Whether the torch is held. The spotlight stays mounted and visible either
+   * way (dimmed to 0): three.js compiles every lit shader for the current
+   * light count, so hiding it recompiled all materials on each equip.
+   */
+  active: boolean;
+}
+
+export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
   const torchRef = useRef<THREE.Group>(null);
   const flameLightRef = useRef<THREE.SpotLight>(null);
   const lightTargetRef = useRef<THREE.Object3D>(null);
@@ -102,7 +111,8 @@ export const TorchTool: React.FC = () => {
       const baseIntensity = debugMode ? torchLightDebug.baseIntensity : 2.1;
       const flickerAmt = debugMode ? torchLightDebug.flickerAmount : 0.24;
       // Scale flicker amount relative to default 0.12.
-      flameLightRef.current.intensity = baseIntensity * (1.0 + (flicker - 1.0) * (flickerAmt / 0.12));
+      const enabled = active && (!debugMode || torchLightDebug.enabled);
+      flameLightRef.current.intensity = enabled ? baseIntensity * (1.0 + (flicker - 1.0) * (flickerAmt / 0.12)) : 0;
     }
 
     // Aim spotlight forward in world space, with a slight downward bias.
@@ -130,7 +140,6 @@ export const TorchTool: React.FC = () => {
 
     // Apply debug spotlight properties live.
     if (debugMode && flameLightRef.current) {
-      flameLightRef.current.visible = torchLightDebug.enabled;
       flameLightRef.current.color.set(torchLightDebug.color);
       flameLightRef.current.distance = torchLightDebug.distance;
       flameLightRef.current.decay = torchLightDebug.decay;
@@ -140,7 +149,7 @@ export const TorchTool: React.FC = () => {
 
     // Particle update: drift upward and respawn in place.
     const mesh = particlesRef.current;
-    if (!mesh) return;
+    if (!mesh || !active) return;
 
     for (let i = 0; i < count; i++) {
       lifetimes.current[i] -= delta;
@@ -179,6 +188,7 @@ export const TorchTool: React.FC = () => {
 
   return (
     <group ref={torchRef}>
+      <group visible={active}>
       {/* Torch handle */}
       <mesh position={[0, 0.0, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[0.035, 0.045, 0.8, 8]} />
@@ -219,7 +229,9 @@ export const TorchTool: React.FC = () => {
         />
       </mesh>
 
-      {/* Spotlight for forward cave visibility */}
+      </group>
+
+      {/* Spotlight for forward cave visibility (outside the visibility toggle; see TorchToolProps) */}
       <spotLight
         ref={flameLightRef}
         position={[0, 0.60, 0.0]}
@@ -236,7 +248,7 @@ export const TorchTool: React.FC = () => {
       <group ref={lightTargetRef} position={[0, 0.60, -2.5]} />
 
       {/* Fire particles (embers) */}
-      <instancedMesh ref={particlesRef} args={[undefined, undefined, count]}>
+      <instancedMesh visible={active} ref={particlesRef} args={[undefined, undefined, count]}>
         <sphereGeometry args={[1, 6, 6]} />
         <meshStandardMaterial
           color="#ffb36b"

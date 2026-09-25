@@ -41,6 +41,9 @@ export class AudioManager {
   // Active looping sounds (ambient)
   private loopingSounds: Map<string, HTMLAudioElement> = new Map();
 
+  // Dedicated looping elements, one per ambient sound id (never pooled)
+  private ambientElements: Map<string, HTMLAudioElement> = new Map();
+
   // Reference count for ambient sounds (multiple sources can request same sound)
   private ambientRefCounts: Map<string, number> = new Map();
 
@@ -239,6 +242,15 @@ export class AudioManager {
     const pool = this.pools.get(soundId);
     if (!pool) return;
 
+    // A hard stop also ends an ambient loop of this sound. Previously the loop
+    // stayed registered while paused, so the next ambient-enter was ignored.
+    const loop = this.loopingSounds.get(soundId);
+    if (loop) {
+      loop.pause();
+      this.loopingSounds.delete(soundId);
+      this.ambientRefCounts.delete(soundId);
+    }
+
     // Stop all instances of this sound
     pool.instances.forEach(instance => {
       if (!instance.audio.paused) {
@@ -272,10 +284,15 @@ export class AudioManager {
       return;
     }
 
-    // Use first instance for ambient (looping sounds don't need pooling)
-    const instance = pool.instances[0];
-    const { audio } = instance;
+    // Dedicated element per ambient sound. Borrowing pool.instances[0] let
+    // one-shot play() calls (round-robin over the same pool) restart the loop,
+    // and left `loop = true` on an instance later used for one-shots.
     const def = pool.definition;
+    let audio = this.ambientElements.get(soundId);
+    if (!audio) {
+      audio = new Audio(def.url);
+      this.ambientElements.set(soundId, audio);
+    }
 
     audio.loop = true;
     audio.currentTime = 0;
@@ -369,6 +386,8 @@ export class AudioManager {
       pool.instances.forEach(instance => {
         instance.audio.volume = Math.max(0, Math.min(1, finalVolume));
       });
+      const ambient = this.ambientElements.get(pool.definition.id);
+      if (ambient) ambient.volume = Math.max(0, Math.min(1, finalVolume));
     });
   }
 
@@ -376,8 +395,16 @@ export class AudioManager {
    * Cleanup (for hot reload or disposal)
    */
   dispose(): void {
-    // Stop all looping sounds
-    this.loopingSounds.forEach(audio => audio.pause());
+    // Stop everything, including in-flight one-shots, and release the media
+    // (removing src lets the browser drop decoded buffers).
+    const release = (audio: HTMLAudioElement) => {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    };
+    this.ambientElements.forEach(release);
+    this.pools.forEach(pool => pool.instances.forEach(instance => release(instance.audio)));
+    this.ambientElements.clear();
     this.loopingSounds.clear();
     this.ambientRefCounts.clear();
 

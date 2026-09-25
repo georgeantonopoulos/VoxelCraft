@@ -295,8 +295,16 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
     return treeWoodMaterialPool[key];
 };
 
-const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
-    const key = `${type}${opaque ? ':opaque' : ''}`;
+/**
+ * Leaf materials are pooled per (type, opaque, LOD alpha). The alpha used to be
+ * written in onBeforeRender on one shared material, but three.js skips material
+ * uniform uploads between consecutive draws with the same material, so every
+ * chunk drew with whichever value happened to be uploaded first. Materials
+ * with different alphas share one compiled program.
+ */
+const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha = 1) => {
+    const alpha = Math.round(Math.max(0, Math.min(1, lodAlpha)) * 100) / 100;
+    const key = `${type}${opaque ? ':opaque' : ''}:a${alpha}`;
     const pool = opaque ? treeLeafOpaqueMaterialPool : treeLeafMaterialPool;
     if (pool[key]) return pool[key];
 
@@ -437,7 +445,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
             uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
             uLeafHueVariation: { value: 0.30 },
-            uLeafLodAlpha: { value: 1.0 }
+            uLeafLodAlpha: { value: alpha }
         },
         toneMapped: false,
     });
@@ -460,7 +468,6 @@ const InstancedTreeBatch: React.FC<{
 }> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, leafLodAlpha, lodLevel }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
-    const leafLodAlphaRef = useRef(leafLodAlpha);
     const [deferredCollidersEnabled, setDeferredCollidersEnabled] = React.useState(false);
 
     useEffect(() => {
@@ -490,10 +497,6 @@ const InstancedTreeBatch: React.FC<{
             leafMesh.current.instanceMatrix.needsUpdate = true;
         }
     }, [matrices, wood, leaves]);
-
-    useEffect(() => {
-        leafLodAlphaRef.current = leafLodAlpha;
-    }, [leafLodAlpha]);
 
     // Prepare Physics Instances
     const rigidBodyGroups = useMemo(() => {
@@ -544,7 +547,7 @@ const InstancedTreeBatch: React.FC<{
     }, [type]);
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
-    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified), [type, colors, simplified]);
+    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified, leafLodAlpha), [type, colors, simplified, leafLodAlpha]);
 
     const colliderGeometries = useMemo(() => {
         const cylinder = new THREE.CylinderGeometry(0.225, 0.225, 1.0, 6);
@@ -570,12 +573,6 @@ const InstancedTreeBatch: React.FC<{
                     castShadow
                     receiveShadow
                     material={leafMaterial}
-                    onBeforeRender={() => {
-                        const matAny = leafMaterial as any;
-                        if (matAny?.uniforms?.uLeafLodAlpha) {
-                            matAny.uniforms.uLeafLodAlpha.value = leafLodAlphaRef.current;
-                        }
-                    }}
                 />
             )}
 
