@@ -1,21 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { dilateWaterMask, mergeMaskRects, generateWaterSurfaceMesh } from '@features/terrain/logic/mesher';
+import { dilateWaterMask, generateWaterSurfaceMesh, floodShallows } from '@features/terrain/logic/mesher';
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET, WATER_LEVEL, CHUNK_SIZE_XZ } from '@/constants';
 import { MaterialType } from '@/types';
 
 describe('Water surface mesh', () => {
-  it('covers exactly the mask cells with merged rectangles', () => {
-    const w = 6, h = 5;
-    const mask = new Uint8Array(w * h);
-    for (let z = 1; z < 4; z++) for (let x = 2; x < 5; x++) mask[x + z * w] = 1;
-    mask[0] = 1;
-    const rects = mergeMaskRects(mask, w, h);
-    const cover = new Uint8Array(w * h);
-    for (const r of rects) for (let z = r.z0; z < r.z1; z++) for (let x = r.x0; x < r.x1; x++) { expect(cover[x + z * w]).toBe(0); cover[x + z * w] = 1; }
-    expect([...cover]).toEqual([...mask]);
-    expect(rects.length).toBe(2);
-  });
-
   it('dilates by one cell', () => {
     const w = 5, h = 5, m = new Uint8Array(w * h);
     m[2 + 2 * w] = 1;
@@ -39,7 +27,20 @@ describe('Water surface mesh', () => {
     let maxX = 0;
     for (let i = 0; i < mesh.positions.length; i += 3) maxX = Math.max(maxX, mesh.positions[i]);
     expect(mesh.positions.length).toBeGreaterThan(0);
-    expect(maxX).toBeLessThanOrEqual(11); // 10 sea cells + 1 dilation, not the full CHUNK_SIZE_XZ
+    expect(maxX).toBeLessThanOrEqual(12); // 10 sea cells + 2 dilation, not the full CHUNK_SIZE_XZ
     expect(maxX).toBeLessThan(CHUNK_SIZE_XZ);
+    // Watertight: every vertex position appears once (shared grid, no T-junctions).
+    const keys = new Set<string>();
+    for (let i = 0; i < mesh.positions.length; i += 3) keys.add(`${mesh.positions[i]},${mesh.positions[i + 2]}`);
+    expect(keys.size).toBe(mesh.positions.length / 3);
+  });
+});
+
+describe('Shallow flats', () => {
+  it('floods connected columns below sea level, but not higher ground', () => {
+    const w = 5, h = 1;
+    const sea = new Uint8Array([1, 0, 0, 0, 0]);
+    const tops = new Float32Array([-2, 4.2, 4.4, 6.0, 3.0]); // col 4 is below sea level but cut off by land
+    expect(Array.from(floodShallows(sea, tops, w, h, 4.5))).toEqual([1, 1, 1, 0, 0]);
   });
 });

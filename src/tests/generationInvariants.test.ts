@@ -98,3 +98,25 @@ describe('World types', () => {
     expect(coldShare(WorldType.LUSH).hot).toBeGreaterThan(0.05);
   });
 });
+
+describe('Early-game resources', () => {
+  it('places visible surface stones in grassland/forest (not only mountains, beaches and caves)', () => {
+    let lowlandChunks = 0, surfaceStones = 0;
+    for (let cx = -6; cx < 6; cx++) {
+      for (let cz = -6; cz < 6; cz++) {
+        const b = BiomeManager.getBiomeAt(cx * CHUNK_SIZE_XZ + 16, cz * CHUNK_SIZE_XZ + 16);
+        if (b !== 'PLAINS' && b !== 'THE_GROVE' && b !== 'JUNGLE') continue;
+        lowlandChunks++;
+        const c = TerrainService.generateChunk(cx, cz);
+        for (let i = 0; i < c.rockPositions.length; i += 8) {
+          if (c.rockPositions[i + 1] < -1000) continue;
+          if (c.rockPositions[i + 6] === RockVariant.CAVE) continue; // underground, not visible
+          surfaceStones++;
+        }
+      }
+    }
+    expect(lowlandChunks).toBeGreaterThan(20);
+    // ~1.4 per chunk with field stones; the old generator gave ~0.5.
+    expect(surfaceStones / lowlandChunks).toBeGreaterThan(1.0);
+  }, 300_000);
+});

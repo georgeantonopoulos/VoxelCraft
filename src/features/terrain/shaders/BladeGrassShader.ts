@@ -124,6 +124,7 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
   varying vec3 vWorldPos;
   varying float vHeightFraction;
   varying vec3 vGILight;
+  varying vec3 vGrassNormal;
   varying float vBiomeId;
   varying float vVisible;
 
@@ -302,6 +303,15 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
 
     pos = alignMat * pos;
 
+    // Lighting normal: rotate the blade normal with the blade, then bend it toward
+    // the ground normal (standard thin-grass trick) so a blade is lit like the
+    // turf it grows from. The raw geometry normal was never rotated, so blades
+    // facing away from the sun (and flipped back faces) rendered near-black.
+    vec3 bladeN = normal;
+    bladeN.xz = vec2(c * bladeN.x - s * bladeN.z, s * bladeN.x + c * bladeN.z);
+    bladeN = alignMat * bladeN;
+    vGrassNormal = normalize(mix(bladeN, up, 0.7));
+
     // === Final Position ===
     vec3 localPos = basePos + pos;
     vWorldPos = localPos + uChunkOffset;
@@ -357,6 +367,7 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
   varying vec3 vWorldPos;
   varying float vHeightFraction;
   varying vec3 vGILight;
+  varying vec3 vGrassNormal;
   varying float vBiomeId;
   varying float vVisible;
 
@@ -376,6 +387,9 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
 
   void main() {
     if (vVisible < 0.5) discard;
+
+    // Same normal for both faces (overrides the default back-face flip).
+    csm_FragNormal = normalize((viewMatrix * vec4(vGrassNormal, 0.0)).xyz);
 
     float t = vHeightFraction;
 

@@ -196,6 +196,14 @@ Gameplay layer that gives the world a goal: restore dormant Root Hollows.
 - **Placement randomness**: use `hash01` (uniform, seeded) from `@core/math/noise`; map coherent Perlin through `noiseToUniform` before comparing to probability thresholds (raw Perlin sigma is ~0.25).
 - **Worker pool**: `postBulk` for generation, `postPriority` for remeshes; workers must always reply (ERROR on failure).
 
+### Water (reworked 2026-09)
+
+- Geometry (`generateWaterSurfaceMesh`): shared-vertex grid over the wet area = sea cells flood-filled across connected columns whose terrain top is below `WATER_LEVEL`, dilated one cell. Inland pits and roofed caves stay dry.
+- Shading (`WaterMaterial.tsx`): one material per water chunk (clones share one program). Each gets the chunk's surface height map (`grassHeightTex`) as a half-float seabed texture, so the shader knows true depth: shoreline fade at depth 0, turquoise-to-deep colour, animated shore foam, discard where depth <= 0. Camera/fog uniforms are shared objects updated once per frame.
+- Underwater visuals follow the camera eye vs. the real surface height (`Player.tsx`), not body submersion.
+- Debug: `window.__waterDebug(n)` (1 depth, 2 seabed bound, 3 contour stripes, 0 normal); `window.__vcDebug.teleport(x,y,z)` / `.look(yaw,pitch)` for browser checks without pointer lock.
+- Vite's file watcher misses edits on external volumes: restart `npm run dev` after edits when running from /Volumes.
+
 ## Critical Constants (src/constants.ts)
 
 ```

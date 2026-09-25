@@ -260,6 +260,46 @@ export type WaterSurfaceMeshData = {
  * IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
  * material grid at runtime rather than relying on physics for water.
  */
+/** Top solid surface (world Y) per owned column, -Infinity where there is none. */
+function columnTopHeights(density: Float32Array): Float32Array {
+  const out = new Float32Array(CHUNK_SIZE_XZ * CHUNK_SIZE_XZ).fill(-Infinity);
+  for (let lz = 0; lz < CHUNK_SIZE_XZ; lz++) {
+    for (let lx = 0; lx < CHUNK_SIZE_XZ; lx++) {
+      const gx = lx + PAD, gz = lz + PAD;
+      for (let y = SIZE_Y - 2; y >= 0; y--) {
+        const d = density[gx + y * SIZE_X + gz * SIZE_X * SIZE_Y];
+        if (d > ISO_LEVEL) {
+          const above = density[gx + (y + 1) * SIZE_X + gz * SIZE_X * SIZE_Y];
+          out[lx + lz * CHUNK_SIZE_XZ] = (y + (d - ISO_LEVEL) / (d - above + 1e-4)) - PAD + MESH_Y_OFFSET;
+          break;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Grow the sea mask across 4-connected columns whose terrain top lies below
+ * the water level. Inland pits are not connected to the sea, and cave floors
+ * have a roof above sea level as their top, so both stay dry.
+ */
+export function floodShallows(seaMask: Uint8Array, tops: Float32Array, w: number, h: number, waterLevel: number): Uint8Array {
+  const out = seaMask.slice();
+  const queue: number[] = [];
+  for (let i = 0; i < out.length; i++) if (out[i]) queue.push(i);
+  for (let head = 0; head < queue.length; head++) {
+    const i = queue[head];
+    const x = i % w, z = (i / w) | 0;
+    const neighbours = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < h - 1 ? i + w : -1];
+    for (const n of neighbours) {
+      if (n < 0 || out[n]) continue;
+      if (tops[n] < waterLevel) { out[n] = 1; queue.push(n); }
+    }
+  }
+  return out;
+}
+
 /** Grow a cell mask by one cell in all 8 directions (stays inside the grid). */
 export function dilateWaterMask(mask: Uint8Array, w: number, h: number): Uint8Array {
   const out = new Uint8Array(w * h);
@@ -277,35 +317,6 @@ export function dilateWaterMask(mask: Uint8Array, w: number, h: number): Uint8Ar
   return out;
 }
 
-/**
- * Greedy rectangle cover of a cell mask: row spans, merged downward while the
- * next row has the identical span. Rects are in cell units, [x0,x1) x [z0,z1).
- */
-export function mergeMaskRects(mask: Uint8Array, w: number, h: number): Array<{ x0: number; x1: number; z0: number; z1: number }> {
-  const used = new Uint8Array(w * h);
-  const rects: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
-  for (let z = 0; z < h; z++) {
-    let x = 0;
-    while (x < w) {
-      if (!mask[x + z * w] || used[x + z * w]) { x++; continue; }
-      let x1 = x;
-      while (x1 < w && mask[x1 + z * w] && !used[x1 + z * w]) x1++;
-      let z1 = z + 1;
-      while (z1 < h) {
-        let full = true;
-        for (let i = x; i < x1; i++) {
-          if (!mask[i + z1 * w] || used[i + z1 * w]) { full = false; break; }
-        }
-        if (!full) break;
-        z1++;
-      }
-      for (let zz = z; zz < z1; zz++) for (let i = x; i < x1; i++) used[i + zz * w] = 1;
-      rects.push({ x0: x, x1, z0: z, z1 });
-      x = x1;
-    }
-  }
-  return rects;
-}
 
 export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8Array): WaterSurfaceMeshData {
   const waterVerts: number[] = [];
@@ -339,24 +350,37 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
     }
   }
 
-  // Emit water only over sea-level water cells (dilated by one cell so the sheet
-  // tucks under the shoreline instead of leaving a dry gap), merged into
+  // Emit water only over sea-level water cells (dilated so the sheet reaches
+  // past the shoreline; the shader fades it by seabed depth), merged into
   // rectangles. A chunk-wide quad showed a water sheet inside caves and dug pits
   // that cross sea level, since the shader's shore mask cannot be applied
   // per chunk on the shared water material.
   if (hasAnyWater) {
-    const covered = dilateWaterMask(waterMask, waterW, waterH);
+    // Wet area = sea cells plus every connected column whose terrain top is
+    // below sea level (shallow flats between y 4.0 and 4.5 never get a water
+    // voxel, which left a hard-edged dry patch). One cell of dilation lets the
+    // sheet reach past the shoreline; the shader fades it by seabed depth.
+    const wet = floodShallows(waterMask, columnTopHeights(density), waterW, waterH, WATER_LEVEL);
+    const covered = dilateWaterMask(wet, waterW, waterH);
+    // Shared-vertex grid over covered cells: watertight (merged rectangles left
+    // hairline cracks at T-junctions).
     const y = WATER_LEVEL;
-    for (const r of mergeMaskRects(covered, waterW, waterH)) {
-      const base = waterVerts.length / 3;
-      waterVerts.push(
-        r.x0, y, r.z0,
-        r.x1, y, r.z0,
-        r.x0, y, r.z1,
-        r.x1, y, r.z1
-      );
-      waterNorms.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
-      waterInds.push(base, base + 2, base + 1, base + 2, base + 3, base + 1);
+    const vertexOf = new Int32Array((waterW + 1) * (waterH + 1)).fill(-1);
+    const vtx = (gx: number, gz: number) => {
+      const k = gx + gz * (waterW + 1);
+      if (vertexOf[k] < 0) {
+        vertexOf[k] = waterVerts.length / 3;
+        waterVerts.push(gx, y, gz);
+        waterNorms.push(0, 1, 0);
+      }
+      return vertexOf[k];
+    };
+    for (let z = 0; z < waterH; z++) {
+      for (let x = 0; x < waterW; x++) {
+        if (!covered[x + z * waterW]) continue;
+        const a = vtx(x, z), b = vtx(x + 1, z), c = vtx(x, z + 1), d = vtx(x + 1, z + 1);
+        waterInds.push(a, c, b, c, d, b);
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { useRef, useState, useEffect } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { useGroveStore } from '@state/GroveStore';
@@ -69,6 +69,23 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const spacePressHandled = useRef<boolean>(false);
 
   const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
+
+  // Debug/automation hooks (browser checks without pointer lock):
+  // window.__vcDebug.teleport(x, y, z) and window.__vcDebug.look(yawRad, pitchRad)
+  const camera = useThree((st) => st.camera);
+  useEffect(() => {
+    const api = {
+      teleport: (x: number, y: number, z: number) => {
+        body.current?.setTranslation({ x, y, z }, true);
+        body.current?.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      },
+      look: (yaw: number, pitch: number) => {
+        camera.rotation.set(pitch, yaw, 0, 'YXZ');
+      },
+    };
+    (window as unknown as { __vcDebug?: typeof api }).__vcDebug = api;
+    return () => { delete (window as unknown as { __vcDebug?: typeof api }).__vcDebug; };
+  }, [camera]);
 
   // Throttle WorldStore sync for backward compatibility (10Hz instead of 60fps)
   const lastStoreSyncTime = useRef(0);
@@ -148,11 +165,20 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const inWater = waterHits > 0;
     const submersion = waterHits / 3.0;
 
-    // Update EnvironmentStore for underwater effects (bubbles, exposure, vignette)
+    // Underwater visuals (grade, fringing, bubbles, vignette) follow the CAMERA,
+    // not the body: standing in the shallows or swimming at the surface used to
+    // blend in 1/3-2/3 underwater look. Voxel lookups also round a whole cell to
+    // water, so compare the eye against the real surface height instead.
+    const eyeY = pos.y + (isCrouching.current ? EYE_HEIGHT_CROUCHED : EYE_HEIGHT);
+    const seaSurfaceY = terrainRuntime.getSeaSurfaceYAtWorld(pos.x, pos.z);
+    const eyeDepth = seaSurfaceY != null
+      ? seaSurfaceY - eyeY
+      : (terrainRuntime.isLiquidAtWorld(pos.x, eyeY, pos.z) ? 1 : -1);
+    const underwaterVisual = THREE.MathUtils.smoothstep(eyeDepth, 0.0, 0.2);
     const setUnderwaterBlend = useEnvironmentStore.getState().setUnderwaterBlend;
     const setUnderwaterState = useEnvironmentStore.getState().setUnderwaterState;
-    setUnderwaterBlend(submersion);
-    const isFullyUnderwater = headInWater;
+    setUnderwaterBlend(underwaterVisual);
+    const isFullyUnderwater = eyeDepth > 0;
     const currentUnderwaterState = useEnvironmentStore.getState().isUnderwater;
     if (isFullyUnderwater !== currentUnderwaterState) {
       setUnderwaterState(isFullyUnderwater, state.clock.getElapsedTime());

@@ -4,9 +4,15 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { calculateOrbitAngle as calculateOrbitAngleCore, getOrbitOffset } from '@core/graphics/celestial';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
 /** Shadow map refresh rate for moving casters (the sun itself moves slowly). */
 const SHADOW_UPDATE_HZ = 15;
+
+/** Hemisphere sky-fill intensities (see AmbientController). */
+const SKY_FILL_DAY = 0.9;
+const SKY_FILL_NIGHT = 0.12;
+const SKY_FILL_CAVE = 0.05;
 
 /**
  * Shared Helper Functions for Celestial Rendering
@@ -106,34 +112,39 @@ const getSkyGradient = (
  * Components
  */
 
+/**
+ * Sky fill light.
+ *
+ * The baked voxel GI only scales surface albedo (it darkens enclosed spaces);
+ * it never adds light. With just a 0.1 flat ambient, anything out of direct
+ * sun rendered near-black. A hemisphere light supplies the sky's fill (cool
+ * from above, warm ground bounce from below), scaled by sun height; caves stay
+ * dark because GI still darkens their albedo, and the cave blend lowers it.
+ */
 export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
-    const ambientRef = useRef<THREE.AmbientLight>(null);
-    const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
-    const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
-    const lastBlend = useRef(-1);
+    const hemiRef = useRef<THREE.HemisphereLight>(null);
+    const skyDay = useMemo(() => new THREE.Color('#bcd6ff'), []);
+    const skyNight = useMemo(() => new THREE.Color('#3a4a78'), []);
+    const groundDay = useMemo(() => new THREE.Color('#8a7a5a'), []);
+    const groundNight = useMemo(() => new THREE.Color('#1e2230'), []);
+    const caveTint = useMemo(() => new THREE.Color('#556070'), []);
 
     useFrame(() => {
+        const hemi = hemiRef.current;
+        if (!hemi) return;
+        frameProfiler.begin('ambient-controller');
         // Read per frame (no React re-render while blends animate).
         const { undergroundBlend } = useEnvironmentStore.getState();
-        frameProfiler.begin('ambient-controller');
-        if (!ambientRef.current) {
-            frameProfiler.end('ambient-controller');
-            return;
-        }
-        // Skip update if blend hasn't changed significantly (reduces per-frame work)
-        if (Math.abs(undergroundBlend - lastBlend.current) < 0.01) {
-            frameProfiler.end('ambient-controller');
-            return;
-        }
-        lastBlend.current = undergroundBlend;
-        // With voxel-based GI, ambient light is greatly reduced (GI handles indirect lighting)
-        // Surface: 0.10 (was 0.08), Cave: 0.05 (was 0.04)
-        ambientRef.current.intensity = THREE.MathUtils.lerp(0.10, 0.05, undergroundBlend) * intensityMul;
-        ambientRef.current.color.copy(surfaceAmbient).lerp(caveAmbient, undergroundBlend);
+        const sunY = sharedUniforms.uSunDir.value.y;
+        const day = THREE.MathUtils.smoothstep(sunY, -0.12, 0.25);
+        const surface = THREE.MathUtils.lerp(SKY_FILL_NIGHT, SKY_FILL_DAY, day);
+        hemi.intensity = THREE.MathUtils.lerp(surface, SKY_FILL_CAVE, undergroundBlend) * intensityMul;
+        hemi.color.copy(skyNight).lerp(skyDay, day).lerp(caveTint, undergroundBlend);
+        hemi.groundColor.copy(groundNight).lerp(groundDay, day).lerp(caveTint, undergroundBlend);
         frameProfiler.end('ambient-controller');
     });
 
-    return <ambientLight ref={ambientRef} intensity={0.10} color="#ccccff" />;
+    return <hemisphereLight ref={hemiRef} args={['#bcd6ff', '#8a7a5a', SKY_FILL_DAY]} />;
 };
 
 export const SkyDomeRefLink: React.FC<{

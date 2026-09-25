@@ -1052,6 +1052,9 @@ export class TerrainService {
         // - largeRockPositions: stride 6: x, y, z, radius, variant, seed
         const hash01p = hash01;
 
+        const isSoilMaterial = (m: number): boolean => (
+            m === MaterialType.GRASS || m === MaterialType.JUNGLE_GRASS || m === MaterialType.DIRT || m === MaterialType.MOSSY_STONE
+        );
         const isRockyMaterial = (m: number): boolean => (
             m === MaterialType.STONE ||
             m === MaterialType.MOSSY_STONE ||
@@ -1162,11 +1165,17 @@ export class TerrainService {
                 want = isRockyMaterial(matBelow);
                 threshold = 0.35;
                 variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
-            } else {
-                // Outside obvious rocky biomes, only sprinkle on exposed stone at higher altitudes.
-                want = isRockyMaterial(matBelow) && top.worldY > 24;
+            } else if (isRockyMaterial(matBelow) && top.worldY > 24) {
+                // Exposed stone at higher altitudes.
+                want = true;
                 threshold = 0.16;
                 variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            } else if (isSoilMaterial(matBelow)) {
+                // Field stones on ordinary ground (~1-2 per chunk). Grassland and forest
+                // used to have none, so the early "gather stones" step meant a long hike.
+                want = true;
+                threshold = 0.06;
+                variant = (biome === 'JUNGLE' || biome === 'THE_GROVE') ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
             }
 
             if (!want) continue;

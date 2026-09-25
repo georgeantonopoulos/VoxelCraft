@@ -205,22 +205,6 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     return c;
   }, [chunk.cx, chunk.cz]);
 
-  const waterShoreMaskTexture = useMemo(() => {
-    if (!chunk.meshWaterShoreMask || chunk.meshWaterShoreMask.length === 0) return null;
-    const tex = new THREE.DataTexture(
-      chunk.meshWaterShoreMask,
-      CHUNK_SIZE_XZ,
-      CHUNK_SIZE_XZ,
-      THREE.RedFormat,
-      THREE.UnsignedByteType
-    );
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.needsUpdate = true;
-    return tex;
-  }, [chunk.meshWaterShoreMask]);
 
   const [deferredColliderEnabled, setDeferredColliderEnabled] = React.useState(false);
   const colliderEnabled = !collidersDisabled && lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
@@ -254,9 +238,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     return () => {
       terrainGeometry?.dispose();
       waterGeometry?.dispose();
-      waterShoreMaskTexture?.dispose();
     };
-  }, [terrainGeometry, waterGeometry, waterShoreMaskTexture]);
+  }, [terrainGeometry, waterGeometry]);
 
   if (!terrainGeometry && !waterGeometry) return null;
   // Keyed on colliderVersion: material-only remeshes (moss, wetness) keep the collider.
@@ -306,15 +289,10 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
         <mesh
           geometry={waterGeometry}
           scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
-          userData={{ shoreMask: waterShoreMaskTexture }}
           renderOrder={1}
         >
-          <WaterMaterial
-            shoreEdge={0.07}
-            alphaBase={0.58}
-            texStrength={0.12}
-            foamStrength={0.22}
-          />
+          {/* Seabed heights give the shader true water depth (shoreline, colour, foam). */}
+          <WaterMaterial seabedHeights={chunk.grassHeightTex} />
         </mesh>
       )}
 

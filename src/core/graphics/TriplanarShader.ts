@@ -395,14 +395,12 @@ export const triplanarFragmentShader = `
       vec2 uv = (pos.xz - lightDir.xz * (distToSurface / max(0.2, lightDir.y))) * 0.45;
       float tz1 = 0.5 + 0.5 * sin(ang);
       float tz2 = 0.5 + 0.5 * cos(ang);
-      float disp = 0.006; // AAA FIX: Reduced from 0.012 to avoid rainbow noise
-      float r = sampleCausticPattern(uv * (1.0 + disp), ang, tz1, tz2);
-      float g = sampleCausticPattern(uv, ang, tz1, tz2);
-      float b = sampleCausticPattern(uv * (1.0 - disp), ang, tz1, tz2);
-      vec3 finalC = vec3(r, g, b);
-      float overlap = min(r, min(g, b));
-      finalC += overlap * 0.8; // AAA FIX: Slightly reduced overlap boost
-      finalC *= 4.5; // AAA FIX: Reduced from 6.0 to prevent blowout
+      // Single-channel pattern: per-channel UV offsets (dispersion) read as
+      // oil-slick rainbows through clear shallow water. Real caustics are ~white.
+      float c = sampleCausticPattern(uv, ang, tz1, tz2);
+      vec3 finalC = vec3(c) * vec3(1.0, 0.98, 0.9);
+      finalC += c * c * 0.8; // sharpen the bright filaments
+      finalC *= 3.2;
       float depthFade = exp(-distToSurface * 0.18); 
       return finalC * depthFade;
   }
