@@ -64,6 +64,10 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
 // The world currently uses a single vertical chunk stack. If the computed surface height goes
 // above the top of the chunk volume, the column can become "all solid" and the surface won't
 // be extracted by the mesher. Keep a small margin for overhang noise near the surface.
+/** Overhang-noise evaluation band around the column surface (see generateChunk). */
+const OVERHANG_BAND_ABOVE = 8;
+const OVERHANG_BAND_BELOW = 24;
+
 const MAX_SURFACE_Y = MESH_Y_OFFSET + (CHUNK_SIZE_Y - 1) - 7; // topVisible(=offset+127) minus ~max overhang
 function clampSurfaceHeight(h: number): number {
     return Math.min(h, MAX_SURFACE_Y);
@@ -155,11 +159,28 @@ export class TerrainService {
                 // --- Sacred Grove Terrain Modification ---
                 // Sacred Groves are flat, barren clearings where Root Hollows spawn
                 const sacredGroveMod = BiomeManager.getSacredGroveTerrainMod(wx, wz);
-                const sacredGroveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
 
                 // Apply flattening multipliers for Sacred Grove zones
                 amp *= sacredGroveMod.ampMultiplier;
                 warp *= sacredGroveMod.warpMultiplier;
+
+                // --- Column-constant standard terrain (hoisted out of the Y loop) ---
+                // These only depend on (wx, wz); evaluating them once per column instead of
+                // once per voxel removes ~5 noise lookups x 132 voxels per column.
+                const colQx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+                const colQz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+                const colPx = wx + colQx;
+                const colPz = wz + colQz;
+                const colBaseNoise = noise3D(colPx * 0.01 * freq, 0, colPz * 0.01 * freq);
+                const colDetail = noise3D(colPx * 0.05, 0, colPz * 0.05) * (amp * 0.1);
+                const colSurfaceHeight = clampSurfaceHeight(baseHeight + (colBaseNoise * amp) + colDetail);
+                const colNormBreach = (noise3D(wx * 0.005, 0, wz * 0.005) + 1) * 0.5;
+                // Overhang noise can only change a decision within this band around the
+                // surface: |overhang| <= ~6.3, so above the band d < ISO regardless, and
+                // below it every threshold (crust 4, soil <= 9, lumina 15) is already
+                // exceeded. Outside the band overhang is treated as 0 (sign/material exact).
+                const cliffBandTop = colSurfaceHeight + OVERHANG_BAND_ABOVE;
+                const cliffBandBottom = colSurfaceHeight - OVERHANG_BAND_BELOW;
 
                 for (let y = 0; y < sizeY; y++) {
                     const idx = x + y * sizeX + z * sizeX * sizeY;
@@ -224,23 +245,13 @@ export class TerrainService {
                     } else {
                         // --- Standard Terrain Logic ---
 
-                        // Domain Warping
-                        const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
-                        const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+                        // Domain-warped height (column-constant, computed above)
+                        surfaceHeight = colSurfaceHeight;
 
-                        const px = wx + qx;
-                        const pz = wz + qz;
-
-                        const baseNoise = noise3D(px * 0.01 * freq, 0, pz * 0.01 * freq);
-
-                        // Add some detail noise
-                        const detail = noise3D(px * 0.05, 0, pz * 0.05) * (amp * 0.1);
-
-                        // Calculate Height
-                        surfaceHeight = clampSurfaceHeight(baseHeight + (baseNoise * amp) + detail);
-
-                        // Cliff/Overhang noise
-                        const cliffNoise = noise3D(wx * 0.06, wy * 0.08, wz * 0.06);
+                        // Cliff/Overhang noise (only where it can matter, see cliffBand*)
+                        const cliffNoise = (wy <= cliffBandTop && wy >= cliffBandBottom)
+                            ? noise3D(wx * 0.06, wy * 0.08, wz * 0.06)
+                            : 0;
                         // Apply Sacred Grove flattening to overhangs
                         overhang = cliffNoise * 6 * sacredGroveMod.overhangMultiplier;
 
@@ -250,12 +261,9 @@ export class TerrainService {
                         // Only calc caves if we are somewhat near ground or deep?
                         // Optimization: Skip cave calc if d is huge (sky) or tiny (deep underground bedrock)?
                         // No, deep underground needs caves.
-                        const caveMod = getCavernModifier(wx, wy, wz, biome);
-
                         // Congruent Breach Logic
                         const settings = getCaveSettings(biome);
-                        const breachNoise = noise3D(wx * 0.005, 0, wz * 0.005);
-                        const normBreach = (breachNoise + 1) * 0.5;
+                        const normBreach = colNormBreach;
 
                         let crustThickness = 4.0;
                         const isSteep = (cliffNoise > 0.4);
@@ -272,12 +280,16 @@ export class TerrainService {
                         // that cause mesh artifacts and look unnatural.
                         const MIN_SURFACE_CAVE_SIZE = -12; // Cave SDF must be this negative (~1.2 voxels into cave)
                         const isBelowCrust = d > crustThickness;
-                        const isLargeCave = caveMod < MIN_SURFACE_CAVE_SIZE;
                         const isNearSurface = d < 3.0; // Within 3 voxels of surface
 
                         // Apply cave if: below crust AND (either deep enough OR cave is large)
-                        if (isBelowCrust && (!isNearSurface || isLargeCave)) {
-                            d = Math.min(d, caveMod);
+                        // The cave SDF (4 noise lookups) is only needed below the crust.
+                        if (isBelowCrust) {
+                            const caveMod = getCavernModifier(wx, wy, wz, biome);
+                            const isLargeCave = caveMod < MIN_SURFACE_CAVE_SIZE;
+                            if (!isNearSurface || isLargeCave) {
+                                d = Math.min(d, caveMod);
+                            }
                         }
 
                         // Bedrock

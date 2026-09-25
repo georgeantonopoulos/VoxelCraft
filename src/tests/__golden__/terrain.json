@@ -1,0 +1,44 @@
+{
+  "0,0": {
+    "sign": "bf9acc47",
+    "material": "9f96cbb9",
+    "trees": "25:31ec7c4f",
+    "flora": "28:9e09b22c",
+    "sticks": "48:a3c29a88",
+    "rocks": "0:811c9dc5",
+    "largeRocks": "0:811c9dc5",
+    "hollows": "0:811c9dc5",
+    "fireflies": "0:811c9dc5",
+    "meshPositions": "28404:b73d7107",
+    "meshNormals": "28404:bab64b44",
+    "meshIndices": "46128:ef1e2b82"
+  },
+  "5,-3": {
+    "sign": "aff5ee3a",
+    "material": "4abb575",
+    "trees": "120:633a76be",
+    "flora": "8:237a1cc1",
+    "sticks": "256:234482f3",
+    "rocks": "0:811c9dc5",
+    "largeRocks": "0:811c9dc5",
+    "hollows": "0:811c9dc5",
+    "fireflies": "0:811c9dc5",
+    "meshPositions": "30294:8c64158a",
+    "meshNormals": "30294:d85de524",
+    "meshIndices": "49032:b610c5bd"
+  },
+  "-12,40": {
+    "sign": "ab8400c4",
+    "material": "ad30ddf1",
+    "trees": "0:811c9dc5",
+    "flora": "0:811c9dc5",
+    "sticks": "0:811c9dc5",
+    "rocks": "0:811c9dc5",
+    "largeRocks": "0:811c9dc5",
+    "hollows": "0:811c9dc5",
+    "fireflies": "0:811c9dc5",
+    "meshPositions": "40587:71b0676f",
+    "meshNormals": "40587:aa3d27e9",
+    "meshIndices": "68772:2b642fac"
+  }
+}

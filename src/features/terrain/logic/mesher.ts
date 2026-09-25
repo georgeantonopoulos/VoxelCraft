@@ -183,6 +183,22 @@ const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
 const isLiquidMaterial = (mat: number) => mat === MaterialType.WATER || mat === MaterialType.ICE;
 
 /**
+ * Per-material lookup tables for the vertex material-blend kernel (hot loop:
+ * 125 samples per vertex). Equivalent to the original per-sample checks:
+ *  - BLEND_NEAREST_OK: solid, non-liquid material eligible as "nearest solid".
+ *  - BLEND_WEIGHT_CHANNEL: shader channel that receives blend weight, or NO_CHANNEL
+ *    (AIR, WATER and unmapped materials contribute no weight).
+ */
+const NO_CHANNEL = 255;
+const BLEND_NEAREST_OK = new Uint8Array(256);
+const BLEND_WEIGHT_CHANNEL = new Uint8Array(256).fill(NO_CHANNEL);
+for (let mat = 0; mat < 256; mat++) {
+  BLEND_NEAREST_OK[mat] = mat !== MaterialType.AIR && !isLiquidMaterial(mat) ? 1 : 0;
+  const channel = resolveChannel(mat);
+  if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) BLEND_WEIGHT_CHANNEL[mat] = channel;
+}
+
+/**
  * Sample the light grid at a given local chunk position.
  * Returns RGB values as floats (0-1 range).
  */
@@ -518,59 +534,71 @@ export function generateMesh(
   };
 
   // 1. Vertex Generation
+  //
+  // Precomputed solid mask: cells are classified with 8 byte reads, and the vast
+  // majority (all-air / all-solid) are rejected without touching density.
+  const STRIDE_Y = SIZE_X;
+  const STRIDE_Z = SIZE_X * SIZE_Y;
+  const solid = new Uint8Array(density.length);
+  for (let i = 0; i < density.length; i++) solid[i] = density[i] > ISO_LEVEL ? 1 : 0;
+
+  // Edge-intersection accumulator. Declared once (not per cell) so the hot loop
+  // allocates nothing; arithmetic and edge order match the original exactly.
+  let edgeCount = 0;
+  let avgX = 0, avgY = 0, avgZ = 0;
+  let cellX = 0, cellY = 0, cellZ = 0;
+  const addInter = (valA: number, valB: number, axis: 0 | 1 | 2, offX: number, offY: number, offZ: number) => {
+    if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
+      // Safe Denominator: prevent Infinity/NaN, preserving sign to keep the vertex on the correct side.
+      let denominator = valB - valA;
+      if (Math.abs(denominator) < 0.00001) denominator = (Math.sign(denominator) || 1) * 0.00001;
+      const mu = (ISO_LEVEL - valA) / denominator;
+      const clampedMu = Math.max(0.001, Math.min(0.999, mu));
+      if (axis === 0) { avgX += cellX + clampedMu; avgY += cellY + offY; avgZ += cellZ + offZ; }
+      if (axis === 1) { avgX += cellX + offX; avgY += cellY + clampedMu; avgZ += cellZ + offZ; }
+      if (axis === 2) { avgX += cellX + offX; avgY += cellY + offY; avgZ += cellZ + clampedMu; }
+      edgeCount++;
+    }
+  };
+
   for (let z = 0; z < SIZE_Z - 1; z++) {
     for (let y = 0; y < SIZE_Y - 1; y++) {
+      const rowBase = y * STRIDE_Y + z * STRIDE_Z;
       for (let x = 0; x < SIZE_X - 1; x++) {
-        const v000 = getVal(density, x, y, z);
-        const v100 = getVal(density, x + 1, y, z);
-        const v010 = getVal(density, x, y + 1, z);
-        const v110 = getVal(density, x + 1, y + 1, z);
-        const v001 = getVal(density, x, y, z + 1);
-        const v101 = getVal(density, x + 1, y, z + 1);
-        const v011 = getVal(density, x, y + 1, z + 1);
-        const v111 = getVal(density, x + 1, y + 1, z + 1);
+        const i000 = rowBase + x;
+        const solidCount =
+          solid[i000] + solid[i000 + 1] +
+          solid[i000 + STRIDE_Y] + solid[i000 + STRIDE_Y + 1] +
+          solid[i000 + STRIDE_Z] + solid[i000 + STRIDE_Z + 1] +
+          solid[i000 + STRIDE_Y + STRIDE_Z] + solid[i000 + STRIDE_Y + STRIDE_Z + 1];
 
-        let mask = 0;
-        if (v000 > ISO_LEVEL) mask |= 1;
-        if (v100 > ISO_LEVEL) mask |= 2;
-        if (v010 > ISO_LEVEL) mask |= 4;
-        if (v110 > ISO_LEVEL) mask |= 8;
-        if (v001 > ISO_LEVEL) mask |= 16;
-        if (v101 > ISO_LEVEL) mask |= 32;
-        if (v011 > ISO_LEVEL) mask |= 64;
-        if (v111 > ISO_LEVEL) mask |= 128;
+        if (solidCount !== 0 && solidCount !== 8) {
+          // All 8 corners are in-bounds (x,y,z < SIZE-1), so index density directly.
+          const v000 = density[i000];
+          const v100 = density[i000 + 1];
+          const v010 = density[i000 + STRIDE_Y];
+          const v110 = density[i000 + STRIDE_Y + 1];
+          const v001 = density[i000 + STRIDE_Z];
+          const v101 = density[i000 + STRIDE_Z + 1];
+          const v011 = density[i000 + STRIDE_Y + STRIDE_Z];
+          const v111 = density[i000 + STRIDE_Y + STRIDE_Z + 1];
 
-        if (mask !== 0 && mask !== 255) {
-          let edgeCount = 0;
-          let avgX = 0, avgY = 0, avgZ = 0;
+          edgeCount = 0;
+          avgX = 0; avgY = 0; avgZ = 0;
+          cellX = x; cellY = y; cellZ = z;
 
-          const addInter = (valA: number, valB: number, axis: 'x' | 'y' | 'z', offX: number, offY: number, offZ: number) => {
-            if ((valA > ISO_LEVEL) !== (valB > ISO_LEVEL)) {
-              // 1. Safe Denominator: Prevent Infinity/NaN
-              // Preserve sign to keep vertex on correct side of edge
-              let denominator = valB - valA;
-              if (Math.abs(denominator) < 0.00001) denominator = (Math.sign(denominator) || 1) * 0.00001;
-              const mu = (ISO_LEVEL - valA) / denominator;
-              const clampedMu = Math.max(0.001, Math.min(0.999, mu));
-              if (axis === 'x') { avgX += x + clampedMu; avgY += y + offY; avgZ += z + offZ; }
-              if (axis === 'y') { avgX += x + offX; avgY += y + clampedMu; avgZ += z + offZ; }
-              if (axis === 'z') { avgX += x + offX; avgY += y + offY; avgZ += z + clampedMu; }
-              edgeCount++;
-            }
-          };
-
-          addInter(v000, v100, 'x', 0, 0, 0);
-          addInter(v010, v110, 'x', 0, 1, 0);
-          addInter(v001, v101, 'x', 0, 0, 1);
-          addInter(v011, v111, 'x', 0, 1, 1);
-          addInter(v000, v010, 'y', 0, 0, 0);
-          addInter(v100, v110, 'y', 1, 0, 0);
-          addInter(v001, v011, 'y', 0, 0, 1);
-          addInter(v101, v111, 'y', 1, 0, 1);
-          addInter(v000, v001, 'z', 0, 0, 0);
-          addInter(v100, v101, 'z', 1, 0, 0);
-          addInter(v010, v011, 'z', 0, 1, 0);
-          addInter(v110, v111, 'z', 1, 1, 0);
+          addInter(v000, v100, 0, 0, 0, 0);
+          addInter(v010, v110, 0, 0, 1, 0);
+          addInter(v001, v101, 0, 0, 0, 1);
+          addInter(v011, v111, 0, 0, 1, 1);
+          addInter(v000, v010, 1, 0, 0, 0);
+          addInter(v100, v110, 1, 1, 0, 0);
+          addInter(v001, v011, 1, 0, 0, 1);
+          addInter(v101, v111, 1, 1, 0, 1);
+          addInter(v000, v001, 2, 0, 0, 0);
+          addInter(v100, v101, 2, 1, 0, 0);
+          addInter(v010, v011, 2, 0, 1, 0);
+          addInter(v110, v111, 2, 1, 1, 0);
 
           if (edgeCount > 0) {
             avgX /= edgeCount; avgY /= edgeCount; avgZ /= edgeCount;
@@ -604,24 +632,32 @@ export function generateMesh(
             let bestWet = 0, bestMoss = 0, bestVal = -Infinity;
             let totalWeight = 0, occTotalW = 0, occSolidW = 0;
             let nearestSolidMat = MaterialType.AIR, minSolidDistSq = Infinity;
+            // Fast path: when the whole blend kernel is inside the grid, skip per-sample bounds checks.
+            const kernelInside =
+              centerX - BLEND_RADIUS >= 0 && centerX + BLEND_RADIUS < SIZE_X &&
+              centerY - BLEND_RADIUS >= 0 && centerY + BLEND_RADIUS < SIZE_Y &&
+              centerZ - BLEND_RADIUS >= 0 && centerZ + BLEND_RADIUS < SIZE_Z;
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
               for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
                 for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
                   const sx = centerX + dx, sy = centerY + dy, sz = centerZ + dz;
-                  const val = getVal(density, sx, sy, sz);
+                  const sIdx = sx + sy * STRIDE_Y + sz * STRIDE_Z;
+                  const val = kernelInside ? density[sIdx] : getVal(density, sx, sy, sz);
                   const distSq = dx * dx + dy * dy + dz * dz;
                   const w = 1.0 / (distSq + 0.1);
                   occTotalW += w;
-                  if (val > ISO_LEVEL) occSolidW += w;
                   if (val > ISO_LEVEL) {
-                    const mat = getMat(material, sx, sy, sz);
-                    if (mat !== MaterialType.AIR && !isLiquidMaterial(mat)) {
-                      if (distSq < minSolidDistSq) { minSolidDistSq = distSq; nearestSolidMat = mat; }
+                    occSolidW += w;
+                    const mat = kernelInside ? material[sIdx] : getMat(material, sx, sy, sz);
+                    if (BLEND_NEAREST_OK[mat] === 1 && distSq < minSolidDistSq) { minSolidDistSq = distSq; nearestSolidMat = mat; }
+                    const channel = BLEND_WEIGHT_CHANNEL[mat];
+                    if (channel !== NO_CHANNEL) { localWeights[channel] += w; totalWeight += w; }
+                    if (val > bestVal) {
+                      bestVal = val;
+                      bestWet = kernelInside ? wetData[sIdx] : getByte(wetData, sx, sy, sz);
+                      bestMoss = kernelInside ? mossData[sIdx] : getByte(mossData, sx, sy, sz);
                     }
-                    const channel = resolveChannel(mat);
-                    if (channel > -1 && mat !== MaterialType.AIR && mat !== MaterialType.WATER) { localWeights[channel] += w; totalWeight += w; }
-                    if (val > bestVal) { bestVal = val; bestWet = getByte(wetData, sx, sy, sz); bestMoss = getByte(mossData, sx, sy, sz); }
                   }
                 }
               }
