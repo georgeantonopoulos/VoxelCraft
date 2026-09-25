@@ -141,7 +141,11 @@ export const useGroveStore = create<GroveState>((set, get) => {
     bindWorld: (seed) => {
       if (get().seed === seed) return;
       const saved = typeof window !== 'undefined' ? loadPersisted(seed) : null;
-      const progression = saved?.progression ?? initialProgression();
+      // Merge saved stats over defaults: stats added in later versions start at 0.
+      const base = initialProgression();
+      const progression = saved?.progression
+        ? { ...saved.progression, stats: { ...base.stats, ...saved.progression.stats } }
+        : base;
       set({
         seed,
         progression,

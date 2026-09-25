@@ -31,6 +31,7 @@ import { CinematicCamera } from '@features/environment/components/CinematicCamer
 import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
 import { EnvironmentProbe } from '@features/environment/components/EnvironmentProbe';
 import { AmbienceDirector } from '@features/environment/components/AmbienceDirector';
+import { WildlifeManager } from '@features/creatures/wildlife/WildlifeManager';
 import { PointLightPool } from '@core/graphics/PointLightPool';
 import { DebugHandles } from '@core/utils/DebugHandles';
 import { GroveDirector } from '@features/grove/GroveDirector';
@@ -519,6 +520,7 @@ const App: React.FC = () => {
               {gameStarted && spawnPos && collidersReady && <Player position={spawnPos} />}
               {!gameStarted && <CinematicCamera spawnPos={spawnPos} />}
               <AmbientLife enabled={gameStarted} />
+              {gameStarted && terrainLoaded && <WildlifeManager enabled />}
               {gameStarted && (
                 <Suspense fallback={null}>
                   <BeeManager enabled />

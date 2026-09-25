@@ -18,6 +18,8 @@ export interface GroveStats {
   hollowsRestored: number;
   biomesDiscovered: number;
   nightsEndured: number;
+  /** Times a rootling led the player to a Root Hollow. */
+  creaturesGuided: number;
 }
 
 export type GroveStatKey = keyof GroveStats;
@@ -33,6 +35,7 @@ export const EMPTY_STATS: GroveStats = {
   hollowsRestored: 0,
   biomesDiscovered: 0,
   nightsEndured: 0,
+  creaturesGuided: 0,
 };
 
 export interface QuestDef {
@@ -209,6 +212,7 @@ export const ACTION_ESSENCE: Partial<Record<GroveStatKey, number>> = {
   biomesDiscovered: 15,
   treesFelled: 3,
   nightsEndured: 10,
+  creaturesGuided: 12,
 };
 
 /**
@@ -262,7 +266,7 @@ export const applyStat = (
   if (amount <= 0) return { state: prev, notices: [] };
 
   const notices: GroveNotice[] = [];
-  const stats: GroveStats = { ...prev.stats, [stat]: prev.stats[stat] + amount };
+  const stats: GroveStats = { ...prev.stats, [stat]: (prev.stats[stat] ?? 0) + amount };
   let essence = prev.essence + (ACTION_ESSENCE[stat] ?? 0) * amount;
   let questIndex = prev.questIndex;
   let questBaseline = prev.questBaseline;
