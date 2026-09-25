@@ -32,8 +32,7 @@ export const SparkSystem: React.FC = () => {
 
             if (age < 0.0 || age > aLife) {
                 csm_Position = vec3(0.0, -9999.0, 0.0);
-                return;
-            }
+            } else { // no early return: CSM inlines main() (gl_Position must be written)
 
             float progress = age / aLife;
             vec3 worldPos = aOffset + aDirection.xyz * age;
@@ -42,6 +41,7 @@ export const SparkSystem: React.FC = () => {
             float s = max(0.0, 1.0 - progress);
             csm_Position = worldPos + csm_Position * s;
         }
+    }
     `;
 
     const clockTime = useRef(0);

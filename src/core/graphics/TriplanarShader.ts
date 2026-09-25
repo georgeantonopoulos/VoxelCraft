@@ -406,7 +406,9 @@ export const triplanarFragmentShader = `
     float totalHumidity = clamp(vBaseHumidity + vTreeHumidityBoost, 0.0, 1.0);
     // Only lush up soil that already exists here (adding grass weight unconditionally
     // tinted pure sand, snow and cave rock near water green).
-    float soilPresent = step(0.001, vWb.x + vWa.w);
+    // Smooth gate: a hard step() here drew a saw-tooth grass edge along the
+    // zig-zag contour where interpolated soil weight crosses ~0.
+    float soilPresent = smoothstep(0.05, 0.5, vWb.x + vWa.w);
 
     // === MATERIAL SELECTION: top two channels by (humidity-adjusted) weight ===
     float w[16];
@@ -428,27 +430,6 @@ export const triplanarFragmentShader = `
     w1 = max(w1 - w2, 0.0);
     if (w0 < 0.001) { c0 = 2; w0 = 1.0; }
 
-    if (uWeightsView >= 5) {
-      // Emissive-only debug views (window.__terrainView): unaffected by lights.
-      vec3 dbgE = vec3(0.0);
-      if (uWeightsView == 5) dbgE = getGILight();
-      else if (uWeightsView == 6 || uWeightsView == 7) {
-        vec3 twD = pow(abs(N), vec3(6.0)); twD /= max(dot(twD, vec3(1.0)), 1e-5);
-        vec4 aD; vec3 nD; float rD; float oD;
-        samplePbrLayer(c0, vWorldPosition, N, twD, aD, nD, rD, oD);
-        dbgE = uWeightsView == 6 ? aD.rgb : nD * 0.5 + 0.5;
-      }
-      csm_DiffuseColor = vec4(0.0, 0.0, 0.0, uOpacity); csm_Emissive = dbgE; csm_Roughness = 1.0; csm_Metalness = 0.0; return;
-    }
-    if (uWeightsView != 0) {
-      float grassW = vWb.x; float snowW = vWb.z; vec3 dbg = vec3(0.5);
-      if (uWeightsView == 1) dbg = vec3(snowW);
-      else if (uWeightsView == 2) dbg = vec3(grassW);
-      else if (uWeightsView == 3) dbg = vec3(clamp((snowW - grassW) * 2.0 + 0.5, 0.0, 1.0));
-      else if (uWeightsView == 4) dbg = vec3(float(c0) / 15.0);
-      csm_DiffuseColor = vec4(dbg, uOpacity); csm_Emissive = vec3(0.0); csm_Roughness = 1.0; csm_Metalness = 0.0; return;
-    }
-
     // === TRIPLANAR PBR ===
     vec3 tw = pow(abs(N), vec3(6.0));
     tw /= max(dot(tw, vec3(1.0)), 1e-5);
@@ -465,8 +446,10 @@ export const triplanarFragmentShader = `
       // Height blend: the taller texel wins near the boundary (stones poke out of
       // grass, sand fills cracks) instead of a soft cross-fade.
       // Noise-jittered weights break up boundaries that follow the voxel grid.
-      float jitter = (texture(uNoiseTexture, P * 0.07 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 0.9
-                   + (texture(uNoiseTexture, P * 0.31 + vec3(0.8, 0.4, 0.2)).b - 0.5) * 0.35;
+      // Strong enough to move the boundary ~1 m: per-vertex weights ramp across a
+      // single triangle, which otherwise shows as a saw-tooth edge.
+      float jitter = (texture(uNoiseTexture, P * 0.07 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 1.1
+                   + (texture(uNoiseTexture, P * 0.45 + vec3(0.8, 0.4, 0.2)).b - 0.5) * 0.8;
       float b0 = clamp(w0 / wSum + jitter, 0.0, 1.0), b1 = 1.0 - b0;
       float h0 = A0.a + b0, h1 = A1.a + b1;
       float top = max(h0, h1) - 0.25;
@@ -630,6 +613,23 @@ export const triplanarFragmentShader = `
     csm_FragNormal = normalize((viewMatrix * vec4(N, 0.0)).xyz);
     // CSM semantics: csm_AO is the occlusion AMOUNT (indirectDiffuse *= 1 - csm_AO).
     csm_AO = 1.0 - ao;
+
+    // Debug views (window.__terrainView). Applied as overrides at the end: CSM
+    // inlines this main(), so an early return would skip writing the output.
+    if (uWeightsView != 0) {
+      vec3 dbg = vec3(0.5);
+      if (uWeightsView == 1) dbg = vec3(vWb.z);
+      else if (uWeightsView == 2) dbg = vec3(vWb.x);
+      else if (uWeightsView == 3) dbg = vec3(clamp((vWb.z - vWb.x) * 2.0 + 0.5, 0.0, 1.0));
+      else if (uWeightsView == 4) dbg = vec3(float(c0) / 15.0, float(c1) / 15.0, w1 / max(w0 + w1, 1e-4));
+      else if (uWeightsView == 5) dbg = getGILight();
+      else if (uWeightsView == 6) dbg = accColor;
+      else if (uWeightsView == 7) dbg = N * 0.5 + 0.5;
+      csm_DiffuseColor = vec4(0.0, 0.0, 0.0, uOpacity);
+      csm_Emissive = dbg;
+      csm_Roughness = 1.0;
+      csm_AO = 1.0;
+    }
     csm_Metalness = 0.0;
   }
 `;

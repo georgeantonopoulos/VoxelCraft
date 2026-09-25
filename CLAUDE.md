@@ -201,6 +201,7 @@ Gameplay layer that gives the world a goal: restore dormant Root Hollows.
 - **Constant light count**: never mount/unmount or toggle `visible` on lights during play; dim them to intensity 0 instead (TorchTool, FirstPersonTools). Any change in the number of visible lights recompiles every lit shader. `SceneWarmup` precompiles the scene once with `gl.compileAsync` after load.
 - **CustomShaderMaterial (React) uniforms**: pass a memoized/module-level object, never an inline `uniforms={{...}}`. The wrapper disposes and rebuilds the material whenever the uniforms object identity changes, so a literal recompiles it on every re-render.
 - **Shared materials**: never write per-object uniform values in `onBeforeRender` on a material shared by several meshes. three.js skips material uniform uploads between consecutive draws of the same material. Pool materials per value instead (e.g. TreeLayer leaf LOD alpha).
+- **CSM `main()` is inlined** into three's main: never `return;` early in a CSM shader (the vertex path then never writes gl_Position, the fragment path never writes the colour). Use if/else. Enforced by `src/tests/csmShaderRules.test.ts`.
 - **CSM `csm_AO`** is the occlusion *amount* (`indirectDiffuse *= 1 - csm_AO`), not visibility. Writing an AO map value (1 = open) straight into it removed all sky light from shadowed terrain (black shadows).
 - **GLSL `smoothstep`**: edges must satisfy edge0 < edge1 (reversed or equal edges are undefined and can produce NaN). For a falling ramp write `1.0 - smoothstep(lo, hi, x)`. Also guard `atan(y, x)` at (0,0) and `normalize()` of possibly-zero vectors.
 
@@ -458,6 +459,10 @@ Also resolved (2026-09, second pass):
 - Production builds generated no terrain: the terrain worker was constructed from a URL variable, so Vite never bundled it (see Worker construction above).
 - Crouch was on Ctrl (Ctrl+W closed the tab); it is now Z. Crouching keeps the feet planted and won't stand up under a ceiling.
 - Log depth removed (`logarithmicDepthBuffer: false`): fog ends ~100m, so standard depth with near 0.1 is precise enough, and early-Z works again. Never write gl_FragDepth in custom shaders.
+
+## Known Limitations
+
+- Sharp terrain crests seen at grazing angles show a voxel-scale zig-zag silhouette (one Surface Nets vertex per cell). Fix idea: a constrained vertex relaxation pass in mesher.ts (move vertices toward the neighbour average, then re-project onto the isosurface along the gradient).
 
 ## Future Features (TODO)
 

@@ -112,8 +112,10 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
       THREE.RedFormat,
       THREE.UnsignedByteType
     );
-    material.minFilter = THREE.NearestFilter;
-    material.magFilter = THREE.NearestFilter;
+    // Linear: blades threshold the interpolated mask with per-blade dither, so the
+    // grass edge follows an organic line instead of voxel-cell steps.
+    material.minFilter = THREE.LinearFilter;
+    material.magFilter = THREE.LinearFilter;
     material.needsUpdate = true;
 
     // Normal texture - expand RG to RGBA

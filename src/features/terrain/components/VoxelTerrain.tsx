@@ -185,8 +185,7 @@ const Particles = ({
 
       if (age < 0.0 || age > life) {
           csm_Position = vec3(0.0, -9999.0, 0.0);
-          return;
-      }
+      } else { // no early return: CSM inlines main() (gl_Position must be written)
 
       vColor = aColor;
       vType = aParams.z;
@@ -224,6 +223,7 @@ const Particles = ({
       }
 
       csm_Position = animatedPos + csm_Position * s;
+    }
     }
   `;
 

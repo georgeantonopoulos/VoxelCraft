@@ -34,8 +34,7 @@ export const BubbleSystem: React.FC = () => {
             if (age < 0.0 || age > life) {
                 // Hide particle
                 csm_Position = vec3(0.0, -9999.0, 0.0);
-                return;
-            }
+            } else { // no early return: CSM inlines main() (gl_Position must be written)
 
             float progress = age / life;
             vec3 worldPos = aOffset + aDirection.xyz * age;
@@ -56,6 +55,7 @@ export const BubbleSystem: React.FC = () => {
             
             csm_Position = worldPos + csm_Position * s;
         }
+    }
     `;
 
     const lastPos = useRef(new THREE.Vector3());

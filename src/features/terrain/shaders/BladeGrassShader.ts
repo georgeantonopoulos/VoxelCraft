@@ -195,8 +195,10 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     // === Visibility Checks ===
     float visible = 1.0;
 
-    // Material mask (grass-friendly surface)
-    visible *= step(0.5, matMask);
+    // Material mask (grass-friendly surface), dithered per blade on the
+    // interpolated mask so the edge thins out organically.
+    float edgeDither = hash2(cellId + vec2(3.1, 7.7)).x;
+    visible *= step(mix(0.2, 0.8, edgeDither), matMask);
 
     // Cave mask (not over cave opening)
     visible *= step(0.5, caveMask);
@@ -215,17 +217,20 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
 
     vVisible = visible;
 
-    // Early exit for invisible blades
+    // Invisible blades collapse far below the world. No early return: CSM
+    // inlines this main() into three's, and returning skipped gl_Position
+    // (undefined output: stray triangles along grass edges).
     if (visible < 0.5) {
       csm_Position = vec3(0.0, -9999.0, 0.0);
-      return;
-    }
+    } else {
 
     // === Instance Variation ===
     vec3 rands = hash3(cellId);
     float randScale = 0.6 + rands.x * 0.8;   // Scale: 0.6 - 1.4
     float randRot = rands.y * 6.28318;       // Rotation: 0 - 2π
     float randCurve = rands.z * 0.3 + 0.1;   // Curvature: 0.1 - 0.4
+    // Shorter, sparser blades toward the edge of a grass patch.
+    randScale *= mix(0.45, 1.0, smoothstep(0.3, 0.95, matMask));
 
     // Biome-specific height adjustments
     if (biomeId > 8.5 && biomeId < 9.5) {
@@ -336,6 +341,7 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     }
 
     csm_Position = localPos;
+    }
   }
 `;
 
@@ -462,5 +468,9 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
     col = mix(col, uFogColor, fogAmt * uShaderFogStrength);
 
     csm_DiffuseColor = vec4(col, 1.0);
+    // Dense grass occludes most sky light near the ground (CSM csm_AO = occlusion
+    // amount). Without it the unshadowed sky fill dominated and tree shadows
+    // barely darkened the blades.
+    csm_AO = mix(0.6, 0.2, t);
   }
 `;
