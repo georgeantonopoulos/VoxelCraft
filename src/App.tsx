@@ -465,7 +465,10 @@ const App: React.FC = () => {
             antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
             toneMapping: THREE.NoToneMapping,
-            logarithmicDepthBuffer: true
+            // Standard depth: fog hides everything past ~100m and near=0.1 still
+            // resolves ~0.006 units there. Log depth made every material write
+            // gl_FragDepth, disabling early-Z (hidden terrain was fully shaded).
+            logarithmicDepthBuffer: false
           }}
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >

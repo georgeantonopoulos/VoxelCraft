@@ -10,7 +10,7 @@
     "hollows": "0:811c9dc5",
     "fireflies": "60:6207c163",
     "meshPositions": "28251:e8d9f300",
-    "meshNormals": "28251:909a3dd8",
+    "meshNormals": "28251:625020f4",
     "meshIndices": "45768:92fe6920"
   },
   "5,-3": {
@@ -24,7 +24,7 @@
     "hollows": "0:811c9dc5",
     "fireflies": "0:811c9dc5",
     "meshPositions": "27423:a7eaf53a",
-    "meshNormals": "27423:7f9b1c51",
+    "meshNormals": "27423:99e47eef",
     "meshIndices": "44454:3e424dfb"
   },
   "-12,40": {
@@ -38,7 +38,7 @@
     "hollows": "0:811c9dc5",
     "fireflies": "0:811c9dc5",
     "meshPositions": "36282:16bce044",
-    "meshNormals": "36282:24d488bb",
+    "meshNormals": "36282:9d521bad",
     "meshIndices": "62502:603b1386"
   }
 }

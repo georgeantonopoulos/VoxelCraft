@@ -12,7 +12,8 @@ export interface ChunkModification {
 }
 
 // Ground item pickup entry - tracks which generated items have been picked up
-export type GroundItemType = 'stick' | 'rock' | 'flora';
+/** 'tree' records use treeRecordIndex (position key) instead of an array index. */
+export type GroundItemType = 'stick' | 'rock' | 'flora' | 'tree';
 export interface GroundItemPickup {
   chunkId: string; // scopedChunkId(): "<worldKey>|cx,cz"
   itemType: GroundItemType;

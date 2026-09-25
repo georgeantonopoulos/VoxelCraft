@@ -99,7 +99,9 @@ const MIN_NORMAL_LEN_SQ = 0.0001;
 function computeAreaWeightedNormals(
   positions: number[],
   indices: number[],
-  originalNormals: number[]
+  originalNormals: number[],
+  /** Extra (non-rendered) triangles that contribute to smoothing, e.g. the border band. */
+  extraIndices: number[] = []
 ): number[] {
   const vertexCount = positions.length / 3;
 
@@ -107,8 +109,8 @@ function computeAreaWeightedNormals(
   const accumulated = new Float32Array(vertexCount * 3);
 
   // First pass: accumulate area-weighted face normals
-  for (let i = 0; i < indices.length; i += 3) {
-    const i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+  for (const list of [indices, extraIndices]) for (let i = 0; i < list.length; i += 3) {
+    const i0 = list[i], i1 = list[i + 1], i2 = list[i + 2];
 
     // Get vertex positions
     const ax = positions[i0 * 3], ay = positions[i0 * 3 + 1], az = positions[i0 * 3 + 2];
@@ -181,6 +183,9 @@ const getByte = (arr: Uint8Array, x: number, y: number, z: number) => {
 };
 
 const isLiquidMaterial = (mat: number) => mat === MaterialType.WATER || mat === MaterialType.ICE;
+
+/** Padded-grid coordinate within one voxel of either chunk border plane (XZ). */
+const isNearChunkBorder = (c: number) => Math.abs(c - PAD) <= 1 || Math.abs(c - (PAD + CHUNK_SIZE_XZ)) <= 1;
 
 /**
  * Per-material lookup tables for the vertex material-blend kernel (hot loop:
@@ -255,6 +260,53 @@ export type WaterSurfaceMeshData = {
  * IMPORTANT: This mesh is purely visual (no colliders). Player interaction queries the voxel
  * material grid at runtime rather than relying on physics for water.
  */
+/** Grow a cell mask by one cell in all 8 directions (stays inside the grid). */
+export function dilateWaterMask(mask: Uint8Array, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(w * h);
+  for (let z = 0; z < h; z++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[x + z * w]) continue;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, nz = z + dz;
+          if (nx >= 0 && nz >= 0 && nx < w && nz < h) out[nx + nz * w] = 1;
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Greedy rectangle cover of a cell mask: row spans, merged downward while the
+ * next row has the identical span. Rects are in cell units, [x0,x1) x [z0,z1).
+ */
+export function mergeMaskRects(mask: Uint8Array, w: number, h: number): Array<{ x0: number; x1: number; z0: number; z1: number }> {
+  const used = new Uint8Array(w * h);
+  const rects: Array<{ x0: number; x1: number; z0: number; z1: number }> = [];
+  for (let z = 0; z < h; z++) {
+    let x = 0;
+    while (x < w) {
+      if (!mask[x + z * w] || used[x + z * w]) { x++; continue; }
+      let x1 = x;
+      while (x1 < w && mask[x1 + z * w] && !used[x1 + z * w]) x1++;
+      let z1 = z + 1;
+      while (z1 < h) {
+        let full = true;
+        for (let i = x; i < x1; i++) {
+          if (!mask[i + z1 * w] || used[i + z1 * w]) { full = false; break; }
+        }
+        if (!full) break;
+        z1++;
+      }
+      for (let zz = z; zz < z1; zz++) for (let i = x; i < x1; i++) used[i + zz * w] = 1;
+      rects.push({ x0: x, x1, z0: z, z1 });
+      x = x1;
+    }
+  }
+  return rects;
+}
+
 export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8Array): WaterSurfaceMeshData {
   const waterVerts: number[] = [];
   const waterInds: number[] = [];
@@ -287,27 +339,25 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
     }
   }
 
-  // Emit a chunk-wide sea-level quad only if this chunk actually has sea-level water.
-  // The shoreline is handled by a mask in WaterMaterial, so geometry stays simple.
-  // Using exact chunk boundaries (0 to CHUNK_SIZE_XZ) ensures seamless tiling.
+  // Emit water only over sea-level water cells (dilated by one cell so the sheet
+  // tucks under the shoreline instead of leaving a dry gap), merged into
+  // rectangles. A chunk-wide quad showed a water sheet inside caves and dug pits
+  // that cross sea level, since the shader's shore mask cannot be applied
+  // per chunk on the shared water material.
   if (hasAnyWater) {
+    const covered = dilateWaterMask(waterMask, waterW, waterH);
     const y = WATER_LEVEL;
-    waterVerts.push(
-      0, y, 0,
-      CHUNK_SIZE_XZ, y, 0,
-      0, y, CHUNK_SIZE_XZ,
-      CHUNK_SIZE_XZ, y, CHUNK_SIZE_XZ
-    );
-    waterNorms.push(
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0,
-      0, 1, 0
-    );
-    waterInds.push(
-      0, 2, 1,
-      2, 3, 1
-    );
+    for (const r of mergeMaskRects(covered, waterW, waterH)) {
+      const base = waterVerts.length / 3;
+      waterVerts.push(
+        r.x0, y, r.z0,
+        r.x1, y, r.z0,
+        r.x0, y, r.z1,
+        r.x1, y, r.z1
+      );
+      waterNorms.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+      waterInds.push(base, base + 2, base + 1, base + 2, base + 3, base + 1);
+    }
   }
 
   // --- Compute shoreline SDF mask for the shader ---
@@ -638,14 +688,20 @@ export function generateMesh(
             let totalWeight = 0, occTotalW = 0, occSolidW = 0;
             let nearestSolidMat = MaterialType.AIR, minSolidDistSq = Infinity;
             // Fast path: when the whole blend kernel is inside the grid, skip per-sample bounds checks.
+            // Within one voxel of a chunk border plane the radius-2 kernel would
+            // reach past this chunk's padding on one side only, so the two chunks
+            // sharing a border vertex blended different voxels (visible seams in
+            // cavity/material). Shrink the kernel along that axis to 1 there.
+            const radiusX = isNearChunkBorder(centerX) ? 1 : BLEND_RADIUS;
+            const radiusZ = isNearChunkBorder(centerZ) ? 1 : BLEND_RADIUS;
             const kernelInside =
-              centerX - BLEND_RADIUS >= 0 && centerX + BLEND_RADIUS < SIZE_X &&
+              centerX - radiusX >= 0 && centerX + radiusX < SIZE_X &&
               centerY - BLEND_RADIUS >= 0 && centerY + BLEND_RADIUS < SIZE_Y &&
-              centerZ - BLEND_RADIUS >= 0 && centerZ + BLEND_RADIUS < SIZE_Z;
+              centerZ - radiusZ >= 0 && centerZ + radiusZ < SIZE_Z;
 
             for (let dy = -BLEND_RADIUS; dy <= BLEND_RADIUS; dy++) {
-              for (let dz = -BLEND_RADIUS; dz <= BLEND_RADIUS; dz++) {
-                for (let dx = -BLEND_RADIUS; dx <= BLEND_RADIUS; dx++) {
+              for (let dz = -radiusZ; dz <= radiusZ; dz++) {
+                for (let dx = -radiusX; dx <= radiusX; dx++) {
                   const sx = centerX + dx, sy = centerY + dy, sz = centerZ + dz;
                   const sIdx = sx + sy * STRIDE_Y + sz * STRIDE_Z;
                   const val = kernelInside ? density[sIdx] : getVal(density, sx, sy, sz);
@@ -717,6 +773,13 @@ export function generateMesh(
 
   const start = PAD, endX = PAD + CHUNK_SIZE_XZ, endY = PAD + CHUNK_SIZE_Y;
 
+  // Owned quads go to tInds (rendered). Quads of the one-cell band just outside
+  // the owned region go to borderInds: never rendered (the neighbour owns them)
+  // but included when smoothing normals, so vertices on a shared border see the
+  // same triangles from both chunks and shade identically (no seam line).
+  const borderInds: number[] = [];
+  let quadTarget: number[] = tInds;
+
   /**
    * Push a quad as two triangles, choosing the shorter diagonal for splitting.
    * This minimizes distortion on non-planar quads (common at cave openings and steep slopes).
@@ -785,16 +848,16 @@ export function generateMesh(
       if (dotA > dotB) {
         // Split along c0-c3 diagonal
         if (!flipped) {
-          tInds.push(c0, c1, c3, c0, c3, c2);
+          quadTarget.push(c0, c1, c3, c0, c3, c2);
         } else {
-          tInds.push(c3, c1, c0, c2, c3, c0);
+          quadTarget.push(c3, c1, c0, c2, c3, c0);
         }
       } else {
         // Split along c1-c2 diagonal
         if (!flipped) {
-          tInds.push(c0, c1, c2, c2, c1, c3);
+          quadTarget.push(c0, c1, c2, c2, c1, c3);
         } else {
-          tInds.push(c2, c1, c0, c3, c1, c2);
+          quadTarget.push(c2, c1, c0, c3, c1, c2);
         }
       }
     }
@@ -805,11 +868,9 @@ export function generateMesh(
   // - Only emit quads for interior cells: [PAD .. PAD+CHUNK_SIZE) (half-open).
   // - Still sample neighbor side via PAD when reading x+1 / z+1.
   // This ensures exactly one chunk owns the shared border plane.
-  for (let z = start; z < endX; z++) {
-    for (let y = start; y < endY; y++) {
-      for (let x = start; x < endX; x++) {
+  const emitCellQuads = (x: number, y: number, z: number) => {
         const val = getVal(density, x, y, z);
-        if (x < endX) {
+        if (x < SIZE_X - 1) {
           const vNext = getVal(density, x + 1, y, z);
           if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x, y - 1, z - 1), bufIdx(x, y - 1, z), bufIdx(x, y, z - 1), bufIdx(x, y, z), val > ISO_LEVEL);
         }
@@ -817,13 +878,30 @@ export function generateMesh(
           const vNext = getVal(density, x, y + 1, z);
           if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x - 1, y, z - 1), bufIdx(x, y, z - 1), bufIdx(x - 1, y, z), bufIdx(x, y, z), val > ISO_LEVEL);
         }
-        if (z < endX) {
+        if (z < SIZE_Z - 1) {
           const vNext = getVal(density, x, y, z + 1);
           if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) pushQuad(bufIdx(x - 1, y - 1, z), bufIdx(x - 1, y, z), bufIdx(x, y - 1, z), bufIdx(x, y, z), val > ISO_LEVEL);
         }
+  };
+
+  quadTarget = tInds;
+  for (let z = start; z < endX; z++) {
+    for (let y = start; y < endY; y++) {
+      for (let x = start; x < endX; x++) emitCellQuads(x, y, z);
+    }
+  }
+
+  // Normal-only border band: cells at start-1 and endX on the X/Z sides.
+  quadTarget = borderInds;
+  for (let z = start - 1; z <= endX; z++) {
+    for (let y = start; y < endY; y++) {
+      for (let x = start - 1; x <= endX; x++) {
+        const inOwned = x >= start && x < endX && z >= start && z < endX;
+        if (!inOwned) emitCellQuads(x, y, z);
       }
     }
   }
+  quadTarget = tInds;
 
   // === Post-processing: Smooth normals ===
   // NOTE: Vertex welding and degenerate triangle filtering have been removed
@@ -831,7 +909,7 @@ export function generateMesh(
   // terrainService.ts is the proper fix for mesh artifacts at cave openings.
 
   // Compute area-weighted smoothed normals to improve shading on steep slopes
-  const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms);
+  const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms, borderInds);
 
   const water = generateWaterSurfaceMesh(density, material);
   const collider = skipCollider ? {} : generateColliderData(density);

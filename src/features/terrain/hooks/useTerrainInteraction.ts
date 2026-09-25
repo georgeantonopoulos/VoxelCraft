@@ -47,6 +47,8 @@ import { MaterialType, ChunkState, ItemType } from '@/types';
 // Audio System
 import { getRandomDigSound } from '@core/audio';
 import { treeVariant } from '@features/flora/logic/treeInstance';
+import { saveGroundPickup } from '@state/WorldDB';
+import { treeRecordIndex } from '@state/pickupKeys';
 
 // Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
 function getLeafColorForTreeType(treeType: number): string {
@@ -274,6 +276,9 @@ export function useTerrainInteraction(
                   newPositions[destIdx++] = positions[j + 3];
                   newPositions[destIdx++] = positions[j + 4];
                 }
+
+                // Persist the felled tree (by position) so it stays gone after reloads.
+                saveGroundPickup(chunk.cx, chunk.cz, 'tree', treeRecordIndex(positions[posIdx], positions[posIdx + 2]));
 
                 // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
                 const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
@@ -642,6 +647,11 @@ export function useTerrainInteraction(
                 newPositions[destIdx + 3] = positions[i + 3];
                 newPositions[destIdx + 4] = positions[i + 4];
                 destIdx += 5;
+              }
+
+              // Persist felled trees (by position) so they stay gone after reloads.
+              for (const idx of hitIndices) {
+                saveGroundPickup(chunk.cx, chunk.cz, 'tree', treeRecordIndex(positions[idx], positions[idx + 2]));
               }
 
               // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions

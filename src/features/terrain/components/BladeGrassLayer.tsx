@@ -51,6 +51,18 @@ function getInstanceCount(lodLevel: number): number {
 /**
  * BladeGrassLayer - Single InstancedMesh for all grass in chunk
  */
+/** Shared 1x1 white light texture for chunks without a light grid. */
+let dummyLightTexture: THREE.Data3DTexture | null = null;
+const getDummyLightTexture = (): THREE.Data3DTexture => {
+  if (!dummyLightTexture) {
+    dummyLightTexture = new THREE.Data3DTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, 1);
+    dummyLightTexture.format = THREE.RGBAFormat;
+    dummyLightTexture.type = THREE.UnsignedByteType;
+    dummyLightTexture.needsUpdate = true;
+  }
+  return dummyLightTexture;
+};
+
 export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
   heightTex,
   materialTex,
@@ -71,7 +83,13 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
 
   // Create blade geometry (single shared instance)
   const geometry = useMemo(() => {
-    return createBladeGeometry();
+    const g = createBladeGeometry();
+    // Instances are placed in the vertex shader across the whole chunk column, so
+    // the blade's own tiny bounds would cull the layer. Bounds live on the
+    // geometry (not the mesh) so they survive the mesh being recreated.
+    g.boundingBox = new THREE.Box3(new THREE.Vector3(-2, -40, -2), new THREE.Vector3(34, 100, 34));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 30, 16), 70);
+    return g;
   }, []);
 
   // Create textures from typed arrays
@@ -167,16 +185,10 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
   );
 
   // Create material with custom shader
+  // Created once per layer. Texture/offset/count changes only swap uniform
+  // values (see effects below); rebuilding the material on every remesh (each
+  // new light grid) recompiled/re-uploaded far more than needed.
   const material = useMemo(() => {
-    // Dummy 3D light texture if not available
-    const dummyLightTex = new THREE.Data3DTexture(
-      new Uint8Array([255, 255, 255, 255]),
-      1, 1, 1
-    );
-    dummyLightTex.format = THREE.RGBAFormat;
-    dummyLightTex.type = THREE.UnsignedByteType;
-    dummyLightTex.needsUpdate = true;
-
     const mat = new (CustomShaderMaterial as any)({
       baseMaterial: THREE.MeshStandardMaterial,
       vertexShader: BLADE_GRASS_VERTEX,
@@ -188,7 +200,7 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
         uNormalMap: { value: textures.normal },
         uBiomeMap: { value: textures.biome },
         uCaveMask: { value: textures.cave },
-        uLightGrid: { value: textures.light || dummyLightTex },
+        uLightGrid: { value: textures.light || getDummyLightTexture() },
 
         // Animation & positioning
         uTime: sharedUniforms.uTime,
@@ -229,7 +241,27 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
 
     materialRef.current = mat;
     return mat;
-  }, [textures, chunkOffset, instanceCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Swap in rebuilt terrain textures (e.g. after digging) and free the old ones.
+  useEffect(() => {
+    const u = material.uniforms;
+    u.uHeightMap.value = textures.height;
+    u.uMaterialMask.value = textures.material;
+    u.uNormalMap.value = textures.normal;
+    u.uBiomeMap.value = textures.biome;
+    u.uCaveMask.value = textures.cave;
+    u.uLightGrid.value = textures.light || getDummyLightTexture();
+    return () => {
+      textures.height.dispose();
+      textures.material.dispose();
+      textures.normal.dispose();
+      textures.biome.dispose();
+      textures.cave.dispose();
+      textures.light?.dispose();
+    };
+  }, [material, textures]);
 
   // Update dynamic uniforms
   useEffect(() => {
@@ -241,35 +273,11 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
     }
   }, [chunkOffset, instanceCount, material]);
 
-  // Set bounding box to prevent culling issues
-  useEffect(() => {
-    if (meshRef.current) {
-      meshRef.current.frustumCulled = true;
-      const box = new THREE.Box3(
-        new THREE.Vector3(-2, -40, -2),
-        new THREE.Vector3(34, 100, 34)
-      );
-      meshRef.current.geometry.boundingBox = box;
-      meshRef.current.geometry.boundingSphere = new THREE.Sphere(
-        new THREE.Vector3(16, 30, 16),
-        70
-      );
-    }
-  }, []);
-
   // Cleanup
-  useEffect(() => {
-    return () => {
-      geometry.dispose();
-      material.dispose();
-      textures.height.dispose();
-      textures.material.dispose();
-      textures.normal.dispose();
-      textures.biome.dispose();
-      textures.cave.dispose();
-      textures.light?.dispose();
-    };
-  }, [geometry, material, textures]);
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
 
   // Skip rendering if no instances
   if (instanceCount <= 0) return null;

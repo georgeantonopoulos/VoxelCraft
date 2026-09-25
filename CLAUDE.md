@@ -433,12 +433,13 @@ Resolved in the 2026-09 rework (kept here so they are not reintroduced):
 - Root Hollow persistence: restored hollows persist in GroveStore (per seed); interrupted charging completes the restoration.
 - Digs/builds never saved: `markDirty` must receive voxel indices (`TerrainService.brushVoxelIndices`).
 
-Open (lower priority, from the 2026-09 audit):
-- Shading seams at chunk borders: border-vertex normals/cavity differ per side (area-weighted normals only see own triangles; blend kernel radius 2 reaches past PAD=2).
-- Water sheet shows through caves/pits crossing y=4.5 (shore mask disabled in WaterMaterial).
-- Blade grass textures are not rebuilt after digging (grass floats over holes).
-- Tree felling / large-rock removal is not persisted (only voxels and ground pickups are).
-- LuminaFlora shares one material across instances, so per-instance uSeed/uColor are last-writer-wins.
+Also resolved (2026-09, second pass):
+- Chunk-border shading seams: normals are smoothed over a non-rendered one-cell border band, and the material/cavity blend kernel shrinks to radius 1 next to border planes (`src/tests/chunkSeams.test.ts`).
+- Water through caves/pits: the water sheet is built only over sea-level water cells (dilated one cell, merged into rectangles) instead of a chunk-wide quad.
+- Grass floating over digs: REMESH rebuilds the grass height/material/normal/cave textures; BladeGrassLayer swaps textures in place instead of recreating its material.
+- Felled trees returning: persisted as `'tree'` ground-pickup records keyed by position (`src/state/pickupKeys.ts`).
+- LuminaFlora shared uniforms: per-flora seed is a vertex attribute (`aSeed`); time comes from sharedUniforms.
+- Log depth removed (`logarithmicDepthBuffer: false`): fog ends ~100m, so standard depth with near 0.1 is precise enough, and early-Z works again. Never write gl_FragDepth in custom shaders.
 
 ## Future Features (TODO)
 

@@ -1,9 +1,9 @@
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import { RigidBody } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 
 import { ItemType } from '@/types';
 import { getItemMetadata } from '../../interaction/logic/ItemRegistry';
@@ -26,12 +26,15 @@ const getLuminaMaterial = () => {
     baseMaterial: THREE.MeshStandardMaterial,
     vertexShader: `
       uniform float uTime;
-      uniform float uSeed;
+      attribute float aSeed; // per-flora seed (a shared uniform was last-writer-wins)
       varying vec3 vPos;
       varying vec3 vWorldNormal;
       varying float vPulse;
+      varying float vSeed;
 
       void main() {
+        float uSeed = aSeed;
+        vSeed = aSeed;
         vPos = position;
         vWorldNormal = normalize(mat3(modelMatrix) * normal);
 
@@ -50,14 +53,15 @@ const getLuminaMaterial = () => {
     fragmentShader: `
       precision highp sampler3D;
       uniform float uTime;
-      uniform float uSeed;
       uniform vec3 uColor;
       uniform sampler3D uNoiseTexture;
       varying vec3 vPos;
       varying vec3 vWorldNormal;
       varying float vPulse;
+      varying float vSeed;
 
       void main() {
+        float uSeed = vSeed;
         // Multi-scale noise for organic detail
         vec3 noiseCoord = vPos * 3.0 + vec3(uSeed * 0.1);
         float nBase = texture(uNoiseTexture, noiseCoord * 0.3).r;
@@ -108,9 +112,8 @@ const getLuminaMaterial = () => {
       }
     `,
     uniforms: {
-      uTime: { value: 0 },
-      uSeed: { value: 0 },
-      uColor: { value: new THREE.Color('#00FFFF') },
+      uTime: sharedUniforms.uTime, // advanced once per frame by VoxelTerrain
+      uColor: { value: new THREE.Color(getItemMetadata(ItemType.FLORA)?.color || '#00FFFF') },
       uNoiseTexture: { value: getNoiseTexture() },
     },
     roughness: 0.4,
@@ -126,23 +129,24 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
   const refToUse = bodyRef || internalRef;
   const material = useMemo(() => getLuminaMaterial(), []);
 
-  // Keep uniforms for this instance
-  const uniforms = useMemo(() => {
-    const metadata = getItemMetadata(ItemType.FLORA);
+  // Per-flora geometry carrying its seed as a vertex attribute, so every flora
+  // keeps its own pulse phase and pattern while sharing one material.
+  const geometries = useMemo(() => {
+    const withSeed = (g: THREE.BufferGeometry) => {
+      g.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(seed), 1));
+      return g;
+    };
     return {
-      uColor: new THREE.Color(metadata?.color || '#00FFFF'),
-      uSeed: seed
+      main: withSeed(new THREE.SphereGeometry(0.25, 24, 24)),
+      bulbA: withSeed(new THREE.SphereGeometry(0.15, 16, 16)),
+      bulbB: withSeed(new THREE.SphereGeometry(0.12, 16, 16)),
     };
   }, [seed]);
-
-  useFrame(({ clock }) => {
-    const mat = material as any;
-    if (mat?.uniforms) {
-      mat.uniforms.uTime.value = clock.getElapsedTime();
-      mat.uniforms.uSeed.value = uniforms.uSeed;
-      mat.uniforms.uColor.value.copy(uniforms.uColor);
-    }
-  });
+  useEffect(() => () => {
+    geometries.main.dispose();
+    geometries.bulbA.dispose();
+    geometries.bulbB.dispose();
+  }, [geometries]);
 
   return (
     <RigidBody
@@ -156,18 +160,15 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
     >
       <group>
         {/* Main Bulb - Bioluminescent with detailed shader */}
-        <mesh castShadow receiveShadow>
-          <sphereGeometry args={[0.25, 24, 24]} />
+        <mesh castShadow receiveShadow geometry={geometries.main}>
           <primitive object={material} attach="material" />
         </mesh>
 
         {/* Secondary bulbs - share the same material for consistency */}
-        <mesh position={[0.15, -0.1, 0.1]} castShadow receiveShadow>
-          <sphereGeometry args={[0.15, 16, 16]} />
+        <mesh position={[0.15, -0.1, 0.1]} castShadow receiveShadow geometry={geometries.bulbA}>
           <primitive object={material} attach="material" />
         </mesh>
-        <mesh position={[-0.15, -0.15, -0.05]} castShadow receiveShadow>
-          <sphereGeometry args={[0.12, 16, 16]} />
+        <mesh position={[-0.15, -0.15, -0.05]} castShadow receiveShadow geometry={geometries.bulbB}>
           <primitive object={material} attach="material" />
         </mesh>
       </group>

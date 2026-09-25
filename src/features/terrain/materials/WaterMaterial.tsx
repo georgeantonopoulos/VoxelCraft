@@ -64,7 +64,6 @@ const WaterMeshShader = shaderMaterial(
     varying vec3 vWorldPos;
     varying vec3 vNormal;
     varying vec3 vViewPos;
-    varying float vFragDepth;
     varying vec2 vLocalUV;
 
     void main() {
@@ -80,8 +79,6 @@ const WaterMeshShader = shaderMaterial(
       vViewPos = -mvPosition.xyz;
       gl_Position = projectionMatrix * mvPosition;
       
-      // For logarithmic depth buffer
-      vFragDepth = 1.0 + gl_Position.w;
     }
   `,
   // Fragment shader
@@ -115,11 +112,9 @@ const WaterMeshShader = shaderMaterial(
     varying vec3 vWorldPos;
     varying vec3 vNormal;
     varying vec3 vViewPos;
-    varying float vFragDepth;
     varying vec2 vLocalUV;
 
     // Logarithmic depth buffer constant
-    const float logDepthBufFC = 0.1823;
 
     vec3 getNormal(vec3 pos, vec3 baseNormal, float time) {
         // Skip noise calculcations if disabled
@@ -143,21 +138,18 @@ const WaterMeshShader = shaderMaterial(
         // Debug mode 1: Show UV as colors (red=U, green=V)
         if (uDebugMode == 1) {
             gl_FragColor = vec4(uv.x, uv.y, 0.0, 1.0);
-            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
             return;
         }
 
         // Debug mode 2: Show shore mask value (white=water, black=land)
         if (uDebugMode == 2) {
             gl_FragColor = vec4(vec3(mask), 1.0);
-            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
             return;
         }
         
         // Debug mode 4: Simple solid blue water, alpha=1, no effects
         if (uDebugMode == 4) {
             gl_FragColor = vec4(0.2, 0.5, 0.8, 1.0);
-            gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
             return;
         }
 
@@ -206,7 +198,6 @@ const WaterMeshShader = shaderMaterial(
         
         gl_FragColor = vec4(finalColor, alpha);
         
-        gl_FragDepth = log2(vFragDepth) * logDepthBufFC * 0.5;
     }
   `
 );

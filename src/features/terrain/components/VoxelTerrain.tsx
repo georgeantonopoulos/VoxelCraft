@@ -22,6 +22,7 @@ import { WorkerPool } from '@core/workers/WorkerPool';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { getGroundPickups, makeWorldKey, setWorldKey } from '@state/WorldDB';
+import { filterRemovedTrees } from '@state/pickupKeys';
 import { BiomeManager, getFogSettings, BiomeFogSettings } from '@features/terrain/logic/BiomeManager';
 
 // Extracted modules
@@ -904,6 +905,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
         let modified = false;
         const updatedChunk = { ...chunk };
+
+        // Felled trees (keyed by position; see pickupKeys.ts)
+        const removedTrees = new Set(pickups.filter(p => p.itemType === 'tree').map(p => p.index));
+        if (removedTrees.size > 0 && updatedChunk.treePositions) {
+          const filtered = filterRemovedTrees(updatedChunk.treePositions, removedTrees);
+          if (filtered !== updatedChunk.treePositions) {
+            updatedChunk.treePositions = filtered;
+            updatedChunk.treeInstanceBatches = undefined; // TreeLayer recomputes from positions
+            modified = true;
+          }
+        }
 
         for (const pickup of pickups) {
           if (pickup.itemType === 'stick' && updatedChunk.stickPositions) {

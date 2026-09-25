@@ -511,5 +511,15 @@ export function buildRemeshedChunk(request: RemeshRequest, grownTrees: GrownTree
         mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors?.buffer, remeshLightGrid.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
     ].filter(Boolean);
     if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
+    // Grass placement textures follow the edited voxels (blades used to float
+    // over dug holes). The biome texture only depends on position: keep it.
+    const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
+    const grassHeightTex = generateSurfaceHeightTexture(density, sizeX, sizeY, pad);
+    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
+    const grassNormalTex = generateNormalTexture(density, sizeX, sizeY, pad);
+    const grassCaveTex = generateCaveMaskTexture(density, sizeX, sizeY, pad);
+    Object.assign(response, { grassHeightTex, grassMaterialTex, grassNormalTex, grassCaveTex });
+    transfers.push(grassHeightTex.buffer, grassMaterialTex.buffer, grassNormalTex.buffer, grassCaveTex.buffer);
+
     return { payload: response, transfers };
 }
