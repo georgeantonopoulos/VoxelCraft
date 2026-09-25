@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
@@ -9,17 +9,17 @@ import { TreeType } from '@features/terrain/logic/VegetationConfig';
 interface FallingTreeProps {
     position: THREE.Vector3;
     type: number;
-    seed: number; // We pass the seed derived from position to match the static tree
+    seed: number; // treeSeed(localX, localZ) of the static tree
+    /** Static instance scale and geometry variant, so the felled copy matches. */
+    scale: number;
+    variant: number;
 }
 
-export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }) => {
-    const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type), [type]);
+export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, scale, variant }) => {
+    const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
-    const { rotation, scale } = useMemo(() => {
-        const r = (seed % 1) * Math.PI * 2;
-        const s = 0.8 + (seed % 0.4);
-        return { rotation: r, scale: s };
-    }, [seed]);
+    // Same rotation formula as the worker's instance matrices (treeInstance.ts).
+    const rotation = useMemo(() => (seed % 1) * Math.PI * 2, [seed]);
 
     const colors = useMemo(() => {
         let base = '#3e2723';
@@ -198,6 +198,12 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed }
             toneMapped: false,
         });
     }, [colors, seed]);
+
+    // Materials are created per felled tree; R3F does not dispose objects passed as props.
+    useEffect(() => () => {
+        woodMaterial.dispose();
+        leafMaterial.dispose();
+    }, [woodMaterial, leafMaterial]);
 
     return (
         <RigidBody

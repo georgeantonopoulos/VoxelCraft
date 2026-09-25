@@ -48,6 +48,17 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         () => (useGroveStore.getState().restoredHollows[hollowId] ? 'GROWING' : 'IDLE')
     );
     const restoredOnMountRef = useRef(status === 'GROWING');
+    const statusRef = useRef(status);
+    statusRef.current = status;
+
+    // The offered flora is consumed when charging starts. If the hollow unmounts
+    // mid-charge (player walked out of range), finish the restoration instead of
+    // silently losing the offering; it remounts already grown.
+    useEffect(() => () => {
+        if (statusRef.current === 'CHARGING' && !restoredOnMountRef.current) {
+            emitGroveEvent({ type: 'hollow-restored', hollowId, x: px, y: py, z: pz });
+        }
+    }, [hollowId, px, py, pz]);
     const [swarmVisible, setSwarmVisible] = useState(false);
     const [swarmDissipating, setSwarmDissipating] = useState(false);
 

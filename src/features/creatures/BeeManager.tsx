@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
+import { TerrainService } from '@features/terrain/logic/terrainService';
 import { LumabeeCharacter, BeeState } from './LumabeeCharacter';
 // TODO: Import and integrate NectarVFX when bees harvest
 // import { NectarVFX } from './NectarVFX';
@@ -148,7 +149,10 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
     const despawnedBeeIds = new Set<string>();
 
     currentBees.forEach(bee => {
-      const distToPlayer = bee.position.distanceTo(playerPos);
+      // bee.position is the static spawn point; bees belong to their home tree,
+      // so measure from the tree (spawn points near the limit caused endless
+      // despawn/respawn loops).
+      const distToPlayer = (bee.treePosition ?? bee.position).distanceTo(playerPos);
       if (distToPlayer > config.despawnDistance) {
         despawnedBeeIds.add(bee.id);
         if (shouldProfile()) {
@@ -187,7 +191,10 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
           const distance = config.minSpawnDistance + random() * (config.maxSpawnDistance - config.minSpawnDistance);
           const spawnHeight = config.spawnHeightMin + random() * (config.spawnHeightMax - config.spawnHeightMin);
           const treeHeight = estimateTreeHeight(tree.x + tree.z);
-          const treePos = new THREE.Vector3(tree.x, 0, tree.z);
+          // Grown trees only record XZ; bees used y=0 as the tree base, pinning them
+          // near the ground on raised terrain. Use the real surface height.
+          const groundY = TerrainService.getHeightAt(tree.x, tree.z);
+          const treePos = new THREE.Vector3(tree.x, groundY, tree.z);
           const beeSeed = random() * 1000;
           const beeId = `bee-${nextBeeIdRef.current++}`;
 
@@ -195,7 +202,7 @@ export const BeeManager: React.FC<BeeManagerProps> = ({
             id: beeId,
             position: new THREE.Vector3(
               tree.x + Math.cos(angle) * distance,
-              spawnHeight,
+              groundY + spawnHeight,
               tree.z + Math.sin(angle) * distance
             ),
             treeId,

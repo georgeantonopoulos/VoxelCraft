@@ -46,6 +46,7 @@ import { MaterialType, ChunkState, ItemType } from '@/types';
 
 // Audio System
 import { getRandomDigSound } from '@core/audio';
+import { treeVariant } from '@features/flora/logic/treeInstance';
 
 // Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
 function getLeafColorForTreeType(treeType: number): string {
@@ -80,6 +81,10 @@ export interface FallingTreeData {
   position: THREE.Vector3;
   type: number;
   seed: number;
+  /** Render scale of the static instance (treePositions stride slot 4). */
+  scale: number;
+  /** Geometry variant of the static instance (see treeInstance.ts). */
+  variant: number;
 }
 
 export interface InteractionCallbacks {
@@ -282,7 +287,9 @@ export function useTerrainInteraction(
                   id: `${chunkKey}-${posIdx}-${Date.now()}`,
                   position: new THREE.Vector3(x, y, z),
                   type,
-                  seed
+                  seed,
+                  scale: positions[posIdx + 4],
+                  variant: treeVariant(type, positions[posIdx], positions[posIdx + 2])
                 });
               }
             }
@@ -569,7 +576,9 @@ export function useTerrainInteraction(
                     id: `${key}-${i}-${Date.now()}`,
                     position: new THREE.Vector3(x, y, z),
                     type,
-                    seed
+                    seed,
+                    scale: positions[i + 4],
+                    variant: treeVariant(type, positions[i], positions[i + 2])
                   });
                   continue;
                 }

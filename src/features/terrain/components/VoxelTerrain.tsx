@@ -710,7 +710,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
   const [floraPickups, setFloraPickups] = useState<PickupEffect[]>([]);
 
-  const [fallingTrees, setFallingTrees] = useState<Array<{ id: string; position: THREE.Vector3; type: number; seed: number }>>([]);
+  const [fallingTrees, setFallingTrees] = useState<FallingTreeData[]>([]);
 
   // Callbacks for terrain interaction hook
   const handleParticle = useCallback((state: Partial<ParticleState> & { burstId?: number }) => {
@@ -1885,7 +1885,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         color={particleState.color}
       />
       {fallingTrees.map(tree => (
-        <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} />
+        <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} scale={tree.scale} variant={tree.variant} />
       ))}
       {leafPickup && (
         <LeafPickupEffect

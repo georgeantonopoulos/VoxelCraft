@@ -4,6 +4,8 @@ import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier 
 import { PositionalAudio } from '@react-three/drei';
 import * as THREE from 'three';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
+import { useInventoryStore } from '@state/InventoryStore';
+import { MESH_Y_OFFSET } from '@/constants';
 import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { getItemMetadata } from '../logic/ItemRegistry';
@@ -32,6 +34,13 @@ const playSound = (soundId: string, options?: { pitch?: number; volume?: number 
   }));
 };
 
+const ITEM_LIFECYCLE_INTERVAL_S = 1.0;
+/** Beyond this, the item's chunk collider may be gone: freeze the body. */
+const ITEM_FREEZE_DISTANCE = 72;
+/** Hysteresis: resume simulation once back within this range. */
+const ITEM_THAW_DISTANCE = 56;
+const scratchItemPos = new THREE.Vector3();
+
 /** Items already shattered this session (guards duplicate collision events). */
 const shatteredItemIds = new Set<string>();
 
@@ -46,6 +55,28 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
 
   const lastVel = useRef(new THREE.Vector3());
+
+  // Lifecycle guard (throttled): items used to live forever. Far from the player
+  // their chunk collider may unload, so freeze them in place; anything that
+  // still falls below the world is removed (tools/pickaxes go back to inventory).
+  const lifecycleTimer = useRef(0);
+  useFrame((state, delta) => {
+    lifecycleTimer.current += delta;
+    if (lifecycleTimer.current < ITEM_LIFECYCLE_INTERVAL_S) return;
+    lifecycleTimer.current = 0;
+    const rb = rigidBody.current;
+    if (!rb) return;
+    const t = rb.translation();
+    if (t.y < MESH_Y_OFFSET - 20) {
+      if (item.customToolData) useInventoryStore.getState().addCustomTool(item.customToolData);
+      else if (item.type === ItemType.PICKAXE) useInventoryStore.getState().setHasPickaxe(true);
+      removeItem(item.id);
+      return;
+    }
+    const d2 = state.camera.position.distanceToSquared(scratchItemPos.set(t.x, t.y, t.z));
+    if (rb.isEnabled() && d2 > ITEM_FREEZE_DISTANCE * ITEM_FREEZE_DISTANCE) rb.setEnabled(false);
+    else if (!rb.isEnabled() && d2 < ITEM_THAW_DISTANCE * ITEM_THAW_DISTANCE) rb.setEnabled(true);
+  });
 
   useFrame(() => {
     if (rigidBody.current && !item.isPlanted) {

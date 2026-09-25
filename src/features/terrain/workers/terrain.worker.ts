@@ -3,6 +3,7 @@ import { generateMesh, generateWaterSurfaceMesh, HumidityConfig } from '@feature
 import { MeshData } from '@/types';
 import { getChunkModifications, makeWorldKey, setWorldKey } from '@/state/WorldDB';
 import { initializeNoise } from '@core/math/noise';
+import { treeVariant, treeRotationY } from '@features/flora/logic/treeInstance';
 import { BiomeManager } from '../logic/BiomeManager';
 import { getVegetationForBiome } from '../logic/VegetationConfig';
 import { noise, noiseToUniform } from '@core/math/noise';
@@ -312,12 +313,7 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
     const STRIDE = 5;
     for (let i = 0; i < treePositions.length; i += STRIDE) {
         const x = treePositions[i], y = treePositions[i + 1], z = treePositions[i + 2], type = treePositions[i + 3], scaleFactor = treePositions[i + 4];
-        let variant = 0;
-        if (type === 5) {
-            const seed = x * 12.9898 + z * 78.233;
-            const h = Math.abs(Math.sin(seed)) * 43758.5453;
-            variant = Math.floor((h % 1) * 4);
-        }
+        const variant = treeVariant(type, x, z);
         const key = `${type}:${variant}`;
         if (!batches.has(key)) batches.set(key, { type, variant, positions: [], scales: [], originalIndices: [] });
         const b = batches.get(key)!;
@@ -330,7 +326,7 @@ const buildTreeInstanceData = (treePositions: Float32Array) => {
         const matrices = new Float32Array(count * 16), originalIndices = new Int32Array(batch.originalIndices);
         for (let i = 0; i < count; i++) {
             const x = batch.positions[i * 3], y = batch.positions[i * 3 + 1], z = batch.positions[i * 3 + 2], scale = batch.scales[i];
-            const seed = x * 12.9898 + z * 78.233, rotY = (seed % 1) * Math.PI * 2, c = Math.cos(rotY), s = Math.sin(rotY);
+            const rotY = treeRotationY(x, z), c = Math.cos(rotY), s = Math.sin(rotY);
             const offset = i * 16;
             matrices[offset + 0] = c * scale; matrices[offset + 2] = -s * scale; matrices[offset + 5] = scale; matrices[offset + 8] = s * scale; matrices[offset + 10] = c * scale;
             matrices[offset + 12] = x; matrices[offset + 13] = y; matrices[offset + 14] = z; matrices[offset + 15] = 1;
