@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { sharedUniforms } from './SharedUniforms';
+import { getTerrainTextureArrays } from './pbr/TerrainTextureArrays';
 
 import { triplanarVertexShader as vertexShader, triplanarFragmentShader as fragmentShader } from './TriplanarShader';
 
@@ -30,8 +31,15 @@ const PLACEHOLDER_NOISE_3D = (() => {
 const getSharedTerrainMaterial = () => {
   if (sharedTerrainMaterial) return sharedTerrainMaterial;
 
+  // PBR texture arrays start as flat palette colours and fill in as layers are
+  // synthesised (workers) or read from the IndexedDB cache.
+  const pbr = getTerrainTextureArrays();
+
   // Material-specific uniforms (colors, textures) that don't change per-frame
   const materialUniforms = {
+    uPbrA: { value: pbr.albedoHeight },
+    uPbrB: { value: pbr.normalRoughAO },
+    uPbrScale: { value: pbr.scales },
     uNoiseTexture: { value: PLACEHOLDER_NOISE_3D },
     uColorStone: { value: new THREE.Color('#888c8d') },
     uColorGrass: { value: new THREE.Color('#41a024') },

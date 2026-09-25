@@ -301,7 +301,9 @@ const App: React.FC = () => {
 
   // Sun Orbit Params
   const [sunOrbitRadius, setSunOrbitRadius] = useState(300);
-  const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.025);
+  // Full day/night cycle = 2 * 2PI / sunOrbitSpeed seconds: 0.0087 gives ~24 min
+  // (~19 min of daylight, ~5 min of night; see DAY_FRACTION in celestial.ts).
+  const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.0087);
   const [sunTimeOffset, setSunTimeOffset] = useState(0.0);
 
   const orbitConfig = useMemo(() => ({

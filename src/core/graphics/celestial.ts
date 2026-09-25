@@ -14,42 +14,37 @@ export type OrbitConfig = {
   offset: number;
 };
 
+/** Share of the full cycle with the sun above the horizon (rest is dusk-night-dawn). */
+export const DAY_FRACTION = 0.78;
+/** Cycle phase at t = 0: a fraction of the way into the day, so worlds open in mid-morning. */
+export const START_PHASE = DAY_FRACTION * 0.22;
+
 /**
- * Calculates the non-linear orbit angle for sun/moon to make day longer and night shorter.
- * Maps linear time progression to angle progression where day (sun above horizon) takes
- * ~70% of the cycle and night takes ~30%.
+ * Calculates the non-linear orbit angle for sun/moon so the day is long and the night short.
+ * Linear time maps to angle piecewise: the sun sweeps its above-horizon arc
+ * (angle -PI/2..PI/2, where cos(angle) > 0) during DAY_FRACTION of the cycle and the
+ * night arc (PI/2..3PI/2) during the rest. Rate is constant within each half and
+ * symmetric about noon (the old mapping ran morning and afternoon at different speeds).
  *
  * IMPORTANT:
- * This is intentionally a pure math helper so all systems (lighting, sky gradient, IBL)
- * can stay in sync without duplicating orbit logic.
+ * This is intentionally a pure math helper so all systems (lighting, sky gradient)
+ * stay in sync without duplicating orbit logic.
  *
  * @param t - Elapsed time in seconds
- * @param speed - Base orbit speed
+ * @param speed - Base orbit speed (radians of cycle per second; period = 2PI / speed)
  * @param offset - Optional angle offset (e.g., Math.PI for moon to stay opposite sun)
  * @returns The calculated orbit angle
  */
 export const calculateOrbitAngle = (t: number, speed: number, offset: number = 0): number => {
-  const cycleTime = t * speed;
-  const normalizedCycle = (cycleTime % (Math.PI * 2)) / (Math.PI * 2); // 0 to 1
+  const cycles = (t * speed) / (Math.PI * 2) + START_PHASE;
+  const whole = Math.floor(cycles);
+  const phase = cycles - whole; // 0..1
 
-  // Stretch day (when sun is above horizon): spend ~70% of cycle in day, ~30% in night
-  // Day corresponds to angles where cos(angle) > 0, i.e., -π/2 to π/2
-  let angle: number;
-  if (normalizedCycle < 0.35) {
-    // First half of day: map 0-0.35 to -π/2 to 0
-    angle = -Math.PI / 2 + (normalizedCycle / 0.35) * (Math.PI / 2);
-  } else if (normalizedCycle < 0.65) {
-    // Second half of day: map 0.35-0.65 to 0 to π/2
-    angle = ((normalizedCycle - 0.35) / 0.3) * (Math.PI / 2);
-  } else {
-    // Night: map 0.65-1.0 to π/2 to 3π/2 (faster through night)
-    angle = Math.PI / 2 + ((normalizedCycle - 0.65) / 0.35) * Math.PI;
-  }
+  const angle = phase < DAY_FRACTION
+    ? -Math.PI / 2 + (phase / DAY_FRACTION) * Math.PI
+    : Math.PI / 2 + ((phase - DAY_FRACTION) / (1 - DAY_FRACTION)) * Math.PI;
 
-  // Add full cycle offset
-  angle += Math.floor(cycleTime / (Math.PI * 2)) * Math.PI * 2;
-
-  return angle + offset;
+  return angle + whole * Math.PI * 2 + offset;
 };
 
 /**

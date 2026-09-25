@@ -146,7 +146,7 @@ export const DebugControls: React.FC<{
                 'Sun': folder({
                     sunIntensity: { value: 4.8, min: 0.0, max: 10.0, step: 0.1, onChange: props.setSunIntensityMul, label: 'Intensity' },
                     radius: { value: 300, min: 50, max: 1000, step: 10, onChange: props.setSunOrbitRadius, label: 'Orbit Radius' },
-                    speed: { value: 0.025, min: 0.0, max: 0.5, step: 0.001, onChange: props.setSunOrbitSpeed, label: 'Orbit Speed' },
+                    speed: { value: 0.0087, min: 0.0, max: 0.5, step: 0.0001, onChange: props.setSunOrbitSpeed, label: 'Orbit Speed' },
                     timeOffset: { value: 0.0, min: 0.0, max: Math.PI * 2, step: 0.05, onChange: props.setSunTimeOffset, label: 'Time Offset' },
                     'Shadows': folder({
                         shadowsEnabled: { value: true, onChange: (v) => props.setDebugShadowsEnabled(!!v), label: 'Enabled' },

@@ -295,70 +295,49 @@ export const triplanarFragmentShader = `
       return v / len;
   }
 
-  vec4 getTriplanarNoise(vec3 normal, float scale) {
-      vec3 blend = abs(normal);
-      blend = normalize(max(blend, 0.00001));
-      blend = pow(blend, vec3(4.0));
-      blend /= dot(blend, vec3(1.0));
-      vec3 p = vWorldPosition * scale;
-      vec4 xN = texture(uNoiseTexture, p.zyx);
-      vec4 yN = texture(uNoiseTexture, p.xzy + vec3(100.0));
-      vec4 zN = texture(uNoiseTexture, p.xyz + vec3(200.0));
-      return xN * blend.x + yN * blend.y + zN * blend.z;
-  }
+  // === PBR texture arrays (see core/graphics/pbr) ===
+  // A: albedo (sRGB) + height, B: tangent normal XY + roughness + AO.
+  uniform highp sampler2DArray uPbrA;
+  uniform highp sampler2DArray uPbrB;
+  uniform float uPbrScale[16];
 
-  // === PHASE 1: Cheap micro-detail from triplanar noise ===
-  // Instead of expensive extra texture samples, we derive detail from
-  // the noise we already sample for material colors.
-  // This function takes the already-sampled triplanar noise and creates
-  // a perturbed normal from it - essentially FREE since we have the data.
-  vec3 getMicroDetailNormal(vec3 geometryNormal, vec4 noiseData, vec4 noiseDataHigh, vec3 worldPos, float strength, float flatness) {
-      // Use different noise channels for X and Z perturbation
-      // This creates apparent surface detail without extra texture reads
-      float nx = noiseData.r * 2.0 - 1.0;  // Red channel -> X perturbation
-      float nz = noiseData.g * 2.0 - 1.0;  // Green channel -> Z perturbation
-
-      // High-frequency detail from nHigh - critical for close-up ground detail
-      float hx = noiseDataHigh.b * 2.0 - 1.0;
-      float hz = noiseDataHigh.a * 2.0 - 1.0;
-
-      // Add ultra-high-frequency variation using position-based hash (very cheap)
-      // This breaks up repetition and adds "grain" to flat surfaces
-      vec3 hp = fract(worldPos * 4.5) * 2.0 - 1.0;  // Higher frequency than before
-      vec3 hp2 = fract(worldPos * 11.0) * 2.0 - 1.0; // Even finer grain
-
-      // Flat surfaces (grass, dirt) need MORE fine detail
-      // Steep surfaces (cliffs) look fine with coarser detail
-      float fineDetailBoost = flatness * flatness; // 1.0 for flat, 0.0 for vertical
-
-      // Layer the frequencies:
-      // - Low freq (nx, nz): broad undulation
-      // - Mid freq (hx, hz): medium bumps
-      // - High freq (hp): fine texture
-      // - Ultra-high freq (hp2): micro-grain for flat surfaces
-      float perturbX = nx * 0.3
-                     + hx * 0.35
-                     + hp.x * noiseData.b * 0.25
-                     + hp2.x * noiseDataHigh.r * 0.1 * fineDetailBoost;
-
-      float perturbZ = nz * 0.3
-                     + hz * 0.35
-                     + hp.z * noiseData.a * 0.25
-                     + hp2.z * noiseDataHigh.g * 0.1 * fineDetailBoost;
-
-      // Create tangent-space perturbation vector
-      // Reference axis must not be parallel to the normal: with N = (+-1,0,0) the old
-      // (1,0,0) - N*N.x was the zero vector and normalize() produced NaN pixels.
-      vec3 tangentRef = abs(geometryNormal.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
-      vec3 tangent = normalize(tangentRef - geometryNormal * dot(geometryNormal, tangentRef));
-      vec3 bitangent = normalize(cross(geometryNormal, tangent));
-
-      vec3 perturbation = tangent * perturbX + bitangent * perturbZ;
-
-      // Boost strength slightly for flat surfaces (they need more visible detail)
-      float flatBoost = 1.0 + fineDetailBoost * 0.4;
-
-      return normalize(geometryNormal + perturbation * strength * flatBoost);
+  // Triplanar PBR sample of one layer. Normals use the whiteout blend
+  // (per-axis tangent normals reoriented onto the geometry normal).
+  // uv.x and the tangent x flip together on negative-facing axes, which keeps
+  // bumps pointing outwards on every side.
+  void samplePbrLayer(int layer, vec3 p, vec3 N, vec3 tw, out vec4 albedoH, out vec3 nWorld, out float rough, out float ao) {
+    float sc = uPbrScale[layer];
+    float fl = float(layer);
+    albedoH = vec4(0.0); nWorld = vec3(0.0); rough = 0.0; ao = 0.0;
+    vec3 sgn = vec3(N.x < 0.0 ? 1.0 : -1.0, N.y < 0.0 ? -1.0 : 1.0, N.z < 0.0 ? -1.0 : 1.0);
+    if (tw.x > 0.02) {
+      vec2 uv = vec2(p.z * sgn.x, p.y) * sc;
+      vec4 a = texture(uPbrA, vec3(uv, fl));
+      vec4 b = texture(uPbrB, vec3(uv, fl));
+      vec2 t = (b.xy * 2.0 - 1.0) * vec2(sgn.x, 1.0);
+      vec3 w = vec3(t + N.zy, sqrt(max(1.0 - dot(t, t), 0.0)) * N.x);
+      albedoH += a * tw.x; nWorld += w.zyx * tw.x; rough += b.z * tw.x; ao += b.w * tw.x;
+    }
+    if (tw.y > 0.02) {
+      vec2 uv = vec2(p.x * sgn.y, p.z) * sc;
+      vec4 a = texture(uPbrA, vec3(uv, fl));
+      vec4 b = texture(uPbrB, vec3(uv, fl));
+      vec2 t = (b.xy * 2.0 - 1.0) * vec2(sgn.y, 1.0);
+      vec3 w = vec3(t + N.xz, sqrt(max(1.0 - dot(t, t), 0.0)) * N.y);
+      albedoH += a * tw.y; nWorld += w.xzy * tw.y; rough += b.z * tw.y; ao += b.w * tw.y;
+    }
+    if (tw.z > 0.02) {
+      vec2 uv = vec2(p.x * sgn.z, p.y) * sc;
+      vec4 a = texture(uPbrA, vec3(uv, fl));
+      vec4 b = texture(uPbrB, vec3(uv, fl));
+      vec2 t = (b.xy * 2.0 - 1.0) * vec2(sgn.z, 1.0);
+      vec3 w = vec3(t + N.xy, sqrt(max(1.0 - dot(t, t), 0.0)) * N.z);
+      albedoH += a * tw.z; nWorld += w.xyz * tw.z; rough += b.z * tw.z; ao += b.w * tw.z;
+    }
+    float tsum = max(tw.x * step(0.02, tw.x) + tw.y * step(0.02, tw.y) + tw.z * step(0.02, tw.z), 1e-4);
+    albedoH /= tsum; rough /= tsum; ao /= tsum;
+    float nl = length(nWorld);
+    nWorld = nl > 1e-5 ? nWorld / nl : N;
   }
 
   vec2 safeNormalize2(vec2 v) {
@@ -414,512 +393,124 @@ export const triplanarFragmentShader = `
       return finalC * depthFade;
   }
 
-  struct MatInfo {
-      vec3 baseCol;
-      float roughness;
-      float noiseFactor;
-      float emission;
-  };
-
-  MatInfo getMatParams(int channel, vec4 nMid, vec4 nHigh) {
-      vec3 baseCol = uColorStone;
-      float roughness = 0.8;
-      float noiseFactor = 0.0;
-      float emission = 0.0;
-      if (channel == 1) { baseCol = uColorBedrock; noiseFactor = nMid.r * 0.7 + nHigh.r * 0.3; }
-      else if (channel == 2) { baseCol = uColorStone; float cracks = nHigh.g; noiseFactor = mix(nMid.r, cracks, 0.4); }
-      else if (channel == 3) { baseCol = uColorDirt; noiseFactor = nMid.g; }
-      else if (channel == 4) { baseCol = uColorGrass; float bladeNoise = nHigh.a; float patchNoise = nMid.r; noiseFactor = mix(bladeNoise, patchNoise, 0.3); baseCol *= vec3(1.0, 1.1, 1.0); }
-      else if (channel == 5) { baseCol = uColorSand; noiseFactor = nMid.g * 0.6 + nHigh.b * 0.4; } // AAA FIX: Use lower freq channels for sand texture
-      else if (channel == 6) { baseCol = uColorSnow; noiseFactor = nMid.r * 0.5 + 0.5; }
-      else if (channel == 7) { baseCol = uColorClay; noiseFactor = nMid.g; }
-      else if (channel == 8) { baseCol = uColorWater; roughness = 0.1; }
-      else if (channel == 9) { baseCol = uColorStone; noiseFactor = nMid.r; }
-      else if (channel == 10) { baseCol = uColorRedSand; noiseFactor = nHigh.a; }
-      else if (channel == 11) { baseCol = uColorTerracotta; noiseFactor = nMid.g; roughness = 0.95; }
-      else if (channel == 12) { baseCol = uColorIce; noiseFactor = nMid.b * 0.5; roughness = 0.05; }
-      else if (channel == 13) { baseCol = uColorJungleGrass; noiseFactor = nHigh.a; }
-      else if (channel == 14) { baseCol = uColorGlowStone; noiseFactor = nMid.r + 0.5; emission = 2.0; }
-      else if (channel == 15) { baseCol = uColorObsidian; noiseFactor = nHigh.b * 0.3; roughness = 0.15; }
-      return MatInfo(baseCol, roughness, noiseFactor, emission);
-  }
-
-  // HUMIDITY SPREADING FUNCTION - DISABLED (causes GPU perf issues)
-  // TODO: Re-implement using vertex attributes or texture-based approach
-  /*
-  float getHumidityInfluence(vec2 worldPosXZ) {
-    // ... disabled ...
-    return 0.0;
-  }
-  */
-
-  void accumulateChannel(int channel, float weight, vec4 nMid, vec4 nHigh,
-    inout vec3 accColor, inout float accRoughness, inout float accNoise, inout float accEmission, inout float totalW,
-    inout int dominantChannel, inout float dominantWeight) {
-    if (weight > 0.001) {
-      MatInfo m = getMatParams(channel, nMid, nHigh);
-      accColor += m.baseCol * weight;
-      accRoughness += m.roughness * weight;
-      accNoise += m.noiseFactor * weight;
-      accEmission += m.emission * weight;
-      totalW += weight;
-      if (weight > dominantWeight) {
-        dominantWeight = weight;
-        dominantChannel = channel;
-      }
-    }
-  }
-
   void main() {
     vec3 N = safeNormalize(vWorldNormal);
     float distSq = dot(vWorldPosition - cameraPosition, vWorldPosition - cameraPosition);
     bool lowDetail = distSq > 1024.0; // Beyond 32 units (1 chunk)
-    bool closeUp = distSq < 400.0;    // Within 20 units - fine detail zone
 
-    // Sample triplanar noise FIRST (we need this for colors anyway)
-    vec4 nMid = getTriplanarNoise(N, 0.15);
-    float highScale = mix(0.15, 0.6, clamp(uTriplanarDetail, 0.0, 1.0));
-    vec4 nHigh = lowDetail ? nMid : getTriplanarNoise(N, highScale);
-
-    // === FINE DETAIL: Sample at very high scale for close-up ground texture ===
-    // This is the key to AAA terrain - fine grain visible when looking at your feet
-    // Scale of 2.5 gives ~0.4 world unit detail cycles, 5.0 gives ~0.2 world unit
-    vec4 nFine = closeUp ? getTriplanarNoise(N, 2.5) : nHigh;
-    vec4 nUltraFine = (closeUp && distSq < 100.0) ? getTriplanarNoise(N, 6.0) : nFine;
-
-    // === PHASE 1: Multi-frequency normal perturbation ===
-    if (uFragmentNormalStrength > 0.01 && distSq < 4096.0) {
-        float distFade = 1.0 - smoothstep(256.0, 4096.0, distSq);
-        float effectiveStrength = uFragmentNormalStrength * distFade;
-
-        if (effectiveStrength > 0.01) {
-            float flatness = clamp(N.y, 0.0, 1.0);
-
-            // Use fine detail samples for close-up perturbation
-            vec4 detailNoise = closeUp ? nFine : nHigh;
-            vec4 microNoise = (closeUp && distSq < 100.0) ? nUltraFine : detailNoise;
-
-            N = getMicroDetailNormal(N, detailNoise, microNoise, vWorldPosition, effectiveStrength * uFragmentNormalScale, flatness);
-        }
-    }
     vec4 nMacro = texture(uNoiseTexture, vWorldPosition * 0.012 + vec3(0.11, 0.07, 0.03));
     float macro = (nMacro.r * 2.0 - 1.0) * clamp(uMacroStrength, 0.0, 2.0);
 
     // === HUMIDITY FIELD SYSTEM ===
-    // Two-layer humidity: base (biome+water) + tree boost (Sacred Grove)
-    // Both values are baked into vertex attributes during meshing - zero per-fragment cost!
+    // Two-layer humidity: base (biome+water) + tree boost (Sacred Grove), baked per vertex.
     float totalHumidity = clamp(vBaseHumidity + vTreeHumidityBoost, 0.0, 1.0);
-
-    // Material weight deltas based on humidity
-    // High humidity: boost grass/dirt, reduce desert materials
-    // Only lush up soil that already exists here: adding grass/dirt weight
-    // unconditionally tinted pure sand, snow and cave rock near water ~26% green.
+    // Only lush up soil that already exists here (adding grass weight unconditionally
+    // tinted pure sand, snow and cave rock near water green).
     float soilPresent = step(0.001, vWb.x + vWa.w);
-    float humidityDeltaGrass = totalHumidity * 0.6 * soilPresent;
-    float humidityDeltaDirt = totalHumidity * 0.3 * soilPresent;
-    float humidityDeltaRedSand = -totalHumidity * 0.8;
-    float humidityDeltaStone = -totalHumidity * 0.2;
-    float humidityDeltaTerracotta = -totalHumidity * 0.5;
 
-    vec3 accColor = vec3(0.0);
-    float accRoughness = 0.0;
-    float accNoise = 0.0;
-    float accEmission = 0.0;
-    float totalW = 0.0;
-    float dominantWeight = -1.0;
-    int dominantChannel = 2;
-    accumulateChannel(0, vWa.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(1, vWa.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(2, vWa.z + humidityDeltaStone, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(3, vWa.w + humidityDeltaDirt, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(4, vWb.x + humidityDeltaGrass, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(5, vWb.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(6, vWb.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(7, vWb.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(8, vWc.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(9, vWc.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(10, vWc.z + humidityDeltaRedSand, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(11, vWc.w + humidityDeltaTerracotta, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(12, vWd.x, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(13, vWd.y, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(14, vWd.z, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    accumulateChannel(15, vWd.w, nMid, nHigh, accColor, accRoughness, accNoise, accEmission, totalW, dominantChannel, dominantWeight);
-    if (totalW > 0.0001) {
-      accColor /= totalW; accRoughness /= totalW; accNoise /= totalW; accEmission /= totalW;
-    } else {
-      accColor = uColorStone; accRoughness = 0.9; accNoise = 0.0;
+    // === MATERIAL SELECTION: top two channels by (humidity-adjusted) weight ===
+    float w[16];
+    w[0] = vWa.x; w[1] = vWa.y; w[2] = vWa.z - totalHumidity * 0.2; w[3] = vWa.w + totalHumidity * 0.3 * soilPresent;
+    w[4] = vWb.x + totalHumidity * 0.6 * soilPresent; w[5] = vWb.y; w[6] = vWb.z; w[7] = vWb.w;
+    w[8] = vWc.x; w[9] = vWc.y; w[10] = vWc.z - totalHumidity * 0.8; w[11] = vWc.w - totalHumidity * 0.5;
+    w[12] = vWd.x; w[13] = vWd.y; w[14] = vWd.z; w[15] = vWd.w;
+    int c0 = 2; int c1 = 2; float w0 = -1.0; float w1 = -1.0; float w2 = 0.0;
+    for (int i = 1; i < 16; i++) {
+      if (i == 8) continue; // water is rendered by the water mesh
+      float wi = w[i];
+      if (wi > w0) { w2 = max(w2, w1); c1 = c0; w1 = w0; c0 = i; w0 = wi; }
+      else if (wi > w1) { w2 = max(w2, w1); c1 = i; w1 = wi; }
+      else w2 = max(w2, wi);
     }
-    float intensity = 0.6 + 0.6 * accNoise;
-    vec3 col = accColor * intensity;
+    w0 = max(w0, 0.0); w1 = max(w1, 0.0);
+    // Only two layers are sampled. Measure the second against the third so it fades
+    // in/out continuously when the pair changes (no seams along triangle edges).
+    w1 = max(w1 - w2, 0.0);
+    if (w0 < 0.001) { c0 = 2; w0 = 1.0; }
+
     if (uWeightsView != 0) {
-      float grassW = vWb.x; float snowW = vWb.z;
-      if (uWeightsView == 1) col = vec3(snowW);
-      else if (uWeightsView == 2) col = vec3(grassW);
-      else if (uWeightsView == 3) col = vec3(clamp((snowW - grassW) * 2.0 + 0.5, 0.0, 1.0));
-      else if (uWeightsView == 4) {
-        float stoneW = vWa.z; float dirtW = vWa.w; float maxW = stoneW; vec3 c = vec3(0.5);
-        if (dirtW > maxW) { maxW = dirtW; c = vec3(0.35, 0.25, 0.15); }
-        if (grassW > maxW) { maxW = grassW; c = vec3(0.1, 0.6, 0.1); }
-        if (snowW > maxW) { maxW = snowW; c = vec3(0.9); }
-        col = c;
-      }
-      csm_DiffuseColor = vec4(col, uOpacity); csm_Emissive = vec3(0.0); csm_Roughness = 1.0; csm_Metalness = 0.0; return;
+      float grassW = vWb.x; float snowW = vWb.z; vec3 dbg = vec3(0.5);
+      if (uWeightsView == 1) dbg = vec3(snowW);
+      else if (uWeightsView == 2) dbg = vec3(grassW);
+      else if (uWeightsView == 3) dbg = vec3(clamp((snowW - grassW) * 2.0 + 0.5, 0.0, 1.0));
+      else if (uWeightsView == 4) dbg = vec3(float(c0) / 15.0);
+      csm_DiffuseColor = vec4(dbg, uOpacity); csm_Emissive = vec3(0.0); csm_Roughness = 1.0; csm_Metalness = 0.0; return;
     }
+
+    // === TRIPLANAR PBR ===
+    vec3 tw = pow(abs(N), vec3(6.0));
+    tw /= max(dot(tw, vec3(1.0)), 1e-5);
+    vec3 P = vWorldPosition;
+
+    vec4 A0; vec3 N0; float r0; float ao0;
+    samplePbrLayer(c0, P, N, tw, A0, N0, r0, ao0);
+
+    vec4 albedoH = A0; vec3 Nm = N0; float rough = r0; float ao = ao0;
+    float wSum = w0 + w1;
+    if (w1 > 0.02 && !(distSq > 6400.0 && w1 < 0.25 * wSum)) {
+      vec4 A1; vec3 N1; float r1; float ao1;
+      samplePbrLayer(c1, P, N, tw, A1, N1, r1, ao1);
+      // Height blend: the taller texel wins near the boundary (stones poke out of
+      // grass, sand fills cracks) instead of a soft cross-fade.
+      // Noise-jittered weights break up boundaries that follow the voxel grid.
+      float jitter = (texture(uNoiseTexture, P * 0.21 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 0.5;
+      float b0 = clamp(w0 / wSum + jitter, 0.0, 1.0), b1 = 1.0 - b0;
+      float h0 = A0.a + b0, h1 = A1.a + b1;
+      float top = max(h0, h1) - 0.25;
+      float k0 = max(h0 - top, 0.0), k1 = max(h1 - top, 0.0);
+      float kInv = 1.0 / max(k0 + k1, 1e-4);
+      k0 *= kInv; k1 *= kInv;
+      albedoH = A0 * k0 + A1 * k1;
+      Nm = normalize(N0 * k0 + N1 * k1);
+      rough = r0 * k0 + r1 * k1;
+      ao = ao0 * k0 + ao1 * k1;
+    }
+
+    // Anti-tiling: blend in a second, larger-scale sample of the dominant layer's
+    // albedo, driven by low-frequency noise, so repeats don't line up.
+    if (!lowDetail || distSq < 9216.0) {
+      vec3 twd = step(max(tw.yzx, tw.zxy), tw); // dominant axis
+      vec2 uvd = (twd.x > 0.5 ? P.zy : (twd.y > 0.5 ? P.xz : P.xy)) * uPbrScale[c0] * 0.29 + vec2(0.37, 0.61);
+      vec3 far = texture(uPbrA, vec3(uvd, float(c0))).rgb;
+      float mixK = smoothstep(0.35, 0.75, nMacro.g) * 0.45;
+      albedoH.rgb = mix(albedoH.rgb, far, mixK);
+    }
+
+    vec3 accColor = albedoH.rgb;
+    float accRoughness = rough;
+    float accEmission = (c0 == 14 ? w0 : 0.0) + (c1 == 14 ? w1 : 0.0);
+    int dominantChannel = c0;
+    // Glow stone emits only from its bright veins, not the dark host rock.
+    vec3 glow = accEmission * 2.0 * accColor * smoothstep(0.3, 0.6, max(accColor.r, max(accColor.g, accColor.b)));
+    vec3 col = accColor;
+    // Texture AO shows as contact shadow in crevices.
+    col *= mix(1.0, ao, 0.65);
+    N = Nm;
+
+    // === MOSS (simulation mossiness + mossy stone) ===
     float mossMatWeight = vWc.y; float effectiveMoss = max(vMossiness, mossMatWeight);
-    if (uMossEnabled > 0.5 && effectiveMoss > 0.001) {
-      vec3 mossColor = uColorMoss;
-      float organicNoise = mix(nMid.r, nHigh.g, 0.4); 
+    if (uMossEnabled > 0.5 && effectiveMoss > 0.001 && c0 != 9) {
+      float organicNoise = texture(uNoiseTexture, P * 0.35).r;
       float threshold = 1.0 - effectiveMoss;
-      float mossMix = smoothstep(threshold - 0.4, threshold + 0.4, organicNoise);
-      col = mix(col, mossColor * (0.6 + 0.4 * nHigh.a), mossMix);
-      accRoughness = mix(accRoughness, 0.9, mossMix);
+      // Moss settles in low texels first.
+      float mossMix = smoothstep(threshold - 0.4, threshold + 0.4, organicNoise + (0.5 - albedoH.a) * 0.6);
+      col = mix(col, uColorMoss * (0.65 + 0.5 * albedoH.a), mossMix);
+      accRoughness = mix(accRoughness, 0.92, mossMix);
     }
+
     // === HUMIDITY-BASED VISUAL WETNESS ===
-    // Materials respond differently to humidity:
-    // - Sand, stone, dirt, clay: get visually wet (darker, shinier)
-    // - Grass: stays dry (water drains, leaves shed water)
-    // - Snow, ice: unaffected (already frozen water)
-    // Weight how much this surface should show wetness based on material composition
-    float wettableMaterials = vWa.z + vWa.w + vWb.y + vWb.w + vWc.z + vWc.w; // stone + dirt + sand + clay + red_sand + terracotta
-    float nonWettableMaterials = vWb.x + vWb.z + vWd.y; // grass + snow + ice
+    // Sand, stone, dirt, clay get darker and shinier; grass, snow, ice don't.
+    float wettableMaterials = vWa.z + vWa.w + vWb.y + vWb.w + vWc.z + vWc.w;
+    float nonWettableMaterials = vWb.x + vWb.z + vWd.y;
     float wettabilityFactor = clamp(wettableMaterials / max(wettableMaterials + nonWettableMaterials, 0.001), 0.0, 1.0);
-
-    // Humidity contributes to visual wetness for wettable materials
-    float humidityWetness = totalHumidity * wettabilityFactor * 0.7; // 0.7 = max humidity wetness contribution
+    float humidityWetness = totalHumidity * wettabilityFactor * 0.7;
     float combinedWetness = max(vWetness, humidityWetness);
-
-    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, combinedWetness * 0.9);
+    // Water pools in low texels: wet darkening follows the height map.
+    float wetMask = combinedWetness * mix(1.0, 1.4 - albedoH.a, 0.6);
+    if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, clamp(wetMask, 0.0, 1.0) * 0.9);
     col *= (1.0 + macro * 0.06); accRoughness += macro * 0.05;
 
-    // === UNIVERSAL FINE GRAIN: Apply to ALL terrain close-up ===
-    // This gives every surface visible micro-texture when viewed up close
-    if (closeUp) {
-        // Fine-scale brightness variation (soil grain, surface roughness)
-        float fineGrain = nFine.r * 2.0 - 1.0;
-        float microGrain = nUltraFine.g * 2.0 - 1.0;
 
-        // Distance-based intensity: strongest at feet, fades by 20 units
-        float grainFade = 1.0 - smoothstep(25.0, 400.0, distSq);
-
-        // Universal micro-variation in brightness
-        float brightnessVar = 1.0 + fineGrain * 0.08 * grainFade;
-
-        // Ultra-fine grain for very close (within 10 units)
-        if (distSq < 100.0) {
-            brightnessVar += microGrain * 0.05;
-        }
-
-        col *= brightnessVar;
-
-        // Subtle color temperature shifts at micro scale
-        // Slightly warmer in "peaks", cooler in "valleys"
-        float tempShift = nFine.b * 2.0 - 1.0;
-        vec3 warmCool = vec3(1.0 + tempShift * 0.02 * grainFade,
-                             1.0,
-                             1.0 - tempShift * 0.02 * grainFade);
-        col *= warmCool;
-
-        // Micro-shadow in crevices (based on ultra-fine noise)
-        float crevice = smoothstep(0.6, 0.9, nUltraFine.r);
-        col *= mix(1.0, 0.92, crevice * grainFade * 0.7);
-    }
-
-    // === PHASE 3: Material-specific fine detail for AAA quality ===
-    // Each material gets unique micro-texture visible at close range
-    // Use the per-fragment dominant channel from the weight accumulation above.
-    // (Rounding the interpolated varying produced in-between material ids across
-    // triangles, e.g. stone->obsidian passing through sand/snow detail branches.)
-    int dom = dominantChannel;
-    vec2 wind = safeNormalize2(uWindDirXZ);
-    float slope = 1.0 - N.y; // 0 = flat, 1 = vertical
-    float slopePow = pow(slope, 1.5);
-    float heightNorm = clamp(vWorldPosition.y / 80.0, 0.0, 1.0);
-    float grainFade = closeUp ? (1.0 - smoothstep(25.0, 400.0, distSq)) : 0.0;
-
-    // --- SAND & RED_SAND (5, 10): Individual grains + ripples ---
-    if (dom == 5 || dom == 10) {
-      // Macro ripples
-      float rippleStrength = 1.0 - smoothstep(0.2, 0.6, slope);
-      float rip = sin(dot(vWorldPosition.xz, wind) * 2.8 + (nMacro.g * 2.0 - 1.0) * 0.6);
-      col *= 1.0 + rip * 0.04 * rippleStrength;
-
-      // Fine detail: individual sand grains
-      if (closeUp) {
-        // Grain brightness variation - some grains lighter (quartz), some darker (minerals)
-        float grainLight = smoothstep(0.6, 0.8, nFine.r);
-        float grainDark = smoothstep(0.7, 0.9, nUltraFine.g);
-        col *= 1.0 + grainLight * 0.12 * grainFade;
-        col *= 1.0 - grainDark * 0.08 * grainFade;
-
-        // Sparkly quartz grains
-        float sparkle = pow(nUltraFine.b, 4.0) * grainFade;
-        col += vec3(sparkle * 0.06);
-
-        // Color variation - some grains warmer, some cooler
-        float warmGrain = nFine.g * 2.0 - 1.0;
-        col *= vec3(1.0 + warmGrain * 0.03, 1.0, 1.0 - warmGrain * 0.02);
-      }
-      accRoughness = mix(accRoughness, 0.92, 0.35);
-    }
-
-    // --- STONE (2): Mineral crystals + weathering ---
-    else if (dom == 2) {
-      float bands = sin(vWorldPosition.y * 1.4 + (nMacro.b * 2.0 - 1.0) * 1.2);
-      col *= 1.0 + bands * slopePow * 0.04;
-
-      if (closeUp) {
-        // Mineral crystal faces - slight color shifts
-        float crystal = smoothstep(0.5, 0.8, nFine.r);
-        col *= 1.0 + crystal * 0.08 * grainFade;
-
-        // Mica sparkle
-        float mica = pow(nUltraFine.a, 5.0);
-        col += vec3(mica * 0.04 * grainFade);
-
-        // Micro-cracks (darker lines)
-        float microCrack = smoothstep(0.75, 0.85, nUltraFine.g);
-        col *= 1.0 - microCrack * 0.15 * grainFade;
-
-        // Iron staining variation
-        float iron = nFine.b * 0.06 * grainFade;
-        col *= vec3(1.0 + iron, 1.0 - iron * 0.3, 1.0 - iron * 0.5);
-      }
-      accRoughness += slopePow * 0.05;
-    }
-
-    // --- BEDROCK (1): Dense, ancient rock texture ---
-    else if (dom == 1) {
-      float exposure = smoothstep(-0.3, 0.3, N.y);
-      col *= mix(vec3(0.9), vec3(1.05), exposure);
-
-      if (closeUp) {
-        // Very fine crystalline structure
-        float crystalline = nUltraFine.r * 2.0 - 1.0;
-        col *= 1.0 + crystalline * 0.06 * grainFade;
-
-        // Pressure bands
-        float pressure = sin(vWorldPosition.y * 8.0 + nFine.g * 3.0);
-        col *= 1.0 + pressure * 0.03 * grainFade;
-      }
-      accRoughness = mix(accRoughness, 0.85, 0.3);
-    }
-
-    // --- DIRT (3): Soil aggregates + organic matter ---
-    else if (dom == 3) {
-      float clump = (nHigh.r * 2.0 - 1.0);
-      col *= 1.0 + clump * 0.04;
-
-      if (closeUp) {
-        // Visible soil aggregates (clumps)
-        float aggregate = smoothstep(0.4, 0.7, nFine.r);
-        col *= mix(0.92, 1.08, aggregate * grainFade);
-
-        // Small pebbles/stones
-        float pebbles = smoothstep(0.75, 0.88, nUltraFine.b);
-        col = mix(col, col * 1.2, pebbles * 0.4 * grainFade);
-
-        // Organic matter (darker specks)
-        float organic = smoothstep(0.8, 0.95, nUltraFine.r);
-        col *= 1.0 - organic * 0.2 * grainFade;
-
-        // Root fragments (slightly lighter)
-        float roots = smoothstep(0.85, 0.95, nFine.b) * smoothstep(0.5, 0.7, nUltraFine.g);
-        col = mix(col, col * vec3(1.1, 1.05, 0.95), roots * 0.3 * grainFade);
-      }
-      accRoughness = mix(accRoughness, 0.95, 0.15);
-    }
-
-    // --- GRASS (4): Blade shadows + clover patches ---
-    else if (dom == 4) {
-      float health = nMacro.g;
-      col *= mix(vec3(1.05, 1.0, 0.88), vec3(0.95, 1.05, 0.92), health);
-
-      if (closeUp) {
-        // Blade shadow pattern
-        float bladeShadow = smoothstep(0.3, 0.7, nFine.b);
-        col *= mix(0.88, 1.08, bladeShadow * grainFade);
-
-        // Yellow grass tips
-        float tips = smoothstep(0.7, 0.9, nUltraFine.r);
-        col = mix(col, col * vec3(1.1, 1.05, 0.85), tips * 0.25 * grainFade);
-
-        // Clover/weed patches (slightly different green)
-        float clover = smoothstep(0.8, 0.95, nFine.g);
-        col = mix(col, col * vec3(0.9, 1.1, 0.95), clover * 0.2 * grainFade);
-
-        // Dead grass patches
-        float dead = smoothstep(0.85, 0.98, nUltraFine.a);
-        col = mix(col, col * vec3(1.15, 1.1, 0.8), dead * 0.3 * grainFade);
-      }
-      col *= 1.0 - slopePow * 0.08;
-    }
-
-    // --- SNOW (6): Crystal sparkle + blue shadows ---
-    else if (dom == 6) {
-      float shadowFactor = 1.0 - clamp(dot(N, uSunDirection), 0.0, 1.0);
-      col *= mix(vec3(1.0), vec3(0.9, 0.95, 1.08), shadowFactor * 0.4);
-
-      if (closeUp) {
-        // Individual ice crystal sparkle
-        float crystalSparkle = pow(nUltraFine.r, 6.0);
-        col += vec3(crystalSparkle * 0.15 * grainFade);
-
-        // Surface texture variation
-        float snowGrain = nFine.g * 2.0 - 1.0;
-        col *= 1.0 + snowGrain * 0.04 * grainFade;
-
-        // Wind-packed vs fluffy variation
-        float packed = smoothstep(0.6, 0.8, nFine.b);
-        col *= mix(1.0, 0.96, packed * grainFade);
-
-        // Blue ice crystals occasionally visible
-        float blueIce = smoothstep(0.9, 0.98, nUltraFine.b);
-        col = mix(col, col * vec3(0.9, 0.95, 1.15), blueIce * 0.3 * grainFade);
-      }
-      accRoughness = mix(accRoughness, 0.98, 0.45);
-    }
-
-    // --- CLAY (7): Smooth with fine cracks ---
-    else if (dom == 7) {
-      if (closeUp) {
-        // Fine surface cracks
-        float cracks = smoothstep(0.7, 0.85, nFine.r);
-        col *= 1.0 - cracks * 0.12 * grainFade;
-
-        // Slight color mottling
-        float mottle = nUltraFine.g * 2.0 - 1.0;
-        col *= 1.0 + mottle * 0.05 * grainFade;
-
-        // Occasional lighter mineral inclusions
-        float mineral = smoothstep(0.85, 0.95, nUltraFine.b);
-        col = mix(col, col * 1.15, mineral * 0.25 * grainFade);
-      }
-      accRoughness = mix(accRoughness, 0.88, 0.2);
-    }
-
-    // --- RED SAND (10): Like sand but with iron oxide ---
-    else if (dom == 10) {
-      // Already handled with sand above, add iron-specific detail
-      if (closeUp) {
-        // Iron oxide variation - some grains more orange, some more brown
-        float ironVar = nFine.r * 2.0 - 1.0;
-        col *= vec3(1.0 + ironVar * 0.06, 1.0 - ironVar * 0.02, 1.0 - ironVar * 0.08);
-      }
-    }
-
-    // --- TERRACOTTA (11): Fired clay texture ---
-    else if (dom == 11) {
-      float oxide = nMacro.r * 0.15;
-      col *= vec3(1.0 + oxide, 1.0 - oxide * 0.5, 1.0 - oxide);
-
-      if (closeUp) {
-        // Firing variation - subtle color bands
-        float firing = sin(vWorldPosition.y * 12.0 + nFine.g * 5.0);
-        col *= 1.0 + firing * 0.03 * grainFade;
-
-        // Micro-pores from firing
-        float pores = smoothstep(0.75, 0.9, nUltraFine.r);
-        col *= 1.0 - pores * 0.1 * grainFade;
-      }
-      accRoughness = mix(accRoughness, 0.92, 0.25);
-    }
-
-    // --- ICE (12): Subsurface scattering + bubbles ---
-    else if (dom == 12) {
-      float depth = vCavity * 0.5 + (1.0 - N.y) * 0.3;
-      col *= mix(vec3(1.0), vec3(0.85, 0.92, 1.1), depth);
-
-      if (closeUp) {
-        // Trapped air bubbles
-        float bubbles = smoothstep(0.85, 0.95, nUltraFine.r);
-        col = mix(col, vec3(1.0), bubbles * 0.3 * grainFade);
-
-        // Fracture lines
-        float fractures = smoothstep(0.8, 0.92, nFine.g);
-        col *= 1.0 - fractures * 0.08 * grainFade;
-
-        // Internal blue-green variation
-        float internal = nFine.b * 2.0 - 1.0;
-        col *= vec3(1.0, 1.0 + internal * 0.03, 1.0 + internal * 0.05);
-      }
-      accRoughness = mix(accRoughness, 0.12, 0.35);
-    }
-
-    // --- JUNGLE GRASS (13): Dense tropical vegetation texture ---
-    else if (dom == 13) {
-      float health = nMacro.g;
-      col *= mix(vec3(1.02, 0.98, 0.9), vec3(0.92, 1.05, 0.95), health);
-
-      if (closeUp) {
-        // Broader leaf shadows
-        float leafShadow = smoothstep(0.25, 0.65, nFine.b);
-        col *= mix(0.85, 1.1, leafShadow * grainFade);
-
-        // Wet leaf sheen
-        float sheen = pow(nUltraFine.g, 3.0);
-        col += vec3(0.0, sheen * 0.04, 0.0) * grainFade;
-
-        // Decaying matter
-        float decay = smoothstep(0.88, 0.98, nUltraFine.a);
-        col = mix(col, col * vec3(0.9, 0.85, 0.7), decay * 0.25 * grainFade);
-      }
-      col *= vec3(0.92, 0.98, 0.88);
-    }
-
-    // --- GLOWSTONE (14): Pulsing crystals ---
-    else if (dom == 14) {
-      float pulse = sin(uTime * 2.0 + vWorldPosition.x * 0.5 + vWorldPosition.z * 0.5) * 0.5 + 0.5;
-      col *= 1.0 + pulse * 0.08;
-
-      if (closeUp) {
-        // Crystal facets
-        float facet = smoothstep(0.5, 0.8, nFine.r);
-        col *= 1.0 + facet * 0.15 * grainFade;
-
-        // Glowing veins
-        float veins = smoothstep(0.7, 0.9, nUltraFine.g);
-        col += vec3(0.0, veins * 0.1, veins * 0.15) * grainFade;
-      }
-    }
-
-    // --- OBSIDIAN (15): Volcanic glass ---
-    else if (dom == 15) {
-      float exposure = smoothstep(-0.3, 0.3, N.y);
-      col *= mix(vec3(0.92), vec3(1.05), exposure);
-
-      if (closeUp) {
-        // Conchoidal fracture patterns
-        float fracture = smoothstep(0.6, 0.85, nFine.g);
-        col *= 1.0 + fracture * 0.1 * grainFade;
-
-        // Slight iridescence
-        float irid = nUltraFine.b * 2.0 - 1.0;
-        col *= vec3(1.0 + irid * 0.02, 1.0, 1.0 - irid * 0.02);
-
-        // Flow banding
-        float flow = sin(vWorldPosition.y * 6.0 + nFine.r * 4.0);
-        col *= 1.0 + flow * 0.02 * grainFade;
-      }
-      accRoughness = mix(accRoughness, 0.15, 0.4);
-    }
-
-    // --- MOSS (9): Fuzzy organic texture ---
-    else if (dom == 9) {
-      if (closeUp) {
-        // Individual moss fronds
-        float fronds = smoothstep(0.4, 0.7, nFine.r);
-        col *= mix(0.9, 1.1, fronds * grainFade);
-
-        // Spore capsules (slightly darker dots)
-        float spores = smoothstep(0.88, 0.96, nUltraFine.g);
-        col *= 1.0 - spores * 0.15 * grainFade;
-
-        // Moisture variation
-        float moist = nFine.b;
-        col *= mix(1.0, 0.95, moist * grainFade);
-      }
-      accRoughness = mix(accRoughness, 0.95, 0.3);
-    }
     float cav = clamp(vCavity, 0.0, 1.0) * clamp(uCavityStrength, 0.0, 2.0);
     col *= mix(1.0, 0.65, cav); accRoughness = mix(accRoughness, 1.0, cav * 0.25);
 
@@ -931,7 +522,7 @@ export const triplanarFragmentShader = `
     vec3 giLight = getGILight();
     col *= giLight;
 
-    col = clamp(col, 0.0, 5.0); col += accEmission * accColor; 
+    col = clamp(col, 0.0, 5.0); col += glow;
     if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
         float depthMask = 1.0 - smoothstep(0.0, 16.0, waterDepth); // AAA FIX: Tighter depth mask (16m)
@@ -1012,16 +603,17 @@ export const triplanarFragmentShader = `
       col = mix(col, tintedFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
-    csm_Emissive = vec3(accEmission * accColor);
-    accRoughness -= (nHigh.r * 0.1);
+    csm_Emissive = glow;
     // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
     if (uWetnessEnabled > 0.5) {
       float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);
       accRoughness = mix(accRoughness, 0.2, roughnessWetness);
     }
     accRoughness = max(accRoughness, clamp(uRoughnessMin, 0.0, 1.0));
-    if (dominantChannel == 8) accRoughness = 0.1;
     csm_Roughness = accRoughness;
+    // Per-pixel normal from the PBR maps (view space) and texture AO for indirect light.
+    csm_FragNormal = normalize((viewMatrix * vec4(N, 0.0)).xyz);
+    csm_AO = ao;
     csm_Metalness = 0.0;
   }
 `;
