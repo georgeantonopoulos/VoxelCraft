@@ -38,6 +38,9 @@ const CAMERA_CLIP_MARGIN = 0.15; // Slightly larger than near plane (0.1) to pre
 const CROUCH_SPEED_MULTIPLIER = 0.5;
 const CAPSULE_HALF_HEIGHT_NORMAL = 0.4;
 const CAPSULE_HALF_HEIGHT_CROUCHED = 0.1;
+const CAPSULE_RADIUS = 0.4;
+/** Distance below the capsule's feet that still counts as standing (slopes, steps). */
+const GROUND_TOLERANCE = 0.35;
 const CAMERA_PUSH_DIRECTIONS = [
   { x: 1, y: 0, z: 0 },   // Right
   { x: -1, y: 0, z: 0 },  // Left
@@ -244,9 +247,14 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       }
     } else {
       if (jump && !wasJumpPressed.current && !spacePressHandled.current) {
-        const ray = new rapier.Ray(body.current.translation(), { x: 0, y: -1, z: 0 });
-        const hit = world.castRay(ray, 1.5, true);
-        if (hit && hit.timeOfImpact < 1.2) yVelocity = JUMP_FORCE;
+        // Grounded check: exclude the player's own body (a solid ray starting inside
+        // the capsule otherwise hits it at t=0, allowing infinite mid-air jumps).
+        const halfHeight = isCrouching.current ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL;
+        const feetDistance = halfHeight + CAPSULE_RADIUS;
+        const t = body.current.translation();
+        const ray = new rapier.Ray({ x: t.x, y: t.y, z: t.z }, { x: 0, y: -1, z: 0 });
+        const hit = world.castRay(ray, feetDistance + GROUND_TOLERANCE, true, undefined, undefined, undefined, body.current);
+        if (hit && hit.timeOfImpact <= feetDistance + GROUND_TOLERANCE) yVelocity = JUMP_FORCE;
       }
     }
 
@@ -289,7 +297,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
   return (
     <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0}>
-      <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, 0.4]} />
+      <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, CAPSULE_RADIUS]} />
     </RigidBody>
   );
 };

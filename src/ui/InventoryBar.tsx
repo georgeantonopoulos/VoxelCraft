@@ -57,6 +57,8 @@ export const InventoryBar: React.FC = React.memo(() => {
                         draggable={isCraftingOpen && !!item && (count > 0 || isCustom)}
                         onDragStart={() => item && handleDragStart(item)}
                         onDragEnd={handleDragEnd}
+                        // Tap/click to select (touch has no number keys or wheel).
+                        onClick={() => { if (!isCraftingOpen) useInventoryStore.getState().setSelectedSlotIndex(index); }}
                         className={`
               relative w-12 h-12 flex items-center justify-center rounded-lg border-2 transition-all duration-200
               ${isSelected ? 'border-amber-400 bg-white/10 scale-105 shadow-[0_0_10px_rgba(251,191,36,0.5)]' : 'border-white/20 bg-black/40'}

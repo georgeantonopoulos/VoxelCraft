@@ -2,6 +2,11 @@ import React, { useRef, useState } from 'react';
 import { useInputStore } from '@/state/InputStore';
 import { useSettingsStore } from '@/state/SettingsStore';
 
+/** Forward on-screen button presses to InteractionHandler (mouse equivalents). */
+const touchAction = (button: number, pressed: boolean) => {
+  window.dispatchEvent(new CustomEvent('vc-touch-action', { detail: { button, pressed } }));
+};
+
 export const TouchControls: React.FC = () => {
   const inputMode = useSettingsStore(s => s.inputMode);
   const { setMoveVector, setLookDelta, setJumping, setDigging } = useInputStore();
@@ -140,12 +145,24 @@ export const TouchControls: React.FC = () => {
             PICK UP
           </button>
 
-          {/* DIG (Left Click) */}
+          {/* USE (Right Click): place / throw / build */}
           <button
+            aria-label="Use item"
+            className="w-16 h-16 rounded-full bg-emerald-500/50 border-2 border-emerald-300 text-white text-xs font-bold backdrop-blur-sm active:bg-emerald-500/80 active:scale-95 transition-all flex items-center justify-center"
+            onPointerDown={(event) => { event.preventDefault(); touchAction(2, true); }}
+            onPointerUp={() => touchAction(2, false)}
+            onPointerLeave={() => touchAction(2, false)}
+          >
+            USE
+          </button>
+
+          {/* DIG (Left Click): dig / chop / strike */}
+          <button
+            aria-label="Dig"
             className="w-16 h-16 rounded-full bg-red-500/50 border-2 border-red-400 text-white font-bold backdrop-blur-sm active:bg-red-500/80 active:scale-95 transition-all flex items-center justify-center"
-            onPointerDown={() => setDigging(true)}
-            onPointerUp={() => setDigging(false)}
-            onPointerLeave={() => setDigging(false)}
+            onPointerDown={(event) => { event.preventDefault(); setDigging(true); touchAction(0, true); }}
+            onPointerUp={() => { setDigging(false); touchAction(0, false); }}
+            onPointerLeave={() => { setDigging(false); touchAction(0, false); }}
           >
             DIG
           </button>

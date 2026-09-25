@@ -7,6 +7,7 @@ import { useWorldStore } from '@state/WorldStore';
 import { Vector3 } from 'three';
 import { ItemType } from '@/types';
 import { useInputStore } from '@/state/InputStore';
+import { useSettingsStore } from '@state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
@@ -34,7 +35,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
   // Keyboard Input Logic
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'c') {
+      // Only open crafting from active gameplay (not while typing or in menus).
+      if (e.key.toLowerCase() === 'c' && !e.repeat && !useSettingsStore.getState().isSettingsOpen) {
         const invState = useInventoryStore.getState();
         const currentItem = invState.inventorySlots[invState.selectedSlotIndex];
         const craftingState = useCraftingStore.getState();
@@ -50,9 +52,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
               craftingState.openCrafting(ItemType.STICK);
             }
           }
-        } else {
-          craftingState.closeCrafting();
         }
+        // Closing is handled by CraftingInterface, which cancels transactionally.
       }
     };
 
@@ -97,8 +98,9 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
       return true;
     };
 
-    const handleMouseDown = (e: MouseEvent) => {
-      if (!document.pointerLockElement) return;
+    // `fromTouch` marks presses from the on-screen touch buttons (no pointer lock on touch).
+    const handleMouseDown = (e: MouseEvent | { button: number; fromTouch: true }) => {
+      if (!('fromTouch' in e) && !document.pointerLockElement) return;
 
       const selectedItem = inventorySlots[selectedSlotIndex];
       // Resolve CustomTool object if the item is a tool ID string
@@ -282,11 +284,21 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
 
+    // Touch action buttons (TouchControls) dispatch vc-touch-action {button, pressed}.
+    const handleTouchAction = (e: Event) => {
+      const detail = (e as CustomEvent<{ button: number; pressed: boolean }>).detail;
+      if (!detail) return;
+      if (detail.pressed) handleMouseDown({ button: detail.button, fromTouch: true });
+      else handleMouseUp();
+    };
+
+    window.addEventListener('vc-touch-action', handleTouchAction);
     window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('contextmenu', handleContextMenu);
 
     return () => {
+      window.removeEventListener('vc-touch-action', handleTouchAction);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('contextmenu', handleContextMenu);

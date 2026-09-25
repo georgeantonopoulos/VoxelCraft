@@ -261,7 +261,7 @@ export const HUD: React.FC = () => {
       )}
 
       {/* Top Right: Settings */}
-      <div className="absolute top-4 right-4 pointer-events-auto">
+      <div className="absolute top-4 right-4 z-50 pointer-events-auto">
         <button
           onClick={toggleSettings}
           className="p-2 bg-slate-800/80 rounded-full hover:bg-slate-700 text-white shadow-lg backdrop-blur-sm transition-colors"

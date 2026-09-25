@@ -76,7 +76,13 @@ export function useItemPickup({
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
         const userData = parent?.userData as { type?: ItemType; id?: string };
-        if (userData && userData.id && userData.type) {
+        // Only real thrown/dropped physics items qualify. Placed flora and campfires also
+        // carry an item userData type, but they live in WorldStore and have their own
+        // pickup branches; treating them as physics items duplicated flora and
+        // deleted fires without refunding them.
+        const isPhysicsStoreItem = !!userData?.id &&
+          usePhysicsItemStore.getState().items.some(i => i.id === userData.id);
+        if (userData && userData.id && userData.type && isPhysicsStoreItem) {
           const t = physicsHit.timeOfImpact;
           const point = new rapier.Ray(origin, dir).pointAt(t);
           physicsItemHit = { id: userData.id, type: userData.type, position: new THREE.Vector3(point.x, point.y, point.z), t };

@@ -5,6 +5,8 @@ interface CraftingState {
   isOpen: boolean;
   baseItem: ItemType | null;
   attachedItems: Record<string, ItemType>; // slotId -> itemType
+  /** Attachments when the session opened (for transactional cancel). */
+  initialAttachments: Record<string, ItemType>;
   editingToolId: string | null;
   draggedItem: ItemType | null;
 
@@ -20,6 +22,7 @@ export const useCraftingStore = create<CraftingState>((set) => ({
   isOpen: false,
   baseItem: null,
   attachedItems: {},
+  initialAttachments: {},
   editingToolId: null,
   draggedItem: null,
 
@@ -27,7 +30,8 @@ export const useCraftingStore = create<CraftingState>((set) => ({
     isOpen: true,
     baseItem: base,
     editingToolId: existingToolId || null,
-    attachedItems: attachments || {},
+    attachedItems: attachments ? { ...attachments } : {},
+    initialAttachments: attachments ? { ...attachments } : {},
     draggedItem: null
   }),
 
@@ -36,6 +40,7 @@ export const useCraftingStore = create<CraftingState>((set) => ({
     baseItem: null,
     editingToolId: null,
     attachedItems: {},
+    initialAttachments: {},
     draggedItem: null
   }),
 

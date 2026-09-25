@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import { Vector2 } from 'three';
@@ -6,6 +6,7 @@ import { Vector2 } from 'three';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useInventoryStore } from '@/state/InventoryStore';
 import { STICK_SLOTS, RECIPES } from '../CraftingData';
+import { netAttachmentDebit, resolveFinish } from '../craftingTransaction';
 import { ItemType, CustomTool } from '@/types';
 import { getToolCapabilities } from '@/features/interaction/logic/ToolCapabilities';
 
@@ -194,19 +195,34 @@ const DropManager = ({ onDrop }: { onDrop: (slotId: string, itemType: ItemType) 
 
 export const CraftingInterface: React.FC = () => {
   const { isOpen, closeCrafting, attachedItems, attach, detach, draggedItem, baseItem, editingToolId } = useCraftingStore();
-  const { removeItem, addItem, addCustomTool, updateCustomTool } = useInventoryStore();
+  const { removeItem, addItem, addCustomTool, updateCustomTool, removeCustomTool } = useInventoryStore();
 
-  // Keyboard Exit (C)
+  /**
+   * Leave without changes: return the inventory to its state at open time
+   * (attach/detach debit and refund live, see craftingTransaction.ts).
+   */
+  const cancelCrafting = useCallback(() => {
+    const { initialAttachments, attachedItems: current } = useCraftingStore.getState();
+    const inventory = useInventoryStore.getState();
+    for (const [item, debit] of netAttachmentDebit(initialAttachments, current)) {
+      if (debit > 0) inventory.addItem(item, debit);
+      else inventory.removeItem(item, -debit);
+    }
+    closeCrafting();
+  }, [closeCrafting]);
+
+  // Keyboard Exit (C / Escape) cancels the session.
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       if (e.key.toLowerCase() === 'c' || e.key === 'Escape') {
-        closeCrafting();
+        cancelCrafting();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, closeCrafting]);
+  }, [isOpen, cancelCrafting]);
 
   // Interaction Logic
   const handleSlotDrop = (slotId: string, itemType: ItemType) => {
@@ -228,21 +244,28 @@ export const CraftingInterface: React.FC = () => {
   };
 
   const handleFinish = () => {
-    if (Object.keys(attachedItems).length === 0) {
-      closeCrafting();
-      return;
-    }
-
-    if (editingToolId) {
-      updateCustomTool(editingToolId, {
-        attachments: { ...attachedItems }
-      });
-    } else {
-      addCustomTool({
-        id: `tool_${Date.now()}`,
-        baseType: baseItem || ItemType.STICK,
-        attachments: { ...attachedItems }
-      });
+    const base = baseItem || ItemType.STICK;
+    const outcome = resolveFinish(editingToolId, baseItem, attachedItems, useInventoryStore.getState().getItemCount(base));
+    switch (outcome.kind) {
+      case 'cancel':
+        cancelCrafting();
+        return;
+      case 'update':
+        updateCustomTool(editingToolId!, { attachments: { ...attachedItems } });
+        break;
+      case 'dismantle':
+        // Every attachment was detached (and refunded); the base returns too.
+        removeCustomTool(editingToolId!);
+        addItem(outcome.refundBase, 1);
+        break;
+      case 'create':
+        removeItem(outcome.consumeBase, 1);
+        addCustomTool({
+          id: `tool_${Date.now()}`,
+          baseType: base,
+          attachments: { ...attachedItems }
+        });
+        break;
     }
     closeCrafting();
   };
@@ -346,7 +369,7 @@ export const CraftingInterface: React.FC = () => {
       {/* Action Buttons */}
       <div className="absolute bottom-12 left-0 right-0 flex justify-center gap-6 pointer-events-auto">
         <button
-          onClick={() => closeCrafting()}
+          onClick={cancelCrafting}
           className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-full font-bold transition-all border border-white/20 backdrop-blur-md"
         >
           CANCEL
@@ -360,7 +383,7 @@ export const CraftingInterface: React.FC = () => {
       </div>
 
       <button
-        onClick={() => closeCrafting()}
+        onClick={cancelCrafting}
         className="absolute top-8 right-8 w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-red-500/80 text-white rounded-full transition-all duration-200 pointer-events-auto group border border-white/20 z-[70]"
         title="Close (C)"
       >

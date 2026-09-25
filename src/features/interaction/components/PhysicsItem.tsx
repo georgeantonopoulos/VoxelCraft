@@ -31,6 +31,9 @@ const playSound = (soundId: string, options?: { pitch?: number; volume?: number 
   }));
 };
 
+/** Items already shattered this session (guards duplicate collision events). */
+const shatteredItemIds = new Set<string>();
+
 export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   const rigidBody = useRef<RapierRigidBody>(null);
   const removeItem = usePhysicsItemStore((state) => state.removeItem);
@@ -63,9 +66,16 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
     const isStickBased = item.type === ItemType.STICK || (item.customToolData?.baseType === ItemType.STICK);
 
     // Helper to shatter a rock at a position (used for both self and target)
-    const shatterRock = (position: { x: number; y: number; z: number }, targetId: string) => {
-      // Spawn 3 Shards
-      for (let i = 0; i < 3; i++) {
+    const shatterRock = (position: { x: number; y: number; z: number }, targetId: string, targetType: ItemType = ItemType.STONE) => {
+      // Removal is applied on the next React render; a second collision event in the
+      // meantime must not shatter the same item again (that spawned 6 shards).
+      if (shatteredItemIds.has(targetId)) return;
+      shatteredItemIds.add(targetId);
+      if (shatteredItemIds.size > 512) shatteredItemIds.clear(); // ids are unique; bound the set
+
+      // A broken shard just breaks: spawning shards from shards multiplied them.
+      const shardCount = targetType === ItemType.STONE ? 3 : 0;
+      for (let i = 0; i < shardCount; i++) {
         const vx = (Math.random() - 0.5) * 4;
         const vy = (Math.random() * 3) + 2;
         const vz = (Math.random() - 0.5) * 4;
@@ -94,7 +104,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
         if (targetHealth <= 0 && targetPos) {
           // Target shattered!
-          shatterRock(targetPos, otherId);
+          shatterRock(targetPos, otherId, otherType);
         } else {
           // Impact sound (NEW: using stone_hit.mp3)
           const volume = Math.min(1.0, impactSpeed / 15);

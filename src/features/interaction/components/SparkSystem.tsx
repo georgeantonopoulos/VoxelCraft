@@ -41,12 +41,16 @@ export const SparkSystem: React.FC = () => {
         }
     `;
 
+    const clockTime = useRef(0);
+
     useEffect(() => {
         const handleSpark = (e: Event) => {
             if (!offsetsAttr.current || !directionsAttr.current || !lifeAttr.current) return;
             const detail = (e as CustomEvent).detail;
             const origin = detail.position as THREE.Vector3;
-            const time = performance.now() / 1000; // Use consistent time source
+            // Must match the shader's uTime clock (canvas elapsed time, not page time),
+            // otherwise sparks are born "in the future" and appear seconds late or never.
+            const time = clockTime.current;
 
             const count = 8;
             for (let i = 0; i < count; i++) {
@@ -76,10 +80,11 @@ export const SparkSystem: React.FC = () => {
     }, []);
 
     useFrame(({ clock }) => {
+        clockTime.current = clock.getElapsedTime();
         if (!meshRef.current) return;
         const mat = meshRef.current.material as any;
         if (mat.uniforms) {
-            mat.uniforms.uTime.value = clock.getElapsedTime();
+            mat.uniforms.uTime.value = clockTime.current;
         }
     });
 
