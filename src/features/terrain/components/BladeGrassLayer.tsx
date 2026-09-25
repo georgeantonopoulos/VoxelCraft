@@ -23,6 +23,7 @@ import {
 } from '../shaders/BladeGrassShader';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { getNoiseTexture } from '@core/memory/sharedResources';
+import { useSettingsStore } from '@state/SettingsStore';
 import { LIGHT_GRID_SIZE_XZ, LIGHT_GRID_SIZE_Y } from '@/constants';
 
 interface BladeGrassLayerProps {
@@ -65,7 +66,8 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
   const materialRef = useRef<CustomShaderMaterial | null>(null);
 
   // Instance count based on LOD
-  const instanceCount = useMemo(() => getInstanceCount(lodLevel), [lodLevel]);
+  const grassDensity = useSettingsStore((st) => st.grassDensity);
+  const instanceCount = useMemo(() => Math.round(getInstanceCount(lodLevel) * grassDensity), [lodLevel, grassDensity]);
 
   // Create blade geometry (single shared instance)
   const geometry = useMemo(() => {

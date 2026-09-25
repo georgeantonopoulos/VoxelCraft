@@ -5,6 +5,9 @@ import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { calculateOrbitAngle as calculateOrbitAngleCore, getOrbitOffset } from '@core/graphics/celestial';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 
+/** Shadow map refresh rate for moving casters (the sun itself moves slowly). */
+const SHADOW_UPDATE_HZ = 15;
+
 /**
  * Shared Helper Functions for Celestial Rendering
  */
@@ -297,6 +300,8 @@ export const SunFollower: React.FC<{
         const lastCameraPos = useRef(new THREE.Vector3());
         const tmpDelta = useRef(new THREE.Vector3());
         const tmpLightOffset = useRef(new THREE.Vector3());
+        const lastShadowUpdate = useRef(-Infinity);
+        const lastShadowOrigin = useRef(new THREE.Vector2(Number.NaN, Number.NaN));
         const tmpVisualOffset = useRef(new THREE.Vector3());
         const tmpTargetSunPos = useRef(new THREE.Vector3());
         const tmpSunColor = useRef(new THREE.Color());
@@ -336,6 +341,20 @@ export const SunFollower: React.FC<{
 
                 lightRef.current.position.set(lx + tmpLightOffset.current.x, tmpLightOffset.current.y, lz + tmpLightOffset.current.z);
                 target.position.set(lx, 0, lz);
+
+                // Shadow map throttling: re-rendering every caster into the 2048^2 map
+                // every frame was one of the largest GPU costs. The map and its matrix
+                // stay consistent between updates, so skipping frames only adds a small
+                // lag for moving casters. Update immediately when the snapped shadow
+                // origin moves, otherwise at SHADOW_UPDATE_HZ.
+                const shadow = lightRef.current.shadow;
+                shadow.autoUpdate = false;
+                const originMoved = lx !== lastShadowOrigin.current.x || lz !== lastShadowOrigin.current.y;
+                if (originMoved || clock.elapsedTime - lastShadowUpdate.current >= 1 / SHADOW_UPDATE_HZ) {
+                    shadow.needsUpdate = true;
+                    lastShadowUpdate.current = clock.elapsedTime;
+                    lastShadowOrigin.current.set(lx, lz);
+                }
                 lightRef.current.target = target;
                 lightRef.current.updateMatrixWorld();
                 target.updateMatrixWorld();

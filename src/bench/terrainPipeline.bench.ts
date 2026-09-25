@@ -4,6 +4,7 @@ import { generateMesh } from '@features/terrain/logic/mesher';
 import { generateLightGrid, extractLuminaLights, getSkyLightConfig } from '@core/lighting/lightPropagation';
 import { BiomeManager, WorldType } from '@features/terrain/logic/BiomeManager';
 import { initializeNoise } from '@core/math/noise';
+import { buildGeneratedChunk } from '@features/terrain/logic/chunkPipeline';
 
 /**
  * Terrain pipeline benchmark: `npm run bench`.
@@ -35,5 +36,11 @@ describe('terrain pipeline (per chunk)', () => {
     const c = generated[k++ % generated.length];
     const grid = generateLightGrid(c.density, extractLuminaLights(c.floraPositions), getSkyLightConfig(0.5));
     generateMesh(c.density, c.material, c.metadata.wetness, c.metadata.mossiness, grid);
+  }, { iterations: 8, warmupIterations: 2 });
+
+  let m = 0;
+  bench('full worker GENERATE (buildGeneratedChunk)', () => {
+    const [cx, cz] = CHUNKS[m++ % CHUNKS.length];
+    buildGeneratedChunk(cx, cz, [], []);
   }, { iterations: 8, warmupIterations: 2 });
 });

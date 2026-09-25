@@ -14,6 +14,9 @@ import { TreeLayer } from './TreeLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
 
+/** Extra bounding radius for water wave displacement (world units). */
+const WATER_BOUNDS_MARGIN = 3;
+
 // Profiling flag - enable via ?profile URL param or console: window.__vcChunkProfile = true
 const shouldProfile = () => typeof window !== 'undefined' && (
   (window as any).__vcChunkProfile ||
@@ -163,16 +166,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     ensureAttribute(chunk.meshTreeHumidityBoost, 'aTreeHumidityBoost', 1);  // Per-vertex tree boost
 
     geom.setIndex(new THREE.BufferAttribute(chunk.meshIndices, 1));
-    geom.computeBoundingSphere();
 
-    if (geom.boundingSphere) {
-      // Center at middle of chunk volume: XZ center is 16, Y center is (MESH_Y_OFFSET + CHUNK_SIZE_Y/2)
-      // With MESH_Y_OFFSET=-35 and CHUNK_SIZE_Y=128: Y center = -35 + 64 = 29
-      // Radius must reach from center (16, 29, 16) to farthest corner (0, 93, 0) or (0, -35, 0)
-      // Distance to (0, 93, 0): √(16² + 64² + 16²) ≈ 68, so use 70 with margin
-      geom.boundingSphere.center.set(16, 29, 16);
-      geom.boundingSphere.radius = 70;
-    }
+    // Fixed chunk-volume sphere (no per-vertex computeBoundingSphere pass, whose
+    // result used to be overwritten anyway). Centre (16, 29, 16) = middle of the
+    // chunk column; radius 70 reaches its farthest corner (~68).
+    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 29, 16), 70);
 
     const duration = performance.now() - start;
     if (duration > 10) {
@@ -190,9 +188,11 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     geom.setIndex(new THREE.BufferAttribute(chunk.meshWaterIndices, 1));
     geom.computeVertexNormals();
 
-    // Set an infinitely large bounding sphere to completely bypass frustum culling
-    // The mesh also has frustumCulled={false}, but this is a belt-and-suspenders approach
-    geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 4.5, 16), Infinity);
+    // Real bounds (+ margin for wave displacement) so off-screen water chunks are
+    // culled; previously an infinite sphere + frustumCulled={false} drew every
+    // transparent water sheet every frame.
+    geom.computeBoundingSphere();
+    if (geom.boundingSphere) geom.boundingSphere.radius += WATER_BOUNDS_MARGIN;
 
     return geom;
   }, [chunk.meshWaterPositions, chunk.meshWaterIndices]);
@@ -259,7 +259,8 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   }, [terrainGeometry, waterGeometry, waterShoreMaskTexture]);
 
   if (!terrainGeometry && !waterGeometry) return null;
-  const colliderKey = `${chunk.key}-${chunk.terrainVersion}`;
+  // Keyed on colliderVersion: material-only remeshes (moss, wetness) keep the collider.
+  const colliderKey = `${chunk.key}-${chunk.colliderVersion ?? 0}`;
   const useHeightfield = chunk.isHeightfield && chunk.colliderHeightfield && chunk.colliderHeightfield.length > 0;
 
   return (
@@ -306,7 +307,6 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
           geometry={waterGeometry}
           scale={[VOXEL_SCALE, VOXEL_SCALE, VOXEL_SCALE]}
           userData={{ shoreMask: waterShoreMaskTexture }}
-          frustumCulled={false}
           renderOrder={1}
         >
           <WaterMaterial

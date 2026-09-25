@@ -426,7 +426,9 @@ export function generateMesh(
   lightGrid?: Uint8Array,
   humidityConfig?: HumidityConfig | null,
   chunkWorldX: number = 0,
-  chunkWorldZ: number = 0
+  chunkWorldZ: number = 0,
+  /** Skip collider generation (material-only remesh: the shape is unchanged). */
+  skipCollider: boolean = false
 ): MeshData {
   const wetData = wetness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
   const mossData = mossiness ?? new Uint8Array(SIZE_X * SIZE_Y * SIZE_Z);
@@ -832,7 +834,7 @@ export function generateMesh(
   const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms);
 
   const water = generateWaterSurfaceMesh(density, material);
-  const collider = generateColliderData(density);
+  const collider = skipCollider ? {} : generateColliderData(density);
 
   return {
     positions: new Float32Array(tVerts),

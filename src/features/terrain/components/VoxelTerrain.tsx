@@ -35,6 +35,9 @@ import {
 import { useItemPickup } from '@features/terrain/hooks/useItemPickup';
 import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
 
+/** Shape-changing remeshes dispatched per frame (player edits must feel instant). */
+const MAX_SHAPE_REMESH_PER_FRAME = 4;
+
 /** How long a felled tree prop lives before it is removed from the scene. */
 const FALLING_TREE_LIFETIME_MS = 12000;
 
@@ -443,6 +446,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // Track if the user manually picked a build material; when active, we don't auto-switch.
   const manualBuildMatUntilMs = useRef(0);
   const remeshQueue = useRef<Set<string>>(new Set());
+  /**
+   * Material-only remeshes (simulation moss/wetness, humidity spread): same
+   * voxel shape, so the worker skips collider generation and the physics
+   * collider is kept. Lower priority than shape changes from player edits.
+   */
+  const materialRemeshQueue = useRef<Set<string>>(new Set());
   const initialLoadTriggered = useRef(false);
   // Phased initial loading: start with spawn chunk, expand outward in rings.
   // This prevents queuing all 49 chunks at once and reduces initial frame spikes.
@@ -794,7 +803,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             current[i] = m;
             changed = true;
           }
-          if (changed) remeshQueue.current.add(update.key);
+          if (changed) materialRemeshQueue.current.add(update.key);
         }
       });
     });
@@ -1134,6 +1143,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const px = Math.floor(streamX / CHUNK_SIZE_XZ);
     const pz = Math.floor(streamZ / CHUNK_SIZE_XZ);
 
+    frameProfiler.begin('terrain-streaming');
     // 1. STREAMING WINDOW & QUEUE UPDATES (Only on chunk crossing)
     const moved = px !== lastProcessedPlayerChunk.current.px || pz !== lastProcessedPlayerChunk.current.pz;
 
@@ -1300,6 +1310,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    frameProfiler.end('terrain-streaming');
+    frameProfiler.begin('terrain-dispatch');
     // 2. THROTTLED GENERATION (with memory pressure awareness)
     // Only dispatch new work if:
     // - Queue has items
@@ -1352,6 +1364,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    frameProfiler.end('terrain-dispatch');
     // 3. THROTTLED WORKER MESSAGES (Time-budgeted loop)
     frameProfiler.begin('terrain-worker-msgs');
     const workerThrottleStartTime = performance.now();
@@ -1473,7 +1486,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             colliderIndices: payload.colliderIndices ? new Uint32Array(payload.colliderIndices) : current.colliderIndices,
             colliderHeightfield: payload.colliderHeightfield ? new Float32Array(payload.colliderHeightfield) : current.colliderHeightfield,
             terrainVersion: (current.terrainVersion ?? 0) + 1,
-            visualVersion: (current.visualVersion ?? 0) + 1
+            visualVersion: (current.visualVersion ?? 0) + 1,
+            // Only shape changes rebuild the physics collider (10-30ms Rapier build).
+            colliderVersion: payload.materialOnly ? (current.colliderVersion ?? 0) : (current.colliderVersion ?? 0) + 1,
           };
 
           chunkDataRef.current.set(key, updatedChunk);
@@ -1505,6 +1520,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
     frameProfiler.end('terrain-worker-msgs');
 
+    frameProfiler.begin('terrain-colliders');
     // 4. THROTTLED COLLIDER ENABLES
     // Process colliders per frame to reduce physics activation latency.
     // Use requestIdleCallback for non-critical colliders (distance > 0 from player)
@@ -1592,6 +1608,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    frameProfiler.end('terrain-colliders');
+    frameProfiler.begin('terrain-removal');
     // 5. THROTTLED CHUNK REMOVAL (Process up to 2 per frame if not already busy)
     if (!appliedWorkerMessageThisFrame && removeQueue.current.length > 0) {
       frameProfiler.trackOperation('chunk-removal');
@@ -1619,49 +1637,49 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
     }
 
+    frameProfiler.end('terrain-removal');
+    frameProfiler.begin('terrain-remesh');
     // 6. REMESH REQUESTS
+    // Shape changes (digs/builds, dirty regeneration) first; at most one
+    // material-only remesh per frame, and only when no shape work is waiting.
+    const dispatchRemesh = (key: string, materialOnly: boolean) => {
+      if (!chunkDataRef.current.has(key)) return; // unloaded since it was queued
+      const chunk = chunkDataManager.getChunk(key);
+      const metadata = metadataDB.getChunk(key);
+      if (!chunk || !metadata || !poolRef.current) return;
+      poolRef.current.postPriority({
+        type: 'REMESH',
+        payload: {
+          key,
+          cx: chunk.cx,
+          cz: chunk.cz,
+          density: chunk.density,
+          material: chunk.material,
+          wetness: metadata.wetness,
+          mossiness: metadata.mossiness,
+          floraPositions: chunk.floraPositions,
+          version: chunk.terrainVersion,
+          materialOnly,
+        }
+      });
+    };
     if (remeshQueue.current.size > 0) {
-      const maxPerFrame = 8;
       const iterator = remeshQueue.current.values();
-      for (let i = 0; i < maxPerFrame; i++) {
+      for (let i = 0; i < MAX_SHAPE_REMESH_PER_FRAME; i++) {
         const key = iterator.next().value as string | undefined;
         if (!key) break;
         remeshQueue.current.delete(key);
-        if (!chunkDataRef.current.has(key)) continue; // unloaded since it was queued
-        const chunk = chunkDataManager.getChunk(key);
-        const metadata = metadataDB.getChunk(key);
-        if (chunk && metadata && poolRef.current) {
-          const isDirty = chunkDataManager.isDirty(key);
-          if (isDirty && streamDebug) {
-            // DEBUG: Log density values being sent to worker
-            let minD = Infinity, maxD = -Infinity, negCount = 0;
-            for (let j = 0; j < chunk.density.length; j++) {
-              const d = chunk.density[j];
-              if (d < minD) minD = d;
-              if (d > maxD) maxD = d;
-              if (d < 0.5) negCount++;
-            }
-            console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
-          }
-
-          poolRef.current.postPriority({
-            type: 'REMESH',
-            payload: {
-              key,
-              cx: chunk.cx,
-              cz: chunk.cz,
-              density: chunk.density,
-              material: chunk.material,
-              wetness: metadata.wetness,
-              mossiness: metadata.mossiness,
-              floraPositions: chunk.floraPositions,
-              version: chunk.terrainVersion
-            }
-          });
-        }
+        materialRemeshQueue.current.delete(key); // a shape remesh covers it
+        dispatchRemesh(key, false);
       }
+    } else if (materialRemeshQueue.current.size > 0) {
+      const key = materialRemeshQueue.current.values().next().value as string;
+      materialRemeshQueue.current.delete(key);
+      dispatchRemesh(key, true);
     }
 
+    frameProfiler.end('terrain-remesh');
+    frameProfiler.begin('terrain-humidity');
     // 7. HUMIDITY EXPANSION CHECK
     // Check if Sacred Grove trees have expanded their humidity radius
     const now = Date.now();
@@ -1698,7 +1716,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       }
 
       // Queue affected chunks for remesh
-      chunksToRemesh.forEach(key => remeshQueue.current.add(key));
+      chunksToRemesh.forEach(key => materialRemeshQueue.current.add(key));
 
       // Broadcast tree data to workers for humidity calculation
       if (poolRef.current && grownTrees.length > 0) {
@@ -1733,6 +1751,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     }
 
     // Update central uniforms for instanced layers
+    frameProfiler.end('terrain-humidity');
     frameProfiler.begin('terrain-uniforms');
 
     // === BIOME FOG CALCULATION ===

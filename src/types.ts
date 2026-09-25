@@ -103,7 +103,9 @@ export interface ChunkState {
   spawnedAt?: number;
   density: Float32Array;
   material: Uint8Array;
-  terrainVersion: number; // Triggers Physics Rebuild
+  terrainVersion: number; // Triggers mesh rebuild
+  /** Bumped only when voxel shape changes; keys the physics collider. */
+  colliderVersion?: number;
   visualVersion: number;  // Triggers Visual Update Only
 
   meshPositions: Float32Array;

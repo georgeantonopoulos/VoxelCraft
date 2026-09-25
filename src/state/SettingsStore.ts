@@ -16,6 +16,7 @@ interface SettingsState {
   antialias: boolean; // SMAA post-process anti-aliasing
   dynamicResolution: boolean; // scale DPR down under load, back up with headroom
   aoQuality: 'performance' | 'high';
+  grassDensity: number; // multiplier on blade grass instance counts (0.35..1.3)
 
   // Controls
   inputMode: InputMode;
@@ -64,6 +65,7 @@ export const useSettingsStore = create<SettingsState>()(
       antialias: true,
       dynamicResolution: true,
       aoQuality: 'performance',
+      grassDensity: 1.0,
       inputMode: getInitialInputMode(),
       isSettingsOpen: false,
 
@@ -96,6 +98,7 @@ export const useSettingsStore = create<SettingsState>()(
               godRays: false,
               antialias: false,
               aoQuality: 'performance',
+              grassDensity: 0.35,
               viewDistance: 0.6,
             });
             break;
@@ -107,6 +110,7 @@ export const useSettingsStore = create<SettingsState>()(
               godRays: false,
               antialias: true,
               aoQuality: 'performance',
+              grassDensity: 0.6,
               viewDistance: 0.8,
             });
             break;
@@ -118,6 +122,7 @@ export const useSettingsStore = create<SettingsState>()(
               godRays: true,
               antialias: true,
               aoQuality: 'performance',
+              grassDensity: 1.0,
               viewDistance: 1.0,
             });
             break;
@@ -130,6 +135,7 @@ export const useSettingsStore = create<SettingsState>()(
               godRays: true,
               antialias: true,
               aoQuality: 'high',
+              grassDensity: 1.3,
               viewDistance: 1.25,
             });
             break;
@@ -153,6 +159,7 @@ export const useSettingsStore = create<SettingsState>()(
         antialias: state.antialias,
         dynamicResolution: state.dynamicResolution,
         aoQuality: state.aoQuality,
+        grassDensity: state.grassDensity,
         inputMode: state.inputMode,
       }),
     }
