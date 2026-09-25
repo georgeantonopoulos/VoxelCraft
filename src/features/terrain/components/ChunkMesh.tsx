@@ -53,9 +53,11 @@ const ProfiledRigidBody: React.FC<{
       {useHeightfield ? (
         colliderHeightfield ? (
           <HeightfieldCollider
+            // Rapier takes SUBDIVISION counts: nrows/ncols cells with (n+1)^2 heights.
+            // Passing 33 with 33*33 heights panicked the WASM ("unreachable").
             args={[
-              CHUNK_SIZE_XZ + 1,
-              CHUNK_SIZE_XZ + 1,
+              CHUNK_SIZE_XZ,
+              CHUNK_SIZE_XZ,
               colliderHeightfield as any,
               { x: CHUNK_SIZE_XZ, y: 1, z: CHUNK_SIZE_XZ }
             ]}

@@ -30,6 +30,7 @@ import { PerformanceMonitor } from '@features/environment/components/Performance
 import { CinematicCamera } from '@features/environment/components/CinematicCamera';
 import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
 import { EnvironmentProbe } from '@features/environment/components/EnvironmentProbe';
+import { PointLightPool } from '@core/graphics/PointLightPool';
 import { GroveDirector } from '@features/grove/GroveDirector';
 import { useGroveStore } from '@state/GroveStore';
 
@@ -471,6 +472,8 @@ const App: React.FC = () => {
           <SceneWarmup />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}
+          {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}
+          <PointLightPool />
           <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />
 

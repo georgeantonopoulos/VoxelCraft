@@ -3,12 +3,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useInventoryStore as useGameStore } from '@state/InventoryStore';
 import { useWorldStore } from '@state/WorldStore';
 import { Vector2, Vector3, Object3D, Matrix3, Quaternion } from 'three';
-import type { PointLight } from 'three';
 import { LuminaFlora } from '@features/flora/components/LuminaFlora';
 import { emitGroveEvent } from '@features/grove/groveEvents';
 import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
 import { ItemType } from '@/types';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement)) return false;
@@ -25,7 +25,7 @@ export const FloraPlacer: React.FC = () => {
     const torches = useMemo(() => Array.from(floraEntities.values()).filter(e => e.type === ItemType.TORCH), [floraEntities]);
     const lastPlaceTime = useRef(0);
     const terrainTargets = useRef<Object3D[]>([]);
-    const lumaLightRefs = useRef<Array<PointLight | null>>([]);
+    const lumaLightRefs = useRef<Array<VirtualPointLight | null>>([]);
     const debugMode = useMemo(() => {
         // Enable via `?debug`, `localStorage.vcDebugPlacement = "1"`, or `window.__vcDebugPlacement = true`.
         // Using multiple toggles helps when URL params aren't convenient during testing.
@@ -245,7 +245,7 @@ export const FloraPlacer: React.FC = () => {
     return (
         <>
             {Array.from({ length: LUMA_LIGHT_POOL_SIZE }).map((_, i) => (
-                <pointLight
+                <PooledPointLight
                     // Pool key must be stable to keep the underlying Three light mounted.
                     key={`luma-light-${i}`}
                     ref={(light) => {

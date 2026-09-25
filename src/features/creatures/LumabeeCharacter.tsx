@@ -7,6 +7,7 @@ import { TerrainService } from '@features/terrain/logic/terrainService';
 
 // Import model as URL (Vite will handle bundling)
 import lumabeeUrl from '@/assets/models/lumabee.glb?url';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 /*
  * ===========================================================================
@@ -99,7 +100,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
   onStateChange
 }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const harvestLightRef = useRef<THREE.PointLight>(null);
+  const harvestLightRef = useRef<VirtualPointLight>(null);
   const { scene } = useGLTF(lumabeeUrl) as unknown as LumabeeGLTF;
   // NOTE: This GLB has NO embedded animations - it's a static mesh
   // We'll use procedural animation (rotation/bobbing) instead
@@ -572,7 +573,7 @@ export const LumabeeCharacter: React.FC<LumabeeProps> = ({
       </group>
 
       {/* Glow effect for nectar trail - visibility controlled imperatively in useFrame */}
-      <pointLight
+      <PooledPointLight
         ref={harvestLightRef}
         visible={false}
         intensity={0.8}

@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import * as THREE from 'three';
+import { MESH_Y_OFFSET, CHUNK_SIZE_Y } from '@/constants';
 import { InstancedRigidBodies, InstancedRigidBodyProps } from '@react-three/rapier';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
@@ -173,12 +174,15 @@ const GroundItemBatch: React.FC<{
     g.attributes.normal = geometry.attributes.normal;
     g.attributes.uv = geometry.attributes.uv;
 
-    // Conservative bounding box for chunks (32x32XZ, -40 to 40Y)
+    // Conservative bounds covering the whole chunk column. The old -40..40 Y box
+    // culled sticks/rocks on high terrain (surface reaches ~85).
+    const minY = MESH_Y_OFFSET - 5;
+    const maxY = MESH_Y_OFFSET + CHUNK_SIZE_Y + 5;
     g.boundingBox = new THREE.Box3(
-      new THREE.Vector3(-2, -40, -2),
-      new THREE.Vector3(34, 40, 34)
+      new THREE.Vector3(-2, minY, -2),
+      new THREE.Vector3(34, maxY, 34)
     );
-    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(16, 0, 16), 45);
+    g.boundingSphere = g.boundingBox.getBoundingSphere(new THREE.Sphere());
     return g;
   }, [geometry]);
 

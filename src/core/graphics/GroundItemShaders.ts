@@ -158,7 +158,9 @@ export const SHARD_SHADER = {
         float displacementAmt = uDisplacementStrength > 0.0 ? uDisplacementStrength : 0.08;
         float displacement = (noiseVal - 0.5) * displacementAmt * (1.0 - heightFactor * 0.7);
 
-        vec3 vertNormal = normalize(vec3(pos.x, 0.0, pos.z));
+        // Apex vertices sit on the axis: normalize(0) is undefined (NaN on many GPUs).
+        vec2 radial = pos.xz;
+        vec3 vertNormal = dot(radial, radial) > 1e-8 ? vec3(normalize(radial), 0.0).xzy : vec3(0.0);
         pos += vertNormal * displacement * randScale;
 
         if (uInstancing) {

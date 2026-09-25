@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { getNoiseTexture } from '@core/memory/sharedResources';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 interface FractalTreeProps {
     seed: number;
@@ -36,7 +37,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
 }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const leafRef = useRef<THREE.InstancedMesh>(null);
-    const lightRef = useRef<THREE.PointLight>(null);
+    const lightRef = useRef<VirtualPointLight>(null);
     const [data, setData] = useState<{
         matrices: Float32Array;
         depths: Float32Array;
@@ -124,6 +125,16 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
                 );
                 geometry.boundingSphere = new THREE.Sphere();
                 geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
+            }
+
+            // InstancedMesh caches its own bounds on first render, which happened
+            // before these matrices existed (trunk-base sized): the grown tree was
+            // culled whenever its base left the view. Recompute from the instances.
+            meshRef.current.computeBoundingSphere();
+            meshRef.current.computeBoundingBox();
+            if (leafRef.current && leafMatrices && leafMatrices.length > 0) {
+                leafRef.current.computeBoundingSphere();
+                leafRef.current.computeBoundingBox();
             }
 
             geometryAppliedRef.current = true;
@@ -588,7 +599,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
                     />
                 </RigidBody>
             )}
-            <pointLight
+            <PooledPointLight
                 ref={lightRef}
                 color="#E0F7FA"
                 intensity={0}

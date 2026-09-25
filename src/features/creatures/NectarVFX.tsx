@@ -1,6 +1,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
+import { PooledPointLight } from '@core/graphics/PointLightPool';
 
 /*
  * ===========================================================================
@@ -221,7 +222,7 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       </points>
 
       {/* Glowing point light at extraction point */}
-      <pointLight
+      <PooledPointLight
         position={[position.x, position.y, position.z]}
         intensity={1.5}
         distance={4.0}
@@ -230,7 +231,7 @@ export const NectarVFX: React.FC<NectarVFXProps> = ({
       />
 
       {/* Glowing point light at bee (target) */}
-      <pointLight
+      <PooledPointLight
         position={[target.x, target.y, target.z]}
         intensity={0.8}
         distance={2.0}

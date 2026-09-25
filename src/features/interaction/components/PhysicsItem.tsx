@@ -13,6 +13,7 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 
 // Fire sound URL for spatial audio
 import fireUrl from '@/assets/sounds/fire.mp3?url';
+import { PooledPointLight } from '@core/graphics/PointLightPool';
 
 interface PhysicsItemProps {
   item: ActivePhysicsItem;
@@ -242,7 +243,7 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
               <meshStandardMaterial color="#5d4037" />
             </mesh>
           </group>
-          <pointLight
+          <PooledPointLight
             position={[0, 0.5, 0]}
             intensity={getItemMetadata(ItemType.FIRE)?.emissiveIntensity || 2.5}
             distance={10}

@@ -162,14 +162,12 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     // Scatter instances across 32x32 chunk area
     float id = float(gl_InstanceID);
 
-    // Use golden ratio for better distribution
-    float phi = 1.61803398875;
-    float theta = id * phi * 6.28318530718;
-    float radius = sqrt(id / uInstanceCount) * 16.0; // Radius 0-16
-
-    // Convert to chunk coordinates (0-32)
-    float chunkX = 16.0 + cos(theta) * radius;
-    float chunkZ = 16.0 + sin(theta) * radius;
+    // R2 low-discrepancy sequence over the whole 32x32 square. (The previous
+    // golden-angle spiral filled a radius-16 disc, leaving the four corners,
+    // ~21% of every chunk, without grass.)
+    vec2 r2 = fract(0.5 + id * vec2(0.7548776662, 0.5698402910));
+    float chunkX = r2.x * 32.0;
+    float chunkZ = r2.y * 32.0;
 
     // Add jitter based on instance ID
     vec2 cellId = vec2(id, id * 1.7);

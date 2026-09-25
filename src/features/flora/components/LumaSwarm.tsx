@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame, useLoader } from '@react-three/fiber';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import lumaShapeUrl from '@assets/images/luma_shape.png';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 interface LumaSwarmProps {
     dissipating: boolean; // Triggers the end sequence
@@ -47,6 +48,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const materialRef = useRef<any>(null);
     const coreRef = useRef<THREE.Group>(null);
+    const coreLightRef = useRef<VirtualPointLight>(null);
     const texture = useLoader(THREE.TextureLoader, lumaShapeUrl);
 
     // Track start time - will be set on first useFrame call
@@ -229,7 +231,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
         // Core Luma Intensity Ramp
         if (coreRef.current) {
-            const light = coreRef.current.children.find(c => (c as THREE.PointLight).isPointLight) as THREE.PointLight;
+            const light = coreLightRef.current;
             if (light) {
                 // Ramp from 2 to 10 intensity
                 const targetIntensity = dissipating ? 0 : (2.0 + progress * 20.0);
@@ -270,7 +272,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
             {/* The Core Luma (Visual Clone) */}
             <group ref={coreRef}>
-                <pointLight color="#4deeea" distance={10} decay={2} intensity={2} />
+                <PooledPointLight ref={coreLightRef} color="#4deeea" distance={10} decay={2} intensity={2} />
                 <mesh>
                     <sphereGeometry args={[0.25, 32, 32]} />
                     <meshStandardMaterial

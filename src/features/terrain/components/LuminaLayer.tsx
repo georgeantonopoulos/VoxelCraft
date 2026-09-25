@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { CHUNK_SIZE_XZ } from '@/constants';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 interface LuminaLayerProps {
   data: Float32Array; // stride 4: x, y, z, type (type unused for now)
@@ -40,7 +41,7 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
 
   const count = data.length / 4;
   const lastCullTime = useRef(0);
-  const lightRefs = useRef<(THREE.PointLight | null)[]>([]);
+  const lightRefs = useRef<(VirtualPointLight | null)[]>([]);
 
   const lights = useMemo(() => {
     if (!lightPositions || lightPositions.length === 0) return [];
@@ -124,9 +125,9 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
       </instancedMesh>
 
       {lights.map((pos, i) => (
-        <pointLight
+        <PooledPointLight
           key={i}
-          ref={el => lightRefs.current[i] = el}
+          ref={el => { lightRefs.current[i] = el; }}
           position={pos}
           color="#00e5ff"
           intensity={2.0}

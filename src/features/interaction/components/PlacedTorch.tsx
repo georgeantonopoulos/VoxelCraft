@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 /**
  * PlacedTorch
@@ -13,7 +14,7 @@ export const PlacedTorch: React.FC<{
   rotation: THREE.Quaternion;
 }> = ({ position, rotation }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const lightRef = useRef<THREE.PointLight>(null);
+  const lightRef = useRef<VirtualPointLight>(null);
   const tmpEuler = useMemo(() => new THREE.Euler(), []);
 
   // Apply placement transform once (updates if entity changes).
@@ -65,7 +66,7 @@ export const PlacedTorch: React.FC<{
       </mesh>
 
       {/* Warm point light */}
-      <pointLight
+      <PooledPointLight
         ref={lightRef}
         position={[0, 0.56, 0.0]}
         color="#ffdbb1"
