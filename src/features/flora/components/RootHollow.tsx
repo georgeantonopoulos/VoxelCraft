@@ -36,7 +36,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     position,
     normal = [0, 1, 0]
 }) => {
-    const hollowId = useMemo(() => hollowIdAt(position[0], position[2]), [position]);
+    // Parents pass a fresh position array every render. Memoising on the array
+    // identity rebuilt posVec each render, which re-ran the transition effect and
+    // restarted the 10s CHARGING timer forever (the "FractalTree never grows" bug).
+    // Everything below keys on the scalar coordinates instead.
+    const [px, py, pz] = position;
+    const hollowId = useMemo(() => hollowIdAt(px, pz), [px, pz]);
     // Restored hollows (persisted per world in GroveStore) come back already grown,
     // so remounting a chunk never resets the Keeper's work.
     const [status, setStatus] = useState<'IDLE' | 'CHARGING' | 'GROWING'>(
@@ -48,10 +53,10 @@ export const RootHollow: React.FC<RootHollowProps> = ({
 
     const removeEntity = useWorldStore(s => s.removeEntity);
     const getEntitiesNearby = useWorldStore(s => s.getEntitiesNearby);
-    const posVec = useMemo(() => new THREE.Vector3(...position), [position]);
+    const posVec = useMemo(() => new THREE.Vector3(px, py, pz), [px, py, pz]);
 
     // Unique ID for this hollow's grown tree (stable across re-renders)
-    const treeEntityId = useMemo(() => `grown-tree-${position[0]}-${position[2]}`, [position]);
+    const treeEntityId = useMemo(() => `grown-tree-${px}-${pz}`, [px, pz]);
 
     // Use ref to track timer so we can properly clean it up
     const growTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -74,14 +79,14 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             .normalize();
 
         const q = new THREE.Quaternion().setFromUnitVectors(up, targetDirection);
-        const hash = Math.abs(Math.sin(position[0] * 12.9898 + position[2] * 78.233) * 43758.5453);
+        const hash = Math.abs(Math.sin(px * 12.9898 + pz * 78.233) * 43758.5453);
         const randomAngle = (hash % 1) * Math.PI * 2;
 
         const randomYaw = new THREE.Quaternion().setFromAxisAngle(targetDirection, randomAngle);
         q.multiply(randomYaw);
 
         return q;
-    }, [normal[0], normal[1], normal[2], position[0], position[2]]);
+    }, [normal[0], normal[1], normal[2], px, pz]);
 
     // Transition Logic
     useEffect(() => {
@@ -193,8 +198,8 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     const stumpRadius = 1.4 * STUMP_CONFIG.scale;
 
     const groupPosition = useMemo(
-        () => new THREE.Vector3(position[0], position[1] - STUMP_CONFIG.embedOffset, position[2]),
-        [position]
+        () => new THREE.Vector3(px, py - STUMP_CONFIG.embedOffset, pz),
+        [px, py, pz]
     );
 
     const treeWorldPosition = useMemo(() => {
@@ -224,7 +229,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                         count={3}
                         radius={1.8}
                         heightRange={[0.3, 1.5]}
-                        seed={Math.abs(position[0] * 31 + position[2] * 17)}
+                        seed={Math.abs(px * 31 + pz * 17)}
                     />
                 </group>
             )}
@@ -249,7 +254,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
 
             {(status === 'CHARGING' || status === 'GROWING') && (
                 <FractalTree
-                    seed={Math.abs(position[0] * 31 + position[2] * 17)}
+                    seed={Math.abs(px * 31 + pz * 17)}
                     position={new THREE.Vector3(0, 0, 0)}
                     baseRadius={stumpRadius * 0.7}
                     userData={{ type: 'flora_tree' }}

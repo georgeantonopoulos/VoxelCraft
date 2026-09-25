@@ -170,7 +170,7 @@ export const DebugControls: React.FC<{
                 }, { collapsed: true }),
                 'GI (Voxel Light)': folder({
                     giEnabled: { value: true, onChange: (v) => props.setGiEnabled(!!v), label: 'Enabled' },
-                    giIntensity: { value: 5.0, min: 0.0, max: 10.0, step: 0.1, onChange: props.setGiIntensity, label: 'Intensity' },
+                    giIntensity: { value: 1.0, min: 0.0, max: 4.0, step: 0.1, onChange: props.setGiIntensity, label: 'Intensity' },
                 }, { collapsed: true }),
             }, { collapsed: true }),
 

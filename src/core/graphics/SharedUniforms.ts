@@ -42,7 +42,7 @@ export const sharedUniforms = {
 
     // Global Illumination (voxel light grid)
     uGIEnabled: { value: 1.0 },               // Toggle for GI (0 = off, 1 = on)
-    uGIIntensity: { value: 5.0 },             // GI strength multiplier (higher = more visible indirect light)
+    uGIIntensity: { value: 1.0 },             // GI multiplier: baked open-sky light is ~1.0, so 1.0 = neutral albedo
 
     // Color grading (in-shader, not post-processing)
     uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated

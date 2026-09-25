@@ -25,7 +25,8 @@ import {
   LIGHT_GRID_SIZE_Y,
   LIGHT_PROPAGATION_ITERATIONS,
   LIGHT_FALLOFF,
-  SKY_LIGHT_ATTENUATION
+  SKY_LIGHT_ATTENUATION,
+  MESH_Y_OFFSET
 } from '@/constants';
 
 // Light source types
@@ -67,7 +68,7 @@ function getCellOcclusion(
 ): number {
   // Sample center of the cell
   const voxelX = cellX * LIGHT_CELL_SIZE + LIGHT_CELL_SIZE / 2 + PAD;
-  const voxelY = cellY * LIGHT_CELL_SIZE + LIGHT_CELL_SIZE / 2;
+  const voxelY = cellY * LIGHT_CELL_SIZE + LIGHT_CELL_SIZE / 2 + PAD;
   const voxelZ = cellZ * LIGHT_CELL_SIZE + LIGHT_CELL_SIZE / 2 + PAD;
 
   // Clamp to valid range
@@ -148,8 +149,12 @@ export function generateLightGrid(
         lightB[idx] += skyB;
 
         // Attenuate for next cell below
+        // Open air passes sky light unchanged; solid cells retain only
+        // SKY_LIGHT_ATTENUATION of it. (Previously air cells attenuated by 0.7 each,
+        // so ground brightness depended on how much empty sky sat above it and
+        // most surfaces below y~20 baked to ~0 light.)
         const transmission = 1 - occ;
-        const attenuation = transmission * SKY_LIGHT_ATTENUATION + (1 - transmission) * 0.1;
+        const attenuation = transmission + (1 - transmission) * SKY_LIGHT_ATTENUATION;
         skyR *= attenuation;
         skyG *= attenuation;
         skyB *= attenuation;
@@ -166,7 +171,7 @@ export function generateLightGrid(
   for (const light of pointLights) {
     // Convert world position to grid cell
     const cellX = Math.floor(light.x / LIGHT_CELL_SIZE);
-    const cellY = Math.floor((light.y + 35) / LIGHT_CELL_SIZE); // Account for MESH_Y_OFFSET
+    const cellY = Math.floor((light.y - MESH_Y_OFFSET) / LIGHT_CELL_SIZE);
     const cellZ = Math.floor(light.z / LIGHT_CELL_SIZE);
 
     if (!inBounds(cellX, cellY, cellZ)) continue;
@@ -283,14 +288,20 @@ export function generateLightGrid(
  * Extract point light sources from flora positions array.
  * Lumina flora emit cyan light.
  */
-export function extractLuminaLights(floraPositions: Float32Array): LightSource[] {
+export function extractLuminaLights(
+  floraPositions: Float32Array,
+  chunkOriginX: number = 0,
+  chunkOriginZ: number = 0
+): LightSource[] {
   const lights: LightSource[] = [];
   const stride = 4; // x, y, z, type
 
+  // floraPositions are world-space; light sources are chunk-local in XZ.
+  // (Without the origin, every chunk except (0,0) discarded all its lights.)
   for (let i = 0; i < floraPositions.length; i += stride) {
-    const x = floraPositions[i];
+    const x = floraPositions[i] - chunkOriginX;
     const y = floraPositions[i + 1];
-    const z = floraPositions[i + 2];
+    const z = floraPositions[i + 2] - chunkOriginZ;
 
     // Skip invalid positions
     if (y < -9999) continue;

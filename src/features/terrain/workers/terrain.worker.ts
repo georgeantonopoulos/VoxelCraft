@@ -378,7 +378,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 const water = generateWaterSurfaceMesh(density, material);
                 const stickData = buildStickData(stickPositions, cx, cz), rockData = buildRockData(rockPositions, cx, cz), treeInstanceData = buildTreeInstanceData(treePositions);
                 // Generate light grid even for empty chunks (sky light still applies)
-                const emptyLuminaLights = extractLuminaLights(floraPositions);
+                const emptyLuminaLights = extractLuminaLights(floraPositions, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ);
                 const emptySkyLight = getSkyLightConfig(0.5);
                 const emptyLightGrid = generateLightGrid(density, emptyLuminaLights, emptySkyLight);
                 const emptyResponse = {
@@ -458,7 +458,7 @@ ctx.onmessage = async (e: MessageEvent) => {
                 }
             }
             // Generate voxel-based light grid for GI (must be before mesh generation)
-            const luminaLights = extractLuminaLights(floraPositions);
+            const luminaLights = extractLuminaLights(floraPositions, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ);
             // Use default daylight sky - the main thread can update this dynamically if needed
             const skyLight = getSkyLightConfig(0.5); // 0.5 = midday sun
             const lightGrid = generateLightGrid(density, luminaLights, skyLight);
@@ -508,7 +508,7 @@ ctx.onmessage = async (e: MessageEvent) => {
 
             // Rebuild the GI light grid: digging opens caves to the sky, so reusing the
             // old per-vertex light (whose length no longer matches) broke dug chunks.
-            const remeshLights = extractLuminaLights(floraPositions ?? new Float32Array(0));
+            const remeshLights = extractLuminaLights(floraPositions ?? new Float32Array(0), cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ);
             const remeshLightGrid = generateLightGrid(density, remeshLights, getSkyLightConfig(0.5));
 
             // Build humidity config for Sacred Grove tree spreading

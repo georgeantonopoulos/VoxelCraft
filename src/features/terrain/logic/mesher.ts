@@ -213,10 +213,13 @@ function sampleLightGrid(
     return [0.35, 0.35, 0.35];
   }
 
-  // Convert local position to grid cell (accounting for MESH_Y_OFFSET)
-  const worldY = localY - MESH_Y_OFFSET;
+  // Mesh vertices are chunk-local in XZ but carry MESH_Y_OFFSET in Y. Light cells
+  // index chunk-relative voxels, so remove the offset exactly once. (The old code
+  // removed it and then added 35 again, sampling ~9 cells too high: caves and
+  // overhangs came out sky-lit.)
+  const chunkRelY = localY - MESH_Y_OFFSET;
   const cellX = Math.floor(localX / LIGHT_CELL_SIZE);
-  const cellY = Math.floor((worldY + 35) / LIGHT_CELL_SIZE); // +35 to undo offset
+  const cellY = Math.floor(chunkRelY / LIGHT_CELL_SIZE);
   const cellZ = Math.floor(localZ / LIGHT_CELL_SIZE);
 
   // Clamp to grid bounds

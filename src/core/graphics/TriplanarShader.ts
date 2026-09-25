@@ -505,8 +505,11 @@ export const triplanarFragmentShader = `
 
     // Material weight deltas based on humidity
     // High humidity: boost grass/dirt, reduce desert materials
-    float humidityDeltaGrass = totalHumidity * 0.6;
-    float humidityDeltaDirt = totalHumidity * 0.3;
+    // Only lush up soil that already exists here: adding grass/dirt weight
+    // unconditionally tinted pure sand, snow and cave rock near water ~26% green.
+    float soilPresent = step(0.001, vWb.x + vWa.w);
+    float humidityDeltaGrass = totalHumidity * 0.6 * soilPresent;
+    float humidityDeltaDirt = totalHumidity * 0.3 * soilPresent;
     float humidityDeltaRedSand = -totalHumidity * 0.8;
     float humidityDeltaStone = -totalHumidity * 0.2;
     float humidityDeltaTerracotta = -totalHumidity * 0.5;
@@ -616,7 +619,10 @@ export const triplanarFragmentShader = `
 
     // === PHASE 3: Material-specific fine detail for AAA quality ===
     // Each material gets unique micro-texture visible at close range
-    int dom = int(floor(vDominantChannel + 0.5));
+    // Use the per-fragment dominant channel from the weight accumulation above.
+    // (Rounding the interpolated varying produced in-between material ids across
+    // triangles, e.g. stone->obsidian passing through sand/snow detail branches.)
+    int dom = dominantChannel;
     vec2 wind = safeNormalize2(uWindDirXZ);
     float slope = 1.0 - N.y; // 0 = flat, 1 = vertical
     float slopePow = pow(slope, 1.5);

@@ -30,7 +30,7 @@ export const LIGHT_GRID_SIZE_Y = CHUNK_SIZE_Y / LIGHT_CELL_SIZE;   // 32 cells
 export const LIGHT_GRID_TOTAL_CELLS = LIGHT_GRID_SIZE_XZ * LIGHT_GRID_SIZE_Y * LIGHT_GRID_SIZE_XZ; // 2048 cells
 export const LIGHT_PROPAGATION_ITERATIONS = 6; // Number of flood-fill passes
 export const LIGHT_FALLOFF = 0.82; // Light retention per propagation step (higher = further reach)
-export const SKY_LIGHT_ATTENUATION = 0.7; // Light retention through solid voxels vertically
+export const SKY_LIGHT_ATTENUATION = 0.15; // Sky light retained per fully solid light cell (air passes 100%)
 
 // World Generation
 export const RENDER_DISTANCE = 3;

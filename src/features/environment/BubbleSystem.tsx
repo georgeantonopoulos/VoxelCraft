@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
@@ -130,27 +130,36 @@ export const BubbleSystem: React.FC = () => {
         }
     });
 
+    // Stable buffers/uniforms: inline literals were rebuilt (and leaked) on every re-render.
+    const bufferArgs = useMemo(() => ({
+        offsets: [new Float32Array(MAX_BUBBLES * 3), 3] as [Float32Array, number],
+        directions: [new Float32Array(MAX_BUBBLES * 4), 4] as [Float32Array, number],
+        params: [new Float32Array(MAX_BUBBLES * 2), 2] as [Float32Array, number],
+    }), []);
+    const uniforms = useMemo(() => ({
+        uTime: { value: 0 },
+        uWaterLevel: { value: WATER_LEVEL }
+    }), []);
+
     return (
         <instancedMesh ref={meshRef} args={[undefined, undefined, MAX_BUBBLES]} frustumCulled={false}>
             <sphereGeometry args={[0.004, 10, 8]}>
-                <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(MAX_BUBBLES * 3), 3]} />
-                <instancedBufferAttribute ref={directionsAttr} attach="attributes-aDirection" args={[new Float32Array(MAX_BUBBLES * 4), 4]} />
-                <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={[new Float32Array(MAX_BUBBLES * 2), 2]} />
+                <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={bufferArgs.offsets} />
+                <instancedBufferAttribute ref={directionsAttr} attach="attributes-aDirection" args={bufferArgs.directions} />
+                <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={bufferArgs.params} />
             </sphereGeometry>
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshPhysicalMaterial}
                 vertexShader={BUBBLE_VSHADER}
-                uniforms={{
-                    uTime: { value: 0 },
-                    uWaterLevel: { value: WATER_LEVEL }
-                }}
+                uniforms={uniforms}
                 transparent
                 opacity={0.8}
                 color="#e0f4ff"
                 roughness={0.0}
                 metalness={0.2}
-                transmission={0.4}
-                thickness={0.5}
+                // No transmission: on 4mm bubbles it is invisible, but any transmissive
+                // material makes three re-render the whole opaque scene into a
+                // mipmapped target every frame (even above water).
                 ior={1.33}
                 depthWrite={false}
                 emissive="#99ccff"

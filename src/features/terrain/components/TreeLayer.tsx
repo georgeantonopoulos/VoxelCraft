@@ -442,7 +442,8 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false) => {
         toneMapped: false,
     });
 
-    return treeLeafMaterialPool[key];
+    // Return from the pool we just filled (opaque LOD leaves previously got undefined -> default material).
+    return pool[key];
 };
 
 const InstancedTreeBatch: React.FC<{

@@ -29,6 +29,7 @@ import { CinematicComposer } from '@features/environment/components/CinematicCom
 import { PerformanceMonitor } from '@features/environment/components/PerformanceMonitor';
 import { CinematicCamera } from '@features/environment/components/CinematicCamera';
 import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
+import { EnvironmentProbe } from '@features/environment/components/EnvironmentProbe';
 import { GroveDirector } from '@features/grove/GroveDirector';
 import { useGroveStore } from '@state/GroveStore';
 
@@ -267,7 +268,7 @@ const App: React.FC = () => {
 
   // Global Illumination (voxel light grid)
   const [giEnabled, setGiEnabled] = useState(true);
-  const [giIntensity, setGiIntensity] = useState(5.0);
+  const [giIntensity, setGiIntensity] = useState(1.0);
 
   // Terrain Color Grading (in-shader, not post-processing)
   const [terrainSaturation, setTerrainSaturation] = useState(1.5);
@@ -463,6 +464,7 @@ const App: React.FC = () => {
         >
           <SceneWarmup />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
+          {gameStarted && <EnvironmentProbe />}
           <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />
 

@@ -105,12 +105,13 @@ const getSkyGradient = (
 
 export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
     const ambientRef = useRef<THREE.AmbientLight>(null);
-    const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
     const surfaceAmbient = useMemo(() => new THREE.Color('#ccccff'), []);
     const caveAmbient = useMemo(() => new THREE.Color('#556070'), []);
     const lastBlend = useRef(-1);
 
     useFrame(() => {
+        // Read per frame (no React re-render while blends animate).
+        const { undergroundBlend } = useEnvironmentStore.getState();
         frameProfiler.begin('ambient-controller');
         if (!ambientRef.current) {
             frameProfiler.end('ambient-controller');
@@ -291,9 +292,6 @@ export const SunFollower: React.FC<{
         const glowMeshRef = useRef<THREE.Mesh>(null);
         const glowMaterialRef = useRef<THREE.ShaderMaterial>(null);
         const target = useMemo(() => new THREE.Object3D(), []);
-        const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
-        const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
-        const skyVisibility = useEnvironmentStore((s) => s.skyVisibility);
 
         const smoothSunPos = useRef(new THREE.Vector3());
         const lastCameraPos = useRef(new THREE.Vector3());
@@ -311,6 +309,8 @@ export const SunFollower: React.FC<{
         }, [camera]);
 
         useFrame(({ clock }) => {
+            // Read per frame (no React re-render while blends animate).
+            const { undergroundBlend, underwaterBlend, skyVisibility } = useEnvironmentStore.getState();
             frameProfiler.begin('sun-follower');
             if (lightRef.current) {
                 const t = clock.getElapsedTime();
@@ -513,13 +513,12 @@ export const MoonFollower: React.FC<{
         const moonMeshRef = useRef<THREE.Mesh>(null);
         const lightRef = useRef<THREE.DirectionalLight>(null);
         const target = useMemo(() => new THREE.Object3D(), []);
-        const undergroundBlend = useEnvironmentStore((s) => s.undergroundBlend);
-        const underwaterBlend = useEnvironmentStore((s) => s.underwaterBlend);
-        const skyVisibility = useEnvironmentStore((s) => s.skyVisibility);
         const tmpLightOffset = useRef(new THREE.Vector3());
         const tmpVisualOffset = useRef(new THREE.Vector3());
 
         useFrame(({ clock }) => {
+            // Read per frame (no React re-render while blends animate).
+            const { undergroundBlend, underwaterBlend, skyVisibility } = useEnvironmentStore.getState();
             frameProfiler.begin('moon-follower');
             if (!moonMeshRef.current || !lightRef.current) {
                 frameProfiler.end('moon-follower');
