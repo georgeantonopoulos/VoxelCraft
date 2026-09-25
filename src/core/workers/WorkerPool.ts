@@ -1,69 +1,106 @@
+/**
+ * WorkerPool — a fixed set of long-lived module workers with load-aware dispatch.
+ *
+ * Jobs are fire-and-forget messages; results come back through listeners added
+ * with `addMessageListener`. The pool tracks in-flight jobs per worker by
+ * watching for completion message types, so it can:
+ *  - send each job to the least-loaded worker (instead of a static hash), and
+ *  - keep a "priority lane" (worker 0) free of bulk work so latency-sensitive
+ *    jobs (e.g. REMESH after digging) never queue behind chunk generation.
+ */
+export interface WorkerPoolOptions {
+  /** Number of workers. Defaults to `WorkerPool.recommendedSize()`. */
+  size?: number;
+  /** Message `type`s that mark a job as finished. */
+  completionTypes?: readonly string[];
+}
+
 export class WorkerPool {
-    private workers: Worker[] = [];
-    private queue: { payload: any; resolve: (val: any) => void; reject: (err: any) => void; transferables?: Transferable[] }[] = [];
-    private activeWorkers = 0;
-    private maxWorkers: number;
+  private readonly workers: Worker[] = [];
+  private readonly inFlight: number[] = [];
+  private readonly completionTypes: ReadonlySet<string>;
 
-    constructor(workerUrl: URL, maxWorkers: number = 4) {
-        this.maxWorkers = Math.min(maxWorkers, navigator.hardwareConcurrency || 4);
-        for (let i = 0; i < this.maxWorkers; i++) {
-            const worker = new Worker(workerUrl, { type: 'module' });
-            this.workers.push(worker);
-        }
+  /** Leave headroom for the main thread and the browser; 2..6 workers. */
+  static recommendedSize(): number {
+    const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+    return Math.max(2, Math.min(6, cores - 1));
+  }
+
+  constructor(workerUrl: URL, options: WorkerPoolOptions = {}) {
+    const size = Math.max(1, options.size ?? WorkerPool.recommendedSize());
+    this.completionTypes = new Set(options.completionTypes ?? []);
+    for (let i = 0; i < size; i++) {
+      const worker = new Worker(workerUrl, { type: 'module' });
+      this.inFlight.push(0);
+      worker.addEventListener('message', (e: MessageEvent) => {
+        const type = (e.data as { type?: string } | null)?.type;
+        if (type && this.completionTypes.has(type)) this.markDone(i);
+      });
+      // A crashed job must not pin the worker as "busy" forever.
+      worker.addEventListener('error', () => this.markDone(i));
+      this.workers.push(worker);
     }
+  }
 
-    public post(payload: any, transferables?: Transferable[]): Promise<any> {
-        return new Promise((resolve, reject) => {
-            this.queue.push({ payload, resolve, reject, transferables });
-            this.processQueue();
-        });
+  get size(): number {
+    return this.workers.length;
+  }
+
+  /** Total jobs currently dispatched and not yet completed. */
+  get pending(): number {
+    let n = 0;
+    for (const c of this.inFlight) n += c;
+    return n;
+  }
+
+  private markDone(index: number): void {
+    this.inFlight[index] = Math.max(0, this.inFlight[index] - 1);
+  }
+
+  private dispatch(index: number, payload: unknown, transferables?: Transferable[]): void {
+    this.inFlight[index]++;
+    this.workers[index].postMessage(payload, transferables ?? []);
+  }
+
+  private leastLoaded(from: number, to: number): number {
+    let best = from;
+    for (let i = from + 1; i < to; i++) {
+      if (this.inFlight[i] < this.inFlight[best]) best = i;
     }
+    return best;
+  }
 
-    private processQueue() {
-        if (this.activeWorkers >= this.maxWorkers || this.queue.length === 0) return;
+  /**
+   * Bulk work (chunk generation). Avoids the priority lane when the pool has
+   * more than one worker.
+   */
+  postBulk(payload: unknown, transferables?: Transferable[]): void {
+    const from = this.workers.length > 1 ? 1 : 0;
+    this.dispatch(this.leastLoaded(from, this.workers.length), payload, transferables);
+  }
 
-        const { payload, resolve, reject, transferables } = this.queue.shift()!;
-        const workerIndex = this.activeWorkers;
-        const worker = this.workers[workerIndex];
+  /**
+   * Latency-sensitive work (remeshing after an edit). Uses the priority lane
+   * unless another worker is strictly idler.
+   */
+  postPriority(payload: unknown, transferables?: Transferable[]): void {
+    const best = this.leastLoaded(0, this.workers.length);
+    const target = this.inFlight[best] < this.inFlight[0] ? best : 0;
+    this.dispatch(target, payload, transferables);
+  }
 
-        this.activeWorkers++;
+  /** Configuration/broadcast messages (not tracked as jobs). */
+  postToAll(payload: unknown): void {
+    this.workers.forEach((w) => w.postMessage(payload));
+  }
 
-        const handler = (e: MessageEvent) => {
-            worker.removeEventListener('message', handler);
-            worker.removeEventListener('error', errorHandler);
-            this.activeWorkers--;
-            resolve(e.data);
-            this.processQueue();
-        };
+  addMessageListener(handler: (e: MessageEvent) => void): void {
+    this.workers.forEach((w) => w.addEventListener('message', handler));
+  }
 
-        const errorHandler = (err: ErrorEvent) => {
-            worker.removeEventListener('message', handler);
-            worker.removeEventListener('error', errorHandler);
-            this.activeWorkers--;
-            reject(err);
-            this.processQueue();
-        };
-
-        worker.addEventListener('message', handler);
-        worker.addEventListener('error', errorHandler);
-        worker.postMessage(payload, transferables || []);
-    }
-
-    public terminate() {
-        this.workers.forEach(w => w.terminate());
-    }
-
-    // Direct access for long-running subscriptions (like terrain.onmessage)
-    // Note: This bypasses the promise-based queueing logic
-    public addMessageListener(handler: (e: MessageEvent) => void) {
-        this.workers.forEach(w => w.addEventListener('message', handler));
-    }
-
-    public postToAll(payload: any) {
-        this.workers.forEach(w => w.postMessage(payload));
-    }
-
-    public postToOne(index: number, payload: any, transferables?: Transferable[]) {
-        this.workers[Math.abs(index) % this.maxWorkers].postMessage(payload, transferables || []);
-    }
+  terminate(): void {
+    this.workers.forEach((w) => w.terminate());
+    this.workers.length = 0;
+    this.inFlight.length = 0;
+  }
 }

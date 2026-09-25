@@ -610,7 +610,12 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   // Post-load, we can be more aggressive since chunks are processed one at a time via mountQueue.
   const MAX_IN_FLIGHT_INITIAL = 4; // Lower limit during initial load
   const MAX_IN_FLIGHT_NORMAL = 8; // Normal limit after initial load
-  const getMaxInFlight = () => initialLoadTriggered.current ? MAX_IN_FLIGHT_NORMAL : MAX_IN_FLIGHT_INITIAL;
+  // Keep every worker busy with one job plus one queued behind it; the static
+  // caps remain as a floor for small pools.
+  const getMaxInFlight = () => {
+    const perPool = (poolRef.current?.size ?? 4) * 2;
+    return Math.max(initialLoadTriggered.current ? MAX_IN_FLIGHT_NORMAL : MAX_IN_FLIGHT_INITIAL, perPool);
+  };
 
   // Memory pressure detection: pause generation if browser signals memory issues.
   // Uses the Performance Memory API where available (Chrome) and allocation failure tracking.
@@ -779,10 +784,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       });
     });
 
-    // Initialize a WorkerPool for terrain generation.
-    // By distributing meshing and voxel generation across multiple threads (up to 4),
-    // we significantly reduce the time a single hot chunk blocks the entire pipeline.
-    const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), 4);
+    // Terrain worker pool: sized to the machine, load-aware dispatch, and a
+    // priority lane so REMESH after digging never waits behind GENERATE jobs.
+    const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), {
+      completionTypes: ['GENERATED', 'REMESHED'],
+    });
     poolRef.current = pool;
 
     // Send configuration to all workers (including seed for deterministic generation)
@@ -1314,8 +1320,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         // Track this generation as in-flight
         inFlightGenerations.current.add(job.key);
 
-        // Distribute generation requests round-robin across the pool
-        poolRef.current.postToOne(job.cx + job.cz, { type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
+        // Least-loaded bulk worker (keeps the priority lane free for remeshes)
+        poolRef.current.postBulk({ type: 'GENERATE', payload: { cx: job.cx, cz: job.cz } });
       }
     }
 
@@ -1595,7 +1601,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
             console.log(`[DIG-REMESH] ${key} sending to worker: min=${minD.toFixed(2)}, max=${maxD.toFixed(2)}, belowISO=${negCount}, ver=${chunk.terrainVersion}`);
           }
 
-          poolRef.current.postToOne(chunk.cx + chunk.cz, {
+          poolRef.current.postPriority({
             type: 'REMESH',
             payload: {
               key,
