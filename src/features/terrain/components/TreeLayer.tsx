@@ -5,6 +5,7 @@ import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
+import { getLeafTexture } from '@features/flora/trees/leafAtlas';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { LOD_DISTANCE_SIMPLIFIED, LOD_DISTANCE_TREES_ANY } from '@/constants';
 
@@ -310,8 +311,8 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
 
     pool[key] = new (CustomShaderMaterial as any)({
         baseMaterial: THREE.MeshStandardMaterial,
-        transparent: !opaque,
-        alphaTest: opaque ? 0.5 : 0.0,
+        // Cut-out cards (discard in the shader): opaque rendering, no sorting.
+        transparent: false,
         vertexShader: `
             uniform float uTime;
             uniform float uLeafHueVariation;
@@ -323,12 +324,14 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
             varying float vTreeSeed;
             varying float vHueCos;
             varying float vHueSin;
+            varying vec2 vLeafUv;
 
             float hash11(float p) {
                 return fract(sin(p) * 43758.5453123);
             }
 
             void main() {
+                vLeafUv = uv;
                 vPos = position;
                 vWorldNormal = normalize(mat3(modelMatrix) * normal);
                 vTreeSeed = fract(sin(dot(instanceMatrix[3].xyz, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
@@ -367,6 +370,8 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
             uniform sampler3D uNoiseTexture;
             uniform float uTime;
             uniform float uLeafLodAlpha;
+            uniform sampler2D uLeafMap;
+            varying vec2 vLeafUv;
 
             vec3 hueRotateCS(vec3 color, float c, float s) {
                 vec3 k = vec3(0.57735026919);
@@ -379,79 +384,81 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
                     discard;
                 }
 
-                // Multi-scale noise for leaf detail
+                // Leaf card texture (species atlas). Alpha is sharpened by its screen
+                // derivative so cut-outs stay crisp and coverage survives mipmapping
+                // (plain alpha test makes distant crowns thin out).
+                vec4 leafTex = texture(uLeafMap, vLeafUv);
+                float cover = (leafTex.a - 0.45) / max(fwidth(leafTex.a), 1e-4) + 0.5;
+                if (cover < 0.5) discard;
+
                 float variation = texture(uNoiseTexture, vNoisePos * 0.15).r;
-                float micro = texture(uNoiseTexture, vNoisePos * 0.4 + vPos * 0.5 + vec3(11.0)).r;
-                float fine = texture(uNoiseTexture, vNoisePos * 1.2 + vec3(7.0)).g;
-                float ultraFine = texture(uNoiseTexture, vNoisePos * 3.0).b;
+                float treeBrightness = 0.82 + vTreeSeed * 0.3;
+                float treeSaturation = 0.8 + fract(vTreeSeed * 7.3) * 0.25;
 
-                float tip = smoothstep(0.0, 1.0, vPos.y + 0.5);
-                float treeBrightness = 0.85 + vTreeSeed * 0.30;
-                float treeSaturation = 0.70 + fract(vTreeSeed * 7.3) * 0.20;
-
-                // Base leaf color
-                vec3 baseLeaf = uColorTip * 0.80 * treeBrightness;
-                vec3 tintA = baseLeaf * vec3(0.70, 0.95, 0.75);
-                vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);
-                vec3 col = mix(tintA, tintB, variation);
-
-                // Vein pattern - softer, more organic with noise modulation
-                float radial = length(vPos.xz);
-                float veinPattern = sin(radial * 8.0 + fine * 6.0 + micro * 3.0);
-                float veins = smoothstep(0.6, 0.9, veinPattern);
-
-                // Gentle vein darkening
-                col *= 0.96 + veins * 0.05;
-
-                // Cell structure - subtle bright spots
-                float cells = smoothstep(0.55, 0.65, ultraFine);
-                col += col * cells * 0.05;
-
-                // Edge discoloration (yellowing at tips)
-                float edge = smoothstep(0.35, 0.45, radial);
-                col.r *= 1.0 + edge * 0.06;
-                col.g *= 1.0 - edge * 0.03;
-
-                // Apply micro and tip variation
-                col *= mix(0.88, 1.12, micro);
-                col *= mix(0.90, 1.08, tip);
-
-                // Subtle translucency effect
-                float translucent = fine * 0.08;
-                col += uColorTip * translucent * 0.2;
-
-                // Saturation and hue rotation
+                vec3 col = leafTex.rgb * treeBrightness * mix(0.9, 1.1, variation);
+                // Per-card variation: some clusters sunnier/yellower, some deeper.
+                col *= mix(vec3(0.92, 1.0, 0.9), vec3(1.08, 1.04, 0.86), fract(vLeafRand * 7.13));
                 float lum = dot(col, vec3(0.299, 0.587, 0.114));
                 col = mix(vec3(lum), col, treeSaturation);
                 col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
-                // Dead/dry spots
-                float drySpot = smoothstep(0.72, 0.77, micro) * smoothstep(0.6, 0.65, fine);
-                vec3 dryColor = vec3(0.45, 0.38, 0.25);
-                col = mix(col, dryColor, drySpot * 0.4);
-
                 csm_DiffuseColor = vec4(col, 1.0);
-
-                // Subtle emissive with vein modulation
-                csm_Emissive = uColorTip * (0.04 + veins * 0.02);
-
-                // Variable roughness
-                float rough = 0.55 + veins * 0.08 - cells * 0.08 + drySpot * 0.15;
-                csm_Roughness = clamp(rough, 0.4, 0.75);
+                // Light passing through the leaf when it faces away from the sun.
+                csm_Emissive = col * 0.05;
+                csm_Roughness = 0.62;
             }
         `,
         uniforms: {
             uColorTip: { value: new THREE.Color(colors.tip) },
             uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
-            uLeafHueVariation: { value: 0.30 },
-            uLeafLodAlpha: { value: alpha }
+            uLeafHueVariation: { value: 0.18 },
+            uLeafLodAlpha: { value: alpha },
+            uLeafMap: { value: getLeafTexture(type as TreeType) },
         },
+        side: THREE.DoubleSide,
         toneMapped: false,
     });
 
     // Return from the pool we just filled (opaque LOD leaves previously got undefined -> default material).
     return pool[key];
+};
+
+/**
+ * Shadow-depth material for leaf cards: same wind sway as the leaf shader and the
+ * same alpha cut-out, so leaves cast leaf-shaped shadows instead of squares.
+ */
+const leafDepthMaterialPool: Record<string, THREE.Material> = {};
+const getTreeLeafDepthMaterial = (type: number) => {
+    const key = `${type}`;
+    if (leafDepthMaterialPool[key]) return leafDepthMaterialPool[key];
+    leafDepthMaterialPool[key] = new (CustomShaderMaterial as any)({
+        baseMaterial: THREE.MeshDepthMaterial,
+        depthPacking: THREE.RGBADepthPacking,
+        vertexShader: `
+            uniform float uTime;
+            varying vec2 vLeafUv;
+            void main() {
+                vLeafUv = uv;
+                float time = uTime * 1.5;
+                float phase = position.x + position.z + instanceMatrix[3][0];
+                vec3 pos = position;
+                pos.x += sin(time + phase) * 0.1;
+                pos.y += sin(time * 3.0 + phase * 2.0) * 0.05;
+                csm_Position = pos;
+            }
+        `,
+        fragmentShader: `
+            uniform sampler2D uLeafMap;
+            varying vec2 vLeafUv;
+            void main() {
+                if (texture(uLeafMap, vLeafUv).a < 0.45) discard;
+            }
+        `,
+        uniforms: { uTime: sharedUniforms.uTime, uLeafMap: { value: getLeafTexture(type as TreeType) } },
+        side: THREE.DoubleSide,
+    });
+    return leafDepthMaterialPool[key];
 };
 
 const InstancedTreeBatch: React.FC<{
@@ -548,6 +555,7 @@ const InstancedTreeBatch: React.FC<{
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
     const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified, leafLodAlpha), [type, colors, simplified, leafLodAlpha]);
+    const leafDepthMaterial = useMemo(() => getTreeLeafDepthMaterial(type), [type]);
 
     const colliderGeometries = useMemo(() => {
         const cylinder = new THREE.CylinderGeometry(0.225, 0.225, 1.0, 6);
@@ -573,6 +581,7 @@ const InstancedTreeBatch: React.FC<{
                     castShadow
                     receiveShadow
                     material={leafMaterial}
+                    customDepthMaterial={leafDepthMaterial}
                 />
             )}
 

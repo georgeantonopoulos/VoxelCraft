@@ -1,5 +1,6 @@
 import React, { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
+import { getLeafTexture } from '@features/flora/trees/leafAtlas';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
@@ -123,11 +124,13 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                 varying float vTreeSeedF;
                 uniform float uTreeSeed;
                 uniform float uLeafHueVariation;
+                varying vec2 vLeafUv;
 
                 float hash11(float p) {
                     return fract(sin(p) * 43758.5453123);
                 }
                 void main() {
+                    vLeafUv = uv;
                     vPos = position;
                     vTreeSeedF = uTreeSeed;
 
@@ -152,6 +155,8 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                 varying float vTreeSeedF;
                 uniform vec3 uColorTip;
                 uniform sampler3D uNoiseTexture;
+                uniform sampler2D uLeafMap;
+                varying vec2 vLeafUv;
 
                 vec3 hueRotateCS(vec3 color, float c, float s) {
                     vec3 k = vec3(0.57735026919); // normalize(vec3(1.0))
@@ -170,13 +175,12 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                     // Simple Gradient
                     float gradient = smoothstep(0.0, 1.0, vPos.y * 0.2);
 
-                    // Base leaf color with wider tint variation
-                    vec3 baseLeaf = uColorTip * 0.80 * treeBrightness;
-                    vec3 tintA = baseLeaf * vec3(0.70, 0.95, 0.75);
-                    vec3 tintB = baseLeaf * vec3(1.0, 1.10, 0.95);
-                    vec3 col = mix(tintA, tintB, variation);
-                    col *= mix(0.88, 1.12, micro);
-                    col *= mix(0.90, 1.08, gradient);
+                    // Leaf card texture (same atlas as standing trees).
+                    vec4 leafTex = texture(uLeafMap, vLeafUv);
+                    if ((leafTex.a - 0.45) / max(fwidth(leafTex.a), 1e-4) + 0.5 < 0.5) discard;
+                    vec3 col = leafTex.rgb * treeBrightness * mix(0.9, 1.1, variation);
+                    col *= mix(0.94, 1.06, micro);
+                    col *= mix(0.95, 1.05, gradient);
 
                     // Apply saturation adjustment
                     float lum = dot(col, vec3(0.299, 0.587, 0.114));
@@ -185,7 +189,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                     col = clamp(hueRotateCS(col, vHueCos, vHueSin), 0.0, 1.0);
 
                     csm_DiffuseColor = vec4(col, 1.0);
-                    csm_Emissive = uColorTip * 0.10;
+                    csm_Emissive = col * 0.05;
                     csm_Roughness = 0.6;
                 }
             `,
@@ -193,11 +197,13 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                 uColorTip: { value: new THREE.Color(colors.tip) },
                 uNoiseTexture: { value: getNoiseTexture() },
                 uTreeSeed: { value: seed },
-                uLeafHueVariation: { value: 0.30 },
+                uLeafHueVariation: { value: 0.18 },
+                uLeafMap: { value: getLeafTexture(type) },
             },
+            side: THREE.DoubleSide,
             toneMapped: false,
         });
-    }, [colors, seed]);
+    }, [colors, seed, type]);
 
     // Materials are created per felled tree; R3F does not dispose objects passed as props.
     useEffect(() => () => {
