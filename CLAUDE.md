@@ -87,6 +87,11 @@ Ambient light reduced to minimal levels (surface: 0.08, cave: 0.04). GI provides
 - **Event-driven**: Listens to `vc-audio-*` custom events (play, stop, ambient-enter, ambient-exit)
 - **Category-based volume**: SFX_IMPACT, SFX_DIG, SFX_CHOP, SFX_INTERACT, AMBIENT, UI, MUSIC
 
+**Procedural ambience** (src/core/audio/ambience/ProceduralAmbience.ts), owned by AudioManager as `audioManager.ambience`:
+- Web Audio synthesis, no samples: wind (rumble + whistle, gusts), leaf rustle, river/sea water, bird species phrases (day, dawn chorus), crickets and owls (night), cicadas (heat), cave drone + drips through a generated reverb, underwater low-pass.
+- Starts on the first pointerdown/keydown (autoplay policy). Driven by `AmbienceDirector` (features/environment/components) every 0.5 s from biome, climate, water proximity (getHeightAt rings), exposure, sun height, EnvironmentStore.
+- Audition: `__audioManager.ambience.debugLockScene({...})`, `debugCapture(seconds)` (PCM for WAV export); `getStats()`.
+
 **Sound Registry** (src/core/audio/soundRegistry.ts):
 - Single source of truth for all sound definitions
 - Each sound: id, URL, category, baseVolume, pitchVariation, poolSize

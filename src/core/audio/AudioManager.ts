@@ -18,6 +18,7 @@
  */
 
 import { SoundCategory } from './types';
+import { ProceduralAmbience } from './ambience/ProceduralAmbience';
 import type {
   SoundDefinition,
   PlayOptions,
@@ -49,6 +50,13 @@ export class AudioManager {
 
   // Initialization flag
   private initialized: boolean = false;
+
+  /**
+   * Procedural world soundscape (Web Audio). Started on the first user gesture
+   * (browser autoplay policy) and driven by AmbienceDirector.
+   */
+  readonly ambience = new ProceduralAmbience();
+  private readonly startAmbience = () => this.ambience.start();
 
   // Bound event handlers (stored for proper removal)
   private boundHandlePlayEvent: (event: Event) => void;
@@ -141,6 +149,9 @@ export class AudioManager {
     window.addEventListener('vc-audio-stop', this.boundHandleStopEvent);
     window.addEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
     window.addEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
+    // The AudioContext may only start after a user gesture.
+    window.addEventListener('pointerdown', this.startAmbience);
+    window.addEventListener('keydown', this.startAmbience);
   }
 
   /**
@@ -416,6 +427,9 @@ export class AudioManager {
     window.removeEventListener('vc-audio-stop', this.boundHandleStopEvent);
     window.removeEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
     window.removeEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
+    window.removeEventListener('pointerdown', this.startAmbience);
+    window.removeEventListener('keydown', this.startAmbience);
+    this.ambience.dispose();
 
     this.initialized = false;
   }

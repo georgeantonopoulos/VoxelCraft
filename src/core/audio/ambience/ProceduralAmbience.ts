@@ -1,0 +1,462 @@
+/**
+ * ProceduralAmbience: the world's living soundscape, synthesised with Web Audio.
+ *
+ * No samples: every layer is generated, so it responds continuously to where the
+ * player is and when. Owned by AudioManager (audio stays centralised); driven by
+ * AmbienceDirector via setScene() a few times per second.
+ *
+ * Layers
+ *   wind      low rumble + high whistle (altitude, exposure), random-walk gusts
+ *   leaves    bright rustle near trees, follows the gusts
+ *   water     river babble / sea swell by proximity
+ *   birds     scheduled calls from several synthesised "species" (day, dawn chorus)
+ *   insects   crickets (night), cicadas (hot days)
+ *   cave      drone + water drips through a long reverb (underground)
+ *   night     occasional owl hoots
+ * Everything passes a master low-pass that closes when the camera is underwater.
+ */
+
+export interface AmbienceScene {
+  /** 0..1 sun height factor: 0 = night, 1 = full day. */
+  daylight: number;
+  /** 0..1, peaks around sunrise. */
+  dawn: number;
+  /** 0 open air .. 1 deep underground. */
+  underground: number;
+  /** 0..1 camera below the water surface. */
+  underwater: number;
+  /** 0..1 how much vegetation surrounds the player. */
+  foliage: number;
+  /** 0..1 bird population of the biome. */
+  birdLife: number;
+  /** 0..1 heat (cicadas), 0 = cold. */
+  heat: number;
+  /** 0..1 nearby moving water (rivers, shore). */
+  water: number;
+  /** true when the nearby water is the open sea (slow swell instead of babble). */
+  sea: boolean;
+  /** 0..1 exposure to wind (altitude, open terrain). */
+  exposure: number;
+}
+
+const DEFAULT_SCENE: AmbienceScene = {
+  daylight: 1, dawn: 0, underground: 0, underwater: 0, foliage: 0.5,
+  birdLife: 0.6, heat: 0.3, water: 0, sea: false, exposure: 0.4,
+};
+
+type Rand = () => number;
+
+/** Small seeded PRNG so the soundscape is varied but not allocation-heavy. */
+function mulberry32(seed: number): Rand {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A bird "species": call shape parameters. */
+interface Species {
+  base: number;      // Hz
+  spread: number;    // pitch range as a ratio
+  notes: [number, number]; // min/max notes per phrase
+  noteLen: number;   // seconds
+  gap: number;       // seconds between notes
+  sweep: number;     // pitch sweep per note (ratio, +up/-down)
+  trill: number;     // FM rate (Hz), 0 = pure whistle
+  night?: boolean;
+}
+
+const SPECIES: Species[] = [
+  { base: 3200, spread: 1.35, notes: [3, 7], noteLen: 0.07, gap: 0.05, sweep: 0.25, trill: 0 },   // warbler
+  { base: 2400, spread: 1.2, notes: [2, 4], noteLen: 0.22, gap: 0.12, sweep: -0.15, trill: 0 },   // thrush whistle
+  { base: 4600, spread: 1.1, notes: [6, 14], noteLen: 0.03, gap: 0.025, sweep: 0.05, trill: 0 },  // finch trill
+  { base: 1500, spread: 1.15, notes: [2, 3], noteLen: 0.16, gap: 0.2, sweep: 0.1, trill: 45 },    // dove-ish coo
+  { base: 5200, spread: 1.4, notes: [1, 2], noteLen: 0.12, gap: 0.3, sweep: 0.6, trill: 0 },      // high chip
+];
+
+/** Output make-up gain: layer levels are authored conservatively (sum < ~0.1). */
+const AMBIENCE_GAIN = 3.2;
+
+const OWL: Species = { base: 420, spread: 1.05, notes: [2, 3], noteLen: 0.45, gap: 0.35, sweep: -0.08, trill: 0, night: true };
+
+export class ProceduralAmbience {
+  private ctx: AudioContext | null = null;
+  private master!: GainNode;
+  private muffle!: BiquadFilterNode;
+  private reverb!: ConvolverNode;
+  private reverbSend!: GainNode;
+
+  private windLow!: GainNode;
+  private windHigh!: GainNode;
+  private windHighFilter!: BiquadFilterNode;
+  private leaves!: GainNode;
+  private water!: GainNode;
+  private waterFilter!: BiquadFilterNode;
+  private cicadas!: GainNode;
+  private caveDrone!: GainNode;
+
+  private scene: AmbienceScene = { ...DEFAULT_SCENE };
+  private gust = 0.5;
+  private gustTarget = 0.5;
+  private seaPhase = 0;
+  private nextBirdAt = 0;
+  private nextCricketAt = 0;
+  private nextDripAt = 0;
+  private nextOwlAt = 0;
+  private timer: number | null = null;
+  private rand: Rand = mulberry32(0x5eed);
+  private volume = 0.8;
+
+  /** Creates the audio graph. Must be called from a user gesture (autoplay policy). */
+  start(): void {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      return;
+    }
+    const AC = (window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+    if (!AC) return;
+    const ctx = new AC();
+    this.ctx = ctx;
+
+    this.master = ctx.createGain();
+    this.master.gain.value = this.volume * AMBIENCE_GAIN;
+    this.muffle = ctx.createBiquadFilter();
+    this.muffle.type = 'lowpass';
+    this.muffle.frequency.value = 18000;
+    this.muffle.connect(this.master);
+    this.master.connect(ctx.destination);
+
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this.makeImpulse(3.2, 2.4);
+    this.reverbSend = ctx.createGain();
+    this.reverbSend.gain.value = 0.15;
+    this.reverbSend.connect(this.reverb);
+    this.reverb.connect(this.muffle);
+
+    const pink = this.makeNoise(4, 'pink');
+    const brown = this.makeNoise(4, 'brown');
+    const white = this.makeNoise(2, 'white');
+
+    // Wind low: brown noise, low-pass, slow gusts.
+    this.windLow = ctx.createGain();
+    this.windLow.gain.value = 0;
+    const wl = ctx.createBiquadFilter(); wl.type = 'lowpass'; wl.frequency.value = 380;
+    this.loop(brown, 0.9).connect(wl).connect(this.windLow).connect(this.muffle);
+
+    // Wind high: pink noise through a resonant band-pass that follows gusts.
+    this.windHigh = ctx.createGain();
+    this.windHigh.gain.value = 0;
+    this.windHighFilter = ctx.createBiquadFilter();
+    this.windHighFilter.type = 'bandpass'; this.windHighFilter.frequency.value = 900; this.windHighFilter.Q.value = 2.5;
+    this.loop(pink, 1.07).connect(this.windHighFilter).connect(this.windHigh).connect(this.muffle);
+
+    // Leaves: high-passed white noise, tremolo from a fast random LFO.
+    this.leaves = ctx.createGain();
+    this.leaves.gain.value = 0;
+    const lh = ctx.createBiquadFilter(); lh.type = 'highpass'; lh.frequency.value = 2600;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
+    const trem = ctx.createGain(); trem.gain.value = 0.6;
+    const tremLfo = this.loop(this.makeNoise(2, 'brown', 3000), 1);
+    const tremDepth = ctx.createGain(); tremDepth.gain.value = 0.5;
+    tremLfo.connect(tremDepth).connect(trem.gain);
+    this.loop(white, 0.93).connect(lh).connect(lp).connect(trem).connect(this.leaves).connect(this.muffle);
+
+    // Water: band-limited noise; the band wobbles for a babbling character.
+    this.water = ctx.createGain();
+    this.water.gain.value = 0;
+    this.waterFilter = ctx.createBiquadFilter();
+    this.waterFilter.type = 'bandpass'; this.waterFilter.frequency.value = 700; this.waterFilter.Q.value = 0.7;
+    const wobble = ctx.createOscillator(); wobble.frequency.value = 0.35;
+    const wobbleDepth = ctx.createGain(); wobbleDepth.gain.value = 260;
+    wobble.connect(wobbleDepth).connect(this.waterFilter.frequency); wobble.start();
+    this.loop(pink, 0.97).connect(this.waterFilter).connect(this.water).connect(this.muffle);
+    this.water.connect(this.reverbSend);
+
+    // Cicadas: a narrow noise band with fast amplitude modulation.
+    this.cicadas = ctx.createGain();
+    this.cicadas.gain.value = 0;
+    const cb = ctx.createBiquadFilter(); cb.type = 'bandpass'; cb.frequency.value = 5200; cb.Q.value = 6;
+    const cAm = ctx.createGain(); cAm.gain.value = 0.5;
+    const cLfo = ctx.createOscillator(); cLfo.type = 'square'; cLfo.frequency.value = 42;
+    const cLfoDepth = ctx.createGain(); cLfoDepth.gain.value = 0.5;
+    cLfo.connect(cLfoDepth).connect(cAm.gain); cLfo.start();
+    this.loop(white, 1.01).connect(cb).connect(cAm).connect(this.cicadas).connect(this.muffle);
+
+    // Cave drone: two detuned low sines, low-passed, into the reverb.
+    this.caveDrone = ctx.createGain();
+    this.caveDrone.gain.value = 0;
+    const d1 = ctx.createOscillator(); d1.frequency.value = 55;
+    const d2 = ctx.createOscillator(); d2.frequency.value = 82.7;
+    const dl = ctx.createBiquadFilter(); dl.type = 'lowpass'; dl.frequency.value = 220;
+    d1.connect(dl); d2.connect(dl); d1.start(); d2.start();
+    dl.connect(this.caveDrone);
+    this.caveDrone.connect(this.muffle);
+    this.caveDrone.connect(this.reverbSend);
+
+    const now = ctx.currentTime;
+    this.nextBirdAt = now + 1;
+    this.nextCricketAt = now + 0.5;
+    this.nextDripAt = now + 2;
+    this.nextOwlAt = now + 20;
+
+    // Scheduler: 10 Hz is plenty for events scheduled ~0.2 s ahead.
+    this.timer = window.setInterval(() => this.tick(), 100);
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.ctx) this.master.gain.setTargetAtTime(this.volume * AMBIENCE_GAIN, this.ctx.currentTime, 0.2);
+  }
+
+  setScene(scene: Partial<AmbienceScene>): void {
+    if (this.locked) return;
+    Object.assign(this.scene, scene);
+  }
+
+  // --- Debug (window.__audioManager.ambience) -------------------------------
+  private locked = false;
+
+  /** Pins the scene (ignores AmbienceDirector) for auditioning; null releases. */
+  debugLockScene(scene: Partial<AmbienceScene> | null): void {
+    this.locked = false;
+    if (scene) { this.setScene({ ...DEFAULT_SCENE, ...scene }); this.locked = true; }
+  }
+
+  /** Records `seconds` of the mixed output as interleaved stereo PCM. */
+  debugCapture(seconds: number): Promise<{ sampleRate: number; left: Float32Array; right: Float32Array }> {
+    const ctx = this.ctx;
+    if (!ctx) return Promise.reject(new Error('ambience not started'));
+    return new Promise((resolve) => {
+      const frames = Math.floor(seconds * ctx.sampleRate);
+      const left = new Float32Array(frames), right = new Float32Array(frames);
+      let at = 0;
+      const tap = ctx.createScriptProcessor(4096, 2, 2);
+      tap.onaudioprocess = (e) => {
+        const l = e.inputBuffer.getChannelData(0), r = e.inputBuffer.getChannelData(1);
+        const n = Math.min(l.length, frames - at);
+        left.set(l.subarray(0, n), at); right.set(r.subarray(0, n), at);
+        at += n;
+        if (at >= frames) { this.master.disconnect(tap); tap.disconnect(); resolve({ sampleRate: ctx.sampleRate, left, right }); }
+      };
+      this.master.connect(tap);
+      tap.connect(ctx.destination); // processors only run when connected
+    });
+  }
+
+  dispose(): void {
+    if (this.timer !== null) window.clearInterval(this.timer);
+    this.timer = null;
+    void this.ctx?.close();
+    this.ctx = null;
+  }
+
+  getStats() {
+    return { running: this.ctx?.state ?? 'stopped', scene: { ...this.scene }, gust: this.gust };
+  }
+
+  // -------------------------------------------------------------------------
+
+  private tick(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    const t = ctx.currentTime;
+    const s = this.scene;
+    const outside = 1 - s.underground;
+    const tc = 0.6; // smoothing time constant for bed levels
+
+    // Gusts: slow random walk toward new targets.
+    if (this.rand() < 0.03) this.gustTarget = 0.25 + this.rand() * 0.75;
+    this.gust += (this.gustTarget - this.gust) * 0.04;
+    const wind = outside * (0.25 + 0.75 * s.exposure) * (0.4 + 0.6 * this.gust);
+
+    this.windLow.gain.setTargetAtTime(0.09 * wind * (0.4 + s.exposure), t, tc);
+    this.windHigh.gain.setTargetAtTime(0.04 * wind * (0.2 + s.exposure), t, tc);
+    this.windHighFilter.frequency.setTargetAtTime(600 + 900 * this.gust + 500 * s.exposure, t, 0.8);
+    this.leaves.gain.setTargetAtTime(0.05 * outside * s.foliage * (0.2 + 0.8 * this.gust), t, 0.4);
+
+    // Water: sea swells slowly, rivers babble steadily.
+    this.seaPhase += 0.1 * 0.09 * Math.PI * 2;
+    const swell = s.sea ? 0.55 + 0.45 * Math.sin(this.seaPhase) : 1;
+    this.water.gain.setTargetAtTime(0.16 * s.water * swell, t, s.sea ? 0.8 : 0.5);
+    this.waterFilter.Q.setTargetAtTime(s.sea ? 0.5 : 1.1, t, 1);
+
+    this.cicadas.gain.setTargetAtTime(0.012 * outside * s.heat * s.daylight * s.foliage, t, 1.5);
+    this.caveDrone.gain.setTargetAtTime(0.05 * s.underground, t, 1.5);
+    this.reverbSend.gain.setTargetAtTime(0.12 + 0.6 * s.underground, t, 1);
+
+    // Underwater: close the master low-pass.
+    this.muffle.frequency.setTargetAtTime(s.underwater > 0.5 ? 500 : 18000, t, 0.15);
+
+    // Birds: frequent in the day and the dawn chorus, silent at night and underground.
+    const birdRate = outside * s.birdLife * (0.25 * s.daylight + 1.2 * s.dawn); // phrases/s
+    if (t >= this.nextBirdAt) {
+      if (birdRate > 0.01 && s.underwater < 0.5) {
+        const sp = SPECIES[Math.floor(this.rand() * SPECIES.length)];
+        this.birdPhrase(sp, t + 0.05, 0.6 + 0.4 * this.rand());
+      }
+      this.nextBirdAt = t + (birdRate > 0.01 ? (0.4 + this.rand() * 2) / birdRate : 2);
+    }
+
+    // Crickets: a few individuals chirping at night.
+    const night = 1 - s.daylight;
+    if (t >= this.nextCricketAt) {
+      if (night > 0.3 && outside > 0.5 && s.underwater < 0.5) this.cricketChirp(t + 0.02, night);
+      this.nextCricketAt = t + 0.35 + this.rand() * 0.6;
+    }
+
+    // Owls at night.
+    if (t >= this.nextOwlAt) {
+      if (night > 0.6 && outside > 0.5 && s.foliage > 0.3) this.birdPhrase(OWL, t + 0.05, 0.5);
+      this.nextOwlAt = t + 18 + this.rand() * 30;
+    }
+
+    // Cave drips.
+    if (t >= this.nextDripAt) {
+      if (s.underground > 0.4) this.drip(t + 0.02);
+      this.nextDripAt = t + 0.6 + this.rand() * 3;
+    }
+  }
+
+  /** One bird phrase: a sequence of swept, optionally trilled sine notes. */
+  private birdPhrase(sp: Species, start: number, loudness: number): void {
+    const ctx = this.ctx!;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = this.rand() * 1.6 - 0.8;
+    const dist = 0.3 + this.rand() * 0.7; // farther birds are quieter and duller
+    const tone = ctx.createBiquadFilter();
+    tone.type = 'lowpass';
+    tone.frequency.value = 5000 + 9000 * (1 - dist);
+    const out = ctx.createGain();
+    out.gain.value = (sp.night ? 0.08 : 0.09) * loudness * (1.2 - dist);
+    pan.connect(tone).connect(out).connect(this.muffle);
+    out.connect(this.reverbSend);
+
+    const pitch = sp.base * (1 + (this.rand() - 0.5) * (sp.spread - 1));
+    const notes = sp.notes[0] + Math.floor(this.rand() * (sp.notes[1] - sp.notes[0] + 1));
+    let t = start;
+    for (let i = 0; i < notes; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      const f0 = pitch * (1 + (this.rand() - 0.5) * 0.12) * (1 + 0.04 * Math.sin(i));
+      osc.frequency.setValueAtTime(f0, t);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(80, f0 * (1 + sp.sweep)), t + sp.noteLen);
+      if (sp.trill > 0) {
+        const lfo = ctx.createOscillator();
+        lfo.frequency.value = sp.trill;
+        const depth = ctx.createGain();
+        depth.gain.value = f0 * 0.04;
+        lfo.connect(depth).connect(osc.frequency);
+        lfo.start(t); lfo.stop(t + sp.noteLen + 0.05);
+      }
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(1, t + Math.min(0.012, sp.noteLen * 0.3));
+      env.gain.setTargetAtTime(0, t + sp.noteLen * 0.55, sp.noteLen * 0.25);
+      osc.connect(env).connect(pan);
+      osc.start(t);
+      osc.stop(t + sp.noteLen + 0.2);
+      t += sp.noteLen + sp.gap * (0.7 + 0.6 * this.rand());
+    }
+    // Let the graph be collected after the phrase.
+    const end = t + 0.5;
+    window.setTimeout(() => { try { out.disconnect(); } catch { /* already gone */ } }, (end - ctx.currentTime) * 1000 + 200);
+  }
+
+  /** A cricket chirp: three rapid pulses of a ~4.5 kHz tone. */
+  private cricketChirp(start: number, night: number): void {
+    const ctx = this.ctx!;
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 4300 + this.rand() * 700;
+    const env = ctx.createGain();
+    env.gain.value = 0;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = this.rand() * 2 - 1;
+    const level = 0.03 * night * (0.4 + 0.6 * this.rand());
+    const pulses = 2 + Math.floor(this.rand() * 3);
+    for (let i = 0; i < pulses; i++) {
+      const p = start + i * 0.045;
+      env.gain.setValueAtTime(0, p);
+      env.gain.linearRampToValueAtTime(level, p + 0.006);
+      env.gain.linearRampToValueAtTime(0, p + 0.03);
+    }
+    osc.connect(env).connect(pan).connect(this.muffle);
+    osc.start(start);
+    osc.stop(start + pulses * 0.045 + 0.05);
+  }
+
+  /** A water drip: a fast downward-sweeping sine blip into the reverb. */
+  private drip(start: number): void {
+    const ctx = this.ctx!;
+    const osc = ctx.createOscillator();
+    const f = 1400 + this.rand() * 1600;
+    osc.frequency.setValueAtTime(f, start);
+    osc.frequency.exponentialRampToValueAtTime(f * 0.45, start + 0.08);
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(0.05, start + 0.004);
+    env.gain.setTargetAtTime(0, start + 0.01, 0.03);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = this.rand() * 1.4 - 0.7;
+    osc.connect(env).connect(pan);
+    pan.connect(this.reverbSend);
+    pan.connect(this.muffle);
+    osc.start(start);
+    osc.stop(start + 0.25);
+  }
+
+  // -------------------------------------------------------------------------
+
+  private loop(buffer: AudioBuffer, rate: number): AudioBufferSourceNode {
+    const src = this.ctx!.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    src.playbackRate.value = rate;
+    // Random offset so layers sharing a buffer don't correlate.
+    src.start(0, this.rand() * buffer.duration);
+    return src;
+  }
+
+  /** Noise buffer. `brown` is integrated (deep), `pink` uses Kellet's filter. */
+  private makeNoise(seconds: number, kind: 'white' | 'pink' | 'brown', sampleRate?: number): AudioBuffer {
+    const ctx = this.ctx!;
+    const rate = sampleRate ?? ctx.sampleRate;
+    const len = Math.floor(seconds * rate);
+    const buf = ctx.createBuffer(1, len, rate);
+    const d = buf.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
+    for (let i = 0; i < len; i++) {
+      const w = this.rand() * 2 - 1;
+      if (kind === 'white') d[i] = w * 0.5;
+      else if (kind === 'brown') { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.5; }
+      else {
+        b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+        b2 = 0.969 * b2 + w * 0.153852; b3 = 0.8665 * b3 + w * 0.3104856;
+        b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
+        d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+        b6 = w * 0.115926;
+      }
+    }
+    // Crossfade the loop seam.
+    const fade = Math.min(len >> 3, Math.floor(rate * 0.05));
+    for (let i = 0; i < fade; i++) {
+      const k = i / fade;
+      d[len - fade + i] = d[len - fade + i] * (1 - k) + d[i] * k;
+    }
+    return buf;
+  }
+
+  /** Stereo exponentially decaying noise: a cheap natural reverb tail. */
+  private makeImpulse(seconds: number, decay: number): AudioBuffer {
+    const ctx = this.ctx!;
+    const len = Math.floor(seconds * ctx.sampleRate);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (this.rand() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+}

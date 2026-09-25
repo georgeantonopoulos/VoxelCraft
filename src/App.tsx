@@ -30,6 +30,7 @@ import { PerformanceMonitor } from '@features/environment/components/Performance
 import { CinematicCamera } from '@features/environment/components/CinematicCamera';
 import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
 import { EnvironmentProbe } from '@features/environment/components/EnvironmentProbe';
+import { AmbienceDirector } from '@features/environment/components/AmbienceDirector';
 import { PointLightPool } from '@core/graphics/PointLightPool';
 import { DebugHandles } from '@core/utils/DebugHandles';
 import { GroveDirector } from '@features/grove/GroveDirector';
@@ -489,6 +490,7 @@ const App: React.FC = () => {
           <SceneWarmup ready={gameStarted && terrainLoaded} />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}
+          {gameStarted && terrainLoaded && <AmbienceDirector />}
           {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}
           <PointLightPool />
           <DebugHandles />
