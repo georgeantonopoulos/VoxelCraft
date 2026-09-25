@@ -156,44 +156,43 @@ export class TerrainRuntime {
     const maxDistance = opts?.maxDistance ?? 60;
     const step = opts?.step ?? 3;
 
+    // "Is there a roof?", not "is terrain nearby?". Each ray scores 1 if it reaches
+    // open sky, 0 if blocked. The vertical ray dominates; tilted rays only count as
+    // blocked when terrain is close (a cliff 20m away is not a ceiling). Distance-
+    // weighted scoring made standing beside a hill read as ~77% underground.
+    const TILTED_BLOCK_DIST = 12;
     let sum = 0;
     let count = 0;
 
-    for (const dir of SKY_VIS_DIRS) {
-      let hitDist = maxDistance;
+    for (let r = 0; r < SKY_VIS_DIRS.length; r++) {
+      const dir = SKY_VIS_DIRS[r];
+      const weight = r === 0 ? 3 : 1;
+      const limit = r === 0 ? maxDistance : Math.min(maxDistance, TILTED_BLOCK_DIST);
+      let escaped = true;
       let unknown = false;
 
       // Start a bit above the point to avoid self-intersection with the ground voxel.
-      const startD = 1.0;
-      for (let d = startD; d <= maxDistance; d += step) {
+      for (let d = 1.0; d <= limit; d += step) {
         const sx = wx + dir.x * d;
         const sy = wy + dir.y * d;
         const sz = wz + dir.z * d;
 
-        const chunk = this.getChunkAtWorld(sx, sz);
-        if (!chunk) {
-          unknown = true;
-          break;
-        }
-        const idx = this.getIndexInChunk(chunk, sx, sy, sz);
-        if (idx == null) {
-          unknown = true;
-          break;
-        }
+        // Above the voxel grid is open sky.
+        if (sy - MESH_Y_OFFSET + PAD >= TOTAL_SIZE_Y) break;
 
-        // Solid terrain is represented by density > ISO_LEVEL (inside the surface).
-        // Liquids (water/ice) are stored in "air space" (density <= ISO_LEVEL), so they do not occlude.
-        if (chunk.density[idx] > ISO_LEVEL) {
-          hitDist = d;
-          break;
-        }
+        const chunk = this.getChunkAtWorld(sx, sz);
+        if (!chunk) { unknown = true; break; }
+        const idx = this.getIndexInChunk(chunk, sx, sy, sz);
+        if (idx == null) { unknown = true; break; }
+
+        // Solid terrain is density > ISO_LEVEL; liquids live in air space and don't occlude.
+        if (chunk.density[idx] > ISO_LEVEL) { escaped = false; break; }
       }
 
-      // If we couldn't query due to missing chunks, skip this ray (keep last known skyVisibility).
+      // Missing chunks: skip this ray (callers keep their last estimate on null).
       if (unknown) continue;
-
-      sum += THREE.MathUtils.clamp(hitDist / maxDistance, 0, 1);
-      count++;
+      sum += escaped ? weight : 0;
+      count += weight;
     }
 
     if (count === 0) return null;
@@ -203,3 +202,8 @@ export class TerrainRuntime {
 
 // Singleton instance used across gameplay systems.
 export const terrainRuntime = new TerrainRuntime();
+
+// Console debugging: window.__terrainRuntime.estimateSkyVisibility(x, y, z)
+if (typeof window !== 'undefined') {
+  (window as unknown as { __terrainRuntime?: TerrainRuntime }).__terrainRuntime = terrainRuntime;
+}

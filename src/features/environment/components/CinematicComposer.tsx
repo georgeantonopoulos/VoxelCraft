@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { EffectComposer, Bloom, N8AO, ChromaticAberration, SMAA } from '@react-three/postprocessing';
 import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { useGroveStore } from '@state/GroveStore';
-import { GroveGradeEffect, SunShaftsEffect } from '@features/environment/effects/GroveEffects';
+import { GroveGradeEffect, SunShaftsEffect, ScrubEffect } from '@features/environment/effects/GroveEffects';
 
 /** Seconds the restoration pulse takes to sweep across the screen. */
 const PULSE_DURATION = 3.5;
@@ -39,7 +39,7 @@ export interface CinematicComposerProps {
  * CinematicComposer — the Grove's post stack.
  *
  * Pass layout (postprocessing merges adjacent non-convolution effects):
- *   SunShafts (convolution) → N8AO → Bloom + Grove Grade (merged) → [CA] → SMAA
+ *   SunShafts or Scrub (convolution, NaN/Inf removal) → N8AO → Bloom + Grove Grade (merged) → [CA] → SMAA
  *
  * SunShafts must precede N8AO: sampling the depth buffer after N8AO's pass
  * forms a framebuffer feedback loop (GL_INVALID_OPERATION).
@@ -63,6 +63,9 @@ export const CinematicComposer: React.FC<CinematicComposerProps> = (props) => {
 
   const grade = useMemo(() => new GroveGradeEffect(), []);
   const shafts = useMemo(() => (godRays ? new SunShaftsEffect(24) : null), [godRays]);
+  // SunShafts scrubs NaN/Inf itself; otherwise a dedicated pass protects bloom.
+  const scrub = useMemo(() => (godRays ? null : new ScrubEffect()), [godRays]);
+  useEffect(() => () => scrub?.dispose(), [scrub]);
 
   useEffect(() => () => grade.dispose(), [grade]);
   useEffect(() => () => shafts?.dispose(), [shafts]);
@@ -127,6 +130,7 @@ export const CinematicComposer: React.FC<CinematicComposerProps> = (props) => {
     <EffectComposer multisampling={0}>
       <>
         {shafts && <primitive object={shafts} />}
+        {scrub && bloomEnabled && <primitive object={scrub} />}
         {aoEnabled && (
           <N8AO
             halfRes={aoQuality === 'performance'}

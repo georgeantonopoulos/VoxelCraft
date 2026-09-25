@@ -76,7 +76,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                     vec3 radial = rel - axis * along;
                     float x = dot(radial, tangent);
                     float z = dot(radial, bitangent);
-                    float angle = atan(x, z);
+                    float angle = ((abs(x) + abs(z)) < 1e-6 ? 0.0 : atan(x, z));
 
                     float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
                     vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);

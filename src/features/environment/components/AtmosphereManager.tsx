@@ -496,7 +496,7 @@ export const SunFollower: React.FC<{
               float dist = length(centered);
               float mask = smoothstep(0.5, 0.46, dist);
               if (mask <= 0.0) discard;
-              float angle = atan(centered.y, centered.x);
+              float angle = ((abs(centered.y) + abs(centered.x)) < 1e-6 ? 0.0 : atan(centered.y, centered.x));
               float t = uTime;
               float coreInner = 1.0 / (dist * 45.0 + 0.4);
               coreInner = pow(coreInner, 3.2);

@@ -34,7 +34,6 @@ export const DebugControls: React.FC<{
     setTerrainShaderFogEnabled: (v: boolean) => void;
     setTerrainShaderFogStrength: (v: number) => void;
     setTerrainThreeFogEnabled: (v: boolean) => void;
-    setTerrainFadeEnabled: (v: boolean) => void;
     setTerrainWetnessEnabled: (v: boolean) => void;
     setTerrainMossEnabled: (v: boolean) => void;
     setTerrainRoughnessMin: (v: number) => void;
@@ -230,7 +229,6 @@ export const DebugControls: React.FC<{
                     fragNormalScale: { value: 0.5, min: 0.1, max: 1.0, step: 0.05, onChange: props.setFragmentNormalScale, label: 'Normal Scale' },
                 }, { collapsed: true }),
                 'Rendering': folder({
-                    terrainFade: { value: true, onChange: (v) => props.setTerrainFadeEnabled(!!v), label: 'Chunk Fade' },
                     shaderFog: { value: true, onChange: (v) => props.setTerrainShaderFogEnabled(!!v), label: 'Shader Fog' },
                     shaderFogStr: { value: 0.8, min: 0.0, max: 1.5, step: 0.05, onChange: props.setTerrainShaderFogStrength, label: 'Fog Strength' },
                     threeFog: { value: true, onChange: (v) => props.setTerrainThreeFogEnabled(!!v), label: 'Three Fog' },

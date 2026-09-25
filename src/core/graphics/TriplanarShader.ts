@@ -59,6 +59,12 @@ export const triplanarVertexShader = `
     return mix(xz, yOff, f.y * 0.5);
   }
 
+  // normalize() of a zero vector is undefined (NaN on most GPUs).
+  vec3 safeNormalize3(vec3 v, vec3 fallback) {
+    float len = length(v);
+    return len > 1e-5 ? v / len : fallback;
+  }
+
   vec3 applyDominantNormal(vec3 n, vec3 worldPos, float channel, float weight) {
     vec3 nn = normalize(n);
     vec2 wind = safeNormalize2(uWindDirXZ);
@@ -104,7 +110,7 @@ export const triplanarVertexShader = `
       strataDir = strataDir - nn * dot(strataDir, nn);
 
       // Simplified weathering direction (derived from position, no extra noise)
-      vec3 weatherDir = normalize(vec3(sin(worldPos.x * 0.3), 0.0, cos(worldPos.z * 0.3)));
+      vec3 weatherDir = safeNormalize3(vec3(sin(worldPos.x * 0.3), 0.0, cos(worldPos.z * 0.3)), vec3(1.0, 0.0, 0.0));
       weatherDir = weatherDir - nn * dot(weatherDir, nn);
 
       nn = normalize(nn + strataDir * strataContrib * base + weatherDir * weatherContrib * base);
@@ -116,11 +122,11 @@ export const triplanarVertexShader = `
       float clumps = cheapNoise(worldPos * 0.6) * 2.0 - 1.0;
 
       // Direction derived from position (no extra noise calls)
-      vec3 g = normalize(vec3(
+      vec3 g = safeNormalize3(vec3(
         sin(worldPos.x * 0.7 + 50.0),
         sin(worldPos.y * 0.7 + 25.0) * 0.5,
         cos(worldPos.z * 0.7 + 50.0)
-      ));
+      ), vec3(1.0, 0.0, 0.0));
       g = g - nn * dot(g, nn);
       nn = normalize(nn + g * (clumps * base * 0.25));
     }
@@ -153,7 +159,7 @@ export const triplanarVertexShader = `
       // Single noise sample
       float surface = cheapNoise(worldPos * 0.3) * 2.0 - 1.0;
 
-      vec3 g = normalize(vec3(sin(worldPos.x * 0.8), 0.0, cos(worldPos.z * 0.8)));
+      vec3 g = safeNormalize3(vec3(sin(worldPos.x * 0.8), 0.0, cos(worldPos.z * 0.8)), vec3(1.0, 0.0, 0.0));
       g = g - nn * dot(g, nn);
       nn = normalize(nn + g * (surface * base * 0.1));
     }
@@ -341,7 +347,10 @@ export const triplanarFragmentShader = `
                      + hp2.z * noiseDataHigh.g * 0.1 * fineDetailBoost;
 
       // Create tangent-space perturbation vector
-      vec3 tangent = normalize(vec3(1.0, 0.0, 0.0) - geometryNormal * geometryNormal.x);
+      // Reference axis must not be parallel to the normal: with N = (+-1,0,0) the old
+      // (1,0,0) - N*N.x was the zero vector and normalize() produced NaN pixels.
+      vec3 tangentRef = abs(geometryNormal.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+      vec3 tangent = normalize(tangentRef - geometryNormal * dot(geometryNormal, tangentRef));
       vec3 bitangent = normalize(cross(geometryNormal, tangent));
 
       vec3 perturbation = tangent * perturbX + bitangent * perturbZ;

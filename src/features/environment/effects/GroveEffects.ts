@@ -60,6 +60,11 @@ float hash12(vec2 p) {
 }
 
 void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+#ifdef NAN_DEBUG
+  // ?nandebug: paint NaN/Inf scene pixels magenta to locate the offending material.
+  vec3 probe = inputColor.rgb;
+  if (any(isnan(probe)) || any(isinf(probe))) { outputColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
+#endif
   vec3 c = inputColor.rgb * uExposure;
 
   // Restoration pulse: a Lumina-coloured ring sweeping outward from the centre.
@@ -109,8 +114,10 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
 
 export class GroveGradeEffect extends Effect {
   constructor() {
+    const nanDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('nandebug');
     super('GroveGradeEffect', GRADE_FRAGMENT, {
       blendFunction: BlendFunction.SRC,
+      defines: nanDebug ? new Map([['NAN_DEBUG', '1']]) : new Map(),
       uniforms: new Map<string, THREE.Uniform>([
         ['uExposure', new THREE.Uniform(1.0)],
         ['uVitality', new THREE.Uniform(0.3)],
@@ -156,9 +163,15 @@ float shaftHash(vec2 p) {
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+vec3 scrub(vec3 c) {
+  // NaN/Inf from any material would be smeared across the whole frame by bloom.
+  return (any(isnan(c)) || any(isinf(c))) ? vec3(0.0) : min(c, vec3(65000.0));
+}
+
 void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
+  vec3 base = scrub(inputColor.rgb);
   if (uStrength < 0.001) {
-    outputColor = inputColor;
+    outputColor = vec4(base, inputColor.a);
     return;
   }
 
@@ -170,7 +183,7 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   float weight = 1.0;
   for (int i = 0; i < SHAFT_STEPS; i++) {
     float sky = step(0.99999, readDepth(p));
-    vec3 texel = texture2D(inputBuffer, p).rgb;
+    vec3 texel = scrub(texture2D(inputBuffer, p).rgb);
     float bright = smoothstep(1.2, 4.0, dot(texel, vec3(0.2126, 0.7152, 0.0722)));
     float nearSun = exp(-length((p - uSunUv) * vec2(uAspect, 1.0)) * 4.0);
     acc += max(sky * 0.65, bright) * nearSun * weight;
@@ -181,7 +194,7 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
 
   float falloff = exp(-length(delta * vec2(uAspect, 1.0)) * 1.1);
   vec3 shafts = uShaftColor * acc * falloff * uStrength;
-  outputColor = vec4(inputColor.rgb + shafts, inputColor.a);
+  outputColor = vec4(base + shafts, inputColor.a);
 }
 `;
 
@@ -214,5 +227,29 @@ export class SunShaftsEffect extends Effect {
 
   set aspect(v: number) {
     this.uniforms.get('uAspect')!.value = v;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scrub: replaces NaN/Inf pixels before bloom. A single NaN pixel (e.g. an
+// undefined atan at a branch tip) otherwise spreads through bloom's blur and
+// blacks out the entire frame. Marked CONVOLUTION so it gets its own pass
+// ahead of Bloom; only used when SunShafts (which scrubs too) is disabled.
+// ---------------------------------------------------------------------------
+
+const SCRUB_FRAGMENT = /* glsl */ `
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  vec3 c = inputColor.rgb;
+  bool bad = any(isnan(c)) || any(isinf(c));
+  outputColor = vec4(bad ? vec3(0.0) : min(c, vec3(65000.0)), inputColor.a);
+}
+`;
+
+export class ScrubEffect extends Effect {
+  constructor() {
+    super('ScrubEffect', SCRUB_FRAGMENT, {
+      blendFunction: BlendFunction.SRC,
+      attributes: EffectAttribute.CONVOLUTION,
+    });
   }
 }

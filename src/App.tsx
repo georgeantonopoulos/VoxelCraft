@@ -31,8 +31,10 @@ import { CinematicCamera } from '@features/environment/components/CinematicCamer
 import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
 import { EnvironmentProbe } from '@features/environment/components/EnvironmentProbe';
 import { PointLightPool } from '@core/graphics/PointLightPool';
+import { DebugHandles } from '@core/utils/DebugHandles';
 import { GroveDirector } from '@features/grove/GroveDirector';
 import { useGroveStore } from '@state/GroveStore';
+import { useEnvironmentStore } from '@state/EnvironmentStore';
 
 // UI
 import { HUD as UI } from '@ui/HUD';
@@ -174,6 +176,16 @@ const App: React.FC = () => {
           z: Number(playerState.z.toFixed(2)),
           rotation: Number(playerState.rotation.toFixed(3)),
         } : null,
+        spawn: spawnPos,
+        environment: (() => {
+          const env = useEnvironmentStore.getState();
+          return {
+            sunY: Number(sunDirection.y.toFixed(3)),
+            undergroundBlend: Number(env.undergroundBlend.toFixed(2)),
+            skyVisibility: Number(env.skyVisibility.toFixed(2)),
+            underwaterBlend: Number(env.underwaterBlend.toFixed(2)),
+          };
+        })(),
         grove: (() => {
           const grove = useGroveStore.getState();
           return {
@@ -198,7 +210,7 @@ const App: React.FC = () => {
       delete (window as any).advanceTime;
       delete (window as any).render_game_to_text;
     };
-  }, [gameStarted, terrainLoaded, worldType]);
+  }, [gameStarted, terrainLoaded, worldType, spawnPos]);
 
   useEffect(() => {
     if (terrainLoaded && !collidersReady) {
@@ -232,7 +244,6 @@ const App: React.FC = () => {
   const [terrainShaderFogEnabled, setTerrainShaderFogEnabled] = useState(true);
   const [terrainShaderFogStrength, setTerrainShaderFogStrength] = useState(0.8);
   const [terrainThreeFogEnabled, setTerrainThreeFogEnabled] = useState(true);
-  const [terrainFadeEnabled, setTerrainFadeEnabled] = useState(true);
   const [terrainWetnessEnabled, setTerrainWetnessEnabled] = useState(true);
   const [terrainMossEnabled, setTerrainMossEnabled] = useState(true);
   const [terrainRoughnessMin, setTerrainRoughnessMin] = useState(0.0);
@@ -393,7 +404,6 @@ const App: React.FC = () => {
           setTerrainShaderFogEnabled={setTerrainShaderFogEnabled}
           setTerrainShaderFogStrength={setTerrainShaderFogStrength}
           setTerrainThreeFogEnabled={setTerrainThreeFogEnabled}
-          setTerrainFadeEnabled={setTerrainFadeEnabled}
           setTerrainWetnessEnabled={setTerrainWetnessEnabled}
           setTerrainMossEnabled={setTerrainMossEnabled}
           setTerrainRoughnessMin={setTerrainRoughnessMin}
@@ -420,7 +430,7 @@ const App: React.FC = () => {
             bloomIntensity, bloomThreshold, exposureSurface, exposureCaveMax, exposureUnderwater,
             fogNear, fogFar, atmosphereHaze, atmosphereBrightness, sunIntensityMul, ambientIntensityMul, moonIntensityMul,
             terrainShaderFogEnabled, terrainShaderFogStrength,
-            terrainThreeFogEnabled, terrainFadeEnabled, terrainWetnessEnabled, terrainMossEnabled,
+            terrainThreeFogEnabled, terrainWetnessEnabled, terrainMossEnabled,
             terrainRoughnessMin, bedrockPlaneEnabled, terrainPolygonOffsetEnabled,
             terrainPolygonOffsetFactor, terrainPolygonOffsetUnits, levaScale, levaWidth,
             terrainChunkTintEnabled, terrainWireframeEnabled, terrainWeightsView,
@@ -477,6 +487,7 @@ const App: React.FC = () => {
           {gameStarted && <EnvironmentProbe />}
           {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}
           <PointLightPool />
+          <DebugHandles />
           <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />
 
@@ -514,7 +525,6 @@ const App: React.FC = () => {
                   terrainShaderFogEnabled={terrainShaderFogEnabled}
                   terrainShaderFogStrength={terrainShaderFogStrength}
                   terrainThreeFogEnabled={terrainThreeFogEnabled}
-                  terrainFadeEnabled={terrainFadeEnabled}
                   terrainWetnessEnabled={terrainWetnessEnabled}
                   terrainMossEnabled={terrainMossEnabled}
                   terrainRoughnessMin={terrainRoughnessMin}

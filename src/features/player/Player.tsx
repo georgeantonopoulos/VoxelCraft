@@ -41,6 +41,8 @@ const CAPSULE_HALF_HEIGHT_CROUCHED = 0.1;
 const CAPSULE_RADIUS = 0.4;
 /** Distance below the capsule's feet that still counts as standing (slopes, steps). */
 const GROUND_TOLERANCE = 0.35;
+/** How far below the spawn point to look for a terrain collider before releasing the player. */
+const SPAWN_GROUND_SEARCH = 64;
 const CAMERA_PUSH_DIRECTIONS = [
   { x: 1, y: 0, z: 0 },   // Right
   { x: -1, y: 0, z: 0 },  // Left
@@ -93,10 +95,16 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const STORE_SYNC_INTERVAL = 100; // ms
   const STORE_SYNC_DISTANCE_SQ = 0.25; // 0.5m squared
 
+  // Spawn guard: the player's chunk collider can arrive a few frames after the
+  // player mounts. During a load hitch Rapier catch-up steps dropped the body
+  // straight through the (not yet present) surface into caves below. Hold the
+  // body weightless at its spawn point until a downward ray finds ground.
+  const [spawnSettled, setSpawnSettled] = useState(false);
+
   useEffect(() => {
     if (!body.current) return;
-    body.current.setGravityScale(isFlying ? 0 : 1, true);
-  }, [isFlying]);
+    body.current.setGravityScale(isFlying || !spawnSettled ? 0 : 1, true);
+  }, [isFlying, spawnSettled]);
 
   useEffect(() => {
     const handleLumina = () => {
@@ -119,6 +127,14 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     if (!body.current) {
       frameProfiler.end('player');
       return;
+    }
+
+    if (!spawnSettled) {
+      const ray = new rapier.Ray({ x: position[0], y: position[1], z: position[2] }, { x: 0, y: -1, z: 0 });
+      const ground = world.castRay(ray, SPAWN_GROUND_SEARCH, true, undefined, undefined, undefined, body.current);
+      body.current.setTranslation({ x: position[0], y: position[1], z: position[2] }, true);
+      body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      if (ground) setSpawnSettled(true);
     }
 
     const pos = body.current.translation();
@@ -322,7 +338,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   });
 
   return (
-    <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} enabledRotations={[false, false, false]} friction={0}>
+    <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} gravityScale={0} enabledRotations={[false, false, false]} friction={0}>
       <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, CAPSULE_RADIUS]} />
     </RigidBody>
   );

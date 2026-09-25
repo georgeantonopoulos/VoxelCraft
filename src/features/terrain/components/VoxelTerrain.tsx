@@ -811,7 +811,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
     // Terrain worker pool: sized to the machine, load-aware dispatch, and a
     // priority lane so REMESH after digging never waits behind GENERATE jobs.
-    const pool = new WorkerPool(new URL('../workers/terrain.worker.ts', import.meta.url), {
+    const pool = new WorkerPool(() => new Worker(new URL('../workers/terrain.worker.ts', import.meta.url), { type: 'module' }), {
       completionTypes: ['GENERATED', 'REMESHED', 'ERROR'],
     });
     poolRef.current = pool;

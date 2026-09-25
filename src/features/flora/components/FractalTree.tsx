@@ -405,7 +405,7 @@ export const FractalTree: React.FC<FractalTreeProps> = ({
 
                         void main() {
                             // UV Mapping for Cylindrical Bark
-                            float angle = atan(vPos.x, vPos.z);
+                            float angle = ((abs(vPos.x) + abs(vPos.z)) < 1e-6 ? 0.0 : atan(vPos.x, vPos.z));
                             vec2 barkUV = vec2(angle * 2.0, vPos.y * 6.0);
 
                             // Multi-scale noise sampling

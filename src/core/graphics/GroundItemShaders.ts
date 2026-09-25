@@ -62,7 +62,7 @@ export const STICK_SHADER = {
 
     void main() {
         // Cylindrical UV for bark pattern
-        float angle = atan(vLocalPos.x, vLocalPos.z);
+        float angle = ((abs(vLocalPos.x) + abs(vLocalPos.z)) < 1e-6 ? 0.0 : atan(vLocalPos.x, vLocalPos.z));
         vec2 barkUV = vec2(angle * 2.0, vLocalPos.y * 8.0);
 
         // Multi-scale noise sampling
@@ -496,7 +496,7 @@ export const TORCH_SHADER = {
 
     void main() {
         // Cylindrical UV for wood grain
-        float angle = atan(vLocalPos.x, vLocalPos.z);
+        float angle = ((abs(vLocalPos.x) + abs(vLocalPos.z)) < 1e-6 ? 0.0 : atan(vLocalPos.x, vLocalPos.z));
         vec2 woodUV = vec2(angle * 2.0, vLocalPos.y * 6.0);
 
         // Multi-scale noise

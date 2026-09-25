@@ -503,23 +503,39 @@ export function buildRemeshedChunk(request: RemeshRequest, grownTrees: GrownTree
         density, material, wetness, mossiness, remeshLightGrid,
         humidityConfig, cx * CHUNK_SIZE_XZ, cz * CHUNK_SIZE_XZ, materialOnly
     ) as MeshData;
-    const response = {
-        key, cx, cz, version, materialOnly, lightGrid: remeshLightGrid, meshLightColors: mesh.lightColors, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask,
-        colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
+    const response: Record<string, unknown> = {
+        key, cx, cz, version, materialOnly, meshLightColors: mesh.lightColors, meshPositions: mesh.positions, meshIndices: mesh.indices, meshMatWeightsA: mesh.matWeightsA, meshMatWeightsB: mesh.matWeightsB, meshMatWeightsC: mesh.matWeightsC, meshMatWeightsD: mesh.matWeightsD, meshNormals: mesh.normals, meshWetness: mesh.wetness, meshMossiness: mesh.mossiness, meshCavity: mesh.cavity, meshBaseHumidity: mesh.baseHumidity, meshTreeHumidityBoost: mesh.treeHumidityBoost, meshWaterPositions: mesh.waterPositions, meshWaterIndices: mesh.waterIndices, meshWaterNormals: mesh.waterNormals, meshWaterShoreMask: mesh.waterShoreMask
     };
     const transfers: Transferable[] = [
-        mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors?.buffer, remeshLightGrid.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
+        mesh.positions.buffer, mesh.indices.buffer, mesh.matWeightsA.buffer, mesh.matWeightsB.buffer, mesh.matWeightsC.buffer, mesh.matWeightsD.buffer, mesh.normals.buffer, mesh.wetness.buffer, mesh.mossiness.buffer, mesh.cavity.buffer, mesh.lightColors?.buffer, mesh.baseHumidity?.buffer, mesh.treeHumidityBoost?.buffer, mesh.waterPositions.buffer, mesh.waterIndices.buffer, mesh.waterNormals.buffer, mesh.waterShoreMask.buffer
     ].filter(Boolean);
+
+    const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
+    // The grass material mask follows material edits in both modes.
+    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
+    response.grassMaterialTex = grassMaterialTex;
+    transfers.push(grassMaterialTex.buffer);
+
+    if (materialOnly) {
+        // Shape is unchanged: the light grid, collider and shape-derived grass
+        // textures stay valid. Omit the keys entirely - the main thread spreads
+        // this payload over the chunk, so even `undefined` would erase data.
+        return { payload: response, transfers };
+    }
+
+    Object.assign(response, {
+        lightGrid: remeshLightGrid,
+        colliderPositions: mesh.colliderPositions, colliderIndices: mesh.colliderIndices, colliderHeightfield: mesh.colliderHeightfield, isHeightfield: mesh.isHeightfield
+    });
+    transfers.push(remeshLightGrid.buffer);
     if (mesh.colliderPositions) transfers.push(mesh.colliderPositions.buffer); if (mesh.colliderIndices) transfers.push(mesh.colliderIndices.buffer); if (mesh.colliderHeightfield) transfers.push(mesh.colliderHeightfield.buffer);
     // Grass placement textures follow the edited voxels (blades used to float
     // over dug holes). The biome texture only depends on position: keep it.
-    const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
     const grassHeightTex = generateSurfaceHeightTexture(density, sizeX, sizeY, pad);
-    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
     const grassNormalTex = generateNormalTexture(density, sizeX, sizeY, pad);
     const grassCaveTex = generateCaveMaskTexture(density, sizeX, sizeY, pad);
-    Object.assign(response, { grassHeightTex, grassMaterialTex, grassNormalTex, grassCaveTex });
-    transfers.push(grassHeightTex.buffer, grassMaterialTex.buffer, grassNormalTex.buffer, grassCaveTex.buffer);
+    Object.assign(response, { grassHeightTex, grassNormalTex, grassCaveTex });
+    transfers.push(grassHeightTex.buffer, grassNormalTex.buffer, grassCaveTex.buffer);
 
     return { payload: response, transfers };
 }

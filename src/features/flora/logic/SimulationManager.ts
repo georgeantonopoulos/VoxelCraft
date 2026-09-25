@@ -1,6 +1,9 @@
 
 import { metadataDB } from '@state/MetadataDB';
 
+// Timing logs only with ?profile (see CLAUDE.md, Logging Best Practices).
+const PROFILE_LOGS = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('profile');
+
 export interface SimUpdate {
     key: string;
     material: Uint8Array;
@@ -58,7 +61,7 @@ export class SimulationManager {
                 }
 
                 const duration = performance.now() - msgStart;
-                if (duration > 5) {
+                if (duration > 5 && PROFILE_LOGS) {
                     console.warn(`[SimulationManager] CHUNKS_UPDATED handler took ${duration.toFixed(1)}ms for ${updates.length} chunks`);
                 }
             }

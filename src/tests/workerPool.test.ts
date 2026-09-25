@@ -15,7 +15,7 @@ describe('WorkerPool scheduling', () => {
   beforeEach(() => { FakeWorker.instances = []; vi.stubGlobal('Worker', FakeWorker); });
   afterEach(() => vi.unstubAllGlobals());
 
-  const make = (size: number) => new WorkerPool(new URL('http://x/w.js'), { size, completionTypes: ['DONE'] });
+  const make = (size: number) => new WorkerPool(() => new Worker('w.js'), { size, completionTypes: ['DONE'] });
 
   it('spreads bulk jobs across non-priority workers by load', () => {
     const pool = make(4);

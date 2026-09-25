@@ -26,11 +26,18 @@ export class WorkerPool {
     return Math.max(2, Math.min(6, cores - 1));
   }
 
-  constructor(workerUrl: URL, options: WorkerPoolOptions = {}) {
+  /**
+   * @param createWorker Must contain the literal
+   *   `new Worker(new URL('./x.worker.ts', import.meta.url), { type: 'module' })`
+   *   at the call site: Vite only bundles workers written in that exact form.
+   *   Passing a URL through a variable made production builds inline the raw
+   *   TypeScript as a data: URL, so no worker ever started.
+   */
+  constructor(createWorker: () => Worker, options: WorkerPoolOptions = {}) {
     const size = Math.max(1, options.size ?? WorkerPool.recommendedSize());
     this.completionTypes = new Set(options.completionTypes ?? []);
     for (let i = 0; i < size; i++) {
-      const worker = new Worker(workerUrl, { type: 'module' });
+      const worker = createWorker();
       this.inFlight.push(0);
       worker.addEventListener('message', (e: MessageEvent) => {
         const type = (e.data as { type?: string } | null)?.type;

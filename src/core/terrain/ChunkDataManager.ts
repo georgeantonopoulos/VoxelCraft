@@ -54,7 +54,7 @@ const PLAYER_OWNED_FIELDS: ReadonlySet<string> = new Set([
   'stickPositions', 'drySticks', 'jungleSticks', 'stickHotspots',
   'rockPositions', 'rockDataBuckets', 'rockHotspots',
   'floraPositions', 'floraHotspots',
-  'treePositions', 'treeInstanceBatches', 'largeRockPositions',
+  'treePositions', 'treeInstanceBatches', 'largeRockPositions', 'vegetationData',
   'terrainVersion', 'visualVersion',
 ]);
 
@@ -523,6 +523,8 @@ export class ChunkDataManager {
     const source = incoming as unknown as Record<string, unknown>;
     for (const field of Object.keys(source)) {
       if (PLAYER_OWNED_FIELDS.has(field)) continue;
+      // Absent-but-declared fields (undefined) must not erase existing data.
+      if (source[field] === undefined) continue;
       target[field] = source[field];
     }
     // Versions only move forward: stale-response checks compare against them.
