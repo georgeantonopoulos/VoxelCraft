@@ -18,6 +18,13 @@ export const StartupScreen: React.FC<StartupScreenProps> = ({ onEnter, loaded })
         />
       </div>
 
+      {/* Premise */}
+      <p className="mb-8 max-w-[520px] px-6 text-center text-sm leading-relaxed text-emerald-100/70">
+        The Lumina that once connected every land is fading. Gather, craft and wander,
+        follow your <span className="text-cyan-300">Lumina Sense</span> to the dormant Root Hollows,
+        and give them back their light. <span className="text-amber-200/90">Become the Keeper of the Grove.</span>
+      </p>
+
       {/* Loading / Enter */}
       <div className="flex flex-col items-center gap-4 h-16">
         {!loaded ? (
@@ -39,7 +46,7 @@ export const StartupScreen: React.FC<StartupScreenProps> = ({ onEnter, loaded })
       </div>
 
       <div className="absolute bottom-8 text-white/20 text-[10px] font-mono tracking-widest">
-        VOXEL CRAFT ALPHA
+        THE GROVE · VOXELCRAFT
       </div>
     </div>
   );

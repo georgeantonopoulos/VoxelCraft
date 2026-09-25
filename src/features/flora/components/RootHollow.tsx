@@ -8,6 +8,8 @@ import { ItemType } from '@/types';
 import { FractalTree } from '@features/flora/components/FractalTree';
 import { LumaSwarm } from '@features/flora/components/LumaSwarm';
 import { HollowFireflies } from '@features/flora/components/HollowFireflies';
+import { useGroveStore } from '@state/GroveStore';
+import { emitGroveEvent, hollowIdAt } from '@features/grove/groveEvents';
 
 const stumpUrl = "/models/tree_stump.glb";
 
@@ -34,7 +36,13 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     position,
     normal = [0, 1, 0]
 }) => {
-    const [status, setStatus] = useState<'IDLE' | 'CHARGING' | 'GROWING'>('IDLE');
+    const hollowId = useMemo(() => hollowIdAt(position[0], position[2]), [position]);
+    // Restored hollows (persisted per world in GroveStore) come back already grown,
+    // so remounting a chunk never resets the Keeper's work.
+    const [status, setStatus] = useState<'IDLE' | 'CHARGING' | 'GROWING'>(
+        () => (useGroveStore.getState().restoredHollows[hollowId] ? 'GROWING' : 'IDLE')
+    );
+    const restoredOnMountRef = useRef(status === 'GROWING');
     const [swarmVisible, setSwarmVisible] = useState(false);
     const [swarmDissipating, setSwarmDissipating] = useState(false);
 
@@ -82,11 +90,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         if (dissipateTimerRef.current) { clearTimeout(dissipateTimerRef.current); dissipateTimerRef.current = null; }
 
         if (status === 'CHARGING') {
-            console.log('[RootHollow] Starting 10 second particle formation timer');
             setSwarmDissipating(false);
             growTimerRef.current = setTimeout(() => {
-                console.log('[RootHollow] Timer complete, transitioning to GROWING');
                 setStatus('GROWING');
+                if (!restoredOnMountRef.current) {
+                    emitGroveEvent({ type: 'hollow-restored', hollowId, x: posVec.x, y: posVec.y, z: posVec.z });
+                }
             }, 10000);
         }
 
@@ -101,15 +110,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                     position: posVec.clone(),
                     grownAt: Date.now()
                 });
-                console.log('[RootHollow] Registered grown tree for humidity spreading:', treeEntityId);
             }
 
             dissipateStartTimerRef.current = setTimeout(() => {
-                console.log('[RootHollow] Starting swarm dissipation');
                 setSwarmDissipating(true);
             }, 2200);
             dissipateTimerRef.current = setTimeout(() => {
-                console.log('[RootHollow] Hiding swarm');
                 setSwarmVisible(false);
             }, 3800);
         }
@@ -119,7 +125,18 @@ export const RootHollow: React.FC<RootHollowProps> = ({
             if (dissipateStartTimerRef.current) clearTimeout(dissipateStartTimerRef.current);
             if (dissipateTimerRef.current) clearTimeout(dissipateTimerRef.current);
         };
-    }, [status, treeEntityId, posVec]);
+    }, [status, treeEntityId, posVec, hollowId]);
+
+    const absorb = (entityId: string) => {
+        removeEntity(entityId);
+        setStatus('CHARGING');
+        setSwarmVisible(true);
+        setSwarmDissipating(false);
+        emitGroveEvent({ type: 'hollow-awakened', hollowId, x: posVec.x, y: posVec.y, z: posVec.z });
+        window.dispatchEvent(new CustomEvent('vc-audio-play', {
+            detail: { soundId: 'pickup_item', options: { volume: 0.5, pitch: 0.6 } }
+        }));
+    };
 
     const frameCount = useRef(0);
     useFrame((state) => {
@@ -142,17 +159,12 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 // Flora entity exists but RigidBody ref not yet populated - try position fallback
                 const entityPos = entity.position;
                 if (entityPos) {
-                    const distSq = entityPos.distanceToSquared(posVec);
                     // Use horizontal distance check (ignore Y) with generous radius
                     const dx = entityPos.x - posVec.x;
                     const dz = entityPos.z - posVec.z;
                     const horizDistSq = dx * dx + dz * dz;
                     if (horizDistSq < 4.0) { // 2 units radius
-                        console.log('[RootHollow] Flora detected via position fallback, absorbing');
-                        removeEntity(entity.id);
-                        setStatus('CHARGING');
-                        setSwarmVisible(true);
-                        setSwarmDissipating(false);
+                        absorb(entity.id);
                         return;
                     }
                 }
@@ -170,11 +182,7 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 const velSq = vel.x ** 2 + vel.y ** 2 + vel.z ** 2;
                 // More lenient velocity check - flora might still be settling
                 if (velSq < 0.5) {
-                    console.log('[RootHollow] Flora detected via physics body, absorbing');
-                    removeEntity(entity.id);
-                    setStatus('CHARGING');
-                    setSwarmVisible(true);
-                    setSwarmDissipating(false);
+                    absorb(entity.id);
                     return;
                 }
             }

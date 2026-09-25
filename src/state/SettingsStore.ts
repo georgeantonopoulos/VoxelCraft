@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type QualityPreset = 'low' | 'medium' | 'high' | 'custom';
+export type QualityPreset = 'low' | 'medium' | 'high' | 'ultra' | 'custom';
 export type InputMode = 'mouse' | 'touch';
 
 interface SettingsState {
@@ -12,6 +12,10 @@ interface SettingsState {
   ao: boolean;
   bloom: boolean;
   viewDistance: number; // multiplier for fog far
+  godRays: boolean; // screen-space sun shafts
+  antialias: boolean; // SMAA post-process anti-aliasing
+  dynamicResolution: boolean; // scale DPR down under load, back up with headroom
+  aoQuality: 'performance' | 'high';
 
   // Controls
   inputMode: InputMode;
@@ -25,6 +29,9 @@ interface SettingsState {
   setShadows: (enabled: boolean) => void;
   setAo: (enabled: boolean) => void;
   setBloom: (enabled: boolean) => void;
+  setGodRays: (enabled: boolean) => void;
+  setAntialias: (enabled: boolean) => void;
+  setDynamicResolution: (enabled: boolean) => void;
   setInputMode: (mode: InputMode) => void;
   toggleSettings: () => void;
 
@@ -53,6 +60,10 @@ export const useSettingsStore = create<SettingsState>()(
       ao: false,
       bloom: true,
       viewDistance: 1.0,
+      godRays: true,
+      antialias: true,
+      dynamicResolution: true,
+      aoQuality: 'performance',
       inputMode: getInitialInputMode(),
       isSettingsOpen: false,
 
@@ -66,6 +77,10 @@ export const useSettingsStore = create<SettingsState>()(
       setShadows: (enabled) => set({ shadows: enabled, qualityPreset: 'custom' }),
       setAo: (enabled) => set({ ao: enabled, qualityPreset: 'custom' }),
       setBloom: (enabled) => set({ bloom: enabled, qualityPreset: 'custom' }),
+      setGodRays: (enabled) => set({ godRays: enabled, qualityPreset: 'custom' }),
+      setAntialias: (enabled) => set({ antialias: enabled, qualityPreset: 'custom' }),
+      // Not a visual-quality knob, so it does not flip the preset to custom.
+      setDynamicResolution: (enabled) => set({ dynamicResolution: enabled }),
 
       setInputMode: (mode) => set({ inputMode: mode }),
 
@@ -78,6 +93,9 @@ export const useSettingsStore = create<SettingsState>()(
               shadows: false,
               ao: false,
               bloom: false,
+              godRays: false,
+              antialias: false,
+              aoQuality: 'performance',
               viewDistance: 0.6,
             });
             break;
@@ -86,6 +104,9 @@ export const useSettingsStore = create<SettingsState>()(
               shadows: true,
               ao: false,
               bloom: true,
+              godRays: false,
+              antialias: true,
+              aoQuality: 'performance',
               viewDistance: 0.8,
             });
             break;
@@ -94,7 +115,22 @@ export const useSettingsStore = create<SettingsState>()(
               shadows: true,
               ao: false, // AO is expensive - keep off by default even on high
               bloom: true,
+              godRays: true,
+              antialias: true,
+              aoQuality: 'performance',
               viewDistance: 1.0,
+            });
+            break;
+          case 'ultra':
+            // Full cinematic stack; dynamic resolution keeps it smooth under load.
+            set({
+              shadows: true,
+              ao: true,
+              bloom: true,
+              godRays: true,
+              antialias: true,
+              aoQuality: 'high',
+              viewDistance: 1.25,
             });
             break;
           case 'custom':
@@ -113,6 +149,10 @@ export const useSettingsStore = create<SettingsState>()(
         ao: state.ao,
         bloom: state.bloom,
         viewDistance: state.viewDistance,
+        godRays: state.godRays,
+        antialias: state.antialias,
+        dynamicResolution: state.dynamicResolution,
+        aoQuality: state.aoQuality,
         inputMode: state.inputMode,
       }),
     }

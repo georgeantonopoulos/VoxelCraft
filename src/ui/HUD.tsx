@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useMemo, useLayoutEffect } from 'react';
-import { useInventoryStore as useGameStore } from '@/state/InventoryStore';
 import { subscribeThrottled, PlayerPosition } from '@core/player/PlayerState';
 import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { TargetHealthBar } from '@/ui/TargetHealthBar';
+import { GroveHUD } from '@/ui/GroveHUD';
 
 // --- Minimap Configuration ---
 const MAP_SIZE = 64; // Reduced from 128 for better performance
@@ -114,10 +114,8 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 };
 
 export const HUD: React.FC = () => {
-  const inventoryCount = useGameStore((state) => state.inventoryCount);
-  const stickCount = useGameStore((state) => state.stickCount);
-  const stoneCount = useGameStore((state) => state.stoneCount);
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
+  const inputMode = useSettingsStore(s => s.inputMode);
 
   // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
   // This keeps the UI responsive without constant re-renders.
@@ -240,29 +238,14 @@ export const HUD: React.FC = () => {
         </div>
       )}
 
-      {/* Top Left: Controls Info */}
-      <div className="absolute top-4 left-4 text-slate-800 bg-white/70 px-3 py-2 rounded-lg shadow-lg backdrop-blur-md border border-white/40 max-w-[240px]">
-        <div className="flex items-center justify-between mb-1">
-          <h1 className="font-semibold text-sm text-emerald-700">Organic Voxel Engine</h1>
-        </div>
-        <div className="space-y-0.5 text-xs font-medium leading-tight">
-          <p>WASD + Space to move</p>
-          <p>Left Click: <span className="text-red-500 font-semibold">DIG</span> (pickaxe selected)</p>
-          <p>Right Click: <span className="text-emerald-600 font-semibold">USE</span> (place/throw)</p>
-          <p>
-            Q: <span className="text-cyan-600 font-semibold">Pick Up Items</span> (Flora: {inventoryCount}, Sticks: {stickCount}, Stones: {stoneCount})
-          </p>
-          <p>Scroll / 1-9: <span className="text-amber-500 font-semibold">Inventory</span></p>
-        </div>
-        {debugMode && placementDebug && (
-          <div className="mt-1 text-[10px] font-mono text-slate-700">
-            place: {placementDebug}
-          </div>
-        )}
-        <div className="mt-2 pt-2 border-t border-slate-300 text-[10px] font-mono opacity-80">
+      <GroveHUD showControls={inputMode === 'mouse'} />
+
+      {debugMode && (
+        <div className="absolute bottom-28 left-4 rounded bg-black/60 px-2 py-1 text-[10px] font-mono text-white/80">
           POS: {coords.x.toFixed(1)}, {coords.y.toFixed(1)}, {coords.z.toFixed(1)}
+          {placementDebug && <div>place: {placementDebug}</div>}
         </div>
-      </div>
+      )}
 
       {/* Bottom Left: Inventory Bar */}
       <InventoryBar />

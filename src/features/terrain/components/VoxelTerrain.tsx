@@ -10,6 +10,7 @@ import { useWorldStore, FloraHotspot, GroundHotspot } from '@state/WorldStore';
 import { CHUNK_SIZE_XZ, RENDER_DISTANCE } from '@/constants';
 import { MaterialType, ChunkState, ItemType } from '@/types';
 import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
+import { emitGroveEvent } from '@features/grove/groveEvents';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
@@ -714,6 +715,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
   const handleTreeFall = useCallback((tree: FallingTreeData) => {
     setFallingTrees(prev => [...prev, tree]);
+    emitGroveEvent({ type: 'tree-felled' });
   }, []);
 
   const handleLeafHit = useCallback((position: THREE.Vector3, color?: string) => {

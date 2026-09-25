@@ -5,6 +5,7 @@ import { useWorldStore } from '@state/WorldStore';
 import { Vector2, Vector3, Object3D, Matrix3, Quaternion } from 'three';
 import type { PointLight } from 'three';
 import { LuminaFlora } from '@features/flora/components/LuminaFlora';
+import { emitGroveEvent } from '@features/grove/groveEvents';
 import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
 import { ItemType } from '@/types';
 import { frameProfiler } from '@core/utils/FrameProfiler';
@@ -202,6 +203,7 @@ export const FloraPlacer: React.FC = () => {
                             rotation
                         });
                         emitDebug(`Placed Torch id=${id}`);
+                        emitGroveEvent({ type: 'torch-placed' });
                         // Consume a torch and stop holding it (back to slot 1 / empty).
                         state.removeItem(ItemType.TORCH, 1);
                         state.setSelectedSlotIndex(0);

@@ -204,15 +204,15 @@ export const DebugControls: React.FC<{
                     bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: props.setBloomThreshold, label: 'Threshold' },
                 }, { collapsed: true }),
                 'Exposure': folder({
-                    exposureSurface: { value: 0.6, min: 0.2, max: 1.5, step: 0.01, onChange: props.setExposureSurface, label: 'Surface' },
-                    exposureCaveMax: { value: 1.3, min: 0.4, max: 2.5, step: 0.01, onChange: props.setExposureCaveMax, label: 'Cave' },
-                    exposureUnderwater: { value: 0.8, min: 0.2, max: 1.2, step: 0.01, onChange: props.setExposureUnderwater, label: 'Underwater' },
+                    exposureSurface: { value: 1.0, min: 0.2, max: 2.0, step: 0.01, onChange: props.setExposureSurface, label: 'Surface' },
+                    exposureCaveMax: { value: 1.5, min: 0.4, max: 2.5, step: 0.01, onChange: props.setExposureCaveMax, label: 'Cave' },
+                    exposureUnderwater: { value: 0.9, min: 0.2, max: 1.5, step: 0.01, onChange: props.setExposureUnderwater, label: 'Underwater' },
                 }, { collapsed: true }),
                 'Effects': folder({
                     aoEnabled: { value: true, onChange: (v) => props.setAoEnabled(!!v), label: 'AO Enabled' },
                     aoIntensity: { value: 2.0, min: 0.0, max: 6.0, step: 0.1, onChange: props.setAoIntensity, label: 'AO Intensity' },
                     caOffset: { value: 0.00001, min: 0.0, max: 0.01, step: 0.00001, onChange: props.setCaOffset, label: 'Chrom. Abb.' },
-                    vignetteDarkness: { value: 0.5, min: 0.0, max: 1.0, step: 0.05, onChange: props.setVignetteDarkness, label: 'Vignette' },
+                    vignetteDarkness: { value: 0.35, min: 0.0, max: 1.0, step: 0.05, onChange: props.setVignetteDarkness, label: 'Vignette' },
                 }, { collapsed: true }),
             }, { collapsed: true }),
 

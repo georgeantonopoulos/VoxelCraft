@@ -167,6 +167,24 @@ Each shader has both `vertex` and `fragment` properties. **When modifying item v
 - FLORA: `uTime` (animated)
 - Instanced rendering adds: `aInstancePos`, `aInstanceNormal`, `aSeed` attributes
 
+### Grove Progression (Keeper's Path)
+
+Gameplay layer that gives the world a goal: restore dormant Root Hollows.
+- `src/features/grove/questLine.ts` - **Pure** rules: quest chain (+ endless "Renewal" tiers), ranks, essence, `computeVitality`, `strideMultiplier`. Unit tested in `src/tests/grove.test.ts`.
+- `src/state/GroveStore.ts` - Progression state, persisted to localStorage per world seed (`vc-grove-v1-<seed>`). Debug: `window.__groveStore.getState()`.
+- `src/features/grove/groveEvents.ts` - `vc-grove-event` bus (`hollow-awakened`, `hollow-restored`, `tree-felled`, `torch-placed`). Emit from gameplay code; never import GroveStore into terrain/flora logic.
+- `src/features/grove/GroveDirector.tsx` - Headless: inventory deltas → stats, biome discovery, nights endured, Lumina Sense compass (loaded-chunk hollows, else long-range Sacred Grove centre scan). Slow timers only.
+- `src/ui/GroveHUD.tsx` - Quest tracker, rank/essence/vitality, compass strip, toasts, H-toggle controls.
+- RootHollow reads `restoredHollows` on mount, so restored hollows stay grown across chunk reloads.
+
+### Post-Processing Pipeline
+
+`CinematicComposer.tsx`: SunShafts → N8AO → Bloom + GroveGrade (merged) → [underwater CA] → SMAA, `multisampling={0}`.
+- `effects/GroveEffects.ts`: `GroveGradeEffect` (exposure, AgX, vitality grade, restore pulse, underwater, vignette, grain) and `SunShaftsEffect` (depth + convolution). Uniforms are written in `useFrame`, **never via props** (prop changes recreate effects and recompile shaders).
+- SunShafts must stay before N8AO (otherwise GL feedback loop).
+- `AdaptiveResolution.tsx`: dynamic DPR (50/58 FPS hysteresis, min 0.55× of user resolution). Debug: `window.__vcDynamicResolution`.
+- Presets low/medium/high/ultra in `SettingsStore` (`godRays`, `antialias`, `dynamicResolution`, `aoQuality`).
+
 ## Critical Constants (src/constants.ts)
 
 ```
@@ -398,6 +416,9 @@ See `AGENTS.md` for:
    - Supporting partial recipe matching for guidance
 
 ## Known Bugs
+
+### Root Hollow placement tests time out (pre-existing)
+`biome.test.ts > Root Hollow Placement` (4 tests) exceed the 15s timeout on current hardware, before and after the Grove rework.
 
 ### FractalTree Not Growing (Identified 2026-01-05)
 **Status**: Active bug - FractalTree component does not visually grow when RootHollow transitions to GROWING state.

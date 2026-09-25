@@ -17,6 +17,19 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
   const qualityPreset = useSettingsStore(s => s.qualityPreset);
   const setQualityPreset = useSettingsStore(s => s.setQualityPreset);
 
+  const shadows = useSettingsStore(s => s.shadows);
+  const setShadows = useSettingsStore(s => s.setShadows);
+  const bloom = useSettingsStore(s => s.bloom);
+  const setBloom = useSettingsStore(s => s.setBloom);
+  const ao = useSettingsStore(s => s.ao);
+  const setAo = useSettingsStore(s => s.setAo);
+  const godRays = useSettingsStore(s => s.godRays);
+  const setGodRays = useSettingsStore(s => s.setGodRays);
+  const antialias = useSettingsStore(s => s.antialias);
+  const setAntialias = useSettingsStore(s => s.setAntialias);
+  const dynamicResolution = useSettingsStore(s => s.dynamicResolution);
+  const setDynamicResolution = useSettingsStore(s => s.setDynamicResolution);
+
   const inputMode = useSettingsStore(s => s.inputMode);
   const setInputMode = useSettingsStore(s => s.setInputMode);
 
@@ -29,7 +42,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700 p-6 rounded-lg shadow-2xl max-w-md w-full text-white m-4">
+      <div className="bg-slate-900 border border-slate-700 p-6 rounded-lg shadow-2xl max-w-md w-full text-white m-4 max-h-[92vh] overflow-y-auto">
         <h2 className="text-2xl font-bold mb-6 text-emerald-400">Settings</h2>
 
         {/* World Info */}
@@ -60,7 +73,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
         <div className="mb-6">
           <label className="block text-sm font-medium text-slate-400 mb-2">Graphics Quality</label>
           <div className="flex gap-2">
-            {(['low', 'medium', 'high'] as QualityPreset[]).map((p) => (
+            {(['low', 'medium', 'high', 'ultra'] as QualityPreset[]).map((p) => (
               <button
                 key={p}
                 onClick={() => setQualityPreset(p)}
@@ -100,6 +113,31 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
             <span>Performance</span>
             <span>Quality</span>
           </div>
+        </div>
+
+        {/* Individual effects (changing any switches the preset to CUSTOM) */}
+        <div className="mb-6 grid grid-cols-2 gap-2">
+          {([
+            ['Shadows', shadows, setShadows],
+            ['Bloom', bloom, setBloom],
+            ['Sun Shafts', godRays, setGodRays],
+            ['Ambient Occlusion', ao, setAo],
+            ['Anti-aliasing', antialias, setAntialias],
+            ['Dynamic Resolution', dynamicResolution, setDynamicResolution],
+          ] as Array<[string, boolean, (v: boolean) => void]>).map(([label, value, setter]) => (
+            <button
+              key={label}
+              onClick={() => setter(!value)}
+              className={`flex items-center justify-between px-3 py-2 rounded text-xs font-medium transition-colors border ${
+                value
+                  ? 'bg-emerald-900/40 border-emerald-600/60 text-emerald-200'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              <span>{label}</span>
+              <span className={`w-2 h-2 rounded-full ${value ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            </button>
+          ))}
         </div>
 
         {/* Input Mode */}

@@ -28,6 +28,9 @@ import { AtmosphereManager } from '@features/environment/components/AtmosphereMa
 import { CinematicComposer } from '@features/environment/components/CinematicComposer';
 import { PerformanceMonitor } from '@features/environment/components/PerformanceMonitor';
 import { CinematicCamera } from '@features/environment/components/CinematicCamera';
+import { AdaptiveResolution } from '@features/environment/components/AdaptiveResolution';
+import { GroveDirector } from '@features/grove/GroveDirector';
+import { useGroveStore } from '@state/GroveStore';
 
 // UI
 import { HUD as UI } from '@ui/HUD';
@@ -114,6 +117,7 @@ const App: React.FC = () => {
     chunkDataManager.clear();
     useWorldStore.getState().resetAll();
     useEntityHistoryStore.getState().reset();
+    useGroveStore.getState().resetWorld();
 
     // Reset all React state to return to world selection
     setGameStarted(false);
@@ -162,6 +166,16 @@ const App: React.FC = () => {
           z: Number(playerState.z.toFixed(2)),
           rotation: Number(playerState.rotation.toFixed(3)),
         } : null,
+        grove: (() => {
+          const grove = useGroveStore.getState();
+          return {
+            questIndex: grove.progression.questIndex,
+            essence: grove.progression.essence,
+            vitality: Number(grove.vitality.toFixed(2)),
+            hollowsRestored: grove.progression.stats.hollowsRestored,
+            compass: grove.compass ? { kind: grove.compass.kind, distance: Math.round(grove.compass.distance) } : null,
+          };
+        })(),
         inventory: {
           flora: inventory.inventoryCount,
           sticks: inventory.stickCount,
@@ -195,6 +209,10 @@ const App: React.FC = () => {
   const bloomEnabled = useSettingsStore(s => s.bloom);
   const setBloomEnabled = useSettingsStore(s => s.setBloom);
   const viewDistance = useSettingsStore(s => s.viewDistance);
+  const godRaysEnabled = useSettingsStore(s => s.godRays);
+  const antialiasEnabled = useSettingsStore(s => s.antialias);
+  const dynamicResolution = useSettingsStore(s => s.dynamicResolution);
+  const aoQuality = useSettingsStore(s => s.aoQuality);
 
   // Crafting State
   const isCraftingOpen = useCraftingStore(s => s.isOpen);
@@ -220,7 +238,7 @@ const App: React.FC = () => {
   const [terrainWireframeEnabled, setTerrainWireframeEnabled] = useState(false);
   const [terrainWeightsView, setTerrainWeightsView] = useState('off');
   const [caOffset, setCaOffset] = useState(0.00001);
-  const [vignetteDarkness, setVignetteDarkness] = useState(0.5);
+  const [vignetteDarkness, setVignetteDarkness] = useState(0.35);
 
   const [fogNear, setFogNear] = useState(40);
   const [fogFar, setFogFar] = useState(85);
@@ -229,9 +247,9 @@ const App: React.FC = () => {
   const [sunIntensityMul, setSunIntensityMul] = useState(4.8);
   const [ambientIntensityMul, setAmbientIntensityMul] = useState(1.0);
   const [moonIntensityMul, setMoonIntensityMul] = useState(1.7);
-  const [exposureSurface, setExposureSurface] = useState(0.6);
-  const [exposureCaveMax, setExposureCaveMax] = useState(1.3);
-  const [exposureUnderwater, setExposureUnderwater] = useState(0.8);
+  const [exposureSurface, setExposureSurface] = useState(1.0);
+  const [exposureCaveMax, setExposureCaveMax] = useState(1.5);
+  const [exposureUnderwater, setExposureUnderwater] = useState(0.9);
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
 
@@ -444,6 +462,7 @@ const App: React.FC = () => {
           camera={{ fov: 75, near: 0.1, far: 2000 }}
         >
           <SceneWarmup />
+          <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />
 
@@ -528,6 +547,10 @@ const App: React.FC = () => {
             exposureUnderwater={exposureUnderwater}
             caOffset={caOffset}
             vignetteDarkness={vignetteDarkness}
+            sunDirection={sunDirection}
+            godRays={godRaysEnabled}
+            antialias={antialiasEnabled}
+            aoQuality={aoQuality}
             skipPost={skipPost || !postProcessingEnabled}
           />
 
@@ -540,6 +563,7 @@ const App: React.FC = () => {
 
         {gameStarted && (
           <>
+            <GroveDirector seed={worldSeed} sunDirection={sunDirection} />
             <InventoryInput enabled={gameStarted} />
             <UI />
           </>
