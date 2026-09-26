@@ -16,7 +16,7 @@ export const PBR_TEXTURE_SIZE = 512;
  * Bump whenever synthesis output changes: generated layers are cached in
  * IndexedDB under this version (TerrainTextureArrays.ts).
  */
-export const PBR_SYNTH_VERSION = 8;
+export const PBR_SYNTH_VERSION = 9;
 export const PBR_LAYER_COUNT = 16;
 
 /** World size (metres) covered by one repeat of each layer's texture. */
@@ -265,10 +265,16 @@ function grassPixel(u: number, v: number, out: Float32Array, seed: number, dark:
 
 function sandPixel(u: number, v: number, out: Float32Array, seed: number, base: RGB, shade: RGB) {
   const warp = fbm(u, v, 2, 3, seed + 1);
-  const ph = (v * 9 + u * 2 + warp * 0.9) % 1;
   // Asymmetric ripple profile: gentle stoss slope, steep lee.
-  const p = ph < 0 ? ph + 1 : ph;
-  const ripple = p < 0.75 ? p / 0.75 : (1 - p) / 0.25;
+  const profile = (ph: number) => { const p = ((ph % 1) + 1) % 1; return p < 0.75 ? p / 0.75 : (1 - p) / 0.25; };
+  // Two ripple families (different wavelength and heading), strongly warped,
+  // and faded in and out: one family of evenly spaced stripes read as a
+  // repeating pattern across whole beaches and deserts.
+  const rA = profile(v * 9 + u * 2 + warp * 1.7);
+  const rB = profile(v * 13 - u * 3 + fbm(u, v, 3, 3, seed + 6) * 1.4);
+  const mixAB = smooth(0.35, 0.65, fbm(u, v, 2, 3, seed + 7) * 0.5 + 0.5);
+  const presence = smooth(0.2, 0.7, fbm(u, v, 2, 4, seed + 8) * 0.5 + 0.5);
+  const ripple = 0.5 + (mix(rA, rB, mixAB) - 0.5) * presence;
   const grain = hash2(Math.floor(u * 512), Math.floor(v * 512), seed + 3);
   const grain2 = hash2(Math.floor(u * 256), Math.floor(v * 256), seed + 4);
   const dunes = fbm(u, v, 4, 4, seed + 5);
@@ -288,8 +294,8 @@ const PAL = {
   sand: hex('#dcc896'), sandShade: hex('#b59f72'),
   snow: hex('#f4f7fb'), snowShade: hex('#c9d6e8'),
   clay: hex('#a8795a'), clayDark: hex('#6e4a35'),
-  moss: hex('#4f7030'), mossLight: hex('#7a9a3e'),
-  redSand: hex('#c8663e'), redSandShade: hex('#8e4128'),
+  moss: hex('#3f5530'), mossLight: hex('#62773f'),
+  redSand: hex('#b5714f'), redSandShade: hex('#7f4a33'),
   ice: hex('#bfe3f7'), iceDeep: hex('#6fa9d4'),
   jungleDark: hex('#23502a'), jungleLight: hex('#4c8c3a'), jungleDry: hex('#7a7832'),
   obsidian: hex('#0c0a12'), obsidianSheen: hex('#2a2238'),
@@ -359,7 +365,7 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
         const curl = smooth(0.25, 0.0, edge) * 0.12; // plate edges curl up
         const fine = fbm(u, v, 32, 3, s + 3);
         mixRGB(o, PAL.clayDark, PAL.clay, clamp01(0.75 + 0.3 * W.id - 0.2 + 0.2 * fine));
-        mulRGB(o, 1 - 0.6 * crack);
+        mulRGB(o, 1 - 0.35 * crack);
         o[3] = (0.55 + curl + 0.05 * fine) * (1 - 0.85 * crack);
         o[4] = 0.8 + 0.12 * crack;
       });
@@ -368,7 +374,8 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
     case 9: // MOSSY STONE
       return synth(size, 5, 1.0, (u, v, o) => {
         rockPixel(u, v, o, s, PAL.stone, PAL.stoneAlt, 0.3);
-        const cover = smooth(0.42, 0.6, fbm(u, v, 4, 5, s + 7) * 0.5 + 0.5 + (o[3] - 0.5) * -0.4);
+        // Soft-edged cushions settled in hollows (hard lime blotches read as camouflage).
+        const cover = smooth(0.4, 0.72, fbm(u, v, 4, 5, s + 7) * 0.5 + 0.5 + (o[3] - 0.5) * -0.4) * 0.9;
         if (cover > 0) {
           const fuzz = fbm(u, v, 64, 2, s + 8) * 0.5 + 0.5;
           blendTo(o, [mix(PAL.moss[0], PAL.mossLight[0], fuzz), mix(PAL.moss[1], PAL.mossLight[1], fuzz), mix(PAL.moss[2], PAL.mossLight[2], fuzz)], cover);
@@ -379,19 +386,20 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
     case 10: // RED SAND
       return synth(size, 2.5, 0.4, (u, v, o) => sandPixel(u, v, o, s, PAL.redSand, PAL.redSandShade));
     case 11: // TERRACOTTA: horizontal strata (v = world up on side projections)
-      return synth(size, 4.5, 0.9, (u, v, o) => {
-        const warp = 0.02 * fbm(u, v, 3, 3, s);
+      return synth(size, 3, 0.9, (u, v, o) => {
+        const warp = 0.06 * fbm(u, v, 3, 3, s);
         const band = (v + warp) * 11;
         const bi = Math.floor(band);
         const bf = band - bi;
         const bw = wrap(bi, 11); // band index must wrap with the tile
         const c = TERRACOTTA_BANDS[(bw * 7 + 3) % TERRACOTTA_BANDS.length];
         const hard = hash2(bw, 0, s + 1); // harder bands stick out
-        setRGB(o, c);
+        // Strata stay readable but quieter: pull every band toward the mean tone.
+        setRGB(o, [mix(c[0], 0.62, 0.35), mix(c[1], 0.42, 0.35), mix(c[2], 0.32, 0.35)]);
         const grit = fbm(u, v, 40, 3, s + 2);
         mulRGB(o, 0.9 + 0.12 * grit);
         const lip = smooth(0.0, 0.12, bf) * smooth(1.0, 0.8, bf);
-        o[3] = 0.3 + 0.45 * hard * lip + 0.06 * grit;
+        o[3] = 0.4 + 0.2 * hard * lip + 0.06 * grit; // gentle ledges, not ink lines
         o[4] = 0.88 - 0.1 * hard;
       });
     case 12: // ICE: cloudy with fracture planes
