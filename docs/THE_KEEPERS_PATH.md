@@ -1,15 +1,37 @@
 # The Keeper's Path — progression and mythos (proposal)
 
-Status: **draft for approval**. Nothing here is built yet.
+Status: **draft for approval** (updated 2026-09-26). The journey below marks what exists and what is proposed.
 
-## Where we are
+## Where we are (updated 2026-09-26)
 
-- Resources: sticks, stones, shards, Lumina flora, torches. Tools are crafted by binding stones/shards to a stick.
-- Goal: an 11-step checklist ("gather 3 sticks", "find a hollow", ...), then endless "restore N more hollows".
-- Restoring a Root Hollow costs **one** flora dropped beside it. Nothing else is ever spent, built or improved.
-- Lore is one line per quest. There is no story of *why* the light is fading or *who* the Keeper is.
+Built and playable today:
+- **Gather**: sticks (under every wood-bearing tree), stones, flint shards (knapped by striking stone on stone), Lumina flora (glowing in dark places), logs (sawn from felled trees) and planks (split logs).
+- **Craft**: stick + bindings bench. Stones/shards on the right slots make a pick, axe, pick-axe, saw, spear, maul, or a Lumina wand (flora on the tip).
+- **Build**: carry logs and planks, set them upright as posts or lying as walls (corners notch), planks as floors and pitched roofs.
+- **Survive**: a slow weather cycle. Rain puts out fires and torches left in the open; a roof keeps them burning. Campfires from sticks around a stone.
+- **Restore**: Root Hollows (broken ancient oak stumps) in mild clearings of every land. A rootling leads you to the nearest; one flora offered beside it wakes it; its tree grows back.
+- **Goal**: an 11-step quest line (gather, craft, find a hollow, restore it, fell trees, place torches, see biomes, survive a night, restore 3), then endless "Renewal" tiers. Ranks from essence give a faster stride.
+- **Worlds**: five lands (Grove, Sky Archipelago, Frozen Wastes, Lush Jungle, Chaos), saved separately with their own inventory, builds and progress.
 
-The result: resources pile up with no purpose, and the goal never asks more of you than the first time.
+What is still missing: after the first hollow the goal never asks more of you, the resources you build up have no purpose in the goal, the building has one reason (rain) but no place to belong, and the story is one line per quest.
+
+---
+
+## The player's journey (what a player does, in order)
+
+This is the arc the loop below produces. Parts marked **(new)** are proposed; everything else exists.
+
+**1. Waking (first 10 minutes).** You wake in a faded glade with empty hands. The quest tracker asks for fallen sticks, then stones. Striking stone on stone flakes off a shard. At the bench you bind a flake to a stick: your first tool. A rootling watches from the edge of the clearing.
+
+**2. The first hollow (10-25 min).** The Lumina Sense compass stirs. The rootling runs ahead and waits for you; you follow it through the land to a broken, hollow stump in a drained clearing. Lumina flora glows only in dark places (caves, gaps under stone, shaded nooks), so you go looking. You set one flora beside the hollow: it drinks the light, a tree of light grows from it, and you hear the first verse **(new)**.
+
+**3. The first rain (25-45 min).** The sky greys; a slow rain starts and your campfire hisses out. You fell a tree, saw it into logs, and raise posts and a roof. Under the roof, fire survives the rain. This becomes your camp, the **Keeper's Hearth** **(new)**: where you wake, where you keep things, and where verses are read.
+
+**4. The second and third hollows (45 min - 2 h).** Each hollow asks more: three flora carried in an offering bowl, then flora plus a heartstone from the deep obsidian caves **(new)**. The land answers: grass greens and birds return around each woken hollow **(new, local)**, and each gives a gift: stride, night-sight, deep sense or soft step **(new)**.
+
+**5. The Weave (2-5 h).** You set **Wayshrines** **(new)** on hilltops between hollows. When two woken hollows are both within reach of your shrines, a thread of light joins them across the land: you can see the network you are rebuilding.
+
+**6. The Heart (the ending).** With seven hollows joined, the compass points to the **Heart**, a vast dead tree at the oldest grove. You carry the network's light to it; the threads converge, the Heart fills with light, and colour returns to the whole world. The game continues (renewal, building, other lands), but the story has an ending.
 
 ---
 
