@@ -173,18 +173,27 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     // Add jitter based on instance ID
     vec2 cellId = vec2(id, id * 1.7);
     vec2 jitter = hash2(cellId) - 0.5;
-    chunkX += jitter.x * 1.0;
-    chunkZ += jitter.y * 1.0;
+    // Wrap (not clamp) into [0, 32): clamping to [0.5, 31.5] left a 1 m strip
+    // without grass along every chunk border.
+    chunkX = mod(chunkX + jitter.x, 32.0);
+    chunkZ = mod(chunkZ + jitter.y, 32.0);
 
-    // Clamp to chunk bounds
-    chunkX = clamp(chunkX, 0.5, 31.5);
-    chunkZ = clamp(chunkZ, 0.5, 31.5);
-
-    // UV for texture sampling
-    vec2 texUV = vec2(chunkX, chunkZ) / 32.0;
+    // Texel i holds the voxel column at local x = i, i.e. its centre is at
+    // uv (i + 0.5) / 32. Columns past 31 belong to the neighbour chunk, so the
+    // last metre is extrapolated from the slope of the last two columns.
+    vec2 gridPos = vec2(chunkX, chunkZ);
+    vec2 inGrid = min(gridPos, vec2(31.0));
+    vec2 over = gridPos - inGrid;
+    vec2 texUV = (inGrid + 0.5) / 32.0;
 
     // Sample terrain textures
     float surfaceY = texture2D(uHeightMap, texUV).r;
+    if (surfaceY > -900.0 && (over.x > 0.0 || over.y > 0.0)) {
+      float hx = texture2D(uHeightMap, (inGrid + vec2(-0.5, 0.5)) / 32.0).r;
+      float hz = texture2D(uHeightMap, (inGrid + vec2(0.5, -0.5)) / 32.0).r;
+      if (hx > -900.0) surfaceY += over.x * (surfaceY - hx);
+      if (hz > -900.0) surfaceY += over.y * (surfaceY - hz);
+    }
     float matMask = texture2D(uMaterialMask, texUV).r;
     vec2 packedNormal = texture2D(uNormalMap, texUV).rg;
     float biomeId = texture2D(uBiomeMap, texUV).r * 255.0;

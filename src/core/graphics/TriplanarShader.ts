@@ -440,6 +440,7 @@ export const triplanarFragmentShader = `
 
     vec4 albedoH = A0; vec3 Nm = N0; float rough = r0; float ao = ao0;
     float wSum = w0 + w1;
+    float kLayer1 = 0.0; // share of the second layer in the final blend (for anti-tiling)
     if (w1 > 0.02 && !(distSq > 6400.0 && w1 < 0.25 * wSum)) {
       vec4 A1; vec3 N1; float r1; float ao1;
       samplePbrLayer(c1, P, N, tw, A1, N1, r1, ao1);
@@ -450,26 +451,47 @@ export const triplanarFragmentShader = `
       // single triangle, which otherwise shows as a saw-tooth edge.
       float jitter = (texture(uNoiseTexture, P * 0.07 + vec3(0.3, 0.1, 0.7)).g - 0.5) * 1.1
                    + (texture(uNoiseTexture, P * 0.45 + vec3(0.8, 0.4, 0.2)).b - 0.5) * 0.8;
-      float b0 = clamp(w0 / wSum + jitter, 0.0, 1.0), b1 = 1.0 - b0;
+      // The jitter must vanish where the second layer's weight does: at full
+      // strength it could make that layer win outright right up to the
+      // w1 > 0.02 cutoff above, which follows the triangles and drew hard,
+      // jagged sand/grass lines. Fading it in keeps the boundary continuous
+      // while the middle of the transition still follows the noise.
+      float share1 = w1 / wSum;
+      jitter *= smoothstep(0.02, 0.22, share1);
+      // Tie the jitter to a fixed layer (the lower channel index), not to "c0":
+      // where the two layers swap dominance, c0/c1 swap too, and a c0-relative
+      // jitter flipped sign there (a 2x-jitter jump along a triangle-aligned line).
+      if (c0 > c1) jitter = -jitter;
+      float b0 = clamp(1.0 - share1 + jitter, 0.0, 1.0), b1 = 1.0 - b0;
       float h0 = A0.a + b0, h1 = A1.a + b1;
-      float top = max(h0, h1) - 0.25;
+      float top = max(h0, h1) - 0.3;
       float k0 = max(h0 - top, 0.0), k1 = max(h1 - top, 0.0);
+      // A tall texel in a barely-present layer must not pop in at the cutoff either.
+      k1 *= smoothstep(0.02, 0.08, share1);
       float kInv = 1.0 / max(k0 + k1, 1e-4);
       k0 *= kInv; k1 *= kInv;
+      kLayer1 = k1;
       albedoH = A0 * k0 + A1 * k1;
       Nm = normalize(N0 * k0 + N1 * k1);
       rough = r0 * k0 + r1 * k1;
       ao = ao0 * k0 + ao1 * k1;
     }
 
-    // Anti-tiling: blend in a second, larger-scale sample of the dominant layer's
-    // albedo, driven by low-frequency noise, so repeats don't line up.
+    // Anti-tiling: blend in a second, larger-scale sample of each blended layer's
+    // albedo, driven by low-frequency noise, so repeats don't line up. Both
+    // layers are sampled in their blend proportion: using only the dominant
+    // layer (c0) made 45% of the colour jump where the dominant layer swaps,
+    // a line that follows the triangles (jagged sand/grass edges).
     if (!lowDetail || distSq < 9216.0) {
       vec3 twd = step(max(tw.yzx, tw.zxy), tw); // dominant axis
-      vec2 uvd = (twd.x > 0.5 ? P.zy : (twd.y > 0.5 ? P.xz : P.xy)) * uPbrScale[c0] * 0.29 + vec2(0.37, 0.61);
+      vec2 uvBase = (twd.x > 0.5 ? P.zy : (twd.y > 0.5 ? P.xz : P.xy)) * 0.29;
       // Mip bias keeps only broad colour variation (fine ripples/cracks at 3.5x
       // scale read as giant stripes).
-      vec3 far = texture(uPbrA, vec3(uvd, float(c0)), 3.0).rgb;
+      vec3 far = texture(uPbrA, vec3(uvBase * uPbrScale[c0] + vec2(0.37, 0.61), float(c0)), 3.0).rgb;
+      if (kLayer1 > 0.001) {
+        vec3 far1 = texture(uPbrA, vec3(uvBase * uPbrScale[c1] + vec2(0.37, 0.61), float(c1)), 3.0).rgb;
+        far = mix(far, far1, kLayer1);
+      }
       float mixK = smoothstep(0.35, 0.75, nMacro.g) * 0.45;
       albedoH.rgb = mix(albedoH.rgb, far, mixK);
     }
