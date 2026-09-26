@@ -219,21 +219,26 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
   };
   spawnChildren(trunk);
 
-  // Buttress / root flare: short roots leaving the trunk base and diving into the ground.
+  // Buttress / root flare: short, thick roots that swell out of the trunk base
+  // and dive straight into the ground, ending well below it. (Long straight
+  // roots leaving the trunk high up read as stilts, and their pointed tips as
+  // black claws up close.)
   if (sp.buttress > 0) {
     const roots = type === TreeType.JUNGLE ? 5 : 4;
+    const R = sp.trunkRadius;
     for (let i = 0; i < roots; i++) {
       const a = (i / roots) * Math.PI * 2 + rand() * 0.5;
-      const dir = new THREE.Vector3(Math.cos(a), -0.55, Math.sin(a));
-      const start = new THREE.Vector3(0, 0.35 + sp.buttress * 0.9, 0);
-      const len = 0.8 + sp.buttress * 1.8;
-      const steps = 4;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const len = 0.45 + sp.buttress * 1.0;
+      const top = 0.2 + sp.buttress * 0.45;
+      const r0 = R * (0.5 + 0.25 * sp.buttress);
+      const steps = 5;
       const nodes: Node[] = [];
       for (let s = 0; s <= steps; s++) {
         const t = s / steps;
-        const p = start.clone().addScaledVector(dir.clone().normalize(), len * t);
-        p.y -= t * t * 0.4;
-        nodes.push({ p, r: sp.trunkRadius * (0.55 + 0.3 * sp.buttress) * (1 - 0.8 * t) });
+        const d = R * 0.35 + len * t;
+        const h = top * Math.pow(1 - t, 1.6) - 0.45 * t;
+        nodes.push({ p: new THREE.Vector3(ca * d, h, sa * d), r: r0 * (1 - 0.5 * t) });
       }
       branches.push({ nodes, depth: 0, length: len, root: true });
     }
