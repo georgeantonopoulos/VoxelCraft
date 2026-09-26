@@ -140,6 +140,11 @@ export class ProceduralAmbience {
   private windLow!: GainNode;
   private windHigh!: GainNode;
   private windHighFilter!: BiquadFilterNode;
+  private rainBed!: GainNode;
+  private rainFilter!: BiquadFilterNode;
+  private rainLevel = 0;
+  private rainSheltered = false;
+  private nextRainTapAt = 0;
   private leaves!: GainNode;
   private leafEmitters: LeafEmitter[] = [];
   private water!: GainNode;
@@ -210,6 +215,13 @@ export class ProceduralAmbience {
     this.windHighFilter = ctx.createBiquadFilter();
     this.windHighFilter.type = 'bandpass'; this.windHighFilter.frequency.value = 900; this.windHighFilter.Q.value = 2.5;
     this.loop(pink, 1.07).connect(this.windHighFilter).connect(this.windHigh).connect(this.muffle);
+
+    // Rain: a soft hiss of pink noise; under a roof it dulls to a patter.
+    this.rainBed = ctx.createGain();
+    this.rainBed.gain.value = 0;
+    this.rainFilter = ctx.createBiquadFilter();
+    this.rainFilter.type = 'bandpass'; this.rainFilter.frequency.value = 3200; this.rainFilter.Q.value = 0.45;
+    this.loop(pink, 1.13).connect(this.rainFilter).connect(this.rainBed).connect(this.muffle);
 
     // Leaves: high-passed white noise with a fast random tremolo. One faint,
     // non-directional bed, plus positioned emitters on the nearest trees.
@@ -514,6 +526,15 @@ export class ProceduralAmbience {
       this.nextOwlAt = t + 18 + this.rand() * 30;
     }
 
+    // Rain bed and the odd heavier drop; a roof overhead dulls it to a patter.
+    const rain = this.rainLevel * outside;
+    this.rainBed.gain.setTargetAtTime(0.07 * rain * (this.rainSheltered ? 0.75 : 1), t, 0.8);
+    this.rainFilter.frequency.setTargetAtTime(this.rainSheltered ? 1300 : 3200, t, 0.5);
+    if (t >= this.nextRainTapAt) {
+      if (rain > 0.05 && s.underwater < 0.5) this.rainTap(t + 0.02, rain);
+      this.nextRainTapAt = t + (rain > 0.05 ? (0.05 + this.rand() * 0.25) / (0.3 + rain) : 1);
+    }
+
     // Cave drips.
     if (t >= this.nextDripAt) {
       if (s.underground > 0.4) this.drip(t + 0.02);
@@ -589,6 +610,52 @@ export class ProceduralAmbience {
   }
 
   /** A water drip: a fast downward-sweeping sine blip into the reverb. */
+  /** A single heavier raindrop tapping leaves, ground or a roof. */
+  private rainTap(start: number, level: number): void {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = this.stepNoise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = (this.rainSheltered ? 900 : 2400) * (0.7 + this.rand() * 0.6);
+    f.Q.value = 2.5;
+    const env = ctx.createGain();
+    const g = (this.rainSheltered ? 0.05 : 0.025) * level * (0.4 + this.rand() * 0.6);
+    env.gain.setValueAtTime(0, start);
+    env.gain.linearRampToValueAtTime(g, start + 0.003);
+    env.gain.exponentialRampToValueAtTime(0.0001, start + 0.05);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = this.rand() * 1.6 - 0.8;
+    src.connect(f).connect(env).connect(pan).connect(this.muffle);
+    src.start(start, this.rand() * 0.3);
+    src.stop(start + 0.08);
+  }
+
+  /** Rain level (0..1) and whether the player has a roof overhead. */
+  setWeather(rain: number, sheltered: boolean): void {
+    this.rainLevel = Math.max(0, Math.min(1, rain));
+    this.rainSheltered = sheltered;
+  }
+
+  /** A fire or torch doused by rain: a steam hiss with a few crackles. */
+  hiss(loudness = 1): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.stepNoise) return;
+    const t = ctx.currentTime + 0.01;
+    const src = ctx.createBufferSource();
+    src.buffer = this.stepNoise;
+    src.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2800;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.09 * loudness, t + 0.06);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+    src.connect(hp).connect(env).connect(this.muffle);
+    src.start(t);
+    src.stop(t + 1.7);
+    for (let i = 0; i < 5; i++) this.rainTap(t + 0.05 + this.rand() * 0.8, 1.5 * loudness);
+  }
+
   private drip(start: number): void {
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();

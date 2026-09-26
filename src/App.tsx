@@ -22,6 +22,7 @@ import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { ImpactFX } from '@features/interaction/components/ImpactFX';
 import { WeatherDirector } from '@features/environment/components/WeatherDirector';
 import { RainFX } from '@features/environment/components/RainFX';
+import { DousingDirector } from '@features/environment/components/DousingDirector';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
 import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
 import { useCraftingStore } from '@state/CraftingStore';
@@ -581,6 +582,7 @@ const App: React.FC = () => {
               {bedrockPlaneEnabled && <BedrockPlane />}
               <PhysicsItemRenderer />
               {gameStarted && <RainFX />}
+              {gameStarted && <DousingDirector />}
               <InteractionHandler />
             </Physics>
             <FirstPersonTools />

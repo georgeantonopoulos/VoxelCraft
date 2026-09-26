@@ -10,6 +10,7 @@ import { WATER_LEVEL, CHUNK_SIZE_XZ } from '@/constants';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import type { LeafSource } from '@core/audio/ambience/ProceduralAmbience';
+import { useWeatherStore } from '@/state/WeatherStore';
 
 /**
  * AmbienceDirector: headless. Measures what surrounds the camera (biome, water,
@@ -147,6 +148,8 @@ export const AmbienceDirector: React.FC = () => {
     sm.foliage += (trees.density - sm.foliage) * 0.3;
     sm.birds += (life.birds - sm.birds) * 0.2;
 
+    const weather = useWeatherStore.getState();
+    audioManager.ambience.setWeather(weather.rain, weather.sheltered);
     audioManager.ambience.setScene({
       daylight,
       dawn,
