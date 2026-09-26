@@ -6,6 +6,8 @@ export interface EntityHealth {
     health: number;
     lastHitTime: number;
     label: string;
+    /** A filling progress bar (kindling), not a health bar: empty is not "dead". */
+    progress?: boolean;
 }
 
 export const DEAD_ENTITY_RETENTION_MS = 5000;
@@ -46,7 +48,7 @@ export const useEntityHistoryStore = create<EntityHistoryState>((set, get) => ({
     setTargetEntity: (id) => set({ targetEntityId: id }),
 
     setProgress: (id, value, max, label) => {
-        const entities = { ...get().entities, [id]: { id, maxHealth: max, health: Math.max(0, Math.min(max, value)), lastHitTime: Date.now(), label } };
+        const entities = { ...get().entities, [id]: { id, maxHealth: max, health: Math.max(0, Math.min(max, value)), lastHitTime: Date.now(), label, progress: true } };
         set({ entities, targetEntityId: id });
     },
 
@@ -57,7 +59,7 @@ export const useEntityHistoryStore = create<EntityHistoryState>((set, get) => ({
         const now = Date.now();
         const expiredIds = Object.keys(state.entities).filter((id) => {
             const entity = state.entities[id];
-            return entity.health <= 0 && now - entity.lastHitTime >= DEAD_ENTITY_RETENTION_MS;
+            return (entity.health <= 0 || entity.progress) && now - entity.lastHitTime >= DEAD_ENTITY_RETENTION_MS;
         });
 
         // Avoid notifying every health-bar subscriber once per second when there

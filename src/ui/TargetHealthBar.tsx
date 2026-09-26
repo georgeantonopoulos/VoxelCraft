@@ -15,7 +15,7 @@ export const TargetHealthBar: React.FC = () => {
             // Broken or felled: let the empty bar register, then go.
             const timer = setTimeout(() => {
                 setVisible(false);
-            }, entity.health <= 0 ? 500 : 3000);
+            }, entity.health <= 0 && !entity.progress ? 500 : 3000);
             return () => clearTimeout(timer);
         }
     }, [entity?.health, entity?.id]);
