@@ -40,12 +40,19 @@ export const STICK_SHADER = {
             pos *= vec3(radius, length, radius);
             pos = alignMat * (rotY * (rotX90 * pos));
 
-            vec3 finalPos = aInstancePos + (alignMat * vec3(0.0, 0.10, 0.0)) + pos;
+            // Rest on the ground (lifted by about its radius, not 10 cm).
+            vec3 finalPos = aInstancePos + (alignMat * vec3(0.0, radius * 0.7, 0.0)) + pos;
             csm_Position = finalPos;
             vWorldPos = aInstancePos;
-            csm_Normal = normalize(mix(alignMat * normal, up, 0.5));
+            // Normals follow the same scale and rotations as the positions
+            // (they were left in unit-cylinder space and lit wrongly).
+            vec3 n = normal / vec3(radius, length, radius);
+            csm_Normal = normalize(alignMat * (rotY * (rotX90 * n)));
         } else {
+            // Position and normal get the same transform (only the normal was
+            // rotated before, so held sticks were lit from the wrong side).
             pos = rotY * pos;
+            csm_Position = pos;
             csm_Normal = rotY * normal;
             vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
         }
@@ -71,8 +78,9 @@ export const STICK_SHADER = {
         float nFine = texture(uNoiseTexture, noiseCoord * 0.6).g;
         float nMicro = texture(uNoiseTexture, noiseCoord * 1.5).b;
 
-        // Wood grain - vertical lines
-        float grainPattern = sin(barkUV.y * 30.0 + nFine * 4.0);
+        // Wood grain runs along the stick (it varies around it, not along it:
+        // the old pattern drew rings).
+        float grainPattern = sin(angle * 7.0 + nFine * 4.0 + vLocalPos.y * 2.0);
         float grain = smoothstep(0.6, 0.9, grainPattern);
 
         // Bark ridges
@@ -100,7 +108,7 @@ export const STICK_SHADER = {
         col = mix(col, col * vec3(0.9, 0.88, 0.82), endWeather * 0.3);
 
         // Micro fiber detail
-        float fibers = sin(barkUV.y * 80.0 + nMicro * 10.0) * 0.5 + 0.5;
+        float fibers = sin(angle * 23.0 + nMicro * 10.0) * 0.5 + 0.5;
         col += vec3(0.015) * fibers * (1.0 - knots);
 
         csm_DiffuseColor = vec4(col, 1.0);
@@ -145,23 +153,9 @@ export const SHARD_SHADER = {
 
         float randScale = 0.9 + fract(sin(seed + 1.0) * 43758.5453) * 0.3;
 
-        // Noise-based displacement for faceted blade appearance
-        vec3 noiseCoord = pos * 3.0 + vec3(seed * 0.15, seed * 0.21, seed * 0.09);
-        vec3 texCoord = fract(noiseCoord * 0.1 + 0.5);
-        float noiseVal = texture(uNoiseTexture, texCoord).r;
-
-        // Edge factor: vertices near the base get less displacement
-        // This keeps the blade tip sharp while roughening the sides
-        float heightFactor = clamp((pos.y + 0.2) / 0.4, 0.0, 1.0);
-        vEdgeFactor = heightFactor;
-
-        float displacementAmt = uDisplacementStrength > 0.0 ? uDisplacementStrength : 0.08;
-        float displacement = (noiseVal - 0.5) * displacementAmt * (1.0 - heightFactor * 0.7);
-
-        // Apex vertices sit on the axis: normalize(0) is undefined (NaN on many GPUs).
-        vec2 radial = pos.xz;
-        vec3 vertNormal = dot(radial, radial) > 1e-8 ? vec3(normalize(radial), 0.0).xzy : vec3(0.0);
-        pos += vertNormal * displacement * randScale;
+        // Flake geometry already carries its facets (ItemGeometry). Edge factor:
+        // distance from the ridge, for sharper, brighter edges.
+        vEdgeFactor = clamp(1.0 - abs(position.z) / 0.03, 0.0, 1.0);
 
         if (uInstancing) {
             vec3 up = normalize(aInstanceNormal);
@@ -178,6 +172,7 @@ export const SHARD_SHADER = {
         } else {
             pos *= randScale;
             pos = rotY * pos;
+            csm_Position = pos;
             csm_Normal = rotY * normal;
             vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
         }
@@ -197,50 +192,28 @@ export const SHARD_SHADER = {
         vec3 noiseCoord = vLocalPos * 8.0 + vec3(vSeed * 0.1);
         float nBase = texture(uNoiseTexture, noiseCoord * 0.2).r;
         float nFine = texture(uNoiseTexture, noiseCoord * 0.5).g;
-        float nMicro = texture(uNoiseTexture, noiseCoord * 1.2).b;
 
-        // Conchoidal fracture pattern (characteristic of obsidian/flint)
-        float fracture = sin(vLocalPos.y * 15.0 + nFine * 6.0 + vLocalPos.x * 8.0);
-        float conchoidal = smoothstep(0.6, 0.9, fracture);
-
-        // Flow banding (volcanic glass striations)
-        float banding = sin(vLocalPos.y * 25.0 + nBase * 3.0) * 0.5 + 0.5;
-        banding = smoothstep(0.4, 0.6, banding);
-
-        // Sharp edge highlights
+        // Conchoidal ripples: faint concentric rings spreading from the point
+        // of percussion near the butt (what knapped flint actually shows).
+        float ringR = length(vLocalPos.xy - vec2(0.0, -0.2)) * 110.0 + nFine * 2.5;
+        float conchoidal = smoothstep(0.55, 1.0, sin(ringR) * 0.5 + 0.5);
         float edgeShine = smoothstep(0.7, 1.0, vEdgeFactor);
 
-        // Base obsidian color with depth variation
-        vec3 col = uColor;
-        col *= 0.9 + nBase * 0.2;
-
-        // Iridescent shimmer (oil-slick effect on obsidian)
-        vec3 iridescence = vec3(
-            0.5 + 0.5 * sin(nFine * 6.28 + 0.0),
-            0.5 + 0.5 * sin(nFine * 6.28 + 2.09),
-            0.5 + 0.5 * sin(nFine * 6.28 + 4.19)
-        );
-        col = mix(col, col + iridescence * 0.08, nMicro * edgeShine);
-
-        // Flow banding - subtle color variation
-        col *= 0.95 + banding * 0.1;
-
-        // Conchoidal fracture highlights
-        col += vec3(0.04) * conchoidal * edgeShine;
-
-        // Micro-scratches
-        float scratches = smoothstep(0.7, 0.75, nMicro);
-        col *= 1.0 - scratches * 0.15;
-
+        vec3 col = uColor * (0.92 + nBase * 0.16);
+        // Ripple crests catch a little light.
+        col *= 0.94 + conchoidal * 0.1;
+        // Thin edges are slightly translucent-bright (glass/flint edges).
+        col += uColor * 0.35 * edgeShine;
+        float scratches = 0.0;
         csm_DiffuseColor = vec4(col, 1.0);
 
         // Glassy roughness - very smooth on edges, slightly rougher on flat faces
-        float rough = 0.12 + (1.0 - edgeShine) * 0.15 + scratches * 0.1;
-        rough -= conchoidal * 0.05;
-        csm_Roughness = clamp(rough, 0.05, 0.35);
+        float rough = 0.14 + (1.0 - edgeShine) * 0.12 + scratches;
+        rough -= conchoidal * 0.04;
+        csm_Roughness = clamp(rough, 0.12, 0.45);
 
-        // Slight metalness for glass-like reflection
-        csm_Metalness = 0.8 + edgeShine * 0.15;
+        // Glass and flint are dielectrics (metal with no environment map read black).
+        csm_Metalness = 0.0;
     }
   `
 };
@@ -271,19 +244,18 @@ export const ROCK_SHADER = {
         float sRot = sin(randRot);
         mat3 rotY = mat3(cRot, 0.0, sRot, 0.0, 1.0, 0.0, -sRot, 0.0, cRot);
 
-        float randScale = 0.85 + fract(sin(seed + 1.0) * 43758.5453) * 0.80;
-        pos *= randScale;
-
-        // Noise-based vertex displacement for "chipped" stone appearance
-        vec3 noiseCoord = normalize(position) * 2.5 + vec3(seed * 0.1, seed * 0.17, seed * 0.23);
-        vec3 texCoord = fract(noiseCoord * 0.08 + 0.5);
-        float noiseVal = texture(uNoiseTexture, texCoord).r;
-
-        float displacementAmt = uDisplacementStrength > 0.0 ? uDisplacementStrength : 0.15;
-        float displacement = (noiseVal - 0.5) * displacementAmt * randScale;
-
-        vec3 vertNormal = normalize(position);
-        pos += vertNormal * displacement;
+        // The geometry is already a chipped, flattened stone (ItemGeometry
+        // buildRockGeometry). Per instance: size and proportions from the seed,
+        // so one mesh reads as many different stones, and a slight sink into
+        // the ground so they rest rather than balance.
+        float h1 = fract(sin(seed * 3.17 + 1.0) * 43758.5453);
+        float h2 = fract(sin(seed * 5.31 + 2.0) * 43758.5453);
+        float h3 = fract(sin(seed * 7.73 + 3.0) * 43758.5453);
+        float randScale = 0.7 + h1 * 0.6;
+        vec3 shape = vec3(0.85 + h2 * 0.35, 0.8 + h3 * 0.4, 0.85 + (1.0 - h2) * 0.35);
+        pos *= randScale * shape;
+        vec3 vertNormal = normalize(normal / shape);
+        if (uInstancing) pos.y -= 0.06 * randScale * shape.y;
 
         if (uInstancing) {
             vec3 up = normalize(aInstanceNormal);
@@ -296,10 +268,11 @@ export const ROCK_SHADER = {
             vec3 finalPos = aInstancePos + pos;
             csm_Position = finalPos;
             vWorldPos = aInstancePos;
-            csm_Normal = normalize(mix(alignMat * (rotY * vertNormal), up, 0.3));
+            csm_Normal = normalize(alignMat * (rotY * vertNormal));
             vWorldNormal = csm_Normal;
         } else {
             pos = rotY * pos;
+            csm_Position = pos;
             csm_Normal = rotY * vertNormal;
             vWorldNormal = csm_Normal;
             vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
@@ -346,21 +319,21 @@ export const ROCK_SHADER = {
 
         // Iron staining (orange-brown tint)
         vec3 rustColor = vec3(0.6, 0.35, 0.2);
-        col = mix(col, rustColor, ironStain * 0.35);
+        col = mix(col, rustColor, ironStain * 0.06);
 
         // Crystal sparkle (bright spots)
-        col += vec3(0.08) * crystals;
+        col += vec3(0.025) * crystals;
 
         // Mica shimmer (subtle iridescent)
         vec3 micaColor = vec3(0.9, 0.85, 0.7);
-        col = mix(col, micaColor, mica * 0.4);
+        col = mix(col, micaColor, mica * 0.12);
 
         // Moss on top surfaces
         float upFactor = dot(normalize(vWorldNormal), vec3(0.0, 1.0, 0.0));
         float mossNoise = texture(uNoiseTexture, vLocalPos * 1.5 + vec3(3.0)).g;
         if (upFactor > 0.3 && mossNoise > 0.55) {
-            vec3 mossCol = vec3(0.12, 0.4, 0.1);
-            float mossMix = (mossNoise - 0.55) * 3.0 * upFactor;
+            vec3 mossCol = vec3(0.15, 0.2, 0.1);
+            float mossMix = smoothstep(0.6, 0.85, mossNoise) * smoothstep(0.5, 0.95, upFactor) * 0.55;
             col = mix(col, mossCol, mossMix * 0.6);
         }
 

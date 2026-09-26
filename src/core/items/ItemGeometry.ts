@@ -12,6 +12,7 @@
  */
 
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // ============================================================================
 // UNIFIED COLOR PALETTE
@@ -21,18 +22,18 @@ import * as THREE from 'three';
 export const ITEM_COLORS = {
     // Stick colors by biome
     stick: {
-        default: '#8b5a2b',    // Standard dry wood
-        jungle: '#6a4a2a',     // Darker jungle wood
-        dry: '#a67c52',        // Lighter desert wood
+        default: '#7a654d',    // Weathered deadwood (grey-brown)
+        jungle: '#54432f',     // Damp, darker jungle wood
+        dry: '#8f7b62',        // Sun-bleached desert wood
     },
 
     // Stone/Rock variants - unified from both UniversalTool and GroundItemsLayer
     stone: {
         default: '#888c8d',    // uColorStone - standard gray
-        mountain: '#8c8c96',   // Mountain variant (slightly blue-gray)
-        cave: '#4b4b55',       // Cave variant (dark)
+        mountain: '#86847d',   // Mountain variant (warm grey granite)
+        cave: '#55555a',       // Cave variant (dark)
         beach: '#b89f7c',      // Beach/sandstone variant
-        mossy: '#5c7a3a',      // Moss-covered
+        mossy: '#6f7266',      // Grey-green stone; the shader adds moss on top
         obsidian: '#0a0814',   // Volcanic glass
         basalt: '#2a2a2a',     // Dark volcanic
         sandstone: '#ebd89f',  // Desert stone
@@ -41,9 +42,9 @@ export const ITEM_COLORS = {
 
     // Shard (blade) colors - typically darker/more metallic
     shard: {
-        default: '#0a0814',    // Obsidian - sharp blade look
-        flint: '#3a3a3a',      // Flint gray
-        volcanic: '#1a0a0a',   // Dark red-black
+        default: '#34313b',    // Obsidian: dark glass, lit by its highlights
+        flint: '#4d4a44',      // Flint grey-brown
+        volcanic: '#2e2222',   // Dark red-black
     },
 
     // Lashing/binding colors
@@ -88,9 +89,11 @@ export const STONE_MATERIALS: Record<StoneVariant, MaterialProps> = {
 };
 
 export const SHARD_MATERIALS: Record<ShardVariant, MaterialProps> = {
-    default: { color: ITEM_COLORS.shard.default, roughness: 0.1, metalness: 0.95 },
-    flint: { color: ITEM_COLORS.shard.flint, roughness: 0.2, metalness: 0.8 },
-    volcanic: { color: ITEM_COLORS.shard.volcanic, roughness: 0.15, metalness: 0.9, emissive: '#200808', emissiveIntensity: 0.05 },
+    // Stone and glass are dielectrics: metalness ~0. At 0.8-0.95 they reflected
+    // an empty environment and rendered as black slivers.
+    default: { color: ITEM_COLORS.shard.default, roughness: 0.18, metalness: 0.0 },
+    flint: { color: ITEM_COLORS.shard.flint, roughness: 0.4, metalness: 0.0 },
+    volcanic: { color: ITEM_COLORS.shard.volcanic, roughness: 0.22, metalness: 0.0 },
 };
 
 export const STICK_MATERIALS: Record<StickVariant, MaterialProps> = {
@@ -166,72 +169,256 @@ function getCachedGeometry(key: string, factory: () => THREE.BufferGeometry): TH
 // GEOMETRY FACTORIES
 // ============================================================================
 
+// ----------------------------------------------------------------------------
+// Procedural shape helpers (deterministic; independent of the world seed)
+// ----------------------------------------------------------------------------
+
+const hash3 = (x: number, y: number, z: number, s: number): number => {
+    const h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + s * 19.19) * 43758.5453;
+    return h - Math.floor(h);
+};
+
+/** Smooth 3D value noise in [0, 1]. */
+function valueNoise(x: number, y: number, z: number, s: number): number {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = x - xi, yf = y - yi, zf = z - zi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const c = (dx: number, dy: number, dz: number) => hash3(xi + dx, yi + dy, zi + dz, s);
+    return lerp(
+        lerp(lerp(c(0, 0, 0), c(1, 0, 0), u), lerp(c(0, 1, 0), c(1, 1, 0), u), v),
+        lerp(lerp(c(0, 0, 1), c(1, 0, 1), u), lerp(c(0, 1, 1), c(1, 1, 1), u), v),
+        w,
+    );
+}
+
+function fbm3(x: number, y: number, z: number, s: number, octaves: number): number {
+    let sum = 0, amp = 0.5, f = 1, norm = 0;
+    for (let i = 0; i < octaves; i++) {
+        sum += amp * valueNoise(x * f, y * f, z * f, s + i * 7.1);
+        norm += amp; amp *= 0.5; f *= 2.03;
+    }
+    return sum / norm;
+}
+
 /**
- * Create stick geometry
+ * A natural stone: a subdivided sphere pushed by multi-octave noise, squashed
+ * (river and field stones are flatter than they are wide) and cut by a few
+ * planes, which read as fracture faces. `variant` picks one of several shapes.
  */
-export function createStickGeometry(isThumbnail = false): THREE.CylinderGeometry {
+export function buildRockGeometry(radius: number, variant: number, detail = 3, flatten = 0.62): THREE.BufferGeometry {
+    // Polyhedra are built unindexed; welding shares vertices so the noise moves
+    // them together (no cracks) and normals come out smooth, not faceted.
+    const base = new THREE.IcosahedronGeometry(1, detail);
+    base.deleteAttribute('uv');
+    const g = mergeVertices(base);
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const s = variant * 13.37 + 1.0;
+    const stretchX = 1.0 + (hash3(s, 1, 2, 3) - 0.5) * 0.45;
+    const stretchZ = 1.0 + (hash3(s, 4, 5, 6) - 0.5) * 0.35;
+    // Fracture planes: normal and offset (a cut removes everything beyond it).
+    const cuts: Array<{ n: THREE.Vector3; d: number }> = [];
+    const cutCount = 2 + Math.floor(hash3(s, 7, 8, 9) * 3);
+    for (let i = 0; i < cutCount; i++) {
+        const n = new THREE.Vector3(hash3(s, i, 1, 10) - 0.5, (hash3(s, i, 2, 11) - 0.5) * 1.4, hash3(s, i, 3, 12) - 0.5).normalize();
+        cuts.push({ n, d: 0.62 + hash3(s, i, 4, 13) * 0.25 });
+    }
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const n = fbm3(v.x * 1.6, v.y * 1.6, v.z * 1.6, s, 4);
+        const bump = fbm3(v.x * 5.5, v.y * 5.5, v.z * 5.5, s + 3.3, 2);
+        v.multiplyScalar(0.78 + n * 0.42 + (bump - 0.5) * 0.06);
+        for (const c of cuts) {
+            const over = v.dot(c.n) - c.d;
+            if (over > 0) v.addScaledVector(c.n, -over * 0.92);
+        }
+        v.set(v.x * stretchX, v.y * flatten, v.z * stretchZ);
+        // Flatter underside so it sits on the ground.
+        if (v.y < -0.35 * flatten) v.y = -0.35 * flatten + (v.y + 0.35 * flatten) * 0.35;
+        v.multiplyScalar(radius);
+        pos.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals();
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(pos.count * 2), 2));
+    g.computeBoundingSphere();
+    return g;
+}
+
+/**
+ * Stick geometry for the hand and crafting bench: straight axis (attachment
+ * slots sit on it) with a gentle taper and an irregular, knobbly profile.
+ */
+export function createStickGeometry(isThumbnail = false): THREE.BufferGeometry {
     const d = ITEM_DIMENSIONS.stick;
     const key = `stick-${isThumbnail ? 'thumb' : 'world'}`;
-    return getCachedGeometry(key, () => new THREE.CylinderGeometry(
-        d.radiusTop,
-        d.radiusBottom,
-        d.height,
-        isThumbnail ? d.radialSegmentsThumbnail : d.radialSegments,
-        isThumbnail ? d.heightSegmentsThumbnail : d.heightSegments
-    )) as THREE.CylinderGeometry;
-}
-
-/**
- * Create stone geometry (dodecahedron)
- */
-export function createStoneGeometry(isThumbnail = false): THREE.DodecahedronGeometry {
-    const d = ITEM_DIMENSIONS.stone;
-    const key = `stone-${isThumbnail ? 'thumb' : 'world'}`;
-    return getCachedGeometry(key, () => new THREE.DodecahedronGeometry(
-        d.radius,
-        isThumbnail ? d.detailThumbnail : d.detail
-    )) as THREE.DodecahedronGeometry;
-}
-
-/**
- * Create shard geometry (octahedron stretched into blade shape)
- * This replaces the cone geometry for a more blade-like appearance
- */
-export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
-    const d = ITEM_DIMENSIONS.shard;
-    const key = `shard-${isThumbnail ? 'thumb' : 'world'}`;
-
     return getCachedGeometry(key, () => {
-        // Use octahedron as base - 8 triangular faces, very angular/sharp
-        const baseGeom = new THREE.OctahedronGeometry(d.radius, d.detail);
-
-        // Scale non-uniformly to create blade shape:
-        // - Narrow in X (thin blade)
-        // - Tall in Y (long blade)
-        // - Very thin in Z (flat blade)
-        const posAttr = baseGeom.attributes.position;
-        const positions = posAttr.array as Float32Array;
-
-        for (let i = 0; i < positions.length; i += 3) {
-            positions[i] *= d.scaleX;      // X - width
-            positions[i + 1] *= d.scaleY;  // Y - height
-            positions[i + 2] *= d.scaleZ;  // Z - depth
+        const g = new THREE.CylinderGeometry(
+            d.radiusTop, d.radiusBottom, d.height,
+            isThumbnail ? d.radialSegmentsThumbnail : 9,
+            isThumbnail ? d.heightSegmentsThumbnail : 14,
+        );
+        const pos = g.attributes.position as THREE.BufferAttribute;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+            const r = Math.hypot(x, z);
+            if (r < 1e-5) continue;
+            const a = Math.atan2(z, x);
+            const t = y / d.height + 0.5;
+            const k = 1 + (fbm3(Math.cos(a) * 1.5, t * 6, Math.sin(a) * 1.5, 5.1, 3) - 0.5) * 0.35 - t * 0.12;
+            pos.setX(i, x * k); pos.setZ(i, z * k);
         }
-
-        posAttr.needsUpdate = true;
-        baseGeom.computeVertexNormals();
-        baseGeom.computeBoundingSphere();
-
-        return baseGeom;
+        g.computeVertexNormals();
+        return g;
     });
 }
 
 /**
- * Create large rock geometry (icosahedron for boulders)
+ * Unit fallen branch for instanced ground sticks (scaled per instance: x/z by
+ * radius, y by length). Tapered, slightly bent, with a broken side twig, so
+ * sticks no longer read as identical straight dowels.
  */
-export function createLargeRockGeometry(): THREE.IcosahedronGeometry {
-    const key = 'large-rock';
-    return getCachedGeometry(key, () => new THREE.IcosahedronGeometry(1.0, 2)) as THREE.IcosahedronGeometry;
+export function createGroundStickGeometry(): THREE.BufferGeometry {
+    return getCachedGeometry('stick-ground', () => {
+        const main = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0.0, -0.5, 0),
+            new THREE.Vector3(0.35, -0.2, 0.1),
+            new THREE.Vector3(0.2, 0.15, -0.1),
+            new THREE.Vector3(-0.35, 0.5, 0.05),
+        ]);
+        const tube = (curve: THREE.Curve<THREE.Vector3>, segs: number, r0: number, r1: number, rad: number) => {
+            const g = new THREE.TubeGeometry(curve, segs, 1, rad, false);
+            const pos = g.attributes.position as THREE.BufferAttribute;
+            const p = new THREE.Vector3();
+            // Rescale each ring around its centre to taper r0 -> r1.
+            for (let i = 0; i <= segs; i++) {
+                const t = i / segs;
+                const c = curve.getPointAt(t);
+                const r = THREE.MathUtils.lerp(r0, r1, t) * (0.9 + 0.2 * valueNoise(t * 9, 0.5, 0.5, 2.2));
+                for (let j = 0; j <= rad; j++) {
+                    const idx = i * (rad + 1) + j;
+                    p.fromBufferAttribute(pos, idx).sub(c).multiplyScalar(r).add(c);
+                    pos.setXYZ(idx, p.x, p.y, p.z);
+                }
+            }
+            g.computeVertexNormals();
+            return g;
+        };
+        const branch = tube(main, 14, 1.0, 0.65, 7);
+        const twigCurve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(0.3, -0.12, 0.05),
+            new THREE.Vector3(1.6, 0.0, 0.4),
+            new THREE.Vector3(3.2, 0.1, 0.9),
+        ]);
+        const twig = tube(twigCurve, 5, 0.5, 0.25, 5);
+        const merged = mergeGeometriesSimple([branch, twig]);
+        merged.computeBoundingSphere();
+        return merged;
+    });
+}
+
+/** Merge non-indexed-compatible geometries (position/normal/uv only). */
+function mergeGeometriesSimple(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+    const flat = parts.map((p) => (p.index ? p.toNonIndexed() : p));
+    const out = new THREE.BufferGeometry();
+    for (const name of ['position', 'normal', 'uv'] as const) {
+        const size = flat[0].getAttribute(name).itemSize;
+        const total = flat.reduce((n, g) => n + g.getAttribute(name).count * size, 0);
+        const arr = new Float32Array(total);
+        let off = 0;
+        for (const g of flat) { const a = g.getAttribute(name).array as Float32Array; arr.set(a, off); off += a.length; }
+        out.setAttribute(name, new THREE.BufferAttribute(arr, size));
+    }
+    return out;
+}
+
+/** Hand-sized stone (held, thrown, crafting). */
+export function createStoneGeometry(isThumbnail = false, variant = 0): THREE.BufferGeometry {
+    const d = ITEM_DIMENSIONS.stone;
+    const key = `stone-${isThumbnail ? 'thumb' : 'world'}-${variant}`;
+    return getCachedGeometry(key, () => buildRockGeometry(d.radius, variant, isThumbnail ? 2 : 3));
+}
+
+/**
+ * Knapped stone flake: a pointed, leaf-shaped blade that is thick along a
+ * central ridge and thin at the edges, with flat facets (flake scars) on both
+ * faces. Tip at +Y, blade in the XY plane (as the crafting slots expect).
+ */
+export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
+    const key = `shard-${isThumbnail ? 'thumb' : 'world'}`;
+    return getCachedGeometry(key, () => {
+        const L = 0.44, W = 0.075, T = 0.03, edge = 0.004;
+        const N = 12; // outline points per side
+        const outline: Array<[number, number]> = [];
+        // Right side from tip down to the butt, then left side back up.
+        for (let i = 0; i <= N; i++) {
+            const t = i / N; // 0 tip, 1 butt
+            const y = L / 2 - t * L;
+            const w = W * Math.pow(Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5), 0.8) * (t > 0.85 ? 1 - (t - 0.85) * 2.5 : 1);
+            const jag = (hash3(i, 1, 0, 3.3) - 0.5) * 0.012 * (t > 0.08 ? 1 : 0);
+            outline.push([w + jag, y]);
+        }
+        for (let i = N - 1; i >= 1; i--) {
+            const [x, y] = outline[i];
+            outline.push([-x + (hash3(i, 2, 0, 4.4) - 0.5) * 0.012, y]);
+        }
+        const ridge = (y: number) => {
+            const t = (L / 2 - y) / L;
+            return T * Math.sin(Math.min(1, t * 1.3) * Math.PI * 0.5) * (t > 0.9 ? 1 - (t - 0.9) * 4 : 1);
+        };
+        const verts: number[] = [];
+        // Emit a triangle facing `want` (flip the winding if it does not).
+        const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), nrm = new THREE.Vector3();
+        const tri = (a: number[], b: number[], c: number[], want: THREE.Vector3) => {
+            e1.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+            e2.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+            nrm.crossVectors(e1, e2);
+            if (nrm.dot(want) < 0) verts.push(...a, ...c, ...b); else verts.push(...a, ...b, ...c);
+        };
+        const M = outline.length;
+        const up = new THREE.Vector3(0, 0, 1), down = new THREE.Vector3(0, 0, -1);
+        for (const side of [1, -1]) {
+            const want = side > 0 ? up : down;
+            // One ridge point per outline segment, slightly jittered: the faces
+            // between them are the flat flake scars.
+            const ridgePts = outline.map(([x0, y0], i) => {
+                const [x1, y1] = outline[(i + 1) % M];
+                const my = (y0 + y1) / 2;
+                const rx = (x0 + x1) * 0.12 + (hash3(i, side, 5, 6.6) - 0.5) * 0.012;
+                return [rx, my, side * ridge(my)];
+            });
+            for (let i = 0; i < M; i++) {
+                const a = [outline[i][0], outline[i][1], side * edge];
+                const b = [outline[(i + 1) % M][0], outline[(i + 1) % M][1], side * edge];
+                const r0 = ridgePts[i], r1 = ridgePts[(i + 1) % M];
+                tri(a, r0, b, want);
+                tri(b, r0, r1, want); // closes the gap between neighbouring scars
+            }
+            // Fill the thin ridge polygon from a centre point on the crest.
+            const centre = [0, 0, side * ridge(0) * 1.04];
+            for (let i = 0; i < M; i++) tri(centre, ridgePts[i], ridgePts[(i + 1) % M], want);
+        }
+        // Thin edge band between the faces, facing outward.
+        const out = new THREE.Vector3();
+        for (let i = 0; i < M; i++) {
+            const [x0, y0] = outline[i];
+            const [x1, y1] = outline[(i + 1) % M];
+            out.set((x0 + x1) / 2, (y0 + y1) / 2, 0);
+            tri([x0, y0, edge], [x1, y1, edge], [x1, y1, -edge], out);
+            tri([x0, y0, edge], [x1, y1, -edge], [x0, y0, -edge], out);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((verts.length / 3) * 2), 2));
+        g.computeVertexNormals(); // non-indexed: flat facets
+        g.computeBoundingSphere();
+        return g;
+    });
+}
+
+/** Boulder (unit radius; scaled per instance). */
+export function createLargeRockGeometry(): THREE.BufferGeometry {
+    return getCachedGeometry('large-rock', () => buildRockGeometry(1.0, 7, 3, 0.72));
 }
 
 /**

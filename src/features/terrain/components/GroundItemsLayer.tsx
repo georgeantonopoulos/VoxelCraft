@@ -9,6 +9,7 @@ import { STICK_SHADER, ROCK_SHADER } from '@core/graphics/GroundItemShaders';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import {
   createStoneGeometry,
+  createGroundStickGeometry,
   createLargeRockGeometry,
   ITEM_COLORS,
   STONE_MATERIALS,
@@ -96,9 +97,8 @@ export const GroundItemsLayer: React.FC<{
   const stickGeometry = useMemo(() => {
     // For instanced ground items, we use a unit cylinder that gets scaled per-instance
     // This differs from UniversalTool which uses the actual stick dimensions directly
-    return new THREE.CylinderGeometry(1, 0.7, 1.0, 8, 4);
+    return createGroundStickGeometry();
   }, []);
-  const rockGeometry = useMemo(() => createStoneGeometry(false), []);
   const largeRockGeometry = useMemo(() => createLargeRockGeometry(), []);
 
   // Rock materials using unified color palette from ItemGeometry.ts
@@ -128,7 +128,7 @@ export const GroundItemsLayer: React.FC<{
         return (
           <GroundItemBatch
             key={`rocks-${variant}`}
-            geometry={rockGeometry}
+            geometry={createStoneGeometry(false, variant + 1)}
             data={data}
             color={config.color}
             roughness={config.roughness}

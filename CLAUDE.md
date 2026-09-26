@@ -146,7 +146,7 @@ TriplanarMaterial uses custom shaders with:
 - Geometry caching for performance (geometries created once and reused)
 - Used by: UniversalTool (held/crafting), GroundItemsLayer (terrain clutter), PhysicsItem (thrown), ItemThumbnail (inventory)
 
-Shard geometry is a stretched octahedron (not cone) for blade-like appearance. Lashing geometry uses helix curves for realistic tool bindings.
+Stones are procedural (`buildRockGeometry`: welded icosphere, fBm displacement, a few fracture-plane cuts, flattened underside; several shape variants, plus per-instance proportions in ROCK_SHADER). Shards are knapped flakes (`createShardGeometry`: thick central ridge, thin edges, flat facet scars; tip +Y, blade in XY for the crafting slots). Ground sticks use `createGroundStickGeometry` (tapered, bent, with a broken side twig); held sticks stay straight for attachments. Stone and flint are dielectrics: metalness 0 (metal reflected an empty environment and rendered black). In the item shaders the non-instanced branch must write `csm_Position` with the same transform as `csm_Normal`. Lashing geometry uses helix curves for realistic tool bindings. Hotbar icons are SVG line glyphs (`src/ui/grove/ItemGlyph.tsx`), not 3D thumbnails.
 
 ### Item Shader System
 
