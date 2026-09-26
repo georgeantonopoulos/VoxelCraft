@@ -12,7 +12,7 @@ import { frameProfiler } from '@core/utils/FrameProfiler';
 import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
-import { LogMesh } from '@features/building/components/Log';
+import { LogMesh, PlankMesh } from '@features/building/components/Log';
 import { KeeperFist, KeeperForearm } from './KeeperHand';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
@@ -618,7 +618,9 @@ export const FirstPersonTools: React.FC = () => {
             {selectedItem === ItemType.TORCH && <TorchSound />}
             {carriedLog && (
                 <group position={[0.05, -0.42, -1.1]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
-                    <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />
+                    {carriedLog.kind === 'plank'
+                        ? <group rotation={[0, 1.2, 0]}><PlankMesh length={carriedLog.length} halfWidth={carriedLog.radius} bark={carriedLog.bark} /></group>
+                        : <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />}
                     {/* Both hands on the near side of the log, one toward each end
                         (log axis is local Y; local +Z faces the camera). */}
                     {[-0.3, 0.3].map((f) => (

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
-import { useLogStore, type LogData } from '@/state/LogStore';
+import { useLogStore, PLANK_THICKNESS, type LogData } from '@/state/LogStore';
 import { emitImpact } from '@features/interaction/components/ImpactFX';
 
 /**
@@ -103,7 +103,31 @@ export const BuildPreview: React.FC = () => {
     let valid = true;
     const m = modeRef.current;
 
-    if (target) {
+    if (carried.kind === 'plank') {
+      // Planks always lie flat, length across the view (floors, benches, roofs).
+      const flatQ = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(across, UP), across, UP));
+      rot = flatQ;
+      const half = PLANK_THICKNESS / 2;
+      if (target?.kind === 'plank') {
+        // Lay the next board beside the one aimed at (same direction).
+        tmp.q.set(target.rotation[0], target.rotation[1], target.rotation[2], target.rotation[3]);
+        const widthDir = new THREE.Vector3(1, 0, 0).applyQuaternion(tmp.q);
+        const tPos = new THREE.Vector3(...target.position);
+        const k = point.clone().sub(tPos).dot(widthDir) >= 0 ? 1 : -1;
+        pos = tPos.clone().addScaledVector(widthDir, k * (target.radius + carried.radius + 0.01));
+        rot = tmp.q.clone();
+      } else if (target) {
+        tmp.q.set(target.rotation[0], target.rotation[1], target.rotation[2], target.rotation[3]);
+        tmp.axis.copy(UP).applyQuaternion(tmp.q);
+        const tPos = new THREE.Vector3(...target.position);
+        const top = Math.abs(tmp.axis.y) > 0.8 ? tPos.y + target.length / 2 : tPos.y + target.radius;
+        pos = new THREE.Vector3(point.x, top + half, point.z);
+      } else {
+        pos = point.clone().addScaledVector(UP, half);
+        valid = hit.normal.y > 0.6;
+      }
+    } else if (target) {
       tmp.q.set(target.rotation[0], target.rotation[1], target.rotation[2], target.rotation[3]);
       tmp.axis.copy(UP).applyQuaternion(tmp.q);
       const tPos = new THREE.Vector3(...target.position);
@@ -140,7 +164,9 @@ export const BuildPreview: React.FC = () => {
     ghostMaterial.emissive.set(valid ? '#9dbd62' : '#b4745f');
   });
 
-  const geo = useMemo(() => (carried ? new THREE.CylinderGeometry(carried.radius * 0.95, carried.radius, carried.length, 14) : null), [carried?.id, carried?.length, carried?.radius]); // eslint-disable-line react-hooks/exhaustive-deps
+  const geo = useMemo(() => (!carried ? null
+    : carried.kind === 'plank' ? new THREE.BoxGeometry(carried.radius * 2, carried.length, PLANK_THICKNESS)
+    : new THREE.CylinderGeometry(carried.radius * 0.95, carried.radius, carried.length, 14)), [carried?.id, carried?.length, carried?.radius, carried?.kind]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => { geo?.dispose(); }, [geo]);
 
   return (

@@ -18,7 +18,12 @@ export interface LogData {
   /** Bark colour of the tree it came from. */
   bark: string;
   state: LogState;
+  /** A whole log (round) or a split plank (flat board: radius is half its width). */
+  kind?: 'log' | 'plank';
 }
+
+/** Thickness of a split plank (m). */
+export const PLANK_THICKNESS = 0.06;
 
 interface LogStoreState {
   logs: Record<string, LogData>;

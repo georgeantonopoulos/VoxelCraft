@@ -67,8 +67,8 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const customTools = useInventoryStore(state => state.customTools);
-    const carrying = useLogStore(state => !!state.carriedId);
-    const selectedName = carrying ? 'Carrying a log · right click to place · Q to set down'
+    const carrying = useLogStore(state => (state.carriedId ? state.logs[state.carriedId]?.kind ?? 'log' : null));
+    const selectedName = carrying ? `Carrying a ${carrying} · right click to place · Q to set down`
         : !selectedItem ? ''
         : (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
             ? toolDisplayName(customTools[selectedItem])

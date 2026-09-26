@@ -32,6 +32,8 @@ import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilitie
 import { emitSpark } from '@features/interaction/components/SparkSystem';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { fallenTreeBodies } from '@features/flora/components/FallingTree';
+import { useLogStore } from '@/state/LogStore';
+import { logBodies } from '@features/building/components/Log';
 import { emitImpact, type ImpactKind } from '@features/interaction/components/ImpactFX';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
@@ -426,6 +428,52 @@ export function useTerrainInteraction(
               useEntityHistoryStore.getState().setTargetEntity(null);
               window.dispatchEvent(new CustomEvent('vc-tree-sawn', { detail: { id: userData.id } }));
               playSound('wood_hit', { pitch: 0.7, volume: 1.0 });
+            }
+            return;
+          }
+
+          // --- LOOSE LOG --- an axe splits it into two planks.
+          if (userData.type === 'log' && ((physicsHit as any).timeOfImpact ?? Infinity) <= STRIKE_REACH) {
+            const logs = useLogStore.getState();
+            const log = logs.logs[userData.id];
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const held = inventorySlots[selectedSlotIndex];
+            const tool = (typeof held === 'string' && held.startsWith('tool_')) ? customTools[held as string] : (held as ItemType);
+            const caps = getToolCapabilities(tool);
+            const raw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const at = new THREE.Vector3(raw.x, raw.y, raw.z);
+            const away = direction.clone().multiplyScalar(-1).setY(0.7);
+            if (!log || log.state !== 'loose' || log.kind === 'plank' || !caps.canChop) {
+              emitImpact({ position: at, direction: away, kind: 'wood', color: '#a88760', strength: 0.3 });
+              playSound('wood_hit', { pitch: 0.9, volume: 0.5 });
+              return;
+            }
+            const h = useEntityHistoryStore.getState().damageEntity(`split-${log.id}`, caps.woodDamage, 10, 'Log');
+            emitImpact({ position: at, direction: away, kind: 'wood', color: '#c9ab80', strength: 1.1, floorY: at.y - 0.4 });
+            playSound('wood_hit', { pitch: 0.95 + Math.random() * 0.1 });
+            window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true } }));
+            if (h <= 0) {
+              useEntityHistoryStore.getState().setTargetEntity(null);
+              // Two boards lying flat along the log's line, side by side.
+              const body = logBodies.get(log.id);
+              const t = body ? body.translation() : { x: log.position[0], y: log.position[1], z: log.position[2] };
+              const r = body ? body.rotation() : { x: log.rotation[0], y: log.rotation[1], z: log.rotation[2], w: log.rotation[3] };
+              const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));
+              axis.y = 0;
+              if (axis.lengthSq() < 1e-4) axis.set(1, 0, 0);
+              axis.normalize();
+              const up = new THREE.Vector3(0, 1, 0);
+              const side = new THREE.Vector3().crossVectors(axis, up).normalize();
+              const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, axis, up));
+              const half = log.radius * 0.9;
+              logs.removeLog(log.id);
+              logs.addLogs([-1, 1].map((k, i) => ({
+                id: `${log.id}_p${i}`,
+                position: [t.x + side.x * k * (half + 0.02), t.y + 0.05, t.z + side.z * k * (half + 0.02)] as [number, number, number],
+                rotation: [q.x, q.y, q.z, q.w] as [number, number, number, number],
+                length: log.length, radius: half, bark: log.bark, state: 'loose' as const, kind: 'plank' as const,
+              })));
+              playSound('wood_hit', { pitch: 0.75, volume: 1.0 });
             }
             return;
           }

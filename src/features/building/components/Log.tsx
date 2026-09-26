@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { RigidBody, CylinderCollider, type RapierRigidBody } from '@react-three/rapier';
+import { RigidBody, CylinderCollider, CuboidCollider, type RapierRigidBody } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material';
 import { STICK_SHADER } from '@core/graphics/GroundItemShaders';
 import { getNoiseTexture } from '@core/memory/sharedResources';
-import { useLogStore, type LogData } from '@/state/LogStore';
+import { useLogStore, PLANK_THICKNESS, type LogData } from '@/state/LogStore';
 import { useGroveStore } from '@/state/GroveStore';
 import { BuildPreview } from './BuildPreview';
 
@@ -82,6 +82,37 @@ export const LogMesh: React.FC<{ length: number; radius: number; bark: string; s
   );
 };
 
+/** A split plank: a pale board, grain along its length, a strip of bark on one edge. */
+export const PlankMesh: React.FC<{ length: number; halfWidth: number; bark: string; seed?: number }> = ({ length, halfWidth, bark, seed = 1 }) => {
+  const board = useMemo(() => new THREE.BoxGeometry(halfWidth * 2, length, PLANK_THICKNESS, 2, 6, 1), [length, halfWidth]);
+  const edge = useMemo(() => new THREE.BoxGeometry(0.012, length * 0.98, PLANK_THICKNESS * 0.9), [length]);
+  const uniforms = useMemo(() => ({
+    uInstancing: { value: false },
+    uSeed: { value: seed },
+    uHeight: { value: length },
+    uNoiseTexture: { value: getNoiseTexture() },
+    uColor: { value: new THREE.Color('#b89a70') },
+  }), [seed, length]);
+  const barkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: bark, roughness: 0.95 }), [bark]);
+  useEffect(() => () => { board.dispose(); edge.dispose(); barkMaterial.dispose(); }, [board, edge, barkMaterial]);
+  return (
+    <group>
+      <mesh geometry={board} castShadow receiveShadow>
+        <CustomShaderMaterial
+          baseMaterial={THREE.MeshStandardMaterial}
+          vertexShader={STICK_SHADER.vertex}
+          fragmentShader={STICK_SHADER.fragment}
+          uniforms={uniforms}
+          color="#b89a70"
+          roughness={0.9}
+          metalness={0}
+        />
+      </mesh>
+      <mesh geometry={edge} material={barkMaterial} position={[halfWidth + 0.004, 0, 0]} castShadow />
+    </group>
+  );
+};
+
 const Log: React.FC<{ log: LogData }> = ({ log }) => {
   const body = useRef<RapierRigidBody>(null);
   useEffect(() => {
@@ -103,8 +134,17 @@ const Log: React.FC<{ log: LogData }> = ({ log }) => {
       friction={1.2}
       restitution={0.05}
     >
-      <CylinderCollider args={[log.length / 2, log.radius]} />
-      <LogMesh length={log.length} radius={log.radius} bark={log.bark} seed={seed} />
+      {log.kind === 'plank' ? (
+        <>
+          <CuboidCollider args={[log.radius, log.length / 2, PLANK_THICKNESS / 2]} />
+          <PlankMesh length={log.length} halfWidth={log.radius} bark={log.bark} seed={seed} />
+        </>
+      ) : (
+        <>
+          <CylinderCollider args={[log.length / 2, log.radius]} />
+          <LogMesh length={log.length} radius={log.radius} bark={log.bark} seed={seed} />
+        </>
+      )}
     </RigidBody>
   );
 };
