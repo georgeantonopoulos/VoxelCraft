@@ -47,10 +47,12 @@ const Slider: React.FC<{
 const useAudioSettings = () => {
   const master = useSettingsStore((s) => s.masterVolume);
   const ambience = useSettingsStore((s) => s.ambienceVolume);
+  const music = useSettingsStore((s) => s.musicVolume);
   useEffect(() => {
     audioManager.setMasterVolume(master);
     audioManager.ambience.setVolume(master * ambience);
-  }, [master, ambience]);
+    audioManager.ambience.setMusicVolume(master * music);
+  }, [master, ambience, music]);
 };
 
 export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) => {
@@ -83,6 +85,8 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
   const setMasterVolume = useSettingsStore(s => s.setMasterVolume);
   const ambienceVolume = useSettingsStore(s => s.ambienceVolume);
   const setAmbienceVolume = useSettingsStore(s => s.setAmbienceVolume);
+  const musicVolume = useSettingsStore(s => s.musicVolume);
+  const setMusicVolume = useSettingsStore(s => s.setMusicVolume);
 
   const inputMode = useSettingsStore(s => s.inputMode);
   const setInputMode = useSettingsStore(s => s.setInputMode);
@@ -141,6 +145,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
         <Section title="Sound">
           <Slider label="Volume" value={masterVolume} min={0} max={1} step={0.05} display={`${Math.round(masterVolume * 100)}%`} onChange={setMasterVolume} />
           <Slider label="Nature ambience" value={ambienceVolume} min={0} max={1} step={0.05} display={`${Math.round(ambienceVolume * 100)}%`} onChange={setAmbienceVolume} />
+          <Slider label="Music" value={musicVolume} min={0} max={1} step={0.05} display={musicVolume === 0 ? 'off' : `${Math.round(musicVolume * 100)}%`} onChange={setMusicVolume} />
         </Section>
 
         <Section title="Graphics">

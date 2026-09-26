@@ -18,6 +18,8 @@
  * Everything passes a master low-pass that closes when the camera is underwater.
  */
 
+import { GroveMusic, type MusicCue } from './GroveMusic';
+
 export interface AmbienceScene {
   /** 0..1 sun height factor: 0 = night, 1 = full day. */
   daylight: number;
@@ -133,6 +135,8 @@ export class ProceduralAmbience {
   private timer: number | null = null;
   private rand: Rand = mulberry32(0x5eed);
   private volume = 0.8;
+  private musicVolume = 0.6;
+  private music: GroveMusic | null = null;
 
   /** Creates the audio graph. Must be called from a user gesture (autoplay policy). */
   start(): void {
@@ -159,6 +163,10 @@ export class ProceduralAmbience {
     this.reverbSend.gain.value = 0.15;
     this.reverbSend.connect(this.reverb);
     this.reverb.connect(this.muffle);
+
+    // Sparse generative score, on its own volume and a longer, darker room.
+    this.music = new GroveMusic(ctx, ctx.destination, this.makeImpulse(6.5, 3.2), mulberry32(0x6c0e));
+    this.music.setVolume(this.musicVolume);
 
     const pink = this.makeNoise(4, 'pink');
     const brown = this.makeNoise(4, 'brown');
@@ -253,6 +261,16 @@ export class ProceduralAmbience {
     if (this.ctx) this.master.gain.setTargetAtTime(this.volume * AMBIENCE_GAIN, this.ctx.currentTime, 0.2);
   }
 
+  setMusicVolume(v: number): void {
+    this.musicVolume = Math.max(0, Math.min(1, v));
+    this.music?.setVolume(this.musicVolume);
+  }
+
+  /** Short musical motif for a discovery or milestone. */
+  cueMusic(kind: MusicCue): void {
+    this.music?.cue(kind);
+  }
+
   /** Moves the listener to the camera (call every frame; cheap). */
   setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number): void {
     const l = this.ctx?.listener;
@@ -327,9 +345,10 @@ export class ProceduralAmbience {
         const n = Math.min(l.length, frames - at);
         left.set(l.subarray(0, n), at); right.set(r.subarray(0, n), at);
         at += n;
-        if (at >= frames) { this.master.disconnect(tap); tap.disconnect(); resolve({ sampleRate: ctx.sampleRate, left, right }); }
+        if (at >= frames) { this.master.disconnect(tap); this.music?.output.disconnect(tap); tap.disconnect(); resolve({ sampleRate: ctx.sampleRate, left, right }); }
       };
       this.master.connect(tap);
+      this.music?.output.connect(tap);
       tap.connect(ctx.destination); // processors only run when connected
     });
   }
@@ -391,6 +410,8 @@ export class ProceduralAmbience {
     this.cicadas.gain.setTargetAtTime(0.012 * outside * s.heat * s.daylight * s.foliage, t, 1.5);
     this.caveDrone.gain.setTargetAtTime(0.05 * s.underground, t, 1.5);
     this.reverbSend.gain.setTargetAtTime(0.12 + 0.6 * s.underground, t, 1);
+
+    this.music?.update({ daylight: s.daylight, dawn: s.dawn, underground: s.underground, underwater: s.underwater });
 
     // Underwater: close the master low-pass.
     this.muffle.frequency.setTargetAtTime(s.underwater > 0.5 ? 500 : 18000, t, 0.15);

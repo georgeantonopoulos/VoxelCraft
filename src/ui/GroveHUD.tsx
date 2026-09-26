@@ -213,6 +213,11 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
     return () => window.clearTimeout(handle);
   }, [toast.id, dismiss]);
 
+  // A short musical motif marks the moment (AudioManager handles vc-music-cue).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind: toast.notice.kind } }));
+  }, [toast.id, toast.notice.kind]);
+
   const n = toast.notice;
   let eyebrow = '';
   let title = '';

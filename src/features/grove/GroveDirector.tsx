@@ -80,7 +80,10 @@ export const GroveDirector: React.FC<{ seed: number; sunDirection: THREE.Vector3
     switch (event.type) {
       case 'hollow-found': grove.markHollowFound(event.hollowId); break;
       case 'hollow-awakened': grove.markHollowFound(event.hollowId); break;
-      case 'hollow-restored': grove.markHollowRestored(event.hollowId); break;
+      case 'hollow-restored':
+        grove.markHollowRestored(event.hollowId);
+        window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind: 'hollow-restored' } }));
+        break;
       case 'tree-felled': grove.record('treesFelled'); break;
       case 'torch-placed': grove.record('torchesPlaced'); break;
     }

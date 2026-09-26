@@ -19,6 +19,7 @@
 
 import { SoundCategory } from './types';
 import { ProceduralAmbience } from './ambience/ProceduralAmbience';
+import type { MusicCue } from './ambience/GroveMusic';
 import type {
   SoundDefinition,
   PlayOptions,
@@ -57,6 +58,11 @@ export class AudioManager {
    */
   readonly ambience = new ProceduralAmbience();
   private readonly startAmbience = () => this.ambience.start();
+  /** vc-music-cue: { kind: MusicCue } plays a short motif (discoveries, milestones). */
+  private readonly handleMusicCue = (e: Event) => {
+    const kind = (e as CustomEvent<{ kind?: MusicCue }>).detail?.kind;
+    if (kind) this.ambience.cueMusic(kind);
+  };
 
   // Bound event handlers (stored for proper removal)
   private boundHandlePlayEvent: (event: Event) => void;
@@ -150,6 +156,7 @@ export class AudioManager {
     window.addEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
     window.addEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
     // The AudioContext may only start after a user gesture.
+    window.addEventListener('vc-music-cue', this.handleMusicCue);
     window.addEventListener('pointerdown', this.startAmbience);
     window.addEventListener('keydown', this.startAmbience);
   }
@@ -427,6 +434,7 @@ export class AudioManager {
     window.removeEventListener('vc-audio-stop', this.boundHandleStopEvent);
     window.removeEventListener('vc-audio-ambient-enter', this.boundHandleAmbientEnterEvent);
     window.removeEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
+    window.removeEventListener('vc-music-cue', this.handleMusicCue);
     window.removeEventListener('pointerdown', this.startAmbience);
     window.removeEventListener('keydown', this.startAmbience);
     this.ambience.dispose();
