@@ -274,7 +274,7 @@ Changing these breaks mesher output dimensions and worker communication. Light g
 ## Debug Flags
 
 - `?debug` - Enable Leva debug panels (sun, shadows, fog controls, GI toggle)
-- `?mode=map` - Biome/map debug view
+- `?mode=map` - Biome/map debug view (`&world=FROZEN|LUSH|CHAOS|SKY_ISLANDS`, `&scale=N` metres per pixel, `&seed=N`)
 - `?normals` - Normal material for geometry inspection
 - `?profile` or `localStorage.vcProfiler = "1"` - Enable FrameProfiler with spike detection
 - `?benchmark` or `?benchmark=N` - Run FPS benchmark for N seconds (default 5s), reports pass/fail against 40 FPS threshold

@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
+import { BiomeManager, BiomeType, WorldType } from '@/features/terrain/logic/BiomeManager';
+// Land types: ?mode=map&world=FROZEN|LUSH|CHAOS|SKY_ISLANDS, ?scale=N metres per pixel.
+const mapParams = new URLSearchParams(window.location.search);
+const worldParam = mapParams.get('world') as WorldType | null;
+if (worldParam && (Object.values(WorldType) as string[]).includes(worldParam)) BiomeManager.setWorldType(worldParam);
 
 const BIOME_COLORS: Record<BiomeType, string> = {
     PLAINS: '#7cfc00',    // Lawn Green
@@ -17,7 +21,7 @@ const BIOME_COLORS: Record<BiomeType, string> = {
 
 export const MapDebug: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [scale, setScale] = useState(1);
+    const [scale, setScale] = useState(() => Number(mapParams.get('scale')) || 1);
     const [offsetX, setOffsetX] = useState(0);
     const [offsetZ, setOffsetZ] = useState(0);
     const [isDragging, setIsDragging] = useState(false);
