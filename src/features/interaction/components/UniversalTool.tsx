@@ -18,7 +18,7 @@ import {
     createStoneGeometry,
     createShardGeometry,
     createLashingGeometry,
-    getFloraGeometryConfig,
+    createLuminaPlantGeometry,
     STONE_MATERIALS,
     SHARD_MATERIALS,
     STICK_MATERIALS,
@@ -226,7 +226,6 @@ interface FloraMeshProps {
 }
 
 export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = false, seed = 0 }) => {
-    const config = getFloraGeometryConfig(isThumbnail);
     // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
     // the uniforms object identity changes, so an inline literal recompiled it on
     // every re-render.
@@ -245,73 +244,30 @@ export const FloraMesh: React.FC<FloraMeshProps> = ({ scale = 1, isThumbnail = f
         if (!isThumbnail) uniforms.uTime.value = clock.getElapsedTime();
     });
 
-    // Thumbnail uses simple material for performance
-    if (isThumbnail) {
-        return (
-            <group scale={scale}>
-                <mesh>
-                    <sphereGeometry args={[config.main.radius, config.main.segments, config.main.segments]} />
-                    <meshStandardMaterial
-                        color={ITEM_COLORS.flora.base}
-                        emissive={ITEM_COLORS.flora.glow}
-                        emissiveIntensity={1.3}
-                        toneMapped={false}
-                    />
-                </mesh>
-                <mesh position={config.secondary.position}>
-                    <sphereGeometry args={[config.secondary.radius, config.secondary.segments, config.secondary.segments]} />
-                    <meshStandardMaterial
-                        color={ITEM_COLORS.flora.base}
-                        emissive={ITEM_COLORS.flora.glow}
-                        emissiveIntensity={0.5}
-                        toneMapped={false}
-                    />
-                </mesh>
-                <mesh position={config.tertiary.position}>
-                    <sphereGeometry args={[config.tertiary.radius, config.tertiary.segments, config.tertiary.segments]} />
-                    <meshStandardMaterial
-                        color={ITEM_COLORS.flora.base}
-                        emissive={ITEM_COLORS.flora.glow}
-                        emissiveIntensity={0.5}
-                        toneMapped={false}
-                    />
-                </mesh>
-            </group>
-        );
-    }
+    const plant = useMemo(() => createLuminaPlantGeometry(), []);
+    // Plant base sits at y = 0; centre it on the item origin like the old bulb.
+    const PLANT_SCALE = 1.3;
 
     return (
         <group scale={scale}>
-            <mesh castShadow receiveShadow>
-                <sphereGeometry args={[config.main.radius, config.main.segments, config.main.segments]} />
-                <CustomShaderMaterial
-                    baseMaterial={THREE.MeshStandardMaterial}
-                    vertexShader={FLORA_SHADER.vertex}
-                    fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={uniforms.main}
-                    toneMapped={false}
-                />
-            </mesh>
-            <mesh position={config.secondary.position} castShadow receiveShadow>
-                <sphereGeometry args={[config.secondary.radius, config.secondary.segments, config.secondary.segments]} />
-                <CustomShaderMaterial
-                    baseMaterial={THREE.MeshStandardMaterial}
-                    vertexShader={FLORA_SHADER.vertex}
-                    fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={uniforms.secondary}
-                    toneMapped={false}
-                />
-            </mesh>
-            <mesh position={config.tertiary.position} castShadow receiveShadow>
-                <sphereGeometry args={[config.tertiary.radius, config.tertiary.segments, config.tertiary.segments]} />
-                <CustomShaderMaterial
-                    baseMaterial={THREE.MeshStandardMaterial}
-                    vertexShader={FLORA_SHADER.vertex}
-                    fragmentShader={FLORA_SHADER.fragment}
-                    uniforms={uniforms.tertiary}
-                    toneMapped={false}
-                />
-            </mesh>
+            <group scale={PLANT_SCALE} position={[0, -0.17 * PLANT_SCALE, 0]}>
+                <mesh geometry={plant.stems} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
+                    <meshStandardMaterial color="#2c3d31" roughness={0.8} />
+                </mesh>
+                <mesh geometry={plant.pods} castShadow={!isThumbnail}>
+                    {isThumbnail ? (
+                        <meshStandardMaterial color="#c9f7ef" emissive={ITEM_COLORS.flora.glow} emissiveIntensity={1.4} toneMapped={false} />
+                    ) : (
+                        <CustomShaderMaterial
+                            baseMaterial={THREE.MeshStandardMaterial}
+                            vertexShader={FLORA_SHADER.vertex}
+                            fragmentShader={FLORA_SHADER.fragment}
+                            uniforms={uniforms.main}
+                            toneMapped={false}
+                        />
+                    )}
+                </mesh>
+            </group>
         </group>
     );
 };

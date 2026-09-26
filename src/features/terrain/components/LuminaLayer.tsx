@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { CHUNK_SIZE_XZ } from '@/constants';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
+import { createLuminaPlantGeometry } from '@core/items/ItemGeometry';
 
 interface LuminaLayerProps {
   data: Float32Array; // stride 4: x, y, z, type (type unused for now)
@@ -14,20 +15,25 @@ interface LuminaLayerProps {
   simplified?: boolean;
 }
 
-// Shared material pool for Lumina flora
-let sharedLuminaMaterial: THREE.MeshStandardMaterial | null = null;
+// Shared materials for Lumina flora: glowing pods and plain dark stems.
+let sharedPodMaterial: THREE.MeshStandardMaterial | null = null;
+let sharedStemMaterial: THREE.MeshStandardMaterial | null = null;
 
-const getSharedLuminaMaterial = () => {
-  if (sharedLuminaMaterial) return sharedLuminaMaterial;
-  sharedLuminaMaterial = new THREE.MeshStandardMaterial({
-    color: '#00e5ff',
-    emissive: '#00e5ff',
-    emissiveIntensity: 2.0,
-    roughness: 0.4,
-    metalness: 0.1,
-    toneMapped: false // Important for bloom
-  });
-  return sharedLuminaMaterial;
+const getLuminaMaterials = () => {
+  if (!sharedPodMaterial) {
+    sharedPodMaterial = new THREE.MeshStandardMaterial({
+      color: '#c9f7ef',
+      emissive: '#62e6d8',
+      emissiveIntensity: 1.7,
+      roughness: 0.35,
+      metalness: 0.0,
+      toneMapped: false, // pods bloom
+    });
+  }
+  if (!sharedStemMaterial) {
+    sharedStemMaterial = new THREE.MeshStandardMaterial({ color: '#2c3d31', roughness: 0.8, metalness: 0.0 });
+  }
+  return { pod: sharedPodMaterial, stem: sharedStemMaterial };
 };
 
 /**
@@ -37,6 +43,7 @@ const getSharedLuminaMaterial = () => {
  */
 export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, lightPositions, cx, cz, collidersEnabled, simplified }) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const stemRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
 
   const count = data.length / 4;
@@ -99,37 +106,45 @@ export const LuminaLayer: React.FC<LuminaLayerProps> = React.memo(({ data, light
       const wx = data[i * 4];
       const wy = data[i * 4 + 1];
       const wz = data[i * 4 + 2];
-      dummy.position.set(wx - originX, wy, wz - originZ);
-      const scale = 0.3 + hash01(wx, wy, wz, 0) * 0.15;
+      // Plant base slightly below the placement point (it grows from the soil).
+      dummy.position.set(wx - originX, wy - 0.04, wz - originZ);
+      const scale = 0.85 + hash01(wx, wy, wz, 0) * 0.5;
       dummy.scale.setScalar(scale);
-      dummy.rotation.y = hash01(wx, wy, wz, 1) * Math.PI * 2;
-      dummy.rotation.x = (hash01(wx, wy, wz, 2) - 0.5) * 0.5;
+      dummy.rotation.set((hash01(wx, wy, wz, 2) - 0.5) * 0.25, hash01(wx, wy, wz, 1) * Math.PI * 2, 0);
       dummy.updateMatrix();
       meshRef.current.setMatrixAt(i, dummy.matrix);
+      stemRef.current?.setMatrixAt(i, dummy.matrix);
     }
     meshRef.current.instanceMatrix.needsUpdate = true;
+    if (stemRef.current) stemRef.current.instanceMatrix.needsUpdate = true;
   }, [data, count, dummy, cx, cz]);
 
-  const mat = useMemo(() => getSharedLuminaMaterial(), []);
+  const mats = useMemo(() => getLuminaMaterials(), []);
+  const plant = useMemo(() => createLuminaPlantGeometry(), []);
 
   return (
     <group>
       <instancedMesh
         ref={meshRef}
-        args={[undefined, mat, count]}
+        args={[plant.pods, mats.pod, count]}
         castShadow={false}
         receiveShadow={false}
         frustumCulled={false}
-      >
-        <sphereGeometry args={[0.25, simplified ? 6 : 12, simplified ? 6 : 12]} />
-      </instancedMesh>
+      />
+      <instancedMesh
+        ref={stemRef}
+        args={[plant.stems, mats.stem, count]}
+        castShadow={false}
+        receiveShadow={false}
+        frustumCulled={false}
+      />
 
       {lights.map((pos, i) => (
         <PooledPointLight
           key={i}
           ref={el => { lightRefs.current[i] = el; }}
           position={pos}
-          color="#00e5ff"
+          color="#62e6d8"
           intensity={2.0}
           distance={12}
           decay={2}

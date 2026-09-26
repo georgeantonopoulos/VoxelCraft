@@ -4,6 +4,7 @@ import { RigidBody } from '@react-three/rapier';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { createLuminaPlantGeometry } from '@core/items/ItemGeometry';
 
 import { ItemType } from '@/types';
 import { getItemMetadata } from '../../interaction/logic/ItemRegistry';
@@ -16,8 +17,10 @@ interface LuminaFloraProps {
   bodyRef?: React.RefObject<any>;
 }
 
-// Cached material for performance
+// Cached materials for performance
 let luminaMaterial: THREE.Material | null = null;
+let stemMat: THREE.Material | null = null;
+const getStemMaterial = () => (stemMat ??= new THREE.MeshStandardMaterial({ color: '#2c3d31', roughness: 0.8 }));
 
 const getLuminaMaterial = () => {
   if (luminaMaterial) return luminaMaterial;
@@ -43,7 +46,7 @@ const getLuminaMaterial = () => {
         vPulse = pulse;
 
         // Subtle vertex displacement for organic feel
-        float breathe = sin(uTime * 1.5 + uSeed + position.y * 3.0) * 0.02;
+        float breathe = sin(uTime * 1.5 + uSeed + position.y * 3.0) * 0.004; // pods are ~3 cm
         vec3 pos = position;
         pos += normal * breathe * pulse;
 
@@ -129,24 +132,17 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
   const refToUse = bodyRef || internalRef;
   const material = useMemo(() => getLuminaMaterial(), []);
 
-  // Per-flora geometry carrying its seed as a vertex attribute, so every flora
-  // keeps its own pulse phase and pattern while sharing one material.
-  const geometries = useMemo(() => {
-    const withSeed = (g: THREE.BufferGeometry) => {
-      g.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(seed), 1));
-      return g;
-    };
-    return {
-      main: withSeed(new THREE.SphereGeometry(0.25, 24, 24)),
-      bulbA: withSeed(new THREE.SphereGeometry(0.15, 16, 16)),
-      bulbB: withSeed(new THREE.SphereGeometry(0.12, 16, 16)),
-    };
-  }, [seed]);
-  useEffect(() => () => {
-    geometries.main.dispose();
-    geometries.bulbA.dispose();
-    geometries.bulbB.dispose();
-  }, [geometries]);
+  // Per-flora pod geometry carrying its seed as a vertex attribute, so every
+  // flora keeps its own pulse phase while sharing one material. (Cloned: the
+  // plant geometry itself is shared and cached.)
+  const plant = useMemo(() => createLuminaPlantGeometry(), []);
+  const pods = useMemo(() => {
+    const g = plant.pods.clone();
+    g.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(seed), 1));
+    return g;
+  }, [plant, seed]);
+  useEffect(() => () => pods.dispose(), [pods]);
+  const stemMaterial = useMemo(() => getStemMaterial(), []);
 
   return (
     <RigidBody
@@ -158,17 +154,10 @@ export const LuminaFlora: React.FC<LuminaFloraProps> = ({ id, position, seed = 0
       friction={0.8}
       userData={{ type: ItemType.FLORA, id }}
     >
-      <group>
-        {/* Main Bulb - Bioluminescent with detailed shader */}
-        <mesh castShadow receiveShadow geometry={geometries.main}>
-          <primitive object={material} attach="material" />
-        </mesh>
-
-        {/* Secondary bulbs - share the same material for consistency */}
-        <mesh position={[0.15, -0.1, 0.1]} castShadow receiveShadow geometry={geometries.bulbA}>
-          <primitive object={material} attach="material" />
-        </mesh>
-        <mesh position={[-0.15, -0.15, -0.05]} castShadow receiveShadow geometry={geometries.bulbB}>
+      {/* A small Lumina plant: dark stems and glowing pods, centred on the body. */}
+      <group scale={1.3} position={[0, -0.22, 0]}>
+        <mesh geometry={plant.stems} material={stemMaterial} castShadow receiveShadow />
+        <mesh geometry={pods} castShadow>
           <primitive object={material} attach="material" />
         </mesh>
       </group>

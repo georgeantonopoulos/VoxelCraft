@@ -376,7 +376,8 @@ export const FLORA_SHADER = {
         vPulse = pulse;
 
         // Subtle vertex displacement for organic feel
-        float breathe = sin(uTime * 1.5 + uSeed + position.y * 3.0) * 0.02;
+        // Pods are ~3 cm: a gentle breath, not a 2 cm swell.
+        float breathe = sin(uTime * 1.5 + uSeed + position.y * 3.0) * 0.004;
         vec3 pos = position;
         pos += normal * breathe * pulse;
 

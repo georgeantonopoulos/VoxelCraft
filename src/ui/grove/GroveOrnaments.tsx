@@ -202,8 +202,8 @@ export const GroveLogo: React.FC<{ src: string; className?: string }> = ({ src, 
         objectPosition: '50% 47%',
         mixBlendMode: 'screen',
         filter: 'contrast(1.15) brightness(0.96)',
-        WebkitMaskImage: 'radial-gradient(ellipse 50% 48% at 50% 50%, #000 35%, transparent 92%)',
-        maskImage: 'radial-gradient(ellipse 50% 48% at 50% 50%, #000 35%, transparent 92%)',
+        WebkitMaskImage: 'radial-gradient(ellipse 60% 50% at 50% 50%, #000 62%, transparent 96%)',
+        maskImage: 'radial-gradient(ellipse 60% 50% at 50% 50%, #000 62%, transparent 96%)',
       }}
     />
   </div>

@@ -53,7 +53,7 @@ export const ITEM_REGISTRY: Record<ItemType, ItemMetadata> = {
     },
     [ItemType.FLORA]: {
         name: 'Flora',
-        color: '#00FFFF',
+        color: '#62e6d8',
         isStackable: true,
         stateKey: 'inventoryCount',
         icon: floraImg,

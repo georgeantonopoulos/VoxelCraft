@@ -55,7 +55,7 @@ export const ITEM_COLORS = {
 
     // Flora (Lumina)
     flora: {
-        glow: '#00FFFF',       // Cyan emissive
+        glow: '#62e6d8',       // Lumina teal (softer than pure cyan)
         base: '#111111',       // Dark base
     },
 } as const;
@@ -419,6 +419,70 @@ export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
 /** Boulder (unit radius; scaled per instance). */
 export function createLargeRockGeometry(): THREE.BufferGeometry {
     return getCachedGeometry('large-rock', () => buildRockGeometry(1.0, 7, 3, 0.72));
+}
+
+/**
+ * Lumina plant: a few dark, arching stems ending in drooping, glowing pods,
+ * with two leaves at the base. Base at y = 0, about 0.34 m tall. Returned as
+ * two geometries so pods get the glowing material and stems a plain one.
+ * Used for world flora (LuminaLayer), placed/thrown flora (LuminaFlora) and
+ * the held/crafting item (UniversalTool FloraMesh).
+ */
+export function createLuminaPlantGeometry(): { stems: THREE.BufferGeometry; pods: THREE.BufferGeometry } {
+    const stems = getCachedGeometry('lumina-stems', () => {
+        const parts: THREE.BufferGeometry[] = [];
+        const count = 4;
+        for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2 + hash3(i, 1, 2, 8.1) * 0.9;
+            const h = 0.2 + hash3(i, 2, 3, 8.2) * 0.12;
+            const out = 0.05 + hash3(i, 3, 4, 8.3) * 0.05;
+            const ca = Math.cos(a), sa = Math.sin(a);
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, 0, 0),
+                new THREE.Vector3(ca * out * 0.4, h * 0.55, sa * out * 0.4),
+                new THREE.Vector3(ca * out, h, sa * out),
+                new THREE.Vector3(ca * out * 1.35, h - 0.035, sa * out * 1.35), // droop
+            ]);
+            parts.push(new THREE.TubeGeometry(curve, 18, 0.006, 5, false));
+        }
+        // Two leaves at the base.
+        for (let i = 0; i < 2; i++) {
+            const leaf = new THREE.SphereGeometry(1, 8, 4);
+            leaf.scale(0.07, 0.006, 0.025);
+            leaf.translate(0.06, 0.012, 0);
+            leaf.rotateZ(0.35);
+            leaf.rotateY(i * Math.PI + 0.6);
+            parts.push(leaf);
+        }
+        const g = mergeGeometriesSimple(parts);
+        g.computeBoundingSphere();
+        return g;
+    });
+    const pods = getCachedGeometry('lumina-pods', () => {
+        const parts: THREE.BufferGeometry[] = [];
+        const count = 4;
+        for (let i = 0; i < count; i++) {
+            const a = (i / count) * Math.PI * 2 + hash3(i, 1, 2, 8.1) * 0.9;
+            const h = 0.2 + hash3(i, 2, 3, 8.2) * 0.12;
+            const out = 0.05 + hash3(i, 3, 4, 8.3) * 0.05;
+            const r = 0.022 + hash3(i, 4, 5, 8.4) * 0.014;
+            // Teardrop pod hanging from the stem tip.
+            const pod = new THREE.SphereGeometry(1, 12, 10);
+            const pos = pod.attributes.position as THREE.BufferAttribute;
+            for (let k = 0; k < pos.count; k++) {
+                const y = pos.getY(k);
+                const taper = y > 0 ? 1 - y * 0.55 : 1;
+                pos.setXYZ(k, pos.getX(k) * taper * r, y * r * 1.35, pos.getZ(k) * taper * r);
+            }
+            pod.computeVertexNormals();
+            pod.translate(Math.cos(a) * out * 1.35, h - 0.035 - r * 1.1, Math.sin(a) * out * 1.35);
+            parts.push(pod);
+        }
+        const g = mergeGeometriesSimple(parts);
+        g.computeBoundingSphere();
+        return g;
+    });
+    return { stems, pods };
 }
 
 /**
