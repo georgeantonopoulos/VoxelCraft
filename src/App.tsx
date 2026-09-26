@@ -481,12 +481,14 @@ const App: React.FC = () => {
             antialias: false,
             outputColorSpace: THREE.SRGBColorSpace,
             toneMapping: THREE.NoToneMapping,
-            // Standard depth: fog hides everything past ~100m and near=0.1 still
-            // resolves ~0.006 units there. Log depth made every material write
+            // Standard depth: fog hides everything past ~100m and near=0.05 still
+            // resolves ~0.012 units there. Log depth made every material write
             // gl_FragDepth, disabling early-Z (hidden terrain was fully shaded).
             logarithmicDepthBuffer: false
           }}
-          camera={{ fov: 75, near: 0.1, far: 2000 }}
+          // near 0.05: the near plane's corners reach ~0.09 m at fov 75, inside
+          // Player's 0.15 m camera wall margin (0.1 reached ~0.18 m and clipped walls).
+          camera={{ fov: 75, near: 0.05, far: 2000 }}
         >
           <SceneWarmup ready={gameStarted && terrainLoaded} />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />

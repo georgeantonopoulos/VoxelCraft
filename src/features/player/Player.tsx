@@ -36,7 +36,7 @@ const isTerrainCollider = (collider: { parent: () => { userData?: unknown } | nu
 // Camera collision constants
 const EYE_HEIGHT = 0.75;
 const EYE_HEIGHT_CROUCHED = 0.25;
-const CAMERA_CLIP_MARGIN = 0.15; // Slightly larger than near plane (0.1) to prevent clipping
+const CAMERA_CLIP_MARGIN = 0.15; // Larger than the near plane's corner distance (~0.09 m at near 0.05) so walls never clip
 
 // Crouch constants
 const CROUCH_SPEED_MULTIPLIER = 0.5;
@@ -47,6 +47,8 @@ const CAPSULE_RADIUS = 0.4;
 const GROUND_TOLERANCE = 0.35;
 /** How far below the spawn point to look for a terrain collider before releasing the player. */
 const SPAWN_GROUND_SEARCH = 64;
+/** Downward reach of the unloaded-ground guard (deeper than any column: surface to bedrock). */
+const UNLOADED_GROUND_SEARCH = 256;
 const CAMERA_PUSH_DIRECTIONS = [
   { x: 1, y: 0, z: 0 },   // Right
   { x: -1, y: 0, z: 0 },  // Left
@@ -70,6 +72,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const { rapier, world } = useRapier();
   // Reused every frame for the camera wall probes (no per-frame allocations).
   const cameraRay = useMemo(() => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }), [rapier]);
+  const groundProbeRay = useMemo(() => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }), [rapier]);
   const [isFlying, setIsFlying] = useState(false);
   const isCrouching = useRef(false);
   const lastSpacePress = useRef<number>(0);
@@ -90,10 +93,39 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       look: (yaw: number, pitch: number) => {
         camera.rotation.set(pitch, yaw, 0, 'YXZ');
       },
+      /** Terrain rigid bodies in the physics world: chunk key, translation, collider shape types. */
+      terrainBodies: () => {
+        const out: { key: string; t: [number, number, number]; shapes: number[] }[] = [];
+        world.forEachRigidBody((b) => {
+          const ud = b.userData as { type?: string; key?: string } | undefined;
+          if (ud?.type !== 'terrain') return;
+          const t = b.translation();
+          const shapes: number[] = [];
+          for (let i = 0; i < b.numColliders(); i++) shapes.push(b.collider(i).shapeType());
+          out.push({ key: ud.key ?? '?', t: [t.x, t.y, t.z], shapes });
+        });
+        return out;
+      },
+      /** Colliders whose bounding boxes overlap a cube of half-size r at (x, y, z): owner userData, shape type, body translation. */
+      collidersNear: (x: number, y: number, z: number, r = 2) => {
+        const out: { owner: unknown; shape: number; at: number[] }[] = [];
+        world.collidersWithAabbIntersectingAabb({ x, y, z }, { x: r, y: r, z: r }, (c) => {
+          const t = c.translation();
+          out.push({ owner: c.parent()?.userData, shape: c.shapeType(), at: [t.x, t.y, t.z] });
+          return true;
+        });
+        return out;
+      },
+      /** First terrain hit straight down from (x, y, z), or null. */
+      rayDown: (x: number, y: number, z: number, max = 256) => {
+        const ray = new rapier.Ray({ x, y, z }, { x: 0, y: -1, z: 0 });
+        const hit = world.castRay(ray, max, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+        return hit ? y - hit.timeOfImpact : null;
+      },
     };
     (window as unknown as { __vcDebug?: typeof api }).__vcDebug = api;
     return () => { delete (window as unknown as { __vcDebug?: typeof api }).__vcDebug; };
-  }, [camera]);
+  }, [camera, world, rapier]);
 
   // Throttle WorldStore sync for backward compatibility (10Hz instead of 60fps)
   const lastStoreSyncTime = useRef(0);
@@ -315,6 +347,18 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       }
     }
 
+    // Unloaded-ground guard: every loaded column has terrain (at worst bedrock)
+    // below it. If a downward ray finds no terrain collider at all, the chunk
+    // under the player has not got its collider yet (fast travel into a chunk
+    // still generating), so hold height instead of falling through the world.
+    if (!isFlying && !inWater && yVelocity < 0) {
+      groundProbeRay.origin.x = pos.x;
+      groundProbeRay.origin.y = pos.y;
+      groundProbeRay.origin.z = pos.z;
+      const below = world.castRay(groundProbeRay, UNLOADED_GROUND_SEARCH, true, undefined, undefined, undefined, undefined, isTerrainCollider);
+      if (!below) yVelocity = 0;
+    }
+
     if (!jump && wasJumpPressed.current) spacePressHandled.current = false;
     wasJumpPressed.current = jump;
 
@@ -347,7 +391,18 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   });
 
   return (
-    <RigidBody ref={body} colliders={false} mass={1} type="dynamic" position={position} gravityScale={0} enabledRotations={[false, false, false]} friction={0}>
+    <RigidBody
+      ref={body}
+      colliders={false}
+      mass={1}
+      type="dynamic"
+      position={position}
+      gravityScale={0}
+      enabledRotations={[false, false, false]}
+      friction={0}
+      // Terrain trimeshes have no thickness: without CCD a fast fall can step past one.
+      ccd
+    >
       <CapsuleCollider ref={collider} args={[CAPSULE_HALF_HEIGHT_NORMAL, CAPSULE_RADIUS]} />
     </RigidBody>
   );

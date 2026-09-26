@@ -125,6 +125,9 @@ export class TerrainService {
         const material = new Uint8Array(sizeX * sizeY * sizeZ);
         const wetness = new Uint8Array(sizeX * sizeY * sizeZ);
         const mossiness = new Uint8Array(sizeX * sizeY * sizeZ);
+        // Topsoil a voxel would carry if it turned out to be the exposed surface
+        // (set where the depth rule gave it subsoil instead; 0 = none).
+        const topsoil = new Uint8Array(sizeX * sizeY * sizeZ);
         const floraCandidates: number[] = []; // Cavern lumina flora
         const treeCandidates: number[] = [];  // Surface trees
         const stickCandidates: number[] = []; // Surface sticks (collectible)
@@ -363,17 +366,20 @@ export class TerrainService {
                                     // Sacred Grove: Barren desert-like surface
                                     // Deeper layers use terracotta for visual variety
                                     material[idx] = MaterialType.RED_SAND;
-                                    if (depth > 2.5) material[idx] = MaterialType.TERRACOTTA;
+                                    if (depth > 2.5) { material[idx] = MaterialType.TERRACOTTA; topsoil[idx] = MaterialType.RED_SAND; }
                                 } else if (biome === 'BEACH') {
                                     // Beaches need a thicker sand cap than deserts for smooth meshing:
                                     // material weights are neighborhood-splatted, so a 1-2 voxel cap often
                                     // blends away into dirt/stone and becomes visually "green" at the shore.
                                     const sandDepth = 6.0 + soilNoise * 2.0; // 6..8 voxels
                                     material[idx] = MaterialType.SAND;
-                                    if (depth > sandDepth) material[idx] = MaterialType.STONE;
+                                    if (depth > sandDepth) { material[idx] = MaterialType.STONE; topsoil[idx] = MaterialType.SAND; }
                                 } else if (biomeMat === MaterialType.SAND || biomeMat === MaterialType.RED_SAND) {
                                     material[idx] = biomeMat;
-                                    if (depth > 2) material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
+                                    if (depth > 2) {
+                                        material[idx] = (biomeMat === MaterialType.SAND) ? MaterialType.STONE : MaterialType.TERRACOTTA;
+                                        topsoil[idx] = biomeMat;
+                                    }
                                 } else if (biomeMat === MaterialType.SNOW || biomeMat === MaterialType.ICE) {
                                     material[idx] = biomeMat;
                                 } else {
@@ -381,6 +387,7 @@ export class TerrainService {
                                         material[idx] = biomeMat;
                                     } else {
                                         material[idx] = MaterialType.DIRT;
+                                        topsoil[idx] = biomeMat;
                                     }
                                 }
                             }
@@ -394,6 +401,26 @@ export class TerrainService {
                         material[idx] = MaterialType.AIR;
 
                     }
+                }
+            }
+        }
+
+        // --- 3.2 Topsoil on the real exposed surface (Post-Pass) ---
+        // "depth" above is surfaceHeight + overhang - wy, and the overhang noise
+        // changes (and fades out) with height, so the top solid voxel of a column
+        // can come out 2+ m "deep" and get subsoil: dirt lines and blocky dirt
+        // patches in grass, stone specks in sand. The top two solid voxels under
+        // the column's first air get their topsoil back.
+        for (let z = 0; z < sizeZ; z++) {
+            for (let x = 0; x < sizeX; x++) {
+                const colBase = x + z * sizeX * sizeY;
+                let run = -1;
+                for (let y = sizeY - 1; y >= 0; y--) {
+                    const idx = colBase + y * sizeX;
+                    if (density[idx] <= ISO_LEVEL) { if (run >= 0) break; continue; }
+                    run++;
+                    if (run >= 2) break;
+                    if (topsoil[idx] !== 0) material[idx] = topsoil[idx];
                 }
             }
         }

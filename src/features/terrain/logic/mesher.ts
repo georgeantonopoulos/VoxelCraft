@@ -86,6 +86,12 @@ const resolveChannel = (mat: number) => (mat >= 0 && mat < MATERIAL_TO_CHANNEL.l
 const clampSampleCoord = (v: number, max: number) => Math.min(Math.max(v, 1), max - 2);
 const MIN_NORMAL_LEN_SQ = 0.0001;
 
+/** Material blend kernel: weight = skin / (1 + FALLOFF * d^2) over the radius-2 neighbourhood. */
+const MAT_KERNEL_FALLOFF = 0.6;
+/** Solid voxels with density within this of ISO_LEVEL (about metres below the surface) are "skin". */
+const MAT_SKIN_DEPTH = 1.6;
+const MAT_DEEP_WEIGHT = 0.1;
+
 
 /**
  * Computes smoothed normals using area-weighted face normal averaging.
@@ -737,7 +743,15 @@ export function generateMesh(
                     const mat = kernelInside ? material[sIdx] : getMat(material, sx, sy, sz);
                     if (BLEND_NEAREST_OK[mat] === 1 && distSq < minSolidDistSq) { minSolidDistSq = distSq; nearestSolidMat = mat; }
                     const channel = BLEND_WEIGHT_CHANNEL[mat];
-                    if (channel !== NO_CHANNEL) { localWeights[channel] += w; totalWeight += w; }
+                    if (channel !== NO_CHANNEL) {
+                      // Material weights use a broad kernel over the surface skin: the old
+                      // 1/(d^2+0.1) kernel was ~nearest-voxel, so material borders
+                      // flipped within one triangle and showed the voxel grid (blocky dirt
+                      // patches, saw-tooth grass/rock edges on crests). Voxels deep below
+                      // the surface (subsoil under grass, stone under sand) barely count.
+                      const mw = (val - ISO_LEVEL < MAT_SKIN_DEPTH ? 1.0 : MAT_DEEP_WEIGHT) / (1.0 + MAT_KERNEL_FALLOFF * distSq);
+                      localWeights[channel] += mw; totalWeight += mw;
+                    }
                     if (val > bestVal) {
                       bestVal = val;
                       bestWet = kernelInside ? wetData[sIdx] : getByte(wetData, sx, sy, sz);
@@ -936,7 +950,7 @@ export function generateMesh(
   const smoothedNormals = computeAreaWeightedNormals(tVerts, tInds, tNorms, borderInds);
 
   const water = generateWaterSurfaceMesh(density, material);
-  const collider = skipCollider ? {} : generateColliderData(density);
+  const collider = skipCollider ? {} : generateColliderData(density, tVerts, tInds);
 
   return {
     positions: new Float32Array(tVerts),
@@ -961,16 +975,21 @@ export function generateMesh(
 }
 
 /**
- * Strategy: Optimize collision by using a Heightfield where possible,
- * or a high-accuracy simplified trimesh where caves or overhangs exist.
+ * Strategy: a Heightfield where the chunk has no air under solid ground,
+ * otherwise the rendered surface itself as the trimesh.
+ *
+ * The collider must match what the player sees. The previous half-resolution
+ * trimesh sat up to ~1 m off the rendered surface and skipped thin cave roofs:
+ * players fell through into caves and walked far enough into cave walls for the
+ * camera to clip through them (src/tests/colliderMatchesSurface.test.ts).
  */
-function generateColliderData(density: Float32Array) {
+function generateColliderData(density: Float32Array, renderPositions: number[], renderIndices: number[]) {
   const isHf = isHeightfieldCompatible(density);
   if (isHf) {
     return { isHeightfield: true, colliderHeightfield: extractHeightfield(density) };
   }
-  const simple = generateSimplifiedTrimesh(density);
-  return { isHeightfield: false, colliderPositions: simple.positions, colliderIndices: simple.indices };
+  // Separate copies: positions/indices and collider arrays are transferred independently.
+  return { isHeightfield: false, colliderPositions: new Float32Array(renderPositions), colliderIndices: new Uint32Array(renderIndices) };
 }
 
 /**
@@ -1023,78 +1042,3 @@ function extractHeightfield(density: Float32Array): Float32Array {
   return heights;
 }
 
-/**
- * Generates a low-resolution trimesh for complex terrain (caves/overhangs).
- *
- * HIGH-ACCURACY FIX: We use a Surface Nets approach with centroid placement.
- * Instead of placing vertices at the voxel cell centers, we calculate the exact
- * edge crossing points and average them. This ensures the physics collider
- * tightly follows the visual terrain, preventing the "floating" or "puffy"
- * boundary artifacts seen with simpler voxel-center approaches.
- */
-function generateSimplifiedTrimesh(density: Float32Array): { positions: Float32Array, indices: Uint32Array } {
-  const step = 2; // Reduce resolution by 2x (8x volume reduction)
-  const verts: number[] = [];
-  const inds: number[] = [];
-  const vertIdx = new Int32Array(SIZE_X * SIZE_Y * SIZE_Z).fill(-1);
-
-  for (let z = 0; z <= SIZE_Z - step; z += step) {
-    for (let y = 0; y <= SIZE_Y - step; y += step) {
-      for (let x = 0; x <= SIZE_X - step; x += step) {
-        let mask = 0;
-        const v0 = getVal(density, x, y, z), v1 = getVal(density, x + step, y, z), v2 = getVal(density, x, y + step, z), v3 = getVal(density, x + step, y + step, z);
-        const v4 = getVal(density, x, y, z + step), v5 = getVal(density, x + step, y, z + step), v6 = getVal(density, x, y + step, z + step), v7 = getVal(density, x + step, y + step, z + step);
-        if (v0 > ISO_LEVEL) mask |= 1; if (v1 > ISO_LEVEL) mask |= 2; if (v2 > ISO_LEVEL) mask |= 4; if (v3 > ISO_LEVEL) mask |= 8;
-        if (v4 > ISO_LEVEL) mask |= 16; if (v5 > ISO_LEVEL) mask |= 32; if (v6 > ISO_LEVEL) mask |= 64; if (v7 > ISO_LEVEL) mask |= 128;
-        if (mask !== 0 && mask !== 255) {
-          // Centroid Placement: find crossing points on all 12 edges and average them.
-          let avgX = 0, avgY = 0, avgZ = 0, count = 0;
-          const lerpPos = (vA: number, vB: number) => (ISO_LEVEL - vA) / (vB - vA);
-          const check = (va: number, vb: number, x1: number, y1: number, z1: number, x2: number, y2: number, z2: number) => {
-            if ((va > ISO_LEVEL) !== (vb > ISO_LEVEL)) {
-              const t = lerpPos(va, vb);
-              avgX += x1 + (x2 - x1) * t;
-              avgY += y1 + (y2 - y1) * t;
-              avgZ += z1 + (z2 - z1) * t;
-              count++;
-            }
-          };
-          // Check all 12 edges of the 2x2x2 cell
-          check(v0, v1, x, y, z, x + step, y, z);
-          check(v2, v3, x, y + step, z, x + step, y + step, z);
-          check(v4, v5, x, y, z + step, x + step, y, z + step);
-          check(v6, v7, x, y + step, z + step, x + step, y + step, z + step);
-
-          check(v0, v2, x, y, z, x, y + step, z);
-          check(v1, v3, x + step, y, z, x + step, y + step, z);
-          check(v4, v6, x, y, z + step, x, y + step, z + step);
-          check(v5, v7, x + step, y, z + step, x + step, y + step, z + step);
-
-          check(v0, v4, x, y, z, x, y, z + step);
-          check(v1, v5, x + step, y, z, x + step, y, z + step);
-          check(v2, v6, x, y + step, z, x, y + step, z + step);
-          check(v3, v7, x + step, y + step, z, x + step, y + step, z + step);
-          if (count > 0) { avgX /= count; avgY /= count; avgZ /= count; vertIdx[bufIdx(x, y, z)] = verts.length / 3; verts.push(avgX - PAD, avgY - PAD + MESH_Y_OFFSET, avgZ - PAD); }
-        }
-      }
-    }
-  }
-  const push = (i0: number, i1: number, i2: number, i3: number, flipped: boolean) => {
-    const c0 = vertIdx[i0], c1 = vertIdx[i1], c2 = vertIdx[i2], c3 = vertIdx[i3];
-    if (c0 > -1 && c1 > -1 && c2 > -1 && c3 > -1) {
-      if (!flipped) inds.push(c0, c1, c2, c2, c1, c3);
-      else inds.push(c2, c1, c0, c3, c1, c2);
-    }
-  };
-  for (let z = PAD; z < PAD + CHUNK_SIZE_XZ; z += step) {
-    for (let y = PAD; y < PAD + CHUNK_SIZE_Y; y += step) {
-      for (let x = PAD; x < PAD + CHUNK_SIZE_XZ; x += step) {
-        const val = getVal(density, x, y, z);
-        if (x < PAD + CHUNK_SIZE_XZ) { const vNext = getVal(density, x + step, y, z); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x, y - step, z - step), bufIdx(x, y - step, z), bufIdx(x, y, z - step), bufIdx(x, y, z), val > ISO_LEVEL); }
-        if (y < PAD + CHUNK_SIZE_Y) { const vNext = getVal(density, x, y + step, z); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x - step, y, z - step), bufIdx(x, y, z - step), bufIdx(x - step, y, z), bufIdx(x, y, z), val > ISO_LEVEL); }
-        if (z < PAD + CHUNK_SIZE_XZ) { const vNext = getVal(density, x, y, z + step); if ((val > ISO_LEVEL) !== (vNext > ISO_LEVEL)) push(bufIdx(x - step, y - step, z), bufIdx(x - step, y, z), bufIdx(x, y - step, z), bufIdx(x, y, z), val > ISO_LEVEL); }
-      }
-    }
-  }
-  return { positions: new Float32Array(verts), indices: new Uint32Array(inds) };
-}

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { BiomeManager, WorldType } from '@features/terrain/logic/BiomeManager';
 import { initializeNoise } from '@core/math/noise';
-import { CHUNK_SIZE_XZ } from '@/constants';
+import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, ISO_LEVEL } from '@/constants';
+import { MaterialType } from '@/types';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 
 /**
@@ -19,6 +20,28 @@ beforeAll(() => {
   BiomeManager.setWorldType(WorldType.DEFAULT);
   for (let cx = 0; cx < 4; cx++) for (let cz = 0; cz < 4; cz++) chunks.set(`${cx},${cz}`, TerrainService.generateChunk(cx, cz));
 }, 120_000);
+
+describe('Surface materials', () => {
+  it('keeps subsoil off the exposed surface (no dirt lines where overhang noise fades)', () => {
+    // The top solid voxel of a column is DIRT only in dirt-surfaced biomes
+    // (savanna); in grassy chunks the topsoil post-pass restores grass.
+    const SX = TOTAL_SIZE_XZ, SY = TOTAL_SIZE_Y;
+    let grassTops = 0, dirtTops = 0;
+    for (const c of chunks.values()) {
+      for (let z = 2; z < SX - 2; z++) for (let x = 2; x < SX - 2; x++) {
+        for (let y = SY - 1; y >= 0; y--) {
+          const i = x + y * SX + z * SX * SY;
+          if (c.density[i] <= ISO_LEVEL) continue;
+          if (c.material[i] === MaterialType.GRASS) grassTops++;
+          if (c.material[i] === MaterialType.DIRT) dirtTops++;
+          break;
+        }
+      }
+    }
+    expect(grassTops).toBeGreaterThan(1000);
+    expect(dirtTops / (grassTops + dirtTops)).toBeLessThan(0.03);
+  });
+});
 
 describe('Generated placements', () => {
   it('never produces NaN positions (stick/firefly passes read trees with the right stride)', () => {

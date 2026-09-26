@@ -1873,6 +1873,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
               chunk={chunk}
               terrainVersion={chunk.terrainVersion ?? 0}
               lodLevel={chunk.lodLevel}
+              colliderEnabled={chunk.colliderEnabled ?? true}
               terrainThreeFogEnabled={terrainThreeFogEnabled}
               terrainPolygonOffsetEnabled={terrainPolygonOffsetEnabled}
               terrainPolygonOffsetFactor={terrainPolygonOffsetFactor}

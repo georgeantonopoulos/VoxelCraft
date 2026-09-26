@@ -92,6 +92,8 @@ export interface ChunkMeshProps {
   chunk: ChunkState;
   terrainVersion: number; // Passed as primitive to bypass object reference mutation issues
   lodLevel?: number;
+  /** chunk.colliderEnabled as a primitive: the memo comparison must see it flip (see chunkMeshPropsEqual). */
+  colliderEnabled?: boolean;
   // Material properties (not uniforms - must be passed to TriplanarMaterial)
   terrainThreeFogEnabled?: boolean;
   terrainPolygonOffsetEnabled?: boolean;
@@ -106,6 +108,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
   chunk,
   terrainVersion,
   lodLevel = 0,
+  colliderEnabled: chunkColliderEnabled = true,
   // Material properties (passed to TriplanarMaterial)
   terrainThreeFogEnabled = true,
   terrainPolygonOffsetEnabled = false,
@@ -207,7 +210,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
 
 
   const [deferredColliderEnabled, setDeferredColliderEnabled] = React.useState(false);
-  const colliderEnabled = !collidersDisabled && lodLevel <= LOD_DISTANCE_PHYSICS && (chunk.colliderEnabled ?? true);
+  const colliderEnabled = !collidersDisabled && lodLevel <= LOD_DISTANCE_PHYSICS && chunkColliderEnabled;
 
   useEffect(() => {
     if (colliderEnabled) {
@@ -356,20 +359,22 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
       )}
     </group>
   );
-}, (prevProps, nextProps) => {
-  // Custom comparison for React.memo
-  // Must return true if props are EQUAL (skip re-render), false if DIFFERENT (re-render)
+}, chunkMeshPropsEqual);
 
-  // Always re-render if terrain version changed (terrain modification)
-  // CRITICAL: Compare the PRIMITIVE terrainVersion prop, not chunk.terrainVersion!
-  // When chunk objects are mutated in-place, prevProps.chunk and nextProps.chunk
-  // point to the same memory location, so chunk.terrainVersion would compare equal.
-  // The primitive prop captures the value at render time, avoiding this issue.
+/**
+ * React.memo comparison for ChunkMesh: true when props are equal (skip the re-render).
+ *
+ * Compare PRIMITIVE props, not fields of `chunk`: chunk objects are sometimes
+ * mutated in place (lodLevel), so prev/next can be the same object.
+ * colliderEnabled must be compared: it flips on after load for chunks that
+ * streamed in outside the collider radius. Ignoring it left those chunks
+ * rendered with no physics body, and the player fell through them.
+ */
+export function chunkMeshPropsEqual(prevProps: ChunkMeshProps, nextProps: ChunkMeshProps): boolean {
   if (prevProps.terrainVersion !== nextProps.terrainVersion) return false;
   if (prevProps.chunk.visualVersion !== nextProps.chunk.visualVersion) return false;
-
-  // Check other important props
   if (prevProps.lodLevel !== nextProps.lodLevel) return false;
+  if (prevProps.colliderEnabled !== nextProps.colliderEnabled) return false;
   if (prevProps.chunk.key !== nextProps.chunk.key) return false;
 
   // Material property changes (these are the only remaining props that affect rendering)
@@ -377,4 +382,4 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
     prevProps.terrainChunkTintEnabled === nextProps.terrainChunkTintEnabled &&
     prevProps.terrainThreeFogEnabled === nextProps.terrainThreeFogEnabled &&
     prevProps.terrainPolygonOffsetEnabled === nextProps.terrainPolygonOffsetEnabled;
-});
+}

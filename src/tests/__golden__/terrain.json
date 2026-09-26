@@ -1,7 +1,7 @@
 {
   "0,0": {
     "sign": "699117fb",
-    "material": "d3c39efc",
+    "material": "9b752ffa",
     "trees": "20:4ee85a5b",
     "flora": "44:200b22a9",
     "sticks": "24:a96d4fa4",
@@ -15,7 +15,7 @@
   },
   "5,-3": {
     "sign": "7c4668b0",
-    "material": "bd0f4be0",
+    "material": "da2a6a5e",
     "trees": "0:811c9dc5",
     "flora": "4:bdc4dc66",
     "sticks": "0:811c9dc5",
@@ -29,11 +29,11 @@
   },
   "-12,40": {
     "sign": "6964b33",
-    "material": "e2ec883d",
+    "material": "c46a7861",
     "trees": "0:811c9dc5",
     "flora": "0:811c9dc5",
     "sticks": "0:811c9dc5",
-    "rocks": "64:30a2600a",
+    "rocks": "80:4f6aaed6",
     "largeRocks": "6:2b63b6d3",
     "hollows": "0:811c9dc5",
     "fireflies": "0:811c9dc5",
