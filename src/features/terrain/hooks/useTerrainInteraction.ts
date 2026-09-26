@@ -70,6 +70,19 @@ function getLeafColorForTreeType(treeType: number): string {
 
 /** How far a hand-held strike reaches (knapping stones on the ground). */
 const STRIKE_REACH = 4.5;
+/** Press-to-contact time of the first-person swing (FirstPersonTools SWING_*). */
+export const STRIKE_CONTACT_MS = 140;
+
+/**
+ * Where an axe meets a trunk: on the bark facing the striker, at about
+ * chest height (chips used to burst from the tree's centre line).
+ */
+const trunkStrikePoint = (x: number, y: number, z: number, from: THREE.Vector3): THREE.Vector3 => {
+  const dx = from.x - x, dz = from.z - z;
+  const d = Math.hypot(dx, dz) || 1;
+  const h = THREE.MathUtils.clamp(from.y - 0.45 - y, 0.5, 2.0);
+  return new THREE.Vector3(x + (dx / d) * 0.32, y + h, z + (dz / d) * 0.32);
+};
 
 export type ParticleKind = 'debris' | 'spark';
 
@@ -225,11 +238,26 @@ export function useTerrainInteraction(
     }));
   };
 
+  // One strike per press. The effect also re-ran when the auto-picked build
+  // material changed mid-press, digging a second time.
+  const handledPress = useRef<string | null>(null);
+  const pendingStrikes = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  useEffect(() => () => {
+    pendingStrikes.current.forEach(clearTimeout);
+    pendingStrikes.current.clear();
+  }, []);
+
   useEffect(() => {
     if (!isInteracting || !action) {
+      handledPress.current = null;
       return;
     }
+    if (handledPress.current === action) return;
+    handledPress.current = action;
 
+    // Strikes land when the swing makes contact (FirstPersonTools), not on the
+    // press; the aim is read at contact. Building places immediately.
+    const strike = () => {
     const origin = camera.position.clone();
     const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const maxRayDistance = 16.0;
@@ -311,7 +339,7 @@ export function useTerrainInteraction(
               const currentHealth = damageStore.damageEntity(treeId, woodDamage, maxHealth, treeLabel);
 
               // Visuals
-              const woodPos = new THREE.Vector3(x, y + 1.5, z);
+              const woodPos = trunkStrikePoint(x, y, z, origin);
               const woodDir = origin.clone().sub(woodPos).normalize();
               emitParticle({
                 pos: woodPos,
@@ -653,7 +681,7 @@ export function useTerrainInteraction(
                   anyFloraHit = true;
                 } else {
                   // CHOP Animation
-                  const woodPos = new THREE.Vector3(x, y + 1, z);
+                  const woodPos = trunkStrikePoint(x, y, z, origin);
                   const woodDir = origin.clone().sub(woodPos).normalize();
                   emitParticle({
                     pos: woodPos,
@@ -936,5 +964,16 @@ export function useTerrainInteraction(
         }
       }
     }
+    };
+
+    if (action === 'BUILD') {
+      strike();
+      return;
+    }
+    const timer = setTimeout(() => {
+      pendingStrikes.current.delete(timer);
+      strike();
+    }, STRIKE_CONTACT_MS);
+    pendingStrikes.current.add(timer);
   }, [isInteracting, action, camera, world, rapier, buildMat]);
 }

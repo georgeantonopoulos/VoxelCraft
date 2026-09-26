@@ -9,6 +9,13 @@ import { ItemType } from '@/types';
 import { UniversalTool } from './UniversalTool';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { useInputStore } from '@/state/InputStore';
+import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
+
+/** Swing timeline (seconds). Contact must match the delayed strike. */
+const SWING_CONTACT = STRIKE_CONTACT_MS / 1000;
+const SWING_WINDUP = SWING_CONTACT * 0.6;
+const SWING_DURATION = SWING_CONTACT + 0.24;
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -178,10 +185,17 @@ export const FirstPersonTools: React.FC = () => {
         });
     }, [debugMode, setRightHandStickPoseDebug, setRightHandStonePoseDebug]);
 
-    // Animation state
+    // Swing: wind-up, a fast strike that makes contact at STRIKE_CONTACT_MS
+    // (when useTerrainInteraction applies the hit), then a slower recover.
     const isDigging = useRef(false);
-    const digProgress = useRef(0);
-    const digSpeed = 10.0;
+    const digProgress = useRef(0); // seconds into the swing
+    const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH'>('DIG');
+    const swingOff = useMemo(() => new THREE.Vector3(), []);
+    const swingScratch = useMemo(() => ({
+        ePose: new THREE.Euler(), eSwing: new THREE.Euler(),
+        qPose: new THREE.Quaternion(), qSwing: new THREE.Quaternion(), qFinal: new THREE.Quaternion(),
+        grip: new THREE.Vector3(), gripCam: new THREE.Vector3(), back: new THREE.Vector3(),
+    }), []);
     const impactKick = useRef(0);
     const impactKickTarget = useRef(0);
 
@@ -202,20 +216,17 @@ export const FirstPersonTools: React.FC = () => {
     // Debug controls
     const { debugPos, debugRot } = usePickaxeDebug();
 
-    useEffect(() => {
-        const handleMouseDown = (e: MouseEvent) => {
-            if (!document.pointerLockElement) return;
-            const state = useInventoryStore.getState();
-            const selectedItem = state.inventorySlots[state.selectedSlotIndex];
-            if (!selectedItem) return;
-            if (e.button === 0 && !isDigging.current) {
-                isDigging.current = true;
-                digProgress.current = 0;
-            }
-        };
-        window.addEventListener('mousedown', handleMouseDown);
-        return () => window.removeEventListener('mousedown', handleMouseDown);
-    }, []);
+    // Swing whenever a strike starts (mouse or touch), in the style of the action.
+    useEffect(() => useInputStore.subscribe((st, prev) => {
+        const a = st.interactionAction;
+        if (a === prev.interactionAction) return;
+        if (a === 'DIG' || a === 'CHOP' || a === 'SMASH') {
+            if (isDigging.current && digProgress.current < SWING_CONTACT) return;
+            swingStyle.current = a;
+            isDigging.current = true;
+            digProgress.current = 0;
+        }
+    }), []);
 
     useEffect(() => {
         const handleImpact = (e: Event) => {
@@ -223,8 +234,7 @@ export const FirstPersonTools: React.FC = () => {
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
             if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH') {
-                isDigging.current = true;
-                digProgress.current = 0;
+                // Contact: recoil (a hard jolt off unbreakable rock).
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
             } else if (detail.action === 'BUILD') {
                 impactKickTarget.current = 0.25;
@@ -269,14 +279,52 @@ export const FirstPersonTools: React.FC = () => {
         let rotationY = debugRot.current.y;
         let rotationZ = debugRot.current.z;
 
+        let swingPitch = 0;
+        let swingRoll = 0;
+        swingOff.set(0, 0, 0);
+        // Debug: window.__vcSwingHold = { t, style } freezes the swing at t seconds.
+        const hold = (window as unknown as { __vcSwingHold?: { t: number; style?: 'CHOP' | 'DIG' | 'SMASH' } }).__vcSwingHold;
+        if (hold) {
+            isDigging.current = true;
+            digProgress.current = hold.t;
+            if (hold.style) swingStyle.current = hold.style;
+        }
         if (isDigging.current) {
-            digProgress.current += delta * digSpeed;
-            if (digProgress.current < Math.PI) {
-                const swing = Math.sin(digProgress.current);
-                rotationX += -swing * 1.2;
-                rotationZ += -swing * 0.35;
-                positionY -= swing * 0.2;
-                positionZ -= swing * 0.5;
+            if (!hold) digProgress.current += delta;
+            const t = digProgress.current;
+            if (t < SWING_DURATION) {
+                // -1 = fully raised, +1 = at contact.
+                let k: number;
+                if (t < SWING_WINDUP) {
+                    const u = t / SWING_WINDUP;
+                    k = -(1 - (1 - u) * (1 - u)); // ease out into the raise
+                } else if (t < SWING_CONTACT) {
+                    const u = (t - SWING_WINDUP) / (SWING_CONTACT - SWING_WINDUP);
+                    k = -1 + 2 * u * u; // accelerate into the blow
+                } else {
+                    const u = (t - SWING_CONTACT) / (SWING_DURATION - SWING_CONTACT);
+                    k = 1 - u * u * (3 - 2 * u); // settle back
+                }
+                // Screen-space swing around the grip: pitch tips the head
+                // forward (-) / back over the shoulder (+), roll swings it
+                // left (+) / right (-).
+                const style = swingStyle.current;
+                const up = Math.max(-k, 0), down = Math.max(k, 0);
+                if (style === 'CHOP') {
+                    // Wind-up cocks it up and right (tipping it back took it
+                    // past the camera); the blow drives the head at the aim.
+                    swingPitch = -down * 0.5;
+                    swingRoll = -up * 0.3 + down * 0.5;
+                    swingOff.set(up * 0.05 - down * 0.08, up * 0.08 + down * 0.06, -down * 0.12);
+                } else if (style === 'SMASH') {
+                    swingPitch = up * 0.15 - down * 0.5;
+                    swingRoll = down * 0.15;
+                    swingOff.set(-down * 0.08, up * 0.1 - down * 0.12, -down * 0.22);
+                } else {
+                    swingPitch = up * 0.12 - down * 0.7;
+                    swingRoll = -up * 0.12 - down * 0.08;
+                    swingOff.set(-down * 0.05, up * 0.1 - down * 0.02, -down * 0.15);
+                }
             } else {
                 isDigging.current = false;
                 digProgress.current = 0;
@@ -353,13 +401,24 @@ export const FirstPersonTools: React.FC = () => {
                 rightItemTargetPos.current.set(x, pose.y + animOffsetY, pose.z + animOffsetZ);
                 rightItemHiddenPos.current.set(x, pose.y - 0.80, pose.z);
                 rightItemPosTemp.current.copy(rightItemHiddenPos.current).lerp(rightItemTargetPos.current, rease);
-                rightItemRef.current.position.copy(rightItemPosTemp.current);
                 const rot = pose.rot;
-                rightItemRef.current.rotation.set(
+                const sw = swingScratch;
+                sw.qPose.setFromEuler(sw.ePose.set(
                     rotationX + (rot?.x ?? 0) + Math.sin(time * 1.4) * 0.012,
                     rotationY + (rot?.y ?? 0) + Math.cos(time * 1.1) * 0.012,
                     rotationZ + (rot?.z ?? 0)
-                );
+                ));
+                sw.qSwing.setFromEuler(sw.eSwing.set(swingPitch, 0, swingRoll));
+                sw.qFinal.multiplyQuaternions(sw.qSwing, sw.qPose);
+                // Long items turn about the hand near the butt of the handle;
+                // stones and flakes about their centre.
+                const heldItem = activeCustomTool ? activeCustomTool.baseType : selectedItem;
+                const long = heldItem === ItemType.STICK || heldItem === ItemType.PICKAXE || heldItem === ItemType.AXE;
+                sw.grip.set(0, long ? -0.3 : 0, 0).multiplyScalar(pose.scale);
+                sw.gripCam.copy(sw.grip).applyQuaternion(sw.qPose).add(rightItemPosTemp.current);
+                sw.back.copy(sw.grip).negate().applyQuaternion(sw.qFinal);
+                rightItemRef.current.position.copy(sw.gripCam).add(sw.back).add(swingOff);
+                rightItemRef.current.quaternion.copy(sw.qFinal);
                 rightItemRef.current.scale.setScalar(pose.scale);
                 rightItemRef.current.visible = rease > 0.01;
             } else {
