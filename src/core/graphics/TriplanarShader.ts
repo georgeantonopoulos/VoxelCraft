@@ -570,7 +570,7 @@ export const triplanarFragmentShader = `
              float variation = texture(uNoiseTexture, vec3(vWorldPosition.xz * 0.008, 0.0)).b;
              float variationMask = smoothstep(0.35, 0.65, variation);
              vec3 finalCaustic = caus * depthMask * normalMask * openMask * floorMask * variationMask;
-             col += finalCaustic * 0.3; 
+             col += finalCaustic * 0.12; // a gentle shimmer, not bright worm lines
         }
     } 
     if (uShaderFogEnabled > 0.5) {

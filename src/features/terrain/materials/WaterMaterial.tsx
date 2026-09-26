@@ -103,14 +103,16 @@ const WATER_FRAGMENT = /* glsl */ `
     float depthT = 1.0 - exp(-depth * 0.28);
     vec3 body = mix(uColorShallow, uColorDeep, depthT);
     // Sky reflection approximated by the fog/sky colour.
-    vec3 col = mix(body, uFogColor * 1.05, fresnel * 0.65) + vec3(spec);
+    vec3 col = mix(body, uFogColor * 1.02, fresnel * 0.5) + vec3(spec);
 
     // Shore foam: an animated line where the water gets thin.
     float foamNoise = texture(uNoiseTexture, vec3(vWorldPos.xz * 0.25, uTime * 0.05)).r;
-    float foamBand = 1.0 - smoothstep(0.05, 0.55, depth);
-    float foamWave = 0.55 + 0.45 * sin(uTime * 1.6 - depth * 10.0 + foamNoise * 6.0);
-    float foam = foamBand * foamWave * smoothstep(0.35, 0.65, foamNoise + foamBand * 0.4);
-    col = mix(col, vec3(0.95, 0.98, 1.0), foam * 0.85);
+    // Thin and broken, right at the edge: a 55 cm band covered whole shallow
+    // flats in white smears.
+    float foamBand = 1.0 - smoothstep(0.03, 0.22, depth);
+    float foamWave = 0.55 + 0.45 * sin(uTime * 1.6 - depth * 18.0 + foamNoise * 6.0);
+    float foam = foamBand * foamWave * smoothstep(0.45, 0.7, foamNoise + foamBand * 0.3);
+    col = mix(col, vec3(0.9, 0.93, 0.92), foam * 0.6);
 
     // Fog
     float dist = distance(uCamPos, vWorldPos);
@@ -121,7 +123,7 @@ const WATER_FRAGMENT = /* glsl */ `
     // fading to zero exactly at the shoreline.
     float shoreFade = smoothstep(0.0, 0.35, depth);
     float alpha = mix(0.35, 0.88, depthT) + fresnel * 0.2;
-    alpha = clamp(alpha * shoreFade + foam * 0.6, 0.0, 0.95);
+    alpha = clamp(alpha * shoreFade + foam * 0.45, 0.0, 0.95);
 
     gl_FragColor = vec4(col, alpha);
   }
@@ -147,8 +149,8 @@ const getTemplate = (): THREE.ShaderMaterial => {
       uHasSeabed: { value: 0 },
       uWaterLevel: { value: WATER_LEVEL },
       uChunkSize: { value: CHUNK_SIZE_XZ },
-      uColorShallow: { value: new THREE.Color('#2fb3b0') },
-      uColorDeep: { value: new THREE.Color('#0b3a5c') },
+      uColorShallow: { value: new THREE.Color('#5a978d') }, // muted teal, not tropical turquoise
+      uColorDeep: { value: new THREE.Color('#16303b') },
       uNoiseTexture: { value: null },
     },
   });
