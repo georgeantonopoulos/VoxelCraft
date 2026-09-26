@@ -133,6 +133,17 @@ describe('World types', () => {
   it('LUSH worlds contain hot biomes', () => {
     expect(coldShare(WorldType.LUSH).hot).toBeGreaterThan(0.05);
   });
+
+  it('LUSH worlds are largely jungle (it never got hot enough before)', () => {
+    BiomeManager.setWorldType(WorldType.LUSH);
+    let jungle = 0;
+    const N = 4000;
+    for (let i = 0; i < N; i++) {
+      if (BiomeManager.getBiomeAt((i * 97) % 6000 - 3000, Math.floor(i / 60) * 97 - 3000) === 'JUNGLE') jungle++;
+    }
+    BiomeManager.setWorldType(WorldType.DEFAULT);
+    expect(jungle / N).toBeGreaterThan(0.3);
+  });
 });
 
 describe('Early-game resources', () => {

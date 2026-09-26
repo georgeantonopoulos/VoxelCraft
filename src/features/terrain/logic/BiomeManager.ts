@@ -199,6 +199,36 @@ function seededRandom(seed: number, field: number): () => number {
   };
 }
 
+/**
+ * What makes each land different, as data the one climate function reads
+ * (they used to be scattered special cases, and drifted from their intent:
+ * the Lush Jungle never got hot enough for jungle, the Frozen Wastes had no
+ * mild pockets for Root Hollows).
+ */
+export interface ClimatePreset {
+  /** Temperature = tempCenter + latitude * (north-south gradient) + tempSpread * noise. */
+  tempCenter: number;
+  latitude: number;
+  tempSpread: number;
+  /** Humidity is shifted, then never falls below humidFloor. */
+  humidShift: number;
+  humidFloor: number;
+  /** Climate patch size: 1 = regions ~1 km across; 10 = a patchwork (Chaos). */
+  climateFreq: number;
+}
+
+export const CLIMATE_PRESETS: Record<WorldType, ClimatePreset> = {
+  // Latitude bands and broad regions: every biome somewhere.
+  [WorldType.DEFAULT]: { tempCenter: 0, latitude: 0.7, tempSpread: 0.3, humidShift: 0, humidFloor: -1, climateFreq: 1 },
+  [WorldType.SKY_ISLANDS]: { tempCenter: 0, latitude: 0.7, tempSpread: 0.3, humidShift: 0, humidFloor: -1, climateFreq: 1 },
+  // Always cold (about -1.0 to -0.4): snowfields, with ice spikes where it is wet.
+  [WorldType.FROZEN]: { tempCenter: -0.72, latitude: 0, tempSpread: 0.3, humidShift: 0, humidFloor: -1, climateFreq: 1 },
+  // Warm and wet (about 0.15 to 0.9): jungle wherever it is hot, temperate groves between.
+  [WorldType.LUSH]: { tempCenter: 0.56, latitude: 0, tempSpread: 0.36, humidShift: 0.5, humidFloor: 0, climateFreq: 1 },
+  // No latitude, full range, small patches.
+  [WorldType.CHAOS]: { tempCenter: 0, latitude: 0, tempSpread: 1, humidShift: 0, humidFloor: -1, climateFreq: 10 },
+};
+
 export class BiomeManager {
   // World seed - configurable for different world generation
   private static seed = 1337;
@@ -310,61 +340,22 @@ export class BiomeManager {
   static getClimate(x: number, z: number): { temp: number, humid: number, continent: number, erosion: number } {
     const [qx, qz] = this.climateLookup(x, z);
 
-    // 1. Temperature Gradient (Latitude)
-    const latitude = -qz * this.LATITUDE_SCALE;
-    let baseTemp = latitude;
+    const P = CLIMATE_PRESETS[this.currentWorldType] ?? CLIMATE_PRESETS[WorldType.DEFAULT];
 
-    // 2. Add Noise Variation, plus a finer detail layer so the edges of
-    // each land break up at walking scale instead of following smooth isolines.
+    // Climate noise (smaller patches for a higher climateFreq), plus a finer
+    // detail layer so the edges of each land break up at walking scale.
     const DETAIL = 0.006;
-    let noiseTemp = this.tempNoise(qx * this.TEMP_SCALE, qz * this.TEMP_SCALE)
+    const f = P.climateFreq;
+    const noiseTemp = this.tempNoise(qx * this.TEMP_SCALE * f, qz * this.TEMP_SCALE * f)
       + 0.18 * this.climateDetailNoise(qx * DETAIL, qz * DETAIL);
-    let humid = this.humidNoise(qx * this.HUMID_SCALE, qz * this.HUMID_SCALE)
+    let humid = this.humidNoise(qx * this.HUMID_SCALE * f, qz * this.HUMID_SCALE * f)
       + 0.15 * this.climateDetailNoise(qx * DETAIL + 57.3, qz * DETAIL - 21.9);
 
-    // --- STRATEGY OVERRIDES ---
-    switch (this.currentWorldType) {
-      case WorldType.FROZEN:
-        // Force cold: -1.0 to -0.2 (never hot)
-        baseTemp = -0.6;
-        noiseTemp = noiseTemp * 0.4; // Low variance
-        break;
-
-      case WorldType.LUSH:
-        // Force temperate/hot: 0.0 to 0.8
-        baseTemp = 0.4;
-        noiseTemp = noiseTemp * 0.4;
-        // Bias humidity to be Wet
-        humid = Math.max(-0.2, humid + 0.4);
-        break;
-
-      case WorldType.CHAOS:
-        // Extreme noise scales
-        noiseTemp = this.tempNoise(qx * this.TEMP_SCALE * 10, qz * this.TEMP_SCALE * 10);
-        humid = this.humidNoise(qx * this.HUMID_SCALE * 10, qz * this.HUMID_SCALE * 10);
-        baseTemp = 0; // No latitude
-        break;
-
-      case WorldType.SKY_ISLANDS:
-      case WorldType.DEFAULT:
-      default:
-        // Existing logic (Latitude + Noise)
-        break;
-    }
-
-    // Mix: 70% Base, 30% Noise (Adjusted for chaos)
-    let temp = baseTemp * 0.7 + noiseTemp * 0.3;
-
-    // Forced climates are applied AFTER the mix: mixing first squashed FROZEN
-    // into [-0.54,-0.30] (mostly temperate grove, ~5% snow) and kept LUSH out
-    // of the hot band entirely.
-    if (this.currentWorldType === WorldType.FROZEN) {
-      temp = -0.75 + noiseTemp * 0.3;   // ~[-1.05, -0.45]: snow & ice spikes
-    } else if (this.currentWorldType === WorldType.LUSH) {
-      temp = 0.35 + noiseTemp * 0.35;   // ~[0, 0.7]: temperate through jungle
-    } else if (this.currentWorldType === WorldType.CHAOS) {
-      temp = noiseTemp; // Pure noise for chaos
-    }
+    // The land's preset: temperature = centre + latitude pull + noise spread;
+    // humidity shifted and floored (a wet land never dries out).
+    const latitude = -qz * this.LATITUDE_SCALE;
+    let temp = P.tempCenter + P.latitude * latitude + P.tempSpread * noiseTemp;
+    humid = Math.max(P.humidFloor, humid + P.humidShift);
 
     // Clamp to -1..1
     if (temp > 1.0) temp = 1.0;
@@ -780,14 +771,13 @@ export class BiomeManager {
       return { inGrove: false, intensity: 0, isCenter: false };
     }
 
-    // Must be temperate climate (where THE_GROVE would spawn)
-    const isTemperate = temp > -0.4 && temp < 0.4;
-    const isMidHumid = humid > -0.4 && humid < 0.4;
+    // Must be mild for this land: near its own climate centre (so every land
+    // has hollows, whether it is frozen, lush or temperate).
+    const P = CLIMATE_PRESETS[this.currentWorldType] ?? CLIMATE_PRESETS[WorldType.DEFAULT];
+    const isTemperate = Math.abs(temp - P.tempCenter) < 0.4;
+    const isMidHumid = Math.abs(humid - P.humidShift) < 0.4;
 
-    // The Frozen Wastes are never temperate, which left them without a single
-    // hollow ("the Lumina sleeps inside the ice"): there, groves follow humidity only.
-    const temperateEnough = isTemperate || this.currentWorldType === WorldType.FROZEN;
-    if (!temperateEnough || !isMidHumid) {
+    if (!isTemperate || !isMidHumid) {
       return { inGrove: false, intensity: 0, isCenter: false };
     }
 
