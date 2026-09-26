@@ -46,7 +46,7 @@ const WOOD_VERT = /* glsl */ `
     vec3 axis = normalize(aBranchAxis);
     vec3 rel = p - aBranchOrigin;
     vec3 along = axis * dot(rel, axis);
-    p = aBranchOrigin + along + (rel - along) * mix(0.35, 1.0, smoothstep(0.0, 0.9, uGrowth));
+    p = aBranchOrigin + along + (rel - along) * mix(0.6, 1.0, smoothstep(0.0, 0.9, uGrowth));
     vVein = 1.0 - t; // freshly grown wood glows most
     csm_Position = p;
   }
@@ -69,10 +69,12 @@ const WOOD_FRAG = /* glsl */ `
     csm_DiffuseColor = vec4(col, 1.0);
     // Veins: thin teal lines in the furrows, bright while growing, then a
     // slow faint pulse that marks a restored tree.
-    float vein = smoothstep(0.62, 0.7, n) * (1.0 - smoothstep(0.7, 0.8, n));
+    // Thin lines only: a narrow band of the bark noise (a wide band lit the
+    // whole young trunk, which bloomed into a pale white spike).
+    float vein = smoothstep(0.64, 0.68, n) * (1.0 - smoothstep(0.68, 0.72, n));
     float settle = 1.0 - smoothstep(0.85, 1.0, uGrowth);
     float pulse = 0.5 + 0.5 * sin(uTime * 0.8 + vPos.y * 1.3);
-    csm_Emissive = uLumina * vein * (0.9 * max(settle, vVein) + 0.12 * pulse);
+    csm_Emissive = uLumina * vein * (0.45 * max(settle, vVein) + 0.08 * pulse);
     csm_Roughness = 0.85;
   }
 `;
@@ -176,7 +178,7 @@ export const LuminaTree: React.FC<{
     const g = 1 - Math.pow(1 - growth.current, 2.2);
     (woodMat as unknown as { uniforms: Record<string, { value: number }> }).uniforms.uGrowth.value = g;
     (leafMat as unknown as { uniforms: Record<string, { value: number }> }).uniforms.uGrowth.value = g;
-    if (lightRef.current) lightRef.current.intensity = 0.6 + 1.6 * g * (1 - 0.5 * g);
+    if (lightRef.current) lightRef.current.intensity = 0.3 + 0.9 * g * (1 - 0.5 * g);
   });
 
   return (
