@@ -99,6 +99,14 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   // Debug/automation hooks (browser checks without pointer lock):
   // window.__vcDebug.teleport(x, y, z) and window.__vcDebug.look(yawRad, pitchRad)
   const camera = useThree((st) => st.camera);
+
+  // First view on waking: level with the land, a touch below the horizon.
+  // (The camera kept the title flyover's steep downward look, or with
+  // ?autostart whatever it had, so the first frame was often sky or ground.)
+  useEffect(() => {
+    camera.rotation.set(-0.08, camera.rotation.y, 0, 'YXZ');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const api = {
       teleport: (x: number, y: number, z: number) => {

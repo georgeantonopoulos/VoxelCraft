@@ -250,6 +250,11 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
 
 const ToastStack: React.FC = () => {
   const toasts = useGroveStore((s) => s.toasts);
+  // Held while the pause/begin screen is up (it has its own centred title);
+  // the queue plays once the player is in the world, since a toast's timer
+  // starts when it mounts.
+  const paused = useHudPresence((s) => !!s.holds.paused);
+  if (paused) return null;
   // One at a time, in order: a burst (quest done, rank up, new quest) plays as
   // a short sequence instead of stacking mid-screen. Each dismisses itself.
   const shown = toasts.slice(0, 1);
