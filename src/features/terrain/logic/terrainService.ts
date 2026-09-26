@@ -383,8 +383,21 @@ export class TerrainService {
                             }
 
                         } else if (isSkyIsland) {
-                            material[idx] = MaterialType.STONE;
-                            if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
+                            // A soil profile: grass on every top open to the sky, a
+                            // little earth under it, rock on the sides and undersides
+                            // (with moss). Random 3D blotches put grass on cliff faces
+                            // and left the tops bare grey rock.
+                            const skyD = (y2: number) => {
+                                const g2 = 1.0 - Math.abs(y2 - 40) / 30;
+                                return g2 < 0 ? -100 : noise3D(wx * 0.05, y2 * 0.05, wz * 0.05) + g2 * 2.0 - 1.0;
+                            };
+                            if (skyD(wy + 1) <= ISO_LEVEL) {
+                                material[idx] = MaterialType.GRASS;
+                            } else if (skyD(wy + 2) <= ISO_LEVEL || skyD(wy + 3) <= ISO_LEVEL) {
+                                material[idx] = MaterialType.DIRT;
+                            } else {
+                                material[idx] = noise3D(wx * 0.12, wy * 0.12, wz * 0.12) > 0.3 ? MaterialType.MOSSY_STONE : MaterialType.STONE;
+                            }
                         } else {
                             // --- Standard Surface & Cavern Materials ---
                             // Sacred Grove Override: drained, dry earth (not orange sand):
