@@ -7,6 +7,7 @@ import { getNoiseTexture } from '@core/memory/sharedResources';
 import { useLogStore, PLANK_THICKNESS, type LogData } from '@/state/LogStore';
 import { useGroveStore } from '@/state/GroveStore';
 import { BuildPreview } from './BuildPreview';
+import { playerState } from '@core/player/PlayerState';
 
 /**
  * A sawn log: a bark cylinder (the stick bark shader, so logs and sticks read
@@ -156,8 +157,9 @@ export const LogsLayer: React.FC = () => {
   const logs = useLogStore((s) => s.logs);
   const seed = useGroveStore((s) => s.seed);
 
-  // Builds persist per world seed: placed logs load with the world and save
-  // whenever the set of placed logs changes.
+  // Logs persist per world seed: placed ones (builds) and loose ones (sawn
+  // logs and planks lying about, at wherever physics left them). A log being
+  // carried is saved as set down at the player's feet.
   useEffect(() => {
     if (seed == null) return;
     // A different world: its own logs only.
@@ -165,16 +167,34 @@ export const LogsLayer: React.FC = () => {
     try {
       const raw = window.localStorage.getItem(PLACED_PREFIX + seed);
       const saved = raw ? (JSON.parse(raw) as LogData[]) : [];
-      if (saved.length) useLogStore.getState().addLogs(saved.map((l) => ({ ...l, state: 'placed' as const })));
+      if (saved.length) useLogStore.getState().addLogs(saved.map((l) => ({ ...l, state: l.state === 'placed' ? 'placed' as const : 'loose' as const })));
     } catch { /* storage unavailable or corrupt: start empty */ }
     let last = '';
-    return useLogStore.subscribe((st) => {
-      const placed = Object.values(st.logs).filter((l) => l.state === 'placed');
-      const json = JSON.stringify(placed);
+    const save = () => {
+      const st = useLogStore.getState();
+      const list = Object.values(st.logs).map((l): LogData => {
+        if (l.state === 'carried') {
+          return { ...l, state: 'loose', position: [playerState.x, playerState.y + 0.6, playerState.z] };
+        }
+        if (l.state === 'loose') {
+          const body = logBodies.get(l.id);
+          if (body) {
+            const t = body.translation(), r = body.rotation();
+            return { ...l, position: [t.x, t.y, t.z], rotation: [r.x, r.y, r.z, r.w] };
+          }
+        }
+        return l;
+      });
+      const json = JSON.stringify(list);
       if (json === last) return;
       last = json;
       try { window.localStorage.setItem(PLACED_PREFIX + seed, json); } catch { /* ignore */ }
-    });
+    };
+    const unsubscribe = useLogStore.subscribe(save);
+    // Loose logs roll and settle without touching the store: snapshot them now and then.
+    const timer = window.setInterval(save, 8000);
+    window.addEventListener('beforeunload', save);
+    return () => { unsubscribe(); window.clearInterval(timer); window.removeEventListener('beforeunload', save); save(); };
   }, [seed]);
 
   return (
