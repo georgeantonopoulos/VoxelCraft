@@ -106,14 +106,21 @@ export const VitalityRing: React.FC = () => {
       </div>
       <div className="relative h-11 w-11">
         <svg viewBox="0 0 44 44" className="h-11 w-11 -rotate-90">
-          <circle cx="22" cy="22" r={r} fill="rgba(7,11,10,0.45)" stroke="rgba(215,220,182,0.16)" strokeWidth="3" />
+          {/* A soft hollow (shade fading out), matching the hotbar, not a solid disc. */}
+          <circle cx="22" cy="22" r="21" fill="url(#vit-shade)" />
+          <circle cx="22" cy="22" r={r} fill="none" stroke="rgba(215,220,182,0.16)" strokeWidth="1.5" />
           <circle
             cx="22" cy="22" r={r} fill="none"
-            stroke="url(#vit-grad)" strokeWidth="3" strokeLinecap="round"
+            stroke="url(#vit-grad)" strokeWidth="2.5" strokeLinecap="round"
             strokeDasharray={`${c * pct} ${c}`}
             style={{ transition: 'stroke-dasharray 1200ms ease' }}
           />
           <defs>
+            <radialGradient id="vit-shade">
+              <stop offset="0" stopColor="#070b0a" stopOpacity="0.5" />
+              <stop offset="0.72" stopColor="#070b0a" stopOpacity="0.32" />
+              <stop offset="1" stopColor="#070b0a" stopOpacity="0" />
+            </radialGradient>
             <linearGradient id="vit-grad" x1="0" x2="1" y1="0" y2="1">
               <stop offset="0" stopColor="#9dbd62" />
               <stop offset="1" stopColor="#f2cf7c" />

@@ -273,7 +273,7 @@ export const HUD: React.FC = () => {
         <VitalityRing />
         <button
           onClick={toggleSettings}
-          className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-lichen/20 bg-night/45 text-lichen/80 backdrop-blur-sm transition-colors hover:border-lichen/45 hover:text-parchment"
+          className="grove-hollow grove-text-shadow pointer-events-auto flex h-10 w-10 items-center justify-center text-lichen/80 hover:text-parchment"
           title="Settings"
           aria-label="Settings"
         >
