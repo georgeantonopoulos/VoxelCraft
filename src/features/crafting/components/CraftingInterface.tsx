@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei';
-import { Vector2 } from 'three';
+import { Vector2, AdditiveBlending, CanvasTexture } from 'three';
 
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useInventoryStore } from '@/state/InventoryStore';
@@ -11,6 +11,25 @@ import { ItemType, CustomTool } from '@/types';
 import { getToolCapabilities } from '@/features/interaction/logic/ToolCapabilities';
 
 import { StickMesh, StoneMesh, ShardMesh, FloraMesh, LashingMesh } from '@/features/interaction/components/UniversalTool';
+
+/** Radial glow for empty attachment points (shared by all slots). */
+let slotGlowTexture: CanvasTexture | null = null;
+const getSlotGlowTexture = (): CanvasTexture => {
+  if (slotGlowTexture) return slotGlowTexture;
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.18, 'rgba(255,255,255,0.75)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.18)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  slotGlowTexture = new CanvasTexture(c);
+  return slotGlowTexture;
+};
 
 /**
  * ToolStatsPanel - Shows preview of tool capabilities before crafting is complete.
@@ -112,24 +131,18 @@ const SlotIndicator = ({ slot, isFilled, onInteract, draggedItem }: any) => {
         <sphereGeometry args={[0.1, 12, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <mesh scale={hovered ? 1.35 : 1.0}>
-        <sphereGeometry args={[0.03, 16, 16]} />
-        <meshBasicMaterial
+      {/* A soft point of light, not a solid bead: an additive glow sprite. */}
+      <sprite scale={(hovered || isCompatible ? 0.2 : 0.14) * (hovered ? 1.2 : 1)}>
+        <spriteMaterial
+          map={getSlotGlowTexture()}
           color={isCompatible ? (hovered ? "#d9eea0" : "#9dbd62") : (isIncompatible ? "#b4745f" : "#a4f2e4")}
           transparent
-          opacity={isIncompatible ? 0.45 : 0.9}
+          opacity={isIncompatible ? 0.35 : 0.95}
+          blending={AdditiveBlending}
+          depthWrite={false}
           toneMapped={false}
         />
-      </mesh>
-      <mesh scale={hovered || isCompatible ? 1.25 : 1.0}>
-        <sphereGeometry args={[0.065, 16, 16]} />
-        <meshBasicMaterial
-          color={isCompatible ? "#b5d178" : "#a4f2e4"}
-          transparent
-          opacity={hovered ? 0.18 : 0.06}
-          depthWrite={false}
-        />
-      </mesh>
+      </sprite>
     </group>
   );
 };
@@ -266,12 +279,13 @@ export const CraftingInterface: React.FC = () => {
 
       {/* 3D Scene */}
       <div className="w-full h-full pointer-events-auto">
-        <Canvas shadows camera={{ position: [0, 0, 2], fov: 45 }}>
+        {/* Framed so the whole stick sits between the title and the buttons. */}
+        <Canvas shadows camera={{ position: [0, 0, 2.5], fov: 45 }}>
           <DropManager onDrop={handleSlotDrop} />
           <OrbitControls
             enablePan={false}
             minDistance={1.2}
-            maxDistance={3}
+            maxDistance={3.2}
             makeDefault
             autoRotate={!draggedItem}
             autoRotateSpeed={0.5}
@@ -282,7 +296,7 @@ export const CraftingInterface: React.FC = () => {
           <pointLight position={[5, 10, 5]} intensity={1.5} castShadow />
           <pointLight position={[-5, 5, -5]} intensity={0.5} color="#a4f2e4" />
 
-          <group position={[0, -0.2, 0]}>
+          <group position={[0, 0.05, 0]}>
             {/* Base Item */}
             <StickMesh />
 
@@ -340,7 +354,7 @@ export const CraftingInterface: React.FC = () => {
             ))}
           </group>
 
-          <ContactShadows opacity={0.6} scale={5} blur={2.4} far={2} />
+          <ContactShadows position={[0, -0.5, 0]} opacity={0.6} scale={5} blur={2.4} far={2} />
         </Canvas>
       </div>
 
