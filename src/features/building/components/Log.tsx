@@ -8,6 +8,9 @@ import { useLogStore, PLANK_THICKNESS, type LogData } from '@/state/LogStore';
 import { useGroveStore } from '@/state/GroveStore';
 import { BuildPreview } from './BuildPreview';
 import { playerState } from '@core/player/PlayerState';
+import { GEN_VERSION } from '@/constants';
+import { TerrainService } from '@features/terrain/logic/terrainService';
+import { settleLogs } from '../logic/settleLogs';
 
 /**
  * A sawn log: a bark cylinder (the stick bark shader, so logs and sticks read
@@ -166,8 +169,15 @@ export const LogsLayer: React.FC = () => {
     useLogStore.setState({ logs: {}, carriedId: null });
     try {
       const raw = window.localStorage.getItem(PLACED_PREFIX + seed);
-      const saved = raw ? (JSON.parse(raw) as LogData[]) : [];
-      if (saved.length) useLogStore.getState().addLogs(saved.map((l) => ({ ...l, state: l.state === 'placed' ? 'placed' as const : 'loose' as const })));
+      const parsed = raw ? (JSON.parse(raw) as LogData[] | { gen: number; logs: LogData[] }) : [];
+      // Saved as { gen, logs }; older saves are a bare array (terrain version unknown).
+      const savedGen = Array.isArray(parsed) ? -1 : parsed.gen;
+      let saved: LogData[] = (Array.isArray(parsed) ? parsed : parsed.logs).map((l) => ({ ...l, state: l.state === 'placed' ? 'placed' as const : 'loose' as const }));
+      // The ground was regenerated since these were saved: re-seat builds on it.
+      if (saved.length && savedGen !== GEN_VERSION) {
+        saved = settleLogs(saved, (x, z) => TerrainService.getHeightAt(x, z));
+      }
+      if (saved.length) useLogStore.getState().addLogs(saved);
     } catch { /* storage unavailable or corrupt: start empty */ }
     let last = '';
     const save = () => {
@@ -185,7 +195,7 @@ export const LogsLayer: React.FC = () => {
         }
         return l;
       });
-      const json = JSON.stringify(list);
+      const json = JSON.stringify({ gen: GEN_VERSION, logs: list });
       if (json === last) return;
       last = json;
       try { window.localStorage.setItem(PLACED_PREFIX + seed, json); } catch { /* ignore */ }
