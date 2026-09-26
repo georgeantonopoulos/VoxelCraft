@@ -108,21 +108,28 @@ const SlotIndicator = ({ slot, isFilled, onInteract, draggedItem }: any) => {
         onPointerOut={() => setHover(false)}
         onPointerUp={() => isCompatible && onInteract(slot.id, draggedItem)}
       >
-        <sphereGeometry args={[0.1, 16, 16]} />
+        {/* Generous invisible hit area, small visible seed of light. */}
+        <sphereGeometry args={[0.1, 12, 12]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+      <mesh scale={hovered ? 1.35 : 1.0}>
+        <sphereGeometry args={[0.03, 16, 16]} />
         <meshBasicMaterial
-          color={isCompatible ? (hovered ? "#d9eea0" : "#9dbd62") : (isIncompatible ? (hovered ? "#e08a74" : "#b4745f") : "#f1ead3")}
+          color={isCompatible ? (hovered ? "#d9eea0" : "#9dbd62") : (isIncompatible ? "#b4745f" : "#a4f2e4")}
           transparent
-          opacity={(hovered || isIncompatible) ? 0.6 : 0.2}
-          wireframe={!hovered && !isCompatible && !isIncompatible}
+          opacity={isIncompatible ? 0.45 : 0.9}
+          toneMapped={false}
         />
       </mesh>
-      {/* Visual guide for compatibility */}
-      {isCompatible && (
-        <mesh scale={hovered ? 1.1 : 1.0}>
-          <sphereGeometry args={[0.12, 16, 16]} />
-          <meshBasicMaterial color="#a4f2e4" transparent opacity={0.12} />
-        </mesh>
-      )}
+      <mesh scale={hovered || isCompatible ? 1.25 : 1.0}>
+        <sphereGeometry args={[0.065, 16, 16]} />
+        <meshBasicMaterial
+          color={isCompatible ? "#b5d178" : "#a4f2e4"}
+          transparent
+          opacity={hovered ? 0.18 : 0.06}
+          depthWrite={false}
+        />
+      </mesh>
     </group>
   );
 };

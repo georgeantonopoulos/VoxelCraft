@@ -40,7 +40,8 @@ body {
 /* --- Panels --- */
 
 .grove-panel {
-  position: relative;
+  /* No position here: unlayered CSS beats Tailwind's layered utilities, so a
+     position rule would override absolute on panels that use it. */
   background:
     var(--g-grain),
     linear-gradient(180deg, rgba(24, 27, 20, 0.74), rgba(9, 13, 11, 0.68));
