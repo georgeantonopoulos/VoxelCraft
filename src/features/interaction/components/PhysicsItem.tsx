@@ -199,10 +199,9 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
           let targetY = t.y;
           if (hit) {
             const groundY = (t.y + 1.0) - hit.timeOfImpact;
-            // The stick is 0.5 units tall. To bury it by 0.15, 
-            // the center should be at groundY + (halfHeight - buryDepth)
-            // 0.25 - 0.15 = 0.1
-            targetY = groundY + 0.1;
+            // The stick is 0.95 m long; bury about 0.2 m of it, so its
+            // centre stands at groundY + (0.475 - 0.2).
+            targetY = groundY + 0.275;
           } else {
             // Fallback if raycast misses
             targetY = t.y - 0.05;
@@ -248,7 +247,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       {item.type !== ItemType.FIRE && (
         <>
           {item.type === ItemType.STONE && <CuboidCollider args={[0.22, 0.22, 0.22]} />}
-          {item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
+          {/* 95 cm stick: capsule half-height + radius = half its length. */}
+          {item.type === ItemType.STICK && <CapsuleCollider args={[0.43, 0.045]} />}
           {/* Matches the flake (22 x 10 x 4 cm), so it lies flat instead of half-sunk. */}
           {item.type === ItemType.SHARD && <CuboidCollider args={[0.045, 0.11, 0.02]} />}
           {item.type === ItemType.FLORA && <CuboidCollider args={[0.2, 0.2, 0.2]} />}

@@ -15,6 +15,7 @@ import { ItemType, CustomTool } from '@/types';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
 import {
     createStickGeometry,
+    createGroundStickGeometry,
     createStoneGeometry,
     createShardGeometry,
     createLashingGeometry,
@@ -45,6 +46,9 @@ interface StickMeshProps {
     isThumbnail?: boolean;
     variant?: StickVariant;
     seed?: number;
+    /** A fallen branch (bent, with a broken twig) like the ones on the ground;
+     *  straight when it is a tool handle. */
+    natural?: boolean;
 }
 
 export const StickMesh: React.FC<StickMeshProps> = ({
@@ -52,9 +56,10 @@ export const StickMesh: React.FC<StickMeshProps> = ({
     height = ITEM_DIMENSIONS.stick.height,
     isThumbnail = false,
     variant = 'default',
-    seed = 123.45
+    seed = 123.45,
+    natural = false
 }) => {
-    const geometry = useMemo(() => createStickGeometry(isThumbnail), [isThumbnail]);
+    const geometry = useMemo(() => (natural && !isThumbnail ? createGroundStickGeometry() : createStickGeometry(isThumbnail)), [isThumbnail, natural]);
     const mat = STICK_MATERIALS[variant];
     // Memoized: the CSM React wrapper disposes and rebuilds the material whenever
     // the uniforms object identity changes, so an inline literal recompiled it on
@@ -67,8 +72,11 @@ export const StickMesh: React.FC<StickMeshProps> = ({
         uColor: { value: new THREE.Color(mat.color) }
     }), [seed, height, mat.color]);
 
-    // Scale height proportionally
+    // Scale height proportionally. The branch geometry is in radius units
+    // (unit radius, unit length), so it takes the stick's real size here.
     const heightScale = height / ITEM_DIMENSIONS.stick.height;
+    const branchR = natural && !isThumbnail ? ITEM_DIMENSIONS.stick.radiusTop : 1;
+    const branchL = natural && !isThumbnail ? ITEM_DIMENSIONS.stick.height : 1;
 
     if (isThumbnail) {
         return (
@@ -79,7 +87,7 @@ export const StickMesh: React.FC<StickMeshProps> = ({
     }
 
     return (
-        <mesh scale={[scale, scale * heightScale, scale]} geometry={geometry} castShadow receiveShadow>
+        <mesh scale={[scale * branchR, scale * heightScale * branchL, scale * branchR]} geometry={geometry} castShadow receiveShadow>
             <CustomShaderMaterial
                 baseMaterial={THREE.MeshStandardMaterial}
                 vertexShader={STICK_SHADER.vertex}
@@ -377,7 +385,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
 
         switch (type) {
             case ItemType.STICK:
-                return <StickMesh isThumbnail={isThumbnail} />;
+                return <StickMesh isThumbnail={isThumbnail} natural />;
             case ItemType.STONE:
                 return <StoneMesh isThumbnail={isThumbnail} />;
             case ItemType.SHARD:
