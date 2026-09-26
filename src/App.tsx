@@ -428,7 +428,7 @@ const App: React.FC = () => {
   if (debugBeeMode) return <Suspense fallback={null}><BeeDebugScene /></Suspense>;
 
   return (
-    <div className="w-full h-full relative bg-sky-300">
+    <div className="w-full h-full relative bg-night">
       {debugMode && (
         <style>{`#leva__root { transform: scale(var(--vc-leva-scale, 1)); transform-origin: top right; }`}</style>
       )}
