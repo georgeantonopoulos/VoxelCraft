@@ -388,6 +388,15 @@ export class ProceduralAmbience {
     Object.assign(this.scene, scene);
   }
 
+  /**
+   * Title-screen mood: a still night glade (soft wind, distant crickets and
+   * owls, the sparse score). Off hands the scene back to AmbienceDirector.
+   */
+  setMenuMood(on: boolean): void {
+    if (on) this.debugLockScene({ daylight: 0.02, dawn: 0, underground: 0, underwater: 0, foliage: 0.7, birdLife: 0, heat: 0.15, water: 0.12, sea: false, exposure: 0.2 });
+    else if (this.locked) this.debugLockScene(null);
+  }
+
   // --- Debug (window.__audioManager.ambience) -------------------------------
   private locked = false;
 

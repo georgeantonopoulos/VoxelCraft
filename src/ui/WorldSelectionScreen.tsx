@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { audioManager } from '@core/audio/AudioManager';
 import { WorldType } from '@features/terrain/logic/BiomeManager';
 import { WorldSeed } from '@core/WorldSeed';
 import { readLastWorld } from '@state/lastWorld';
@@ -49,6 +50,18 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
   const [editingSeed, setEditingSeed] = useState(false);
 
   const parsedSeed = parseInt(seedInput, 10) || 1337;
+
+  // A night glade plays behind the title (it starts on the first click or key,
+  // as browsers require); the world's own ambience takes over in game.
+  useEffect(() => {
+    audioManager.ambience.setMenuMood(true);
+    return () => audioManager.ambience.setMenuMood(false);
+  }, []);
+
+  const enter = useCallback((type: WorldType, seed: number) => {
+    window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind: 'quest-start' } }));
+    onSelect(type, seed);
+  }, [onSelect]);
   const shown = REALMS.find((r) => r.type === (hovered ?? selected)) ?? REALMS[0];
 
   const reroll = useCallback(() => setSeedInput(String(WorldSeed.generateRandom())), []);
@@ -96,7 +109,7 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
           <div className="grove-rise flex flex-col items-center gap-4" style={{ animationDelay: '450ms' }}>
             <button
               className="grove-button px-14 py-3.5 text-[22px]"
-              onClick={() => onSelect(lastWorld.type, lastWorld.seed)}
+              onClick={() => enter(lastWorld.type, lastWorld.seed)}
             >
               Continue
             </button>
@@ -170,7 +183,7 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
                   Back
                 </button>
               )}
-              <button className="grove-button px-14 py-3.5 text-[20px]" onClick={() => onSelect(selected, parsedSeed)}>
+              <button className="grove-button px-14 py-3.5 text-[20px]" onClick={() => enter(selected, parsedSeed)}>
                 Begin
               </button>
             </div>
