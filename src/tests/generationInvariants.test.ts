@@ -120,6 +120,16 @@ describe('World types', () => {
     expect(coldShare(WorldType.FROZEN).cold).toBeGreaterThan(0.4);
   });
 
+  it('every world type has Root Hollows to find (the Keeper\'s Path depends on them)', async () => {
+    const { findNearestGroveCenter } = await import('@features/grove/hollowSense');
+    for (const type of [WorldType.DEFAULT, WorldType.FROZEN, WorldType.LUSH, WorldType.SKY_ISLANDS, WorldType.CHAOS]) {
+      BiomeManager.setWorldType(type);
+      const hit = findNearestGroveCenter(16, 16, 768, 24);
+      BiomeManager.setWorldType(WorldType.DEFAULT);
+      expect(hit, `${type} has a grove within 768 m`).not.toBeNull();
+    }
+  });
+
   it('LUSH worlds contain hot biomes', () => {
     expect(coldShare(WorldType.LUSH).hot).toBeGreaterThan(0.05);
   });

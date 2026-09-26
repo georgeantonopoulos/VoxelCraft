@@ -717,7 +717,10 @@ export class BiomeManager {
     const isTemperate = temp > -0.4 && temp < 0.4;
     const isMidHumid = humid > -0.4 && humid < 0.4;
 
-    if (!isTemperate || !isMidHumid) {
+    // The Frozen Wastes are never temperate, which left them without a single
+    // hollow ("the Lumina sleeps inside the ice"): there, groves follow humidity only.
+    const temperateEnough = isTemperate || this.currentWorldType === WorldType.FROZEN;
+    if (!temperateEnough || !isMidHumid) {
       return { inGrove: false, intensity: 0, isCenter: false };
     }
 
