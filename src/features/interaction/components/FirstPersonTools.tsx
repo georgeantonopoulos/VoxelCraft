@@ -611,8 +611,15 @@ export const FirstPersonTools: React.FC = () => {
             {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
             {selectedItem === ItemType.TORCH && <TorchSound />}
             {carriedLog && (
-                <group position={[0.05, -0.56, -1.0]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
+                <group position={[0.05, -0.42, -1.1]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
                     <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />
+                    {/* Both hands on the near side of the log, one toward each end
+                        (log axis is local Y; local +Z faces the camera). */}
+                    {[-0.3, 0.3].map((f) => (
+                        <group key={f} position={[-carriedLog.radius * 0.35, f * carriedLog.length, carriedLog.radius * 0.85]} rotation={[0, 0.35, 0]} scale={1.5}>
+                            <KeeperFist />
+                        </group>
+                    ))}
                 </group>
             )}
             <KeeperFist ref={handRef} />
