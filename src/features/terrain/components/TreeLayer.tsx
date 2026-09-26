@@ -161,8 +161,8 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
 const treeWoodMaterialPool: Record<string, THREE.Material> = {};
 const treeLeafMaterialPool: Record<string, THREE.Material> = {};
 
-const getTreeWoodMaterial = (type: number, colors: any) => {
-    const key = `${type}`;
+const getTreeWoodMaterial = (type: number, colors: any, variant: { key: string; moss: number; barkScale: [number, number] } = { key: '', moss: 1, barkScale: [1, 1] }) => {
+    const key = `${type}${variant.key}`;
     if (treeWoodMaterialPool[key]) return treeWoodMaterialPool[key];
 
     treeWoodMaterialPool[key] = new (CustomShaderMaterial as any)({
@@ -211,6 +211,8 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
             uniform vec3 uColorBase;
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
+            uniform float uMoss;
+            uniform vec2 uBarkScale; // around, along
 
             void main() {
                 vec3 axis = normalize(vBranchAxis);
@@ -231,7 +233,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
                 // smearing bark into long streaks on thin branches.
                 float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
                 float rad = max(length(radial), 0.015);
-                vec3 barkP = vec3(cos(angle) * rad * 12.0, sin(angle) * rad * 12.0, along * 5.0);
+                vec3 barkP = vec3(cos(angle) * rad * 12.0 * uBarkScale.x, sin(angle) * rad * 12.0 * uBarkScale.x, along * 5.0 * uBarkScale.y);
                 float nBark = texture(uNoiseTexture, barkP).r;
                 float nFine = texture(uNoiseTexture, barkP * 3.0 + vec3(3.0)).g;
                 float nMicro = texture(uNoiseTexture, vPos * 5.0).b;
@@ -277,7 +279,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
                     vec3 mossCol = vec3(0.1, 0.48, 0.1);
                     mossCol *= 0.85 + mossDetail * 0.3;
                     float mossMix = (mossNoise - 0.45) * 3.0 * upFactor;
-                    col = mix(col, mossCol, mossMix * 0.7);
+                    col = mix(col, mossCol, mossMix * 0.7 * uMoss);
                 }
 
                 // Wet sheen in crevices
@@ -299,6 +301,8 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
             uColorBase: { value: new THREE.Color(colors.base) },
             uColorTip: { value: new THREE.Color(colors.tip) },
             uNoiseTexture: { value: getNoiseTexture() },
+            uMoss: { value: variant.moss },
+            uBarkScale: { value: new THREE.Vector2(...variant.barkScale) },
             ...sharedUniforms,
             uIsInstanced: { value: 1.0 },
         },
@@ -308,6 +312,13 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
 
     return treeWoodMaterialPool[key];
 };
+
+/**
+ * The trees' bark shader for the Root Hollow stump: long-dead, weathered grey
+ * oak with only a trace of moss (the hollow sits in drained ground). Instanced meshes only.
+ */
+export const getHollowBarkMaterial = (): THREE.Material =>
+    getTreeWoodMaterial(TreeType.OAK, { base: '#62584c', tip: '#4CAF50' }, { key: ':hollow', moss: 0.22, barkScale: [0.8, 0.22] });
 
 /**
  * One leaf material per tree type, shared by both LODs. Far crowns fade out by

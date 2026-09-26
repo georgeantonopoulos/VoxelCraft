@@ -1,127 +1,71 @@
-import React, { useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useGLTF } from '@react-three/drei';
-
-const stumpUrl = "/models/tree_stump.glb";
+import { getHollowStumpGeometry } from '@features/flora/trees/hollowStump';
+import { getHollowBarkMaterial } from '@features/terrain/components/TreeLayer';
 
 interface StumpLayerProps {
     positions: Float32Array; // Stride 6: x, y, z, nx, ny, nz
     chunkKey: string;
 }
 
-const STUMP_CONFIG = {
-    height: 1.4,
-    scale: 1.3,
-    embedOffset: 0.3
-};
+/** The instance sits this far below the surface point (RootHollow uses the same offset). */
+const EMBED_OFFSET = 0.3;
 
-// Resource Singleton to prevent per-chunk GLTF traversal/parsing overhead.
-let stumpResourcePromise: Promise<{
-    geometry: THREE.BufferGeometry;
-    material: THREE.Material;
-    sourceHeight: number;
-}> | null = null;
-
-const getStumpResources = (scene: THREE.Group) => {
-    if (stumpResourcePromise) return stumpResourcePromise;
-
-    stumpResourcePromise = (async () => {
-        let geo: THREE.BufferGeometry | null = null;
-        let mat: THREE.Material | null = null;
-        let sHeight = 1;
-
-        scene.traverse((child) => {
-            if (!geo && (child as THREE.Mesh).isMesh) {
-                const mesh = child as THREE.Mesh;
-                geo = mesh.geometry;
-                mat = mesh.material as THREE.Material;
-            }
-        });
-
-        if (geo) {
-            const box = new THREE.Box3().setFromObject(scene);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            sHeight = size.y > 0.0001 ? size.y : 1;
-        }
-
-        if (mat) {
-            mat.side = THREE.FrontSide;
-        }
-
-        if (!geo || !mat) throw new Error("Failed to extract stump resources from GLTF");
-
-        return { geometry: geo, material: mat, sourceHeight: sHeight };
-    })();
-
-    return stumpResourcePromise;
+// The inside of the hollow: darkening toward the floor, where a little Lumina still glows.
+let innerMaterial: THREE.MeshStandardMaterial | null = null;
+let floorMaterial: THREE.MeshStandardMaterial | null = null;
+export const getHollowInteriorMaterials = () => {
+    innerMaterial ??= new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0 });
+    floorMaterial ??= new THREE.MeshStandardMaterial({
+        color: '#15120e', roughness: 1, metalness: 0,
+        emissive: new THREE.Color('#62e6d8'), emissiveIntensity: 0.16,
+    });
+    return { inner: innerMaterial, floor: floorMaterial };
 };
 
 /**
- * Highly optimized instanced renderer for tree stumps.
+ * Instanced renderer for the dormant Root Hollow stumps: a procedural broken
+ * ancient stump in the trees' own bark (see hollowStump.ts), hollow inside.
  */
 export const StumpLayer = React.memo(({ positions }: StumpLayerProps) => {
-    const meshRef = useRef<THREE.InstancedMesh>(null);
-    const { scene } = useGLTF(stumpUrl);
-    const [resources, setResources] = React.useState<{
-        geometry: THREE.BufferGeometry;
-        material: THREE.Material;
-        sourceHeight: number;
-    } | null>(null);
-
-    useEffect(() => {
-        getStumpResources(scene).then(setResources);
-    }, [scene]);
+    const barkRef = useRef<THREE.InstancedMesh>(null);
+    const innerRef = useRef<THREE.InstancedMesh>(null);
+    const floorRef = useRef<THREE.InstancedMesh>(null);
+    const geo = useMemo(() => getHollowStumpGeometry(), []);
+    const bark = useMemo(() => getHollowBarkMaterial(), []);
+    const interior = useMemo(() => getHollowInteriorMaterials(), []);
+    const count = positions.length / 6;
 
     useLayoutEffect(() => {
-        if (!meshRef.current || !resources || !positions || positions.length === 0) return;
-
-        const count = positions.length / 6;
+        const meshes = [barkRef.current, innerRef.current, floorRef.current];
+        if (meshes.some((m) => !m) || count === 0) return;
         const dummy = new THREE.Object3D();
         const up = new THREE.Vector3(0, 1, 0);
-        const finalScale = (STUMP_CONFIG.height * STUMP_CONFIG.scale) / resources.sourceHeight;
-
         for (let i = 0; i < count; i++) {
-            const x = positions[i * 6];
-            const y = positions[i * 6 + 1];
-            const z = positions[i * 6 + 2];
-            const nx = positions[i * 6 + 3];
-            const ny = positions[i * 6 + 4];
-            const nz = positions[i * 6 + 5];
-
-            dummy.position.set(x, y - STUMP_CONFIG.embedOffset, z);
-
-            const terrainNormal = new THREE.Vector3(nx, ny, nz).normalize();
-            const targetDirection = new THREE.Vector3()
-                .copy(terrainNormal)
-                .lerp(up, 0.7)
-                .normalize();
-
-            dummy.quaternion.setFromUnitVectors(up, targetDirection);
-
-            const hash = Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
-            const randomAngle = (hash % 1) * Math.PI * 2;
-            const randomYaw = new THREE.Quaternion().setFromAxisAngle(targetDirection, randomAngle);
-            dummy.quaternion.multiply(randomYaw);
-
-            dummy.scale.setScalar(finalScale);
-
+            const x = positions[i * 6], y = positions[i * 6 + 1], z = positions[i * 6 + 2];
+            const n = new THREE.Vector3(positions[i * 6 + 3], positions[i * 6 + 4], positions[i * 6 + 5]).normalize();
+            dummy.position.set(x, y - EMBED_OFFSET, z);
+            // Mostly upright, leaning a little with the slope.
+            const target = n.lerp(up, 0.7).normalize();
+            dummy.quaternion.setFromUnitVectors(up, target);
+            const hash = Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1;
+            dummy.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(up, hash * Math.PI * 2));
+            dummy.scale.setScalar(0.94 + 0.14 * ((hash * 7.13) % 1));
             dummy.updateMatrix();
-            meshRef.current.setMatrixAt(i, dummy.matrix);
+            for (const m of meshes) m!.setMatrixAt(i, dummy.matrix);
         }
-        meshRef.current.instanceMatrix.needsUpdate = true;
-    }, [positions, resources]);
+        for (const m of meshes) {
+            m!.instanceMatrix.needsUpdate = true;
+            m!.computeBoundingSphere();
+        }
+    }, [positions, count]);
 
-    if (!resources) return null;
-
+    if (count === 0) return null;
     return (
-        <instancedMesh
-            ref={meshRef}
-            args={[resources.geometry, resources.material, positions.length / 6]}
-            castShadow
-            receiveShadow
-        />
+        <group>
+            <instancedMesh ref={barkRef} args={[geo.bark, bark, count]} castShadow receiveShadow />
+            <instancedMesh ref={innerRef} args={[geo.inner, interior.inner, count]} receiveShadow />
+            <instancedMesh ref={floorRef} args={[geo.floor, interior.floor, count]} />
+        </group>
     );
 });
-
-useGLTF.preload(stumpUrl);

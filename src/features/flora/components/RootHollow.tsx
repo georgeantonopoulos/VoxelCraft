@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import * as THREE from 'three';
 import { RigidBody, CylinderCollider } from '@react-three/rapier';
-import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
 import { ItemType } from '@/types';
@@ -10,13 +9,10 @@ import { LumaSwarm } from '@features/flora/components/LumaSwarm';
 import { HollowFireflies } from '@features/flora/components/HollowFireflies';
 import { useGroveStore } from '@state/GroveStore';
 import { emitGroveEvent, hollowIdAt } from '@features/grove/groveEvents';
+import { HOLLOW_GROUND_Y, HOLLOW_STUMP_HEIGHT, HOLLOW_STUMP_RADIUS } from '@features/flora/trees/hollowStump';
 
-const stumpUrl = "/models/tree_stump.glb";
-
-// AAA Visual Config - Matching the reference image
+// The stump itself (StumpLayer) sits this far below the surface point.
 const STUMP_CONFIG = {
-    height: 1.4,
-    scale: 1.3,
     embedOffset: 0.3
 };
 
@@ -30,11 +26,8 @@ interface RootHollowProps {
 }
 
 /**
- * RootHollow component - AAA Quality Procedural Stump
- * Features:
- * - Finite Difference Normal Recomputation for correct lighting
- * - Smooth, organic root flares matching slope
- * - High-poly geometry for clean displacement
+ * RootHollow component: the logic and interactive layers of a dormant hollow
+ * (the stump mesh is instanced by StumpLayer).
  */
 export const RootHollow: React.FC<RootHollowProps> = ({
     position,
@@ -209,8 +202,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         }
     });
 
-    const stumpHeight = STUMP_CONFIG.height * STUMP_CONFIG.scale;
-    const stumpRadius = 1.4 * STUMP_CONFIG.scale;
 
     const groupPosition = useMemo(
         () => new THREE.Vector3(px, py - STUMP_CONFIG.embedOffset, pz),
@@ -226,8 +217,8 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                interactive layers here to save memory.
             */}
             <RigidBody type="fixed" colliders={false}>
-                <group position={[0, stumpHeight / 2, 0]}>
-                    <CylinderCollider args={[stumpHeight / 2, stumpRadius * 0.6]} />
+                <group position={[0, HOLLOW_GROUND_Y + HOLLOW_STUMP_HEIGHT / 2, 0]}>
+                    <CylinderCollider args={[HOLLOW_STUMP_HEIGHT / 2, HOLLOW_STUMP_RADIUS]} />
                 </group>
                 {/* Visual mesh removed from here - rendered by VoxelTerrain->StumpLayer */}
             </RigidBody>
@@ -273,4 +264,3 @@ export const RootHollow: React.FC<RootHollowProps> = ({
     );
 };
 
-useGLTF.preload(stumpUrl);

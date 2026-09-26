@@ -43,7 +43,21 @@ export const SceneWarmup: React.FC<{ ready: boolean }> = ({ ready }) => {
             // Without the parallel-compile extension compileAsync only warns and
             // compiles synchronously anyway; do that directly (once, at load).
             if (gl.extensions.has('KHR_parallel_shader_compile')) {
-                gl.compileAsync(scene, camera).then(done, done);
+                // Same as gl.compileAsync, but tolerant of a material being
+                // disposed while it waits (terrain layers swap materials during
+                // load; three's version then throws on the missing program and
+                // never resolves).
+                const materials = gl.compile(scene, camera);
+                const poll = () => {
+                    if (cancelled) return;
+                    materials.forEach((m) => {
+                        const program = (gl.properties.get(m) as { currentProgram?: { isReady: () => boolean } }).currentProgram;
+                        if (!program || program.isReady()) materials.delete(m);
+                    });
+                    if (materials.size === 0) done();
+                    else window.setTimeout(poll, 10);
+                };
+                poll();
             } else {
                 gl.compile(scene, camera);
                 done();
