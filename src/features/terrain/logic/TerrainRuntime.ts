@@ -1,6 +1,7 @@
 import { CHUNK_SIZE_XZ, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET, ISO_LEVEL, WATER_LEVEL } from '@/constants';
 import * as THREE from 'three';
 import { MaterialType } from '@/types';
+import { BiomeManager, WorldType } from './BiomeManager';
 
 // A small cone upward helps detect cave mouths without needing camera-direction raycasts.
 // (Straight-up alone would incorrectly classify shallow overhangs as "no sky".)
@@ -199,8 +200,40 @@ export class TerrainRuntime {
 
     if (verticalOpen === null) return null;
     const tiltedFrac = tiltedKnown > 0 ? tiltedOpen / tiltedKnown : (verticalOpen ? 1 : 0);
-    return verticalOpen ? 0.9 + 0.1 * tiltedFrac : 0.5 * tiltedFrac;
+    if (verticalOpen) return 0.9 + 0.1 * tiltedFrac;
+    if (BiomeManager.getWorldType() !== WorldType.SKY_ISLANDS) return 0.5 * tiltedFrac;
+
+    // Among floating islands a roof overhead is usually another island: open
+    // all around, it is shade, not a cave (the fog and exposure went cave-black
+    // under every island). Caves still have walls on most sides.
+    const SIDE_DIST = 24;
+    let sideOpen = 0, sideKnown = 0;
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      const dx = Math.cos(a), dz = Math.sin(a);
+      let escaped = true, unknown = false;
+      for (let d = 2; d <= SIDE_DIST; d += step) {
+        const sx = wx + dx * d, sz = wz + dz * d;
+        const chunk = this.getChunkAtWorld(sx, sz);
+        if (!chunk) { unknown = true; break; }
+        const idx = this.getIndexInChunk(chunk, sx, wy, sz);
+        if (idx == null) { unknown = true; break; }
+        if (chunk.density[idx] > ISO_LEVEL) { escaped = false; break; }
+      }
+      if (unknown) continue;
+      sideKnown++;
+      if (escaped) sideOpen++;
+    }
+    const sideFrac = sideKnown > 0 ? sideOpen / sideKnown : 0;
+    const enclosed = 0.5 * tiltedFrac;
+    // Mostly open sides lift it toward open air (0.8 when every side is open).
+    return Math.max(enclosed, 0.8 * smoothRange(sideFrac, 0.5, 0.9));
   }
+}
+
+function smoothRange(x: number, lo: number, hi: number): number {
+  const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
 }
 
 // Singleton instance used across gameplay systems.

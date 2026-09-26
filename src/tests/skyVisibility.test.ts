@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TerrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { BiomeManager, WorldType } from '@features/terrain/logic/BiomeManager';
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET } from '@/constants';
 
 const SIZE = TOTAL_SIZE_XZ * TOTAL_SIZE_Y * TOTAL_SIZE_XZ;
@@ -45,6 +46,19 @@ describe('Sky visibility estimate', () => {
   it('a cave with a roof reads as enclosed', () => {
     const rt = world((_x, y) => y < 10 || (y > 16 && y < 40));
     expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeLessThan(0.2);
+  });
+
+  it('under a floating island (roof overhead, open all around) is shade, not a cave', () => {
+    const prev = BiomeManager.getWorldType();
+    BiomeManager.setWorldType(WorldType.SKY_ISLANDS);
+    try {
+      // Standing on a small island with a wider island floating 6 m above.
+      const rt = world((x, y, z) => (y < 10 && y > 6 && Math.abs(x - 16) < 3 && Math.abs(z - 16) < 3)
+        || (y > 16 && y < 22 && Math.abs(x - 16) < 8 && Math.abs(z - 16) < 8));
+      expect(rt.estimateSkyVisibility(16, 11, 16)!).toBeGreaterThan(0.6);
+    } finally {
+      BiomeManager.setWorldType(prev);
+    }
   });
 
   it('rays leaving the top of the grid count as open sky', () => {

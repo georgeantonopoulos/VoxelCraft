@@ -75,13 +75,38 @@ const TREE_STRIDE = 5;
 
 export class TerrainService {
 
+    /**
+     * Topmost walkable island surface over a Sky Archipelago column, or null
+     * when the column is open void. Same density as generateChunk's sky branch.
+     */
+    static skyIslandTop(wx: number, wz: number): number | null {
+        const islandCenterY = 40, islandHeight = 30;
+        const densityAt = (y: number) => {
+            const grad = 1.0 - Math.abs(y - islandCenterY) / islandHeight;
+            if (grad < 0) return -100;
+            return noise3D(wx * 0.05, y * 0.05, wz * 0.05) + grad * 2.0 - 1.0;
+        };
+        let prev = densityAt(islandCenterY + islandHeight + 1);
+        for (let y = islandCenterY + islandHeight; y >= islandCenterY - islandHeight; y--) {
+            const d = densityAt(y);
+            if (d > ISO_LEVEL && prev <= ISO_LEVEL) {
+                // Interpolate the crossing between y and y + 1.
+                return y + (d - ISO_LEVEL) / (d - prev);
+            }
+            prev = d;
+        }
+        return null;
+    }
+
     // Helper to find surface height at specific world coordinates
     // Now delegates to BiomeManager's parameter system
     // IMPORTANT: Must apply Sacred Grove terrain flattening to match generateChunk()
     static getHeightAt(wx: number, wz: number): number {
         const biome = BiomeManager.getBiomeAt(wx, wz);
         if (biome === 'SKY_ISLANDS') {
-            return 40; // islandCenterY from generation logic
+            // The top of the highest island over this column (the fixed island
+            // centre put spawns and creatures inside or between the islands).
+            return TerrainService.skyIslandTop(wx, wz) ?? 40;
         }
 
         // Same column model as generateChunk (terrainShape.ts).

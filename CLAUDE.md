@@ -77,6 +77,8 @@ Message format: `{ type: string, payload: {...} }`. Use transferables for Float3
 - Per-vertex light colors baked into mesh (aLightColor attribute)
 - Zero runtime cost - light is fully baked during meshing
 
+Columns open to the void at the chunk bottom (Sky Archipelago) also get haze light from below (`HAZE_FROM_BELOW` 0.55), so island undersides aren't cave-black; grounded worlds are unchanged. In the Sky Archipelago a roof with open sides counts as shade, not a cave (`estimateSkyVisibility`), `getHeightAt` returns the real island top (`skyIslandTop`), and spawn searches for solid island.
+
 Ambient light reduced to minimal levels (surface: 0.08, cave: 0.04). GI provides all indirect lighting.
 
 ### Audio System

@@ -41,6 +41,9 @@ export interface LightSource {
   radius: number; // Falloff radius in voxels
 }
 
+/** Haze light rising under floating islands, relative to the sky from above. */
+const HAZE_FROM_BELOW = 0.55;
+
 // Sun/sky light configuration
 export interface SkyLightConfig {
   r: number;
@@ -161,6 +164,33 @@ export function generateLightGrid(
 
         // Stop if light is negligible
         if (skyR + skyG + skyB < 0.01) break;
+      }
+    }
+  }
+
+  // ========================================
+  // Step 1b: Haze light from below
+  // ========================================
+  // Where a column is open air at the very bottom of the chunk (floating
+  // islands above an endless haze), the haze lights the undersides: without
+  // this every island was lit only from above and read as a black cave from
+  // below. Solid-bottomed columns (every grounded world) get nothing here.
+  for (let z = 0; z < LIGHT_GRID_SIZE_XZ; z++) {
+    for (let x = 0; x < LIGHT_GRID_SIZE_XZ; x++) {
+      if (occlusion[gridIndex(x, 0, z)] > 0.05) continue;
+      let hR = skyLight.r * skyLight.intensity * HAZE_FROM_BELOW;
+      let hG = skyLight.g * skyLight.intensity * HAZE_FROM_BELOW;
+      let hB = skyLight.b * skyLight.intensity * HAZE_FROM_BELOW * 1.08;
+      for (let y = 0; y < LIGHT_GRID_SIZE_Y; y++) {
+        const idx = gridIndex(x, y, z);
+        const occ = occlusion[idx];
+        lightR[idx] += hR;
+        lightG[idx] += hG;
+        lightB[idx] += hB;
+        const transmission = 1 - occ;
+        const attenuation = transmission + (1 - transmission) * SKY_LIGHT_ATTENUATION;
+        hR *= attenuation; hG *= attenuation; hB *= attenuation;
+        if (hR + hG + hB < 0.01) break;
       }
     }
   }

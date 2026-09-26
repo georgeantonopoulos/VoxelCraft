@@ -385,6 +385,23 @@ const App: React.FC = () => {
       if (hit) { targetX = hit.x; targetZ = hit.z; }
     }
 
+    // Floating islands: start on top of solid ground, not over the void or
+    // wedged between two islands (the column at the origin is often empty).
+    if (worldType === WorldType.SKY_ISLANDS && !requestedBiome) {
+      const solid = (x: number, z: number) => TerrainService.skyIslandTop(x, z) != null;
+      search: for (let r = 0; r <= 160; r += 4) {
+        for (let k = 0; k < Math.max(1, r * 1.5); k++) {
+          const a = (k / Math.max(1, r * 1.5)) * Math.PI * 2;
+          const x = 16 + Math.cos(a) * r, z = 16 + Math.sin(a) * r;
+          // Some island around the spot too, so the first step isn't off an edge.
+          if (solid(x, z) && solid(x + 3, z) && solid(x - 3, z) && solid(x, z + 3) && solid(x, z - 3)) {
+            targetX = Math.round(x); targetZ = Math.round(z);
+            break search;
+          }
+        }
+      }
+    }
+
     // Instant surface scan
     const worldY = TerrainService.getHeightAt(targetX, targetZ);
     setSpawnPos([targetX, worldY + 2.5, targetZ]);
