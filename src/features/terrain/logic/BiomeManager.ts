@@ -233,6 +233,10 @@ export class BiomeManager {
     this.continentalNoise = makeNoise2D(seededRandom(this.seed, 3));
     this.erosionNoise = makeNoise2D(seededRandom(this.seed, 4));
     this.sacredGroveNoise = makeNoise2D(seededRandom(this.seed, 5));
+    this.warpNoiseX = makeNoise2D(seededRandom(this.seed, 6));
+    this.warpNoiseZ = makeNoise2D(seededRandom(this.seed, 7));
+    this.climateDetailNoise = makeNoise2D(seededRandom(this.seed, 8));
+    this.surfaceCache.clear();
 
     // console.log(`[BiomeManager] Reinitialized with seed: ${this.seed}`);
   }
@@ -240,6 +244,7 @@ export class BiomeManager {
   static setWorldType(type: WorldType) {
     if (this.currentWorldType === type) return; // Avoid duplicate calls from StrictMode
     this.currentWorldType = type;
+    this.surfaceCache.clear();
     // console.log('[BiomeManager] World Type set to:', type);
   }
 
@@ -261,6 +266,10 @@ export class BiomeManager {
   private static erosionNoise = makeNoise2D(seededRandom(this.seed, 4));
   // SacredGroveNoise: Creates isolated pocket clearings for Root Hollows
   private static sacredGroveNoise = makeNoise2D(seededRandom(this.seed, 5));
+  // Domain warp for the climate maps, and a finer climate detail layer.
+  private static warpNoiseX = makeNoise2D(seededRandom(this.seed, 6));
+  private static warpNoiseZ = makeNoise2D(seededRandom(this.seed, 7));
+  private static climateDetailNoise = makeNoise2D(seededRandom(this.seed, 8));
 
   // Scales - Adjusted for larger, more realistic features
   static readonly TEMP_SCALE = 0.0008; // (Was 0.0013)
@@ -283,14 +292,35 @@ export class BiomeManager {
    * - continent: -1 (Deep Ocean) .. 1 (Inland)
    * - erosion: -1 (Flat) .. 1 (Peaky/Mountainous)
    */
+  /**
+   * Where the climate maps are read for a world position. The maps vary over
+   * 1-2 km, so at walking scale every border between lands (and every
+   * coastline) was an isoline of an almost linear field: ruler-straight edges.
+   * Warping the lookup bends them into curves (~400 m) and wiggles (~100 m).
+   */
+  static climateLookup(x: number, z: number): [number, number] {
+    const S1 = 0.0025, A1 = 110; // broad bends
+    const S2 = 0.011, A2 = 26;   // finer wiggles
+    return [
+      x + this.warpNoiseX(x * S1, z * S1) * A1 + this.warpNoiseX(x * S2 + 31.7, z * S2 - 12.3) * A2,
+      z + this.warpNoiseZ(x * S1, z * S1) * A1 + this.warpNoiseZ(x * S2 - 7.1, z * S2 + 44.9) * A2,
+    ];
+  }
+
   static getClimate(x: number, z: number): { temp: number, humid: number, continent: number, erosion: number } {
+    const [qx, qz] = this.climateLookup(x, z);
+
     // 1. Temperature Gradient (Latitude)
-    const latitude = -z * this.LATITUDE_SCALE;
+    const latitude = -qz * this.LATITUDE_SCALE;
     let baseTemp = latitude;
 
-    // 2. Add Noise Variation
-    let noiseTemp = this.tempNoise(x * this.TEMP_SCALE, z * this.TEMP_SCALE);
-    let humid = this.humidNoise(x * this.HUMID_SCALE, z * this.HUMID_SCALE);
+    // 2. Add Noise Variation, plus a finer detail layer so the edges of
+    // each land break up at walking scale instead of following smooth isolines.
+    const DETAIL = 0.006;
+    let noiseTemp = this.tempNoise(qx * this.TEMP_SCALE, qz * this.TEMP_SCALE)
+      + 0.18 * this.climateDetailNoise(qx * DETAIL, qz * DETAIL);
+    let humid = this.humidNoise(qx * this.HUMID_SCALE, qz * this.HUMID_SCALE)
+      + 0.15 * this.climateDetailNoise(qx * DETAIL + 57.3, qz * DETAIL - 21.9);
 
     // --- STRATEGY OVERRIDES ---
     switch (this.currentWorldType) {
@@ -310,8 +340,8 @@ export class BiomeManager {
 
       case WorldType.CHAOS:
         // Extreme noise scales
-        noiseTemp = this.tempNoise(x * this.TEMP_SCALE * 10, z * this.TEMP_SCALE * 10);
-        humid = this.humidNoise(x * this.HUMID_SCALE * 10, z * this.HUMID_SCALE * 10);
+        noiseTemp = this.tempNoise(qx * this.TEMP_SCALE * 10, qz * this.TEMP_SCALE * 10);
+        humid = this.humidNoise(qx * this.HUMID_SCALE * 10, qz * this.HUMID_SCALE * 10);
         baseTemp = 0; // No latitude
         break;
 
@@ -341,8 +371,10 @@ export class BiomeManager {
     if (temp < -1.0) temp = -1.0;
 
     // Continentalness & Erosion
-    let continent = this.continentalNoise(x * this.CONT_SCALE, z * this.CONT_SCALE);
-    let erosion = this.erosionNoise(x * this.EROSION_SCALE, z * this.EROSION_SCALE);
+    let continent = this.continentalNoise(qx * this.CONT_SCALE, qz * this.CONT_SCALE);
+    let erosion = this.erosionNoise(qx * this.EROSION_SCALE, qz * this.EROSION_SCALE);
+    if (humid > 1) humid = 1;
+    if (humid < -1) humid = -1;
 
     return { temp, humid, continent, erosion };
   }
@@ -386,9 +418,36 @@ export class BiomeManager {
     return humidity;
   }
 
+  /**
+   * Surface height of a column (terrainShape registers it; it imports this
+   * module, so it cannot be imported here). Lets getBiomeAt place beaches by
+   * the real water line, the same way chunk generation does.
+   */
+  private static surfaceHeightAt: ((x: number, z: number) => number) | null = null;
+  // Heights per whole-metre column (placement loops ask about the same columns
+  // many times; a metre is far finer than the beach band). Cleared with the world.
+  private static surfaceCache = new Map<number, number>();
+  static setSurfaceHeightProvider(fn: (x: number, z: number) => number): void {
+    this.surfaceHeightAt = fn;
+    this.surfaceCache.clear();
+  }
+  private static cachedSurface(x: number, z: number): number | undefined {
+    if (!this.surfaceHeightAt) return undefined;
+    const ix = Math.round(x), iz = Math.round(z);
+    const key = ix * 131071 + iz;
+    let h = this.surfaceCache.get(key);
+    if (h === undefined) {
+      if (this.surfaceCache.size > 50000) this.surfaceCache.clear();
+      h = this.surfaceHeightAt(ix, iz);
+      this.surfaceCache.set(key, h);
+    }
+    return h;
+  }
+
   static getBiomeAt(x: number, z: number): BiomeType {
     const { temp, humid, continent, erosion } = this.getClimate(x, z);
-    return this.getBiomeFromMetrics(temp, humid, continent, erosion);
+    const surfaceY = this.currentWorldType === WorldType.SKY_ISLANDS ? undefined : this.cachedSurface(x, z);
+    return this.getBiomeFromMetrics(temp, humid, continent, erosion, surfaceY);
   }
 
   /**
@@ -398,7 +457,7 @@ export class BiomeManager {
    * Note: TerrainService uses this variant so it can keep its existing Y-dithered temp/humid
    * while still producing consistent coastlines from column-constant continent/erosion.
    */
-  static getBiomeFromMetrics(temp: number, humid: number, continent: number, erosion: number): BiomeType {
+  static getBiomeFromMetrics(temp: number, humid: number, continent: number, erosion: number, surfaceY?: number): BiomeType {
     if (this.currentWorldType === WorldType.SKY_ISLANDS) {
       return 'SKY_ISLANDS';
     }
@@ -418,13 +477,21 @@ export class BiomeManager {
     //
     // IMPORTANT: The lower bound must include the ocean-side of the transition (-0.3..),
     // otherwise the shoreline can end up with no sand at all.
-    const isCoastal = continent > -0.25 && continent < 0.20;
     const erosion01 = (erosion + 1) / 2; // -1..1 -> 0..1
-    const isFlat = erosion01 < 0.50;
     const isNotFrozen = baseBiome !== 'SNOW' && baseBiome !== 'ICE_SPIKES';
-
-    if (isCoastal && isFlat && isNotFrozen) {
-      return 'BEACH';
+    let isCoastal: boolean;
+    if (surfaceY !== undefined) {
+      // With the ground height known, sand lines the actual water: sea shores,
+      // river banks and lake edges, a couple of metres above the water line.
+      // (The continent band alone laid straight strips of sand far inland.)
+      isCoastal = surfaceY > WATER_LEVEL - 4 && surfaceY < WATER_LEVEL + 2.2;
+      if (isCoastal && isNotFrozen) return 'BEACH';
+    } else {
+      isCoastal = continent > -0.25 && continent < 0.20;
+      const isFlat = erosion01 < 0.50;
+      if (isCoastal && isFlat && isNotFrozen) {
+        return 'BEACH';
+      }
     }
     // --------------------------
 

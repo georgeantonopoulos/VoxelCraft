@@ -10,18 +10,26 @@ describe('terrain shape', () => {
   });
 
   it('stays finite, inside the column budget and free of tears', () => {
-    let maxMicro = 0;
+    let maxSlope = 0;
+    let tears = 0;
     for (let x = -2000; x <= 2000; x += 97) {
       for (let z = -2000; z <= 2000; z += 89) {
         const h = columnInfo(x, z).height;
         expect(Number.isFinite(h)).toBe(true);
         expect(h).toBeLessThanOrEqual(MAX_SURFACE_Y);
-        // A continuous surface barely moves over 2 cm even on cliffs (<= ~10 m/m);
-        // a discontinuity (e.g. a piecewise parameter step) jumps the same at any scale.
-        maxMicro = Math.max(maxMicro, Math.abs(columnInfo(x + 0.02, z).height - h), Math.abs(columnInfo(x, z + 0.02).height - h));
+        for (const [dx, dz] of [[1, 0], [0, 1]]) {
+          const big = Math.abs(columnInfo(x + dx * 0.02, z + dz * 0.02).height - h);
+          const small = Math.abs(columnInfo(x + dx * 0.002, z + dz * 0.002).height - h);
+          maxSlope = Math.max(maxSlope, big / 0.02);
+          // A continuous surface changes ~10x less over a 10x smaller step; a
+          // discontinuity (e.g. a piecewise parameter step) jumps the same at any scale.
+          if (big > 0.05 && small > big * 0.5) tears++;
+        }
       }
     }
-    expect(maxMicro).toBeLessThan(0.3);
+    expect(tears).toBe(0);
+    // Cliffs yes, walls no (steeper than ~25 m per m reads as a tear on screen).
+    expect(maxSlope).toBeLessThan(25);
   });
 
   it('has relief: mountains well above sea level and river valleys cut down to it', () => {

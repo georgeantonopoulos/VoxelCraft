@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { BiomeManager, WorldType } from '@features/terrain/logic/BiomeManager';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { WATER_LEVEL } from '@/constants';
+import { columnInfo } from '@features/terrain/logic/terrainShape';
 
 /**
  * Comprehensive tests for BiomeManager and Sacred Grove system.
@@ -106,23 +107,19 @@ describe('BiomeManager', () => {
       expect(groveCount).toBeGreaterThan(0);
     });
 
-    it('should produce BEACH biomes in coastal flat areas', () => {
+    it('should produce BEACH biomes along the water line', () => {
       let beachCount = 0;
       const sampleSize = 50;
 
       for (let x = 0; x < 5000; x += sampleSize) {
         for (let z = 0; z < 5000; z += sampleSize) {
           const biome = BiomeManager.getBiomeAt(x, z);
-          const climate = BiomeManager.getClimate(x, z);
-
           if (biome === 'BEACH') {
             beachCount++;
-            // BEACH requires coastal continentalness and flat erosion
-            expect(climate.continent).toBeGreaterThan(-0.25);
-            expect(climate.continent).toBeLessThan(0.20);
-
-            const erosion01 = (climate.erosion + 1) / 2;
-            expect(erosion01).toBeLessThan(0.50);
+            // Sand lines the actual water: the ground sits a few metres around sea level.
+            const h = columnInfo(x, z).height;
+            expect(h).toBeGreaterThan(WATER_LEVEL - 4);
+            expect(h).toBeLessThan(WATER_LEVEL + 2.2);
           }
         }
       }

@@ -232,7 +232,8 @@ export class TerrainService {
                         ditheredTemp,
                         ditheredHumid,
                         climate.continent,
-                        climate.erosion
+                        climate.erosion,
+                        colSurfaceHeight
                     );
 
                     let d = 0;

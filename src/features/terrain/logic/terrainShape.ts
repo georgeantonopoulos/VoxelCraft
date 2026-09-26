@@ -152,3 +152,6 @@ export function columnInfo(wx: number, wz: number): ColumnInfo {
   );
   return { height, climate, groveMod, warp, amp };
 }
+
+// Biome lookups place beaches by the real water line (BiomeManager cannot import this module).
+BiomeManager.setSurfaceHeightProvider((x, z) => columnInfo(x, z).height);

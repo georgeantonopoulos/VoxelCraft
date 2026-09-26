@@ -197,7 +197,11 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     }
     float matMask = texture2D(uMaterialMask, texUV).r;
     vec2 packedNormal = texture2D(uNormalMap, texUV).rg;
-    float biomeId = texture2D(uBiomeMap, texUV).r * 255.0;
+    // Biome read at a per-blade jittered spot (up to ~1.5 m): the biome map is
+    // nearest-sampled, so grass stopped along a ruler-straight line where
+    // meadow met sand or snow. Jitter makes that edge ragged, like a real one.
+    vec2 biomeJitter = (hash2(cellId + vec2(9.3, 1.7)) - 0.5) * (3.0 / 32.0);
+    float biomeId = texture2D(uBiomeMap, clamp(texUV + biomeJitter, vec2(0.5 / 32.0), vec2(31.5 / 32.0))).r * 255.0;
     float caveMask = texture2D(uCaveMask, texUV).r;
 
     vBiomeId = biomeId;
