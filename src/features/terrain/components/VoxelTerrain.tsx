@@ -173,6 +173,8 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
 
   // Track current biome fog settings with smooth interpolation.
   // We sample the biome at camera position each frame and lerp toward target values.
+  const fogBiomeTimer = useRef(0);
+  const fogBiome = useRef<ReturnType<typeof BiomeManager.getBiomeAt>>('THE_GROVE');
   const biomeFogState = useRef({
     densityMul: 1.0,
     heightMul: 1.0,
@@ -878,7 +880,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   };
 
   // 3. Process Queues (Throttled)
-  useFrame((state) => {
+  useFrame((state, delta) => {
     frameProfiler.tick();
     frameProfiler.begin('terrain-main');
     const frameStart = performance.now();
@@ -1548,12 +1550,17 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     // Sample biome at camera position and smoothly interpolate fog parameters.
     // This creates smooth transitions as player moves between biomes.
     if (biomeFogEnabled) {
-      const camPos = camera.position;
-      const biome = BiomeManager.getBiomeAt(camPos.x, camPos.z);
-      const targetFog = getFogSettings(biome);
+      // The biome under the camera changes slowly: look it up a few times a second.
+      fogBiomeTimer.current -= delta;
+      if (fogBiomeTimer.current <= 0) {
+        fogBiomeTimer.current = 0.25;
+        fogBiome.current = BiomeManager.getBiomeAt(camera.position.x, camera.position.z);
+      }
+      const targetFog = getFogSettings(fogBiome.current);
 
-      // Smooth interpolation speed (lower = smoother, higher = more responsive)
-      const lerpSpeed = 0.015; // ~4 seconds to fully transition
+      // Ease toward the biome's fog over ~4 s whatever the frame rate (a fixed
+      // per-frame factor took twice as long at 30 fps as at 60).
+      const lerpSpeed = 1 - Math.exp(-Math.min(delta, 0.1) / 1.1);
       const fog = biomeFogState.current;
 
       fog.densityMul += (targetFog.densityMul - fog.densityMul) * lerpSpeed;
