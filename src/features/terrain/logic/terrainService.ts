@@ -2,7 +2,7 @@
 import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
 import { noise as noise3D, hash01, noiseToUniform } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
-import { BiomeManager, getCaveSettings } from './BiomeManager';
+import { BiomeManager, getCaveSettings, WorldType } from './BiomeManager';
 import { columnInfo, ColumnInfo, MAX_SURFACE_Y, overhangFade } from './terrainShape';
 import { RockVariant } from './GroundItemKinds';
 
@@ -24,7 +24,7 @@ export const MATERIAL_HARDNESS: Record<number, number> = {
     [MaterialType.WATER]: 1.0,
     [MaterialType.AIR]: 1.0
 };
-import { getTreeForBiome } from './VegetationConfig';
+import { getTreeForBiome, TreeType } from './VegetationConfig';
 import { ChunkModification } from '@/state/WorldDB';
 
 // Helper to find surface height at specific world coordinates
@@ -518,8 +518,40 @@ export class TerrainService {
 
         // --- 3.5 Flora Generation (Post-Pass) ---
         // Place flora in Lumina Depths (deep underground) on restricted materials.
-        const cavernMinWorldY = -40; // Bottom of chunk
-        const cavernMaxWorldY = -20; // Start of Lumina Depths
+        // Lumina grows on dark floors. Grounded worlds: the glowstone/obsidian
+        // floors of the Lumina Depths. Floating islands have no depths (so the
+        // Sky Archipelago had no flora and no hollow could be restored): there it
+        // grows on floors roofed over by another island, anywhere in the island band.
+        const skyWorld = BiomeManager.getWorldType() === WorldType.SKY_ISLANDS;
+        const cavernMinWorldY = skyWorld ? 10 : -40; // Bottom of chunk
+        const cavernMaxWorldY = skyWorld ? 70 : -20; // Start of Lumina Depths
+        const roofedOver = (idx: number) => {
+            for (let k = 3; k <= 10; k++) {
+                const a = idx + k * sizeX;
+                if (a < density.length && density[a] > ISO_LEVEL) return true;
+            }
+            return false;
+        };
+        // ...and open to the side (a gap under an overhang the player can walk
+        // into, not a sealed air bubble inside the rock).
+        const openSideways = (idx: number) => {
+            const lx = idx % sizeX, lz = Math.floor(idx / (sizeX * sizeY));
+            let open = 0;
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                let clear = true;
+                for (let k = 1; k <= 5; k++) {
+                    const x2 = lx + dx * k, z2 = lz + dz * k;
+                    if (x2 < 0 || z2 < 0 || x2 >= sizeX || z2 >= sizeZ) { clear = false; break; }
+                    const j = idx + dx * k + dz * k * sizeX * sizeY + sizeX; // one voxel up: head height
+                    if (density[j] > ISO_LEVEL) { clear = false; break; }
+                }
+                if (clear) open++;
+            }
+            return open >= 2;
+        };
+        const isLuminaFloor = (idx: number, idxBelow: number) => skyWorld
+            ? material[idxBelow] !== MaterialType.WATER && roofedOver(idx) && openSideways(idx)
+            : material[idxBelow] === MaterialType.GLOW_STONE || material[idxBelow] === MaterialType.OBSIDIAN;
         const cavernMinY = Math.max(1, Math.floor(cavernMinWorldY - MESH_Y_OFFSET + PAD));
         const cavernMaxY = Math.min(sizeY - 3, Math.ceil(cavernMaxWorldY - MESH_Y_OFFSET + PAD));
         const maxFloraPerChunk = 60;
@@ -558,8 +590,7 @@ export class TerrainService {
                     if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL && density[idxAbove2] <= ISO_LEVEL) {
 
                         // Strict Material Check for Center Finding
-                        const matBelow = material[idxBelow];
-                        if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                        if (isLuminaFloor(idx, idxBelow)) {
                             // Interpolate for smoother placement on the floor
                             const dAir = density[idx];
                             const dSolid = density[idxBelow];
@@ -573,6 +604,8 @@ export class TerrainService {
                 }
 
                 if (!foundCenter) continue;
+                // Roofed island floors are common: only some grow a cluster.
+                if (skyWorld && hash01(wx, centerFloorWy, wz, 5501) > 0.3) continue;
 
                 // Use position hash for deterministic clustering
                 const seed = Math.abs(noise3D(wx * 1.31, centerFloorWy * 0.77, wz * 1.91));
@@ -616,8 +649,7 @@ export class TerrainService {
                         if (density[idx] <= ISO_LEVEL && density[idxBelow] > ISO_LEVEL && density[idxAbove] <= ISO_LEVEL) {
 
                             // STRICT MATERIAL CHECK FOR INDIVIDUAL FLORA
-                            const matBelow = material[idxBelow];
-                            if (matBelow === MaterialType.GLOW_STONE || matBelow === MaterialType.OBSIDIAN) {
+                            if (isLuminaFloor(idx, idxBelow)) {
                                 const dAir = density[idx];
                                 const dSolid = density[idxBelow];
                                 const t = (ISO_LEVEL - dSolid) / (dAir - dSolid);
@@ -1086,9 +1118,23 @@ export class TerrainService {
         const MAX_PICKUP_ROCKS = 18;
         const MAX_LARGE_ROCKS = 3;
 
-        // 5.1 Sticks (near trees, biased to high-tree biomes)
-        // NOTE: treeCandidates are chunk-local (XZ) and world-space Y.
-        for (let i = 0; i < treeCandidates.length && stickCandidates.length / 8 < MAX_STICKS; i += TREE_STRIDE) {
+        // 5.1 Sticks: fallen wood under trees, by tree kind (they were limited to
+        // oak/jungle biomes, so the Frozen Wastes, savanna and mountains had no
+        // sticks at all and the first quest could not start there). Trees are
+        // visited in a seeded random order so the stick cap thins evenly.
+        const STICKS_BY_TREE: Partial<Record<number, { factor: number; attempts: number }>> = {
+            [TreeType.JUNGLE]: { factor: 1.0, attempts: 3 },
+            [TreeType.OAK]: { factor: 0.85, attempts: 3 },
+            [TreeType.ACACIA]: { factor: 0.8, attempts: 2 },
+            [TreeType.PINE]: { factor: 0.7, attempts: 2 },
+            [TreeType.PALM]: { factor: 0.5, attempts: 2 },
+        };
+        const treeOrder = Array.from({ length: treeCandidates.length / TREE_STRIDE }, (_, k) => k * TREE_STRIDE)
+            .map((i) => ({ i, r: hash01p(treeCandidates[i] + worldOffsetX, 0, treeCandidates[i + 2] + worldOffsetZ, 3099) }))
+            .sort((a, b) => a.r - b.r)
+            .map((o) => o.i);
+        for (const i of treeOrder) {
+            if (stickCandidates.length / 8 >= MAX_STICKS) break;
             const txLocal = treeCandidates[i + 0];
             const tyWorld = treeCandidates[i + 1];
             const tzLocal = treeCandidates[i + 2];
@@ -1097,21 +1143,10 @@ export class TerrainService {
             const tzWorld = tzLocal + worldOffsetZ;
             const biome = BiomeManager.getBiomeAt(txWorld, tzWorld);
 
-            let biomeFactor = 0.0;
-            let attempts = 2;
-            if (biome === 'JUNGLE') {
-                biomeFactor = 1.0;
-                attempts = 3;
-            } else if (biome === 'THE_GROVE') {
-                biomeFactor = 0.85; // Grove is player starting area - abundant sticks
-                attempts = 3;
-            } else if (biome === 'PLAINS') {
-                biomeFactor = 0.25;
-                attempts = 2;
-            } else {
-                biomeFactor = 0.0;
-            }
-            if (biomeFactor <= 0) continue;
+            const kind = STICKS_BY_TREE[treeCandidates[i + 3]];
+            if (!kind) continue; // cacti drop no wood
+            const biomeFactor = kind.factor;
+            const attempts = kind.attempts;
 
             const spawnP = hash01p(txWorld, tyWorld, tzWorld, 3101);
             if (spawnP > biomeFactor * 0.65) continue;

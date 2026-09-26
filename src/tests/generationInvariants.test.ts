@@ -196,3 +196,36 @@ describe('Tree cover', () => {
     expect(far / (near + far)).toBeGreaterThan(0.35);
   }, 120_000);
 });
+
+describe('Every land can start the Keeper\'s Path', () => {
+  it('has fallen sticks near the start in every land type', () => {
+    for (const type of [WorldType.DEFAULT, WorldType.FROZEN, WorldType.LUSH, WorldType.SKY_ISLANDS, WorldType.CHAOS]) {
+      BiomeManager.setWorldType(type);
+      let sticks = 0;
+      try {
+        for (let cx = -1; cx <= 1 && sticks === 0; cx++) for (let cz = -1; cz <= 1; cz++) {
+          const c = TerrainService.generateChunk(cx, cz);
+          for (let i = 0; i < c.stickPositions.length; i += 8) if (c.stickPositions[i + 1] > -1000) sticks++;
+        }
+      } finally {
+        BiomeManager.setWorldType(WorldType.DEFAULT);
+      }
+      expect(sticks, `${type} has sticks near the start`).toBeGreaterThan(0);
+    }
+  }, 240_000);
+
+  it('has Lumina flora to offer the hollows in every land type', () => {
+    for (const type of [WorldType.DEFAULT, WorldType.FROZEN, WorldType.LUSH, WorldType.SKY_ISLANDS, WorldType.CHAOS]) {
+      BiomeManager.setWorldType(type);
+      let flora = 0;
+      try {
+        for (let cx = -2; cx <= 2 && flora === 0; cx++) for (let cz = -2; cz <= 2 && flora === 0; cz++) {
+          flora += TerrainService.generateChunk(cx, cz).floraPositions.length;
+        }
+      } finally {
+        BiomeManager.setWorldType(WorldType.DEFAULT);
+      }
+      expect(flora, `${type} has Lumina flora within reach`).toBeGreaterThan(0);
+    }
+  }, 300_000);
+});
