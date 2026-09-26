@@ -209,21 +209,21 @@ function buildDeer(): THREE.BufferGeometry {
 
 function buildBird(): THREE.BufferGeometry {
   const body = (y: number, _x: number, _z: number, c: THREE.Color) => c.lerp(new THREE.Color('#c9b79a'), THREE.MathUtils.smoothstep(0.0, -0.05, y) * 0.8);
-  const wing = (span: number) => {
-    // Tapered wing: a flat quad strip from root to tip.
+  const wing = (span: number, mirror: boolean) => {
+    // Tapered wing: a flat quad strip from root to tip. The mirrored wing
+    // reverses its triangle order so both face up (scaling by -1 flipped the
+    // winding and the right wing rendered black from above).
     const g = new THREE.BufferGeometry();
-    const w = [0, 0, 0.09, span, 0, 0.02, span, 0, -0.06, 0, 0, -0.1];
-    const verts = new Float32Array([...w.slice(0, 3), ...w.slice(3, 6), ...w.slice(6, 9), ...w.slice(0, 3), ...w.slice(6, 9), ...w.slice(9, 12)]);
-    g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    const m = mirror ? -1 : 1;
+    const A = [0, 0, 0.09], B = [m * span, 0, 0.02], C = [m * span, 0, -0.06], D = [0, 0, -0.1];
+    const tris = mirror ? [A, C, B, A, D, C] : [A, B, C, A, C, D];
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris.flat()), 3));
     g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(12), 2));
     g.computeVertexNormals();
     return g;
   };
-  const left = wing(0.34); left.translate(0.04, 0.02, 0);
-  const right = wing(0.34); right.scale(-1, 1, 1); right.translate(-0.04, 0.02, 0);
-  // Mirroring flips the winding: flip normals back up.
-  const rn = right.getAttribute('normal') as THREE.BufferAttribute;
-  for (let i = 0; i < rn.count; i++) rn.setY(i, Math.abs(rn.getY(i)));
+  const left = wing(0.34, false); left.translate(0.04, 0.02, 0);
+  const right = wing(0.34, true); right.translate(-0.04, 0.02, 0);
   const parts = [
     tag(ellipsoid(0.055, 0.05, 0.15, 0, 0, 0, 8), PART_BODY, [0, 0, 0], '#4a3b2c', body),
     tag(ellipsoid(0.04, 0.04, 0.045, 0, 0.03, 0.13, 8), PART_BODY, [0, 0, 0], '#3a2e24'),
@@ -237,7 +237,7 @@ function buildBird(): THREE.BufferGeometry {
 
 function buildFish(): THREE.BufferGeometry {
   const scales = (y: number, _x: number, _z: number, c: THREE.Color) => {
-    c.lerp(new THREE.Color('#dfe6e8'), THREE.MathUtils.smoothstep(0.02, -0.04, y));
+    c.lerp(new THREE.Color('#dfe6e8'), 1 - THREE.MathUtils.smoothstep(y, -0.04, 0.02)); // pale belly only
   };
   const tail = new THREE.ConeGeometry(0.07, 0.12, 4).rotateX(-Math.PI / 2).scale(0.25, 1, 1).translate(0, 0, -0.24);
   const parts = [
@@ -250,25 +250,49 @@ function buildFish(): THREE.BufferGeometry {
 }
 
 function buildRootling(): THREE.BufferGeometry {
+  // A small wood spirit: a knotted, slightly leaning trunk-body with a round
+  // head, Lumina eyes, a two-leaf sprout, twig arms and splayed root feet.
   const bark = (y: number, x: number, z: number, c: THREE.Color) => {
-    const n = Math.sin(y * 40 + x * 13) * 0.5 + Math.sin(z * 31) * 0.5;
-    c.multiplyScalar(0.85 + 0.15 * n);
+    const n = Math.sin(y * 38 + x * 11) * 0.5 + Math.sin(z * 29 + y * 7) * 0.5;
+    c.multiplyScalar(0.82 + 0.18 * n);
+    c.lerp(new THREE.Color('#3f5a2a'), THREE.MathUtils.smoothstep(y, 0.62, 0.7) * 0.25); // moss at the collar
+  };
+  const body = loft([
+    { p: [0, 0.14, 0], rx: 0.13, ry: 0.12 },
+    { p: [0.01, 0.3, 0.0], rx: 0.17, ry: 0.15 },
+    { p: [0.0, 0.48, 0.01], rx: 0.15, ry: 0.14 },
+    { p: [-0.01, 0.62, 0.02], rx: 0.1, ry: 0.1 },
+  ], 12, 4);
+  const leaf = (side: number) => {
+    const g = ellipsoid(0.1, 0.014, 0.05, 0, 0, 0, 8);
+    g.translate(0.09, 0, 0).rotateZ(side > 0 ? 0.5 : Math.PI - 0.5).translate(0, 0.98, 0);
+    return g;
+  };
+  const arm = (side: number) => {
+    const g = limb(0.026, 0.012, 0.24, 0, 0, 0, 5);
+    g.rotateZ(side * 0.95).translate(side * 0.2, 0.45, 0.02);
+    return g;
+  };
+  const foot = (side: number, forward: number) => {
+    const g = limb(0.05, 0.03, 0.18, 0, 0, 0, 6);
+    g.rotateX(forward * 0.5).rotateZ(side * 0.45).translate(side * 0.1, 0.12, forward * 0.05);
+    return g;
   };
   const parts = [
-    tag(ellipsoid(0.2, 0.24, 0.18, 0, 0.42, 0, 12), PART_BODY, [0, 0, 0], '#6b4a2e', bark),
-    tag(ellipsoid(0.16, 0.14, 0.15, 0, 0.72, 0.02, 12), PART_HEAD, [0, 0.62, 0], '#7a5634', bark),
+    tag(body, PART_BODY, [0, 0, 0], '#6b4a2e', bark),
+    tag(ellipsoid(0.15, 0.14, 0.14, 0, 0.74, 0.02, 14), PART_HEAD, [0, 0.62, 0], '#7a5634', bark),
     // Glowing Lumina eyes.
-    tag(ellipsoid(0.035, 0.045, 0.02, 0.06, 0.75, 0.15, 6), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
-    tag(ellipsoid(0.035, 0.045, 0.02, -0.06, 0.75, 0.15, 6), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
-    // Leaf sprout on the head.
-    tag(ellipsoid(0.1, 0.012, 0.05, 0.07, 0.9, 0, 6).rotateZ(-0.5), PART_SPROUT, [0, 0.84, 0], '#5da83a'),
-    tag(ellipsoid(0.1, 0.012, 0.05, -0.07, 0.9, 0, 6).rotateZ(0.5), PART_SPROUT, [0, 0.84, 0], '#6cbc44'),
-    tag(limb(0.02, 0.015, 0.14, 0, 0.94, 0, 4), PART_SPROUT, [0, 0.84, 0], '#4e7a2a'),
-    // Stubby root legs and twig arms.
-    tag(limb(0.06, 0.08, 0.22, 0.09, 0.22, 0), PART_LEG_FL, [0.09, 0.22, 0], '#5a3d25'),
-    tag(limb(0.06, 0.08, 0.22, -0.09, 0.22, 0), PART_LEG_FR, [-0.09, 0.22, 0], '#5a3d25'),
-    tag(limb(0.025, 0.015, 0.22, 0.2, 0.52, 0).rotateZ(0.6), PART_WING_L, [0.18, 0.5, 0], '#5a3d25'),
-    tag(limb(0.025, 0.015, 0.22, -0.2, 0.52, 0).rotateZ(-0.6), PART_WING_R, [-0.18, 0.5, 0], '#5a3d25'),
+    tag(ellipsoid(0.032, 0.042, 0.02, 0.055, 0.76, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
+    tag(ellipsoid(0.032, 0.042, 0.02, -0.055, 0.76, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
+    // Sprout: stem and two leaves.
+    tag(limb(0.012, 0.016, 0.12, 0, 0.99, 0, 5), PART_SPROUT, [0, 0.86, 0], '#4e7a2a'),
+    tag(leaf(1), PART_SPROUT, [0, 0.86, 0], '#6cbc44'),
+    tag(leaf(-1), PART_SPROUT, [0, 0.86, 0], '#5da83a'),
+    // Root feet and twig arms (arm parts reuse the wing channels for swing).
+    tag(foot(1, 1), PART_LEG_FL, [0.09, 0.22, 0], '#5a3d25', bark),
+    tag(foot(-1, 1), PART_LEG_FR, [-0.09, 0.22, 0], '#5a3d25', bark),
+    tag(arm(1), PART_WING_L, [0.13, 0.5, 0], '#5a3d25'),
+    tag(arm(-1), PART_WING_R, [-0.13, 0.5, 0], '#5a3d25'),
   ];
   return BufferGeometryUtils.mergeGeometries(parts)!;
 }
