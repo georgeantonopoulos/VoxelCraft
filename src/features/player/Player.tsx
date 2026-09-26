@@ -3,6 +3,7 @@ import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
+import { MaterialType } from '@/types';
 import { useGroveStore } from '@state/GroveStore';
 import { strideMultiplier } from '@features/grove/questLine';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
@@ -25,6 +26,19 @@ const scratchCamDir = new THREE.Vector3();
 const scratchForward = new THREE.Vector3();
 const scratchSide = new THREE.Vector3();
 const scratchUp = new THREE.Vector3(0, 1, 0);
+/** Surface family for footstep sounds (null = nothing solid underfoot). */
+const footstepSurface = (m: MaterialType | null): 'grass' | 'dirt' | 'sand' | 'stone' | 'snow' | null => {
+  switch (m) {
+    case MaterialType.GRASS: case MaterialType.JUNGLE_GRASS: return 'grass';
+    case MaterialType.DIRT: case MaterialType.CLAY: return 'dirt';
+    case MaterialType.SAND: case MaterialType.RED_SAND: return 'sand';
+    case MaterialType.SNOW: case MaterialType.ICE: return 'snow';
+    case MaterialType.STONE: case MaterialType.BEDROCK: case MaterialType.MOSSY_STONE:
+    case MaterialType.TERRACOTTA: case MaterialType.OBSIDIAN: case MaterialType.GLOW_STONE: return 'stone';
+    default: return null;
+  }
+};
+
 const scratchVelocity = new THREE.Vector3();
 const scratchCameraPos = new THREE.Vector3();
 const scratchPushDir = new THREE.Vector3();
@@ -77,6 +91,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const isCrouching = useRef(false);
   const lastSpacePress = useRef<number>(0);
   const wasJumpPressed = useRef<boolean>(false);
+  const strideDistance = useRef(0);
   const spacePressHandled = useRef<boolean>(false);
 
   const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
@@ -363,6 +378,29 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     wasJumpPressed.current = jump;
 
     body.current.setLinvel({ x: scratchMoveDir.x, y: yVelocity, z: scratchMoveDir.z }, true);
+
+    // Footsteps: one per stride while walking on the ground or wading.
+    const horizSpeed = Math.hypot(scratchVelocity.x, scratchVelocity.z);
+    if (!isFlying && horizSpeed > 0.6) {
+      strideDistance.current += horizSpeed * delta;
+      const stride = isCrouching.current ? 1.1 : 1.9;
+      if (strideDistance.current >= stride) {
+        strideDistance.current = 0;
+        const halfHeight = isCrouching.current ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL;
+        const feetY = pos.y - halfHeight - CAPSULE_RADIUS;
+        const grounded = Math.abs(scratchVelocity.y) < 2.5;
+        const surface = inWater ? 'water' : grounded
+          ? (footstepSurface(terrainRuntime.getMaterialAtWorld(pos.x, feetY - 0.35, pos.z))
+            ?? footstepSurface(terrainRuntime.getMaterialAtWorld(pos.x, feetY - 1.0, pos.z)))
+          : null;
+        if (surface) {
+          const loudness = (isCrouching.current ? 0.35 : 0.75) * Math.min(1, horizSpeed / PLAYER_SPEED);
+          window.dispatchEvent(new CustomEvent('vc-audio-footstep', { detail: { surface, loudness } }));
+        }
+      }
+    } else {
+      strideDistance.current = Math.min(strideDistance.current, 1.0);
+    }
 
     // Sync camera to body eye level with wall collision detection
     // Start with intended eye position (lower when crouching)

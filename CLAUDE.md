@@ -92,6 +92,7 @@ Ambient light reduced to minimal levels (surface: 0.08, cave: 0.04). GI provides
 - Web Audio synthesis, no samples: wind (rumble + whistle, gusts), leaf rustle, river/sea water, bird species phrases (day, dawn chorus), crickets and owls (night), cicadas (heat), cave drone + drips through a generated reverb, underwater low-pass.
 - Starts on the first pointerdown/keydown (autoplay policy). Driven by `AmbienceDirector` (features/environment/components) every 0.5 s from biome, climate, water proximity (getHeightAt rings), exposure, sun height, EnvironmentStore.
 - Audition: `__audioManager.ambience.debugLockScene({...})`, `debugCapture(seconds)` (PCM for WAV export); `getStats()`.
+- Footsteps: Player dispatches `vc-audio-footstep` { surface: grass|dirt|sand|stone|snow|water, loudness } once per stride (1.9 m, 1.1 m crouched) from the material under the feet; `ambience.footstep()` synthesises a filtered noise burst (+ low thump / grains per surface) through the underwater muffle.
 - Music (`ambience/GroveMusic.ts`): sparse generative score, mostly silence. Glass-bell phrases every 15-45 s (D major pentatonic by day, minor + flat six at night/underground), a slow pad at dawn/dusk/caves, long dark reverb. Motifs via `window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind } }))` (quest-start/-complete, rank-up, discovery from HUD toasts; hollow-restored from GroveDirector). Own volume (Settings → Music); `debugCapture` includes it.
 
 **Sound Registry** (src/core/audio/soundRegistry.ts):

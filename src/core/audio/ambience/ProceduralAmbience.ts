@@ -58,6 +58,29 @@ export interface LeafSource {
   strength: number;
 }
 
+export type FootstepSurface = 'grass' | 'dirt' | 'sand' | 'stone' | 'snow' | 'water';
+
+interface StepVoice {
+  filter: BiquadFilterType;
+  freq: number;
+  q: number;
+  dur: number;
+  level: number;
+  /** Low body thump (Hz, 0 = none). */
+  thump: number;
+  /** Extra grain bursts (snow crunch, gravel). */
+  grains: number;
+}
+
+const STEP_VOICES: Record<FootstepSurface, StepVoice> = {
+  grass: { filter: 'bandpass', freq: 2600, q: 0.7, dur: 0.14, level: 0.05, thump: 90, grains: 0 },
+  dirt: { filter: 'bandpass', freq: 950, q: 0.9, dur: 0.1, level: 0.06, thump: 110, grains: 1 },
+  sand: { filter: 'lowpass', freq: 1700, q: 0.5, dur: 0.17, level: 0.045, thump: 0, grains: 0 },
+  stone: { filter: 'bandpass', freq: 1900, q: 1.6, dur: 0.05, level: 0.045, thump: 130, grains: 0 },
+  snow: { filter: 'bandpass', freq: 1400, q: 0.6, dur: 0.2, level: 0.05, thump: 0, grains: 3 },
+  water: { filter: 'lowpass', freq: 850, q: 0.7, dur: 0.28, level: 0.07, thump: 0, grains: 1 },
+};
+
 /** Positioned rustle emitters (nearest trees). */
 const LEAF_EMITTERS = 4;
 
@@ -136,6 +159,7 @@ export class ProceduralAmbience {
   private rand: Rand = mulberry32(0x5eed);
   private volume = 0.8;
   private musicVolume = 0.6;
+  private stepNoise: AudioBuffer | null = null;
   private music: GroveMusic | null = null;
 
   /** Creates the audio graph. Must be called from a user gesture (autoplay policy). */
@@ -163,6 +187,8 @@ export class ProceduralAmbience {
     this.reverbSend.gain.value = 0.15;
     this.reverbSend.connect(this.reverb);
     this.reverb.connect(this.muffle);
+
+    this.stepNoise = this.makeNoise(0.6, 'white');
 
     // Sparse generative score, on its own volume and a longer, darker room.
     this.music = new GroveMusic(ctx, ctx.destination, this.makeImpulse(6.5, 3.2), mulberry32(0x6c0e));
@@ -264,6 +290,46 @@ export class ProceduralAmbience {
   setMusicVolume(v: number): void {
     this.musicVolume = Math.max(0, Math.min(1, v));
     this.music?.setVolume(this.musicVolume);
+  }
+
+  /** One synthesised footstep for the surface underfoot (loudness 0..1 ~ speed). */
+  footstep(surface: FootstepSurface, loudness: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.stepNoise) return;
+    const v = STEP_VOICES[surface];
+    const t = ctx.currentTime + 0.005;
+    const level = v.level * Math.max(0.2, Math.min(1, loudness)) * (0.8 + 0.4 * this.rand());
+    const burst = (at: number, dur: number, gain: number) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.stepNoise;
+      src.playbackRate.value = 0.85 + this.rand() * 0.3;
+      const f = ctx.createBiquadFilter();
+      f.type = v.filter;
+      f.frequency.value = v.freq * (0.85 + this.rand() * 0.3);
+      f.Q.value = v.q;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(gain, at + 0.008);
+      env.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      src.connect(f).connect(env).connect(this.muffle);
+      src.start(at, this.rand() * 0.4);
+      src.stop(at + dur + 0.05);
+    };
+    burst(t, v.dur, level);
+    for (let g = 0; g < v.grains; g++) burst(t + 0.02 + this.rand() * v.dur * 0.7, 0.03 + this.rand() * 0.03, level * 0.6);
+    if (v.thump > 0) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(v.thump * 1.3, t);
+      o.frequency.exponentialRampToValueAtTime(v.thump * 0.7, t + 0.08);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, t);
+      env.gain.linearRampToValueAtTime(level * 0.8, t + 0.006);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      o.connect(env).connect(this.muffle);
+      o.start(t);
+      o.stop(t + 0.12);
+    }
   }
 
   /** Short musical motif for a discovery or milestone. */
