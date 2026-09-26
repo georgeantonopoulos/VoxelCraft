@@ -205,7 +205,6 @@ const WATER_FRAGMENT = /* glsl */ `
     float fine = 1.0 - smoothstep(10.0, 38.0, dist);
     vec2 slope = waveSlope(vWorldPos, uTime, fine);
     if (uRain > 0.01) slope += rainSlope(vWorldPos.xz, uTime) * uRain * fine;
-    slope += touchSlope(vWorldPos.xz, uTime);
     // River current (none in the open sea or deep water).
     float current = 0.0;
     float flecks = 0.0;
@@ -220,6 +219,8 @@ const WATER_FRAGMENT = /* glsl */ `
         flecks = cs.z * current;
       }
     }
+    // Rings from things touching the water, on top of wind and current.
+    slope += touchSlope(vWorldPos.xz, uTime);
     if (uDebugMode == 4) {
       // Current: hue = direction, brightness = strength (grey = none).
       vec3 fl = uHasFlow > 0.5 ? texture2D(uFlow, (vLocal / ${FLOW_STEP.toFixed(1)} + 0.5) / ${FLOW_GRID.toFixed(1)}).rgb : vec3(0.5, 0.5, 0.0);
