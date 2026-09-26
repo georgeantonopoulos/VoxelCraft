@@ -33,6 +33,16 @@ describe('ChunkDataManager persistence', () => {
     expect(saved[0].mods).toEqual([expect.objectContaining({ voxelIndex: 3, density: -1 })]);
   });
 
+  it('tells subscribers when a chunk arrives from the generator (saved pickups re-apply on it)', () => {
+    const mgr = new ChunkDataManager();
+    const seen: string[] = [];
+    mgr.on('chunk-generated', ({ key }) => seen.push(key));
+    mgr.addChunk('1,2', makeChunk('1,2'), true);
+    mgr.addChunk('1,2', makeChunk('1,2'), true); // regenerated
+    mgr.addChunk('3,4', makeChunk('3,4')); // not from the generator
+    expect(seen).toEqual(['1,2', '1,2']);
+  });
+
   it('flushes pending edits on clear()', async () => {
     const mgr = new ChunkDataManager();
     mgr.addChunk('1,2', makeChunk('1,2'));

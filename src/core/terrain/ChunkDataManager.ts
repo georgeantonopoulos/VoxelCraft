@@ -54,7 +54,7 @@ const PLAYER_OWNED_FIELDS: ReadonlySet<string> = new Set([
   'stickPositions', 'drySticks', 'jungleSticks', 'stickHotspots',
   'rockPositions', 'rockDataBuckets', 'rockHotspots',
   'floraPositions', 'floraHotspots',
-  'treePositions', 'treeInstanceBatches', 'largeRockPositions', 'vegetationData',
+  'treePositions', 'treeInstanceBatches', 'felledStumps', 'largeRockPositions', 'vegetationData',
   'terrainVersion', 'visualVersion',
 ]);
 
@@ -79,6 +79,7 @@ export class ChunkDataManager {
     this.listeners.set('chunk-updated', new Set());
     this.listeners.set('chunk-remove', new Set());
     this.listeners.set('chunk-dirty', new Set());
+    this.listeners.set('chunk-generated', new Set());
   }
 
   // === EVENT SYSTEM ===
@@ -88,7 +89,11 @@ export class ChunkDataManager {
    * Returns unsubscribe function.
    */
   on(event: ChunkEventType, callback: ChunkEventCallback): () => void {
-    this.listeners.get(event)?.add(callback);
+    // Create the set on demand: a missing entry silently dropped subscribers
+    // ('chunk-generated' had none, so saved pickups never re-applied on reload).
+    let set = this.listeners.get(event);
+    if (!set) { set = new Set(); this.listeners.set(event, set); }
+    set.add(callback);
     return () => this.listeners.get(event)?.delete(callback);
   }
 
