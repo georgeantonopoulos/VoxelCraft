@@ -250,49 +250,63 @@ function buildFish(): THREE.BufferGeometry {
 }
 
 function buildRootling(): THREE.BufferGeometry {
-  // A small wood spirit: a knotted, slightly leaning trunk-body with a round
-  // head, Lumina eyes, a two-leaf sprout, twig arms and splayed root feet.
+  // A small wood spirit: a knotted trunk-body flaring into root legs, a round
+  // head, Lumina eyes, a two-leaf sprout and twig arms. Every limb is lofted
+  // from a joint buried inside the body and pivots at that joint, so swinging
+  // never pulls it away from the body.
   const bark = (y: number, x: number, z: number, c: THREE.Color) => {
     const n = Math.sin(y * 38 + x * 11) * 0.5 + Math.sin(z * 29 + y * 7) * 0.5;
     c.multiplyScalar(0.82 + 0.18 * n);
-    c.lerp(new THREE.Color('#3f5a2a'), THREE.MathUtils.smoothstep(y, 0.62, 0.7) * 0.25); // moss at the collar
+    c.lerp(new THREE.Color('#3f5a2a'), THREE.MathUtils.smoothstep(y, 0.6, 0.68) * 0.25); // moss at the collar
   };
   const body = loft([
-    { p: [0, 0.14, 0], rx: 0.13, ry: 0.12 },
-    { p: [0.01, 0.3, 0.0], rx: 0.17, ry: 0.15 },
-    { p: [0.0, 0.48, 0.01], rx: 0.15, ry: 0.14 },
-    { p: [-0.01, 0.62, 0.02], rx: 0.1, ry: 0.1 },
-  ], 12, 4);
+    { p: [0, 0.2, 0], rx: 0.12, ry: 0.11 },
+    { p: [0.005, 0.32, 0], rx: 0.16, ry: 0.145 },
+    { p: [0, 0.48, 0.01], rx: 0.15, ry: 0.14 },
+    { p: [-0.005, 0.64, 0.02], rx: 0.1, ry: 0.1 },
+  ], 14, 4);
+  const HIP: [number, number, number] = [0.065, 0.3, 0];
+  const SHOULDER: [number, number, number] = [0.09, 0.5, 0.01];
+  // Root leg: from the hip inside the body down to a foot that splays forward.
+  const leg = (side: number) => loft([
+    { p: [side * HIP[0], HIP[1], HIP[2]], rx: 0.06, ry: 0.06 },
+    { p: [side * 0.08, 0.16, 0.0], rx: 0.05, ry: 0.05 },
+    { p: [side * 0.088, 0.045, 0.03], rx: 0.042, ry: 0.038 },
+    { p: [side * 0.095, 0.02, 0.1], rx: 0.036, ry: 0.022 },
+  ], 8, 3);
+  // Twig arm: from the shoulder inside the body, out and down, ending in two little twigs.
+  const arm = (side: number) => BufferGeometryUtils.mergeGeometries([
+    loft([
+      { p: [side * SHOULDER[0], SHOULDER[1], SHOULDER[2]], rx: 0.034, ry: 0.034 },
+      { p: [side * 0.17, 0.47, 0.02], rx: 0.024, ry: 0.024 },
+      { p: [side * 0.225, 0.37, 0.04], rx: 0.018, ry: 0.018 },
+      { p: [side * 0.24, 0.29, 0.06], rx: 0.013, ry: 0.013 },
+    ], 6, 3),
+    loft([
+      { p: [side * 0.235, 0.31, 0.055], rx: 0.009, ry: 0.009 },
+      { p: [side * 0.275, 0.27, 0.08], rx: 0.005, ry: 0.005 },
+    ], 5, 2),
+  ])!;
   const leaf = (side: number) => {
     const g = ellipsoid(0.1, 0.014, 0.05, 0, 0, 0, 8);
-    g.translate(0.09, 0, 0).rotateZ(side > 0 ? 0.5 : Math.PI - 0.5).translate(0, 0.98, 0);
-    return g;
-  };
-  const arm = (side: number) => {
-    const g = limb(0.026, 0.012, 0.24, 0, 0, 0, 5);
-    g.rotateZ(side * 0.95).translate(side * 0.2, 0.45, 0.02);
-    return g;
-  };
-  const foot = (side: number, forward: number) => {
-    const g = limb(0.05, 0.03, 0.18, 0, 0, 0, 6);
-    g.rotateX(forward * 0.5).rotateZ(side * 0.45).translate(side * 0.1, 0.12, forward * 0.05);
+    g.translate(0.09, 0, 0).rotateZ(side > 0 ? 0.5 : Math.PI - 0.5).translate(0, 0.96, 0);
     return g;
   };
   const parts = [
     tag(body, PART_BODY, [0, 0, 0], '#6b4a2e', bark),
-    tag(ellipsoid(0.15, 0.14, 0.14, 0, 0.74, 0.02, 14), PART_HEAD, [0, 0.62, 0], '#7a5634', bark),
+    tag(ellipsoid(0.15, 0.14, 0.14, 0, 0.72, 0.02, 14), PART_HEAD, [0, 0.62, 0], '#7a5634', bark),
     // Glowing Lumina eyes.
-    tag(ellipsoid(0.032, 0.042, 0.02, 0.055, 0.76, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
-    tag(ellipsoid(0.032, 0.042, 0.02, -0.055, 0.76, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
+    tag(ellipsoid(0.032, 0.042, 0.02, 0.055, 0.74, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
+    tag(ellipsoid(0.032, 0.042, 0.02, -0.055, 0.74, 0.14, 8), PART_GLOW, [0, 0.62, 0], '#8ff7ff'),
     // Sprout: stem and two leaves.
-    tag(limb(0.012, 0.016, 0.12, 0, 0.99, 0, 5), PART_SPROUT, [0, 0.86, 0], '#4e7a2a'),
-    tag(leaf(1), PART_SPROUT, [0, 0.86, 0], '#6cbc44'),
-    tag(leaf(-1), PART_SPROUT, [0, 0.86, 0], '#5da83a'),
-    // Root feet and twig arms (arm parts reuse the wing channels for swing).
-    tag(foot(1, 1), PART_LEG_FL, [0.09, 0.22, 0], '#5a3d25', bark),
-    tag(foot(-1, 1), PART_LEG_FR, [-0.09, 0.22, 0], '#5a3d25', bark),
-    tag(arm(1), PART_WING_L, [0.13, 0.5, 0], '#5a3d25'),
-    tag(arm(-1), PART_WING_R, [-0.13, 0.5, 0], '#5a3d25'),
+    tag(limb(0.012, 0.016, 0.13, 0, 0.97, 0, 5), PART_SPROUT, [0, 0.84, 0], '#4e7a2a'),
+    tag(leaf(1), PART_SPROUT, [0, 0.84, 0], '#6cbc44'),
+    tag(leaf(-1), PART_SPROUT, [0, 0.84, 0], '#5da83a'),
+    // Root legs and twig arms (arm parts reuse the wing channels for swing).
+    tag(leg(1), PART_LEG_FL, [HIP[0], HIP[1], HIP[2]], '#5a3d25', bark),
+    tag(leg(-1), PART_LEG_FR, [-HIP[0], HIP[1], HIP[2]], '#5a3d25', bark),
+    tag(arm(1), PART_WING_L, [SHOULDER[0], SHOULDER[1], SHOULDER[2]], '#5a3d25'),
+    tag(arm(-1), PART_WING_R, [-SHOULDER[0], SHOULDER[1], SHOULDER[2]], '#5a3d25'),
   ];
   return BufferGeometryUtils.mergeGeometries(parts)!;
 }
@@ -367,14 +381,20 @@ export function createCreatureMaterial(kind: CreatureKind): THREE.Material {
           float along = clamp((0.2 - p.z) / 0.45, 0.0, 1.0);
           p.x += sin(phase - p.z * 9.0) * amp * 0.06 * along * along;
         } else {
-          // Rootling: waddle, arm swing, sprout bounce.
-          if (aPart > 2.5 && aPart < 3.5) p = rotX(p, aPivot, sin(phase) * amp * 0.6);
-          if (aPart > 3.5 && aPart < 4.5) p = rotX(p, aPivot, -sin(phase) * amp * 0.6);
-          if (aPart > 0.5 && aPart < 1.5) p = rotX(p, aPivot, -sin(phase) * amp * 0.5);
-          if (aPart > 1.5 && aPart < 2.5) p = rotX(p, aPivot, sin(phase) * amp * 0.5);
+          // Rootling: waddle and swing while walking; when running (head
+          // channel = run 0..1) it leans in and bounds, arms trailing.
+          float run = headDown;
+          float legSwing = amp * mix(0.6, 0.45, run);
+          if (aPart > 2.5 && aPart < 3.5) p = rotX(p, aPivot, sin(phase) * legSwing);
+          if (aPart > 3.5 && aPart < 4.5) p = rotX(p, aPivot, -sin(phase) * legSwing);
+          float armSwing = amp * mix(0.5, 0.25, run);
+          if (aPart > 0.5 && aPart < 1.5) p = rotX(p, aPivot, -sin(phase) * armSwing + run * 0.7);
+          if (aPart > 1.5 && aPart < 2.5) p = rotX(p, aPivot, sin(phase) * armSwing + run * 0.7);
           if (aPart > 9.5) p = rotZ(p, aPivot, sin(uTime * 4.0 + phase) * 0.15);
-          p = rotZ(p, vec3(0.0), sin(phase) * amp * 0.08);
-          p.y += abs(sin(phase)) * amp * 0.05;
+          if (aPart > 9.5) p = rotX(p, aPivot, -run * 0.5);
+          p = rotZ(p, vec3(0.0), sin(phase) * amp * 0.08 * (1.0 - run));
+          p = rotX(p, vec3(0.0, 0.1, 0.0), run * 0.32);
+          p.y += abs(sin(phase)) * amp * mix(0.05, 0.3, run);
         }
         csm_Position = p;
       }

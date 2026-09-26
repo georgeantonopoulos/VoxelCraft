@@ -22,6 +22,8 @@ export interface WildlifeWorld {
   waterAt(x: number, z: number): number | null;
   /** 0..1: how suitable the biome at (x, z) is for a species. */
   habitat(kind: 'bird' | 'deer' | 'fish', x: number, z: number): number;
+  /** Exact walkable surface under (x, yHint, z), e.g. a physics ray (dug terrain included). Optional. */
+  surfaceAt?(x: number, z: number, yHint: number): number | null;
 }
 
 export interface Agent {
@@ -57,9 +59,11 @@ export interface RootlingState {
   mode: 'wait' | 'lead' | 'arrive' | 'burrow';
   targetX: number; targetZ: number;
   timer: number;
+  /** Current travel speed (m/s), eased toward the pace the player sets. */
+  pace?: number;
 }
 
-export interface PlayerInfo { x: number; y: number; z: number; }
+export interface PlayerInfo { x: number; y: number; z: number; /** Horizontal speed (m/s), if known. */ speed?: number; }
 
 type Rand = () => number;
 
@@ -67,7 +71,7 @@ export const TUNING = {
   bird: { speed: 7, groundHop: 0.8, scatter: 10, altitude: [9, 20] as [number, number] },
   deer: { walk: 1.3, run: 9.5, alertDist: 24, fleeDist: 14, calmDist: 45 },
   fish: { speed: 1.6, dart: 5.5, fleeDist: 4.5 },
-  rootling: { speed: 3.2, waitDist: 16, startDist: 9, arriveDist: 5 },
+  rootling: { speed: 3.4, runSpeed: 9, leadGap: 7, waitDist: 18, startDist: 10, arriveDist: 5 },
 };
 
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -334,6 +338,21 @@ export function updateFish(g: Group, dt: number, player: PlayerInfo, world: Wild
 // Rootling guide
 // ---------------------------------------------------------------------------
 
+const smooth01 = (x: number, lo: number, hi: number) => {
+  const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Ground under the rootling, sampled every frame: the exact surface if the world offers it, else bilinear heights. */
+function rootlingGround(a: Agent, world: WildlifeWorld): number {
+  const exact = world.surfaceAt?.(a.x, a.z, a.y);
+  if (exact != null) return exact;
+  const x0 = Math.floor(a.x), z0 = Math.floor(a.z), fx = a.x - x0, fz = a.z - z0;
+  const h00 = world.groundAt(x0, z0), h10 = world.groundAt(x0 + 1, z0);
+  const h01 = world.groundAt(x0, z0 + 1), h11 = world.groundAt(x0 + 1, z0 + 1);
+  return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz;
+}
+
 /** Returns true on the frame the rootling reaches the hollow with the player. */
 export function updateRootling(r: RootlingState, dt: number, player: PlayerInfo, world: WildlifeWorld): boolean {
   if (!r.active) return false;
@@ -343,7 +362,7 @@ export function updateRootling(r: RootlingState, dt: number, player: PlayerInfo,
   const pd = Math.hypot(player.x - a.x, player.z - a.z);
   const td = Math.hypot(r.targetX - a.x, r.targetZ - a.z);
   let arrived = false;
-  let speed = 0;
+  let want = 0;
 
   if (r.mode === 'wait') {
     a.yaw = approachAngle(a.yaw, Math.atan2(player.x - a.x, player.z - a.z), Math.min(1, dt * 3));
@@ -354,7 +373,12 @@ export function updateRootling(r: RootlingState, dt: number, player: PlayerInfo,
     } else if (td < T.arriveDist) {
       r.mode = 'arrive'; r.timer = 2.5;
     } else {
-      speed = T.speed;
+      // Stay a few strides ahead: stroll while the player hangs back, run as
+      // they close in, and sprint past if they overtake (always faster than them).
+      const pt = Math.hypot(r.targetX - player.x, r.targetZ - player.z);
+      const urge = Math.max(1 - smooth01(pd, T.leadGap * 0.4, T.leadGap), pt < td ? 1 : 0);
+      const top = Math.max(T.runSpeed, (player.speed ?? 0) * 1.3);
+      want = T.speed + (top - T.speed) * urge;
       let dx = r.targetX - a.x, dz = r.targetZ - a.z;
       // Walk around water rather than into it.
       const probeX = a.x + Math.sin(a.yaw) * 1.5, probeZ = a.z + Math.cos(a.yaw) * 1.5;
@@ -370,13 +394,21 @@ export function updateRootling(r: RootlingState, dt: number, player: PlayerInfo,
     if (r.timer <= 0) r.active = false;
   }
 
+  r.pace = (r.pace ?? 0) + (want - (r.pace ?? 0)) * Math.min(1, dt * 4);
+  const speed = r.pace < 0.05 ? 0 : r.pace;
   a.vx = Math.sin(a.yaw) * speed; a.vz = Math.cos(a.yaw) * speed;
   a.x += a.vx * dt; a.z += a.vz * dt;
   if (r.mode !== 'burrow') {
-    const gy = ground(a, world);
-    a.y += (gy - a.y) * Math.min(1, dt * 12);
+    // Follow the ground closely and never sink into it (running uphill outpaced a soft follow).
+    const gy = rootlingGround(a, world);
+    a.y += (gy - a.y) * Math.min(1, dt * 20);
+    if (a.y < gy - 0.03) a.y = gy - 0.03;
   }
-  a.phase += dt * (speed > 0 ? 11 : r.mode === 'arrive' ? 14 : 2);
+  // Running: bounding gait (the shader reads this from the head channel).
+  const run = smooth01(speed, 4.5, 7);
+  a.head = run;
+  const walkRate = speed * 3.3;
+  a.phase += dt * (speed > 0 ? walkRate + (13 + speed * 0.4 - walkRate) * run : r.mode === 'arrive' ? 14 : 2);
   a.amp += ((speed > 0 || r.mode === 'arrive' ? 1 : 0.15) - a.amp) * Math.min(1, dt * 6);
   return arrived;
 }

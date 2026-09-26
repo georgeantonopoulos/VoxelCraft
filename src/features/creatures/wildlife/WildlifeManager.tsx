@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { useRapier } from '@react-three/rapier';
 import * as THREE from 'three';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
@@ -93,7 +94,24 @@ function useSpeciesMesh(kind: CreatureKind) {
 const SCALE: Record<CreatureKind, number> = { bird: 1, deer: 1, fish: 1.3, rootling: 1 };
 
 export const WildlifeManager: React.FC<{ enabled: boolean }> = ({ enabled }) => {
-  const world = useMemo(() => createWorld(), []);
+  const { world: physics, rapier } = useRapier();
+  const world = useMemo(() => {
+    const w = createWorld();
+    // The rootling walks right beside the player: stand it on the real terrain
+    // collider (digs included). The 1 m analytic grid sat it up to half a metre
+    // into slopes. A hit far above the creature is a roof overhead: ignore it.
+    const ray = new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    w.surfaceAt = (x, z, yHint) => {
+      ray.origin = { x, y: yHint + 1.5, z };
+      const hit = physics.castRay(ray, 4, true, undefined, undefined, undefined, undefined,
+        (c: { parent: () => { userData?: unknown } | null }) => (c.parent()?.userData as { type?: string } | undefined)?.type === 'terrain');
+      if (!hit) return null;
+      const y = yHint + 1.5 - hit.timeOfImpact;
+      return y > yHint + 1.0 ? null : y;
+    };
+    return w;
+  }, [physics, rapier]);
+  const lastPlayer = useRef<{ x: number; z: number; speed: number } | null>(null);
   const rand = useMemo(() => mulberry32(0xa11ce), []);
   const groups = useRef<Group[]>([]);
   const spawnTimer = useRef(0);
@@ -136,7 +154,12 @@ export const WildlifeManager: React.FC<{ enabled: boolean }> = ({ enabled }) => 
     if (!enabled) return;
     frameProfiler.begin('wildlife');
     const dt = Math.min(delta, 0.05);
-    const player = { x: playerState.x, y: playerState.y, z: playerState.z };
+    // Player's horizontal speed (smoothed) so the rootling can keep ahead of them.
+    const lp = lastPlayer.current;
+    const inst = lp && dt > 0 ? Math.min(40, Math.hypot(playerState.x - lp.x, playerState.z - lp.z) / dt) : 0;
+    const playerSpeed = lp ? lp.speed + (inst - lp.speed) * Math.min(1, dt * 5) : 0;
+    lastPlayer.current = { x: playerState.x, z: playerState.z, speed: playerSpeed };
+    const player = { x: playerState.x, y: playerState.y, z: playerState.z, speed: playerSpeed };
     const daylight = THREE.MathUtils.smoothstep(sharedUniforms.uSunDir.value.y, -0.1, 0.15);
     const vitality = useGroveStore.getState().vitality;
     const life = 0.35 + 0.65 * vitality;

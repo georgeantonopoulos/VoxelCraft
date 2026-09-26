@@ -77,4 +77,24 @@ describe('wildlife behaviour', () => {
     expect(arrived).toBe(true);
     expect(Math.hypot(r.agent.x, r.agent.z - 60)).toBeLessThan(8);
   });
+
+  it('the rootling stays ahead of a player running flat out, and sits on sloped ground', () => {
+    const rand = mulberry32(6);
+    // A steady 30% slope rising toward the hollow.
+    const slope: WildlifeWorld = { ...world, groundAt: (_x, z) => 10 + z * 0.3 };
+    const r: RootlingState = { active: true, agent: makeAgent(0, 10, 4, 0, rand), mode: 'lead', targetX: 0, targetZ: 200, timer: 0 };
+    const player = { x: 0, y: 10, z: 0, speed: 7 };
+    let minGap = Infinity, maxSink = 0;
+    for (let i = 0; i < 30 * 20; i++) {
+      player.z += 7 / 30; // sprinting straight at the hollow
+      updateRootling(r, 1 / 30, player, slope);
+      if (i > 60) {
+        minGap = Math.min(minGap, r.agent.z - player.z);
+        maxSink = Math.max(maxSink, (10 + r.agent.z * 0.3) - r.agent.y);
+      }
+    }
+    expect(minGap).toBeGreaterThan(1.5);
+    expect(maxSink).toBeLessThan(0.05);
+    expect(r.agent.head).toBeGreaterThan(0.5); // running gait
+  });
 });
