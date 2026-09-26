@@ -1,6 +1,11 @@
 import React, { useRef, useState } from 'react';
 import { useInputStore } from '@/state/InputStore';
 import { useSettingsStore } from '@/state/SettingsStore';
+import { useInventoryStore } from '@/state/InventoryStore';
+import { useLogStore } from '@/state/LogStore';
+import { ItemType } from '@/types';
+import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
+import { openCraftingForSelected } from '@features/crafting/openCrafting';
 
 /** Forward on-screen button presses to InteractionHandler (mouse equivalents). */
 const touchAction = (button: number, pressed: boolean) => {
@@ -22,6 +27,17 @@ export const TouchControls: React.FC = () => {
 
   // Constants
   const JOYSTICK_RADIUS = 50;
+
+  // What the buttons do right now depends on what is in hand.
+  const carrying = useLogStore((st) => st.carriedId !== null);
+  const selected = useInventoryStore((st) => st.inventorySlots[st.selectedSlotIndex]);
+  const selectedTool = useInventoryStore((st) => {
+    const it = st.inventorySlots[st.selectedSlotIndex];
+    return typeof it === 'string' && it.startsWith('tool_') ? st.customTools[it] : undefined;
+  });
+  const caps = getToolCapabilities(selectedTool ?? (selected as ItemType | null));
+  const primaryLabel = caps.canSaw ? 'Saw' : caps.canChop && !caps.canDig ? 'Chop' : caps.canSmash ? 'Strike' : 'Dig';
+  const showCraft = !carrying && (selected === ItemType.STICK || !!selectedTool);
 
   if (inputMode !== 'touch') return null;
 
@@ -130,52 +146,71 @@ export const TouchControls: React.FC = () => {
         </div>
       </div>
 
-      {/* Action Buttons Overlay */}
-      <div className="absolute bottom-28 right-8 flex flex-col gap-4 pointer-events-auto">
-        <div className="flex gap-4">
-          {/* PICK UP (Q) */}
+      {/* Action buttons: hollows like the hotbar's, named for what they will do now. */}
+      <div className="absolute bottom-28 right-8 flex flex-col items-end gap-3 pointer-events-auto">
+        {showCraft && (
           <button
-            aria-label="Pick up item"
-            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
+            aria-label="Craft"
+            className="grove-touch h-12 w-12 text-[13px]"
+            onPointerDown={(event) => { event.preventDefault(); openCraftingForSelected(); }}
+          >
+            Craft
+          </button>
+        )}
+        <div className="flex gap-3">
+          {/* Gather (Q): pick up what you look at; with a log in hand, set it down. */}
+          <button
+            aria-label={carrying ? 'Set down' : 'Gather'}
+            className="grove-touch h-16 w-16 text-[14px]"
             onPointerDown={(event) => {
               event.preventDefault();
               window.dispatchEvent(new Event('vc-item-pickup-request'));
             }}
           >
-            PICK UP
+            {carrying ? 'Set down' : 'Gather'}
           </button>
 
-          {/* USE (Right Click): place / throw / build */}
+          {/* Use (right click): place / throw / use; with a log in hand, place it. */}
           <button
-            aria-label="Use item"
-            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
+            aria-label={carrying ? 'Place' : 'Use'}
+            className="grove-touch h-16 w-16 text-[14px]"
             onPointerDown={(event) => { event.preventDefault(); touchAction(2, true); }}
             onPointerUp={() => touchAction(2, false)}
             onPointerLeave={() => touchAction(2, false)}
           >
-            USE
+            {carrying ? 'Place' : 'Use'}
           </button>
 
-          {/* DIG (Left Click): dig / chop / strike */}
-          <button
-            aria-label="Dig"
-            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
-            onPointerDown={(event) => { event.preventDefault(); setDigging(true); touchAction(0, true); }}
-            onPointerUp={() => { setDigging(false); touchAction(0, false); }}
-            onPointerLeave={() => { setDigging(false); touchAction(0, false); }}
-          >
-            DIG
-          </button>
+          {/* Primary (left click): dig / chop / saw / strike; with a log in hand, turn it. */}
+          {carrying ? (
+            <button
+              aria-label="Turn"
+              className="grove-touch h-16 w-16 text-[14px]"
+              onPointerDown={(event) => { event.preventDefault(); window.dispatchEvent(new CustomEvent('vc-build-rotate')); }}
+            >
+              Turn
+            </button>
+          ) : (
+            <button
+              aria-label={primaryLabel}
+              className="grove-touch h-16 w-16 text-[14px]"
+              onPointerDown={(event) => { event.preventDefault(); setDigging(true); touchAction(0, true); }}
+              onPointerUp={() => { setDigging(false); touchAction(0, false); }}
+              onPointerLeave={() => { setDigging(false); touchAction(0, false); }}
+            >
+              {primaryLabel}
+            </button>
+          )}
         </div>
 
-        {/* JUMP */}
         <button
-          className="h-20 w-20 self-end rounded-full border border-lichen/45 bg-night/45 text-parchment font-display text-[15px] font-semibold backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
+          aria-label="Jump"
+          className="grove-touch h-20 w-20 text-[16px]"
           onPointerDown={() => setJumping(true)}
           onPointerUp={() => setJumping(false)}
           onPointerLeave={() => setJumping(false)}
         >
-          JUMP
+          Jump
         </button>
       </div>
     </div>

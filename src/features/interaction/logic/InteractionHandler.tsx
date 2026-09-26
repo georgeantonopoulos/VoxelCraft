@@ -7,8 +7,8 @@ import { useWorldStore } from '@state/WorldStore';
 import { Vector3 } from 'three';
 import { ItemType } from '@/types';
 import { useInputStore } from '@/state/InputStore';
+import { openCraftingForSelected } from '@features/crafting/openCrafting';
 import { useSettingsStore } from '@state/SettingsStore';
-import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 import { emitImpact } from '../components/ImpactFX';
@@ -44,22 +44,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only open crafting from active gameplay (not while typing or in menus).
       if (e.key.toLowerCase() === 'c' && !e.repeat && !useSettingsStore.getState().isSettingsOpen) {
-        const invState = useInventoryStore.getState();
-        const currentItem = invState.inventorySlots[invState.selectedSlotIndex];
-        const craftingState = useCraftingStore.getState();
-
-        if (!craftingState.isOpen) {
-          const isCustom = typeof currentItem === 'string' && currentItem.startsWith('tool_');
-          if (currentItem === ItemType.STICK || isCustom) {
-            document.exitPointerLock();
-            if (isCustom) {
-              const tool = invState.customTools[currentItem as string];
-              craftingState.openCrafting(tool.baseType, tool.id, { ...tool.attachments });
-            } else {
-              craftingState.openCrafting(ItemType.STICK);
-            }
-          }
-        }
+        openCraftingForSelected();
         // Closing is handled by CraftingInterface, which cancels transactionally.
       }
     };

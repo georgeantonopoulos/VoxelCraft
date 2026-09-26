@@ -40,6 +40,7 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     const setDraggedItem = useCraftingStore(state => state.setDraggedItem);
     const isCraftingOpen = useCraftingStore(state => state.isOpen);
+    const heldForCrafting = useCraftingStore(state => state.draggedItem);
     const hudAwake = useHudPresence(state => state.awake);
 
     const getCount = (item: InventoryItemId) => {
@@ -93,9 +94,17 @@ export const InventoryBar: React.FC = React.memo(() => {
                         draggable={isCraftingOpen && !!item && (count > 0 || isCustom)}
                         onDragStart={() => item && handleDragStart(item)}
                         onDragEnd={handleDragEnd}
-                        // Tap/click to select (touch has no number keys or wheel).
-                        onClick={() => { if (!isCraftingOpen) useInventoryStore.getState().setSelectedSlotIndex(index); }}
-                        data-selected={isSelected}
+                        // Tap/click to select (touch has no number keys or wheel). At the
+                        // crafting bench a tap picks the item up instead (tap again to put it
+                        // back); then tapping a glowing point on the stick attaches it. Touch
+                        // has no drag and drop, and it works with a mouse too.
+                        onClick={() => {
+                            if (!isCraftingOpen) { useInventoryStore.getState().setSelectedSlotIndex(index); return; }
+                            if (item && Object.values(ItemType).includes(item as ItemType) && count > 0) {
+                                setDraggedItem(heldForCrafting === item ? null : item as ItemType);
+                            }
+                        }}
+                        data-selected={isCraftingOpen ? heldForCrafting === item && !!item : isSelected}
                         data-empty={!item}
                         title={metadata?.name}
                         className={`grove-slot relative flex h-[54px] w-[54px] items-center justify-center

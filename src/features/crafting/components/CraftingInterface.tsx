@@ -61,7 +61,7 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
     <div className="grove-panel absolute left-8 top-1/2 min-w-[220px] -translate-y-1/2 px-5 py-4 pointer-events-none">
       {attachmentCount === 0 ? (
         <p className="max-w-[200px] font-display text-[16px] italic leading-snug text-lichen/75">
-          Drag stones, shards or flora from your items onto the glowing points of the stick.
+          Drag stones, shards or flora from your items onto the glowing points of the stick, or tap one, then a point.
         </p>
       ) : (
         <>
@@ -209,6 +209,8 @@ export const CraftingInterface: React.FC = () => {
   const handleSlotDrop = (slotId: string, itemType: ItemType) => {
     const slot = STICK_SLOTS.find(s => s.id === slotId);
     if (!slot || !slot.allowedItems.includes(itemType)) return;
+    // Tap-to-attach keeps the item in hand: stop once none are left.
+    if (useInventoryStore.getState().getItemCount(itemType) <= 0) { useCraftingStore.getState().setDraggedItem(null); return; }
 
     // If slot is already filled, return previous item to inventory
     if (attachedItems[slotId]) {
@@ -217,6 +219,7 @@ export const CraftingInterface: React.FC = () => {
 
     removeItem(itemType, 1);
     attach(slotId, itemType);
+    if (useInventoryStore.getState().getItemCount(itemType) <= 0) useCraftingStore.getState().setDraggedItem(null);
   };
 
   const handleDetach = (slotId: string, itemType: ItemType) => {

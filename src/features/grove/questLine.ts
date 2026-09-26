@@ -85,7 +85,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     id: 'first-tool',
     title: 'First Tool',
     lore: 'Bind stone to wood. Shape the world with intention.',
-    hint: 'Select a stick and press C to craft. Drag stones or shards onto it.',
+    hint: 'Select a stick and press C (or Craft) to work it. Drag stones or shards onto it, or tap one, then a glowing point.',
     stat: 'toolsCrafted',
     goal: 1,
     essence: 20,
