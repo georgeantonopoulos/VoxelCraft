@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
-import { TorchFlame } from './TorchFlame';
+import { TorchModel } from './TorchModel';
 
 /**
  * PlacedTorch
@@ -42,19 +42,7 @@ export const PlacedTorch: React.FC<{
   return (
     <group ref={groupRef}>
       {/* Handle: local +Y points out of the wall/floor based on placement quaternion */}
-      <mesh position={[0, 0.22, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.035, 0.045, 0.44, 8]} />
-        <meshStandardMaterial color="#6b4a2f" roughness={0.9} metalness={0.0} />
-      </mesh>
-
-      {/* Metal collar */}
-      <mesh position={[0, 0.44, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.055, 0.055, 0.06, 10]} />
-        <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
-      </mesh>
-
-      {/* Flame */}
-      <TorchFlame position={[0, 0.64, 0]} scale={0.9} />
+      <TorchModel length={0.44} flameScale={0.9} />
 
       {/* Warm point light */}
       <PooledPointLight

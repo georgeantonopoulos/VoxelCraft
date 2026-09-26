@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useControls } from 'leva';
 import * as THREE from 'three';
-import { TorchFlame } from './TorchFlame';
+import { TorchModel } from './TorchModel';
 
 /**
  * TorchTool
@@ -71,8 +71,15 @@ export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
     Array.from({ length: count }, () => new THREE.Vector3())
   );
 
-  // Seed particles once.
+  // Seed particles once. Embers start at zero size (identity instance matrices
+  // would draw unit spheres around the torch before the first update).
   useEffect(() => {
+    const mesh = particlesRef.current;
+    if (mesh) {
+      const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < count; i++) mesh.setMatrixAt(i, zero);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
     for (let i = 0; i < count; i++) {
       lifetimes.current[i] = Math.random() * 0.6;
       velocities.current[i].set(
@@ -190,21 +197,10 @@ export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
 
   return (
     <group ref={torchRef}>
-      <group visible={active}>
-      {/* Torch handle */}
-      <mesh position={[0, 0.0, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.035, 0.045, 0.8, 8]} />
-        <meshStandardMaterial color="#6b4a2f" roughness={0.9} metalness={0.0} />
-      </mesh>
-
-      {/* Metal collar */}
-      <mesh position={[0, 0.38, 0]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.055, 0.055, 0.06, 10]} />
-        <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
-      </mesh>
-
-      {/* Flame: a camera-facing procedural card rising from the collar. */}
-      <TorchFlame position={[0, 0.58, 0]} />
+      {/* Always rendered (parked below the view when not held) so the load-time
+          shader warm-up compiles it: hiding it made the first light-up stall. */}
+      <group position={[0, -0.4, 0]}>
+        <TorchModel length={0.78} />
       </group>
 
       {/* Spotlight for forward cave visibility (outside the visibility toggle; see TorchToolProps) */}
@@ -224,7 +220,7 @@ export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
       <group ref={lightTargetRef} position={[0, 0.60, -2.5]} />
 
       {/* Fire particles (embers) */}
-      <instancedMesh visible={active} ref={particlesRef} args={[undefined, undefined, count]}>
+      <instancedMesh ref={particlesRef} args={[undefined, undefined, count]}>
         <sphereGeometry args={[1, 6, 6]} />
         <meshStandardMaterial
           color="#ffb36b"

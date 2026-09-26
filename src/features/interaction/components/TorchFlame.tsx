@@ -57,13 +57,15 @@ const flameMaterial = new THREE.ShaderMaterial({
   side: THREE.DoubleSide,
 });
 const flameGeometry = new THREE.PlaneGeometry(0.2, 0.34);
+/** Same card with its pivot at the bottom edge: the flame stays on the tip it burns from. */
+const flameGeometryBase = new THREE.PlaneGeometry(0.2, 0.34).translate(0, 0.17, 0);
 const tmpQuat = new THREE.Quaternion();
 
 /**
  * TorchFlame: a camera-facing procedural flame card. The card's base sits at
  * `position` minus half its height, so place it just above the torch collar.
  */
-export const TorchFlame: React.FC<{ position: [number, number, number]; scale?: number }> = ({ position, scale = 1 }) => {
+export const TorchFlame: React.FC<{ position: [number, number, number]; scale?: number; anchor?: 'center' | 'base' }> = ({ position, scale = 1, anchor = 'center' }) => {
   const ref = useRef<THREE.Mesh>(null);
   useFrame((state) => {
     flameMaterial.uniforms.uTime.value = state.clock.elapsedTime;
@@ -73,5 +75,5 @@ export const TorchFlame: React.FC<{ position: [number, number, number]; scale?: 
       m.quaternion.copy(tmpQuat.invert()).multiply(state.camera.quaternion);
     }
   });
-  return <mesh ref={ref} position={position} scale={scale} geometry={flameGeometry} material={flameMaterial} renderOrder={2} />;
+  return <mesh ref={ref} position={position} scale={scale} geometry={anchor === 'base' ? flameGeometryBase : flameGeometry} material={flameMaterial} renderOrder={2} />;
 };

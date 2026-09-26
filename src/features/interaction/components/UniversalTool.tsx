@@ -9,10 +9,11 @@ import React, { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CustomShaderMaterial from 'three-custom-shader-material';
-import { STICK_SHADER, ROCK_SHADER, SHARD_SHADER, FLORA_SHADER, TORCH_SHADER } from '@core/graphics/GroundItemShaders';
+import { STICK_SHADER, ROCK_SHADER, SHARD_SHADER, FLORA_SHADER } from '@core/graphics/GroundItemShaders';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { ItemType, CustomTool } from '@/types';
 import { STICK_SLOTS } from '../../crafting/CraftingData';
+import { TorchModel } from './TorchModel';
 import {
     createStickGeometry,
     createGroundStickGeometry,
@@ -364,14 +365,6 @@ interface UniversalToolProps {
     isThumbnail?: boolean;
 }
 
-// Stable across renders (see the note on memoized CSM uniforms above).
-let torchHandleUniforms: Record<string, THREE.IUniform> | null = null;
-const getTorchHandleUniforms = () => (torchHandleUniforms ??= {
-    uSeed: { value: 42.0 },
-    uColor: { value: new THREE.Color('#6b4a2f') },
-    uNoiseTexture: { value: getNoiseTexture() }
-});
-
 export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail = false }) => {
     const thumbScale = isThumbnail ? 1.2 : 1.0;
 
@@ -414,50 +407,11 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                     </group>
                 );
             case ItemType.TORCH:
+                // The same torch as in hand and on the wall (no light of its own:
+                // mounting a raw light recompiled every lit shader).
                 return (
-                    <group scale={thumbScale}>
-                        {/* Handle with wood grain shader */}
-                        <mesh position={[0, -0.1, 0]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                            <cylinderGeometry args={[0.035, 0.045, 0.7, 8, 8]} />
-                            {isThumbnail ? (
-                                <meshStandardMaterial color="#6b4a2f" roughness={0.9} />
-                            ) : (
-                                <CustomShaderMaterial
-                                    baseMaterial={THREE.MeshStandardMaterial}
-                                    vertexShader={TORCH_SHADER.vertex}
-                                    fragmentShader={TORCH_SHADER.fragment}
-                                    uniforms={getTorchHandleUniforms()}
-                                    roughness={0.9}
-                                />
-                            )}
-                        </mesh>
-                        {/* Collar */}
-                        <mesh position={[0, 0.3, 0]} castShadow={!isThumbnail} receiveShadow={!isThumbnail}>
-                            <cylinderGeometry args={[0.055, 0.055, 0.06, 10]} />
-                            <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
-                        </mesh>
-                        {/* Ember */}
-                        <mesh position={[0, 0.42, 0]}>
-                            <sphereGeometry args={[0.06, 12, 10]} />
-                            <meshStandardMaterial color="#ff9b47" emissive="#ff6b1a" emissiveIntensity={2.2} toneMapped={false} />
-                        </mesh>
-                        {/* Glow shell */}
-                        {!isThumbnail && (
-                            <mesh position={[0, 0.46, 0]}>
-                                <sphereGeometry args={[0.11, 12, 10]} />
-                                <meshStandardMaterial
-                                    color="#ffd39a"
-                                    emissive="#ffb36b"
-                                    emissiveIntensity={1.8}
-                                    transparent
-                                    opacity={0.3}
-                                    depthWrite={false}
-                                    blending={THREE.AdditiveBlending}
-                                    toneMapped={false}
-                                />
-                            </mesh>
-                        )}
-                        {!isThumbnail && <pointLight position={[0, 0.5, 0]} intensity={2} color="#ffaa00" distance={10} />}
+                    <group scale={thumbScale} position={[0, -0.35, 0]}>
+                        <TorchModel length={0.6} />
                     </group>
                 );
             case ItemType.FLORA:

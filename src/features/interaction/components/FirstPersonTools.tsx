@@ -453,7 +453,9 @@ export const FirstPersonTools: React.FC = () => {
                 (debugMode ? THREE.MathUtils.degToRad(torchPoseDebug.rotZDeg) : torchRotDefault.current.z)
             );
             torchRef.current.scale.setScalar(debugMode ? torchPoseDebug.scale : torchScaleDefault.current);
-            torchRef.current.visible = ease > 0.01;
+            // Stays visible (parked below the view when not held) so the load-time
+            // warm-up compiles it; toggling visibility stalled the first light-up.
+            torchRef.current.visible = true;
         }
 
         const rightHandShown = (!!selectedItem || !!activeCustomTool) && selectedItem !== ItemType.TORCH && !carriedLog;
