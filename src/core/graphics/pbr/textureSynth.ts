@@ -16,7 +16,7 @@ export const PBR_TEXTURE_SIZE = 512;
  * Bump whenever synthesis output changes: generated layers are cached in
  * IndexedDB under this version (TerrainTextureArrays.ts).
  */
-export const PBR_SYNTH_VERSION = 4;
+export const PBR_SYNTH_VERSION = 5;
 export const PBR_LAYER_COUNT = 16;
 
 /** World size (metres) covered by one repeat of each layer's texture. */
