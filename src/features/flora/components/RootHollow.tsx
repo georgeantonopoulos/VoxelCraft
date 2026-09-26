@@ -16,7 +16,7 @@ const STUMP_CONFIG = {
     embedOffset: 0.3
 };
 
-// Stable props for FractalTree: fresh objects each render invalidated its
+// Stable props for the grown tree: fresh objects each render invalidated its
 // physics memo (keyed on userData) on every RootHollow re-render.
 const FLORA_TREE_USER_DATA = { type: 'flora_tree' } as const;
 

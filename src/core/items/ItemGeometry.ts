@@ -3,7 +3,7 @@
  *
  * This is the SINGLE SOURCE OF TRUTH for item visuals.
  * Used by: UniversalTool (held/crafting), GroundItemsLayer (instanced terrain clutter),
- * ItemThumbnail (inventory), PhysicsItem (thrown items).
+ * PhysicsItem (thrown items).
  *
  * Architecture:
  * - Geometries are created once and cached

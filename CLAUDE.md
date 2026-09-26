@@ -147,7 +147,7 @@ TriplanarMaterial uses custom shaders with:
 - Geometry factories: createStickGeometry(), createStoneGeometry(), createShardGeometry(), createLargeRockGeometry(), createLashingGeometry()
 - Material variant system (obsidian, basalt, sandstone, clay stones; flint, volcanic shards)
 - Geometry caching for performance (geometries created once and reused)
-- Used by: UniversalTool (held/crafting), GroundItemsLayer (terrain clutter), PhysicsItem (thrown), ItemThumbnail (inventory)
+- Used by: UniversalTool (held/crafting), GroundItemsLayer (terrain clutter), PhysicsItem (thrown)
 
 Stones are procedural (`buildRockGeometry`: welded icosphere, fBm displacement, a few fracture-plane cuts, flattened underside; several shape variants, plus per-instance proportions in ROCK_SHADER). Shards are knapped flakes (`createShardGeometry`: thick central ridge, thin edges, flat facet scars; tip +Y, blade in XY for the crafting slots). Ground sticks use `createGroundStickGeometry` (tapered, bent, with a broken side twig); held sticks stay straight for attachments. Stone and flint are dielectrics: metalness 0 (metal reflected an empty environment and rendered black). In the item shaders the non-instanced branch must write `csm_Position` with the same transform as `csm_Normal`. Lashing geometry uses helix curves for realistic tool bindings. Hotbar icons are SVG line glyphs (`src/ui/grove/ItemGlyph.tsx`), not 3D thumbnails. Lumina flora (world LuminaLayer, placed/thrown LuminaFlora, held FloraMesh) is one plant shape from `createLuminaPlantGeometry` (dark arching stems, drooping glowing pods, base leaves), glow colour #62e6d8; never plain glowing spheres.
 
@@ -161,7 +161,6 @@ Stones are procedural (`buildRockGeometry`: welded icosphere, fBm displacement, 
 | `ROCK_SHADER` | Stone materials | Mineral crystals, mica shimmer, veins, iron staining, moss |
 | `SHARD_SHADER` | Obsidian/flint shards | Conchoidal fractures, iridescence, flow banding, edge highlights |
 | `FLORA_SHADER` | Bioluminescent flora | Cell structure, pulsing veins, subsurface scattering, breathing animation |
-| `TORCH_SHADER` | Torch handle wood | Wood grain with charring gradient toward flame end |
 
 Each shader has both `vertex` and `fragment` properties. **When modifying item visuals, update the shader in GroundItemShaders.ts** - all consumers will inherit the change.
 
@@ -205,7 +204,7 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 - Haze budget: bloom threshold 0.95 (only sun/Lumina/fire bloom; 0.4 bloomed the whole sky into a veil), sun shafts sample only sky near the sun, small sun disc without starburst, soft cloud layer in the sky dome.
 - Underground: fog colour blends to near-black; terrain fog is scaled by baked GI so cave mouths read dark from outside. Keeper's glow (`uPlayerGlow` emissive in TriplanarShader + pooled `KeeperLight` for objects) lights a few metres around the player in caves and faintly at deep night.
 - Wet ground roughness bottoms out at ~0.45 and caustics fade in with depth (ground just under sea level is usually dry). Water sheet drops interior pools shallower than 0.5 m (`dropShallowPools`).
-- Dormant Root Hollow stump is procedural (`src/features/flora/trees/hollowStump.ts`, instanced by StumpLayer): broken hollow oak shell, five buttress fins that dive underground (no visible root tips), trees' bark shader via `getHollowBarkMaterial` (less moss, coarser vertical furrows: `uMoss`, `uBarkScale`). `public/models/tree_stump.glb` is no longer used.
+- Dormant Root Hollow stump is procedural (`src/features/flora/trees/hollowStump.ts`, instanced by StumpLayer): broken hollow oak shell, five buttress fins that dive underground (no visible root tips), trees' bark shader via `getHollowBarkMaterial` (less moss, coarser vertical furrows: `uMoss`, `uBarkScale`). (The old stock stump model was deleted.)
 - Dormant Root Hollows sit in drained DIRT over stone (no blade grass: `generateMaterialMaskTexture` skips grove columns). Wildlife is rare by design (one small flock, a lone deer or pair).
 
 ### Post-Processing Pipeline
@@ -285,7 +284,6 @@ Changing these breaks mesher output dimensions and worker communication. Light g
 - `?benchmark` or `?benchmark=N` - Run FPS benchmark for N seconds (default 5s), reports pass/fail against 40 FPS threshold
 - `?nocolliders` - Disable all terrain colliders (physics debugging)
 - `?nosim` - Disable simulation worker (performance isolation)
-- `?nominimap` - Disable minimap rendering (performance isolation)
 - `localStorage.vcDebugPlacement = "1"` - Vegetation placement debug
 - `window.__chunkDataManager.getStats()` - View chunk cache stats (total, dirty, pending persistence, memory MB)
 - `window.__fpsBenchmark.start()` - Manually trigger FPS benchmark from console
@@ -306,7 +304,7 @@ See `AGENTS.md` for the complete list. Most critical:
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
-9. **Item shader consistency**: GroundItemShaders.ts defines all item shaders (STICK, ROCK, SHARD, FLORA, TORCH). When adding visual detail to items, update the shader here - never copy shader code to individual components. All consumers (UniversalTool, GroundItemsLayer, LuminaFlora) must use both `vertex` AND `fragment` properties.
+9. **Item shader consistency**: GroundItemShaders.ts defines all item shaders (STICK, ROCK, SHARD, FLORA; torches use TorchModel). When adding visual detail to items, update the shader here - never copy shader code to individual components. All consumers (UniversalTool, GroundItemsLayer, LuminaFlora) must use both `vertex` AND `fragment` properties.
 10. **Audio centralization**: AudioManager (src/core/audio/AudioManager.ts) is the single source of truth for all audio playback. NEVER call `new Audio()` or play sounds directly. Always dispatch `vc-audio-play` events. Sound definitions live in soundRegistry.ts. Only exception: 3D positional sounds (campfire `FireSound` in PhysicsItem.tsx) use drei `<PositionalAudio>` with the camera's AudioListener, since AudioManager has no spatialization. Ambient loops use dedicated elements, separate from the one-shot pools.
 
 ## Logging Best Practices
@@ -515,6 +513,6 @@ Also resolved (2026-09, second pass):
 ### Sacred Grove Ecosystem (Planned)
 Root Hollows are terraforming seeds that transform the landscape:
 1. **Barren Zone**: Area around dormant Root Hollow is desert-like (RED_DESERT material)
-2. **Tree Growth**: When FractalTree grows, it begins spreading life (NOT YET IMPLEMENTED)
+2. **Tree Growth**: When the hollow's LuminaTree grows, it begins spreading life (NOT YET IMPLEMENTED)
 3. **Humidity Spreading**: Gradual biome transformation from barren to lush (NOT YET IMPLEMENTED)
 4. **Vegetation Spawning**: Trees and flora spawn in transformed areas (NOT YET IMPLEMENTED) 
