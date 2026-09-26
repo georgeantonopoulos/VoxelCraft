@@ -113,9 +113,9 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
             >
               Continue
             </button>
-            <div className="-mt-1 text-center text-[13px] tracking-wide text-lichen/70">
+            <div className="-mt-1 text-center text-[13px] tracking-wide text-lichen/80">
               {continueLabel}
-              <span className="text-lichen/40"> · seed <span className="grove-num">{lastWorld.seed}</span></span>
+              <span className="text-lichen/55"> · seed <span className="grove-num">{lastWorld.seed}</span></span>
             </div>
             <button className="grove-button-quiet mt-2 px-6 py-1.5 text-[13px]" onClick={() => setChoosing(true)}>
               Begin a new world
