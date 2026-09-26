@@ -356,3 +356,7 @@ export const useInventoryStore = create<GameState>((set, get) => ({
     return { selectedSlotIndex: nextIndex, currentTool: nextTool };
   }),
 }));
+
+if (typeof window !== 'undefined') {
+  (window as unknown as { __inventoryStore?: typeof useInventoryStore }).__inventoryStore = useInventoryStore;
+}

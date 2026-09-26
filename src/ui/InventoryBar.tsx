@@ -11,7 +11,7 @@ const SelectedName: React.FC<{ name: string; slot: number }> = ({ name, slot }) 
     }, [name, slot]);
     return (
         <div
-            className="grove-text-shadow mb-1.5 h-6 font-display text-[19px] font-semibold text-parchment transition-opacity duration-500"
+            className="grove-text-shadow mb-3 h-6 font-display text-[19px] font-semibold text-parchment transition-opacity duration-500"
             style={{ opacity: visible ? 1 : 0 }}
         >
             {name}
@@ -77,7 +77,9 @@ export const InventoryBar: React.FC = React.memo(() => {
     return (
         <div className={`absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] -translate-y-3 scale-110' : 'z-50'}`}>
             <SelectedName name={selectedName} slot={selectedSlotIndex} />
-            <div className="grove-panel flex gap-1.5 rounded-[14px] p-1.5" style={presenceStyle(hudAwake || isCraftingOpen, 0.28)}>
+            {/* No tray: a row of hollows strung on a faint vine thread. */}
+            <div className="relative flex items-center gap-1" style={presenceStyle(hudAwake || isCraftingOpen, 0.28)}>
+            <div aria-hidden="true" className="grove-thread pointer-events-none absolute inset-x-2 top-1/2 h-px -translate-y-1/2" />
             {inventorySlots.map((item, index) => {
                 const isSelected = index === selectedSlotIndex;
                 const metadata = item ? getItemMetadata(item) : null;
@@ -94,26 +96,27 @@ export const InventoryBar: React.FC = React.memo(() => {
                         // Tap/click to select (touch has no number keys or wheel).
                         onClick={() => { if (!isCraftingOpen) useInventoryStore.getState().setSelectedSlotIndex(index); }}
                         data-selected={isSelected}
+                        data-empty={!item}
                         title={metadata?.name}
-                        className={`grove-slot relative flex h-[52px] w-[52px] items-center justify-center rounded-[10px]
+                        className={`grove-slot relative flex h-[54px] w-[54px] items-center justify-center
               ${isCraftingOpen && !!item && (count > 0 || isCustom) ? 'cursor-grab active:cursor-grabbing' : ''}
             `}
                     >
-                        <span className={`grove-num absolute left-1.5 top-0.5 text-[9px] ${isSelected ? 'text-ember/90' : 'text-lichen/40'}`}>
-                            {index + 1}
-                        </span>
-
                         {item ? (
-                            <ItemGlyph item={item} className="h-9 w-9" />
+                            <ItemGlyph item={item} className="grove-slot-glyph relative h-8 w-8" />
                         ) : (
-                            <span className="h-1 w-1 rounded-full bg-lichen/20" />
+                            <span className="relative h-[3px] w-[3px] rounded-full bg-lichen/35" />
                         )}
 
                         {showCount && count > 0 && (
-                            <span className="grove-num grove-text-shadow absolute bottom-0.5 right-1.5 text-[11px] font-bold text-parchment">
+                            <span className="grove-num grove-text-shadow absolute bottom-1 right-1.5 text-[11px] font-semibold text-parchment/90">
                                 {count}
                             </span>
                         )}
+                        <span className={`grove-num grove-text-shadow absolute -top-2.5 text-[9px] transition-opacity duration-500 ${isSelected ? 'text-ember/85' : 'text-lichen/40'}`}
+                            style={{ opacity: hudAwake || isCraftingOpen ? 1 : 0 }}>
+                            {index + 1}
+                        </span>
                     </div>
                 );
             })}
