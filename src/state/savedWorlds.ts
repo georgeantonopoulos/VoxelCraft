@@ -97,7 +97,7 @@ export const recordWorldEntered = (type: WorldType, seed: number): void => {
 
 /**
  * Let a world go: removes it from the list and erases what was saved for it
- * (terrain edits for this type+seed; Grove progress and builds for the seed,
+ * (terrain edits and inventory for this type+seed; Grove progress and builds for the seed,
  * unless another listed world shares that seed).
  */
 export const forgetWorld = async (type: WorldType, seed: number): Promise<void> => {
@@ -109,6 +109,7 @@ export const forgetWorld = async (type: WorldType, seed: number): Promise<void> 
       window.localStorage.removeItem(`vc-logs-v1-${seed}`);
     } catch { /* storage blocked */ }
   }
+  try { window.localStorage.removeItem(`vc-inventory-v1-${seed}:${type}`); } catch { /* storage blocked */ }
   try {
     const { worldDB } = await import('./WorldDB');
     // Chunk ids are `<seed>:<type>:g<GEN>|cx,cz`: every generator version of this world.

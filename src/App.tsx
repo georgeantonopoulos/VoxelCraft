@@ -49,6 +49,8 @@ import { KeeperLight } from '@features/environment/components/KeeperLight';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { recordWorldEntered } from '@state/savedWorlds';
+import { bindInventoryToWorld } from '@state/inventoryPersistence';
+import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 
@@ -127,6 +129,12 @@ const App: React.FC = () => {
   );
   const [worldSeed, setWorldSeed] = useState<number>(() => WorldSeed.fromURLOrRandom());
 
+  // Each world has its own inventory: load it on entry, keep it saved.
+  useEffect(() => {
+    if (!worldType) return;
+    return bindInventoryToWorld(worldType, worldSeed);
+  }, [worldType, worldSeed]);
+
   // Handler for restarting with a new world (returns to world selection)
   const handleRestartWorld = useCallback(() => {
     // Clear all cached data from singletons FIRST, before resetting React state
@@ -138,6 +146,8 @@ const App: React.FC = () => {
     useWorldStore.getState().resetAll();
     useEntityHistoryStore.getState().reset();
     useGroveStore.getState().resetWorld();
+    // Dropped and thrown items, fires, belong to the world being left.
+    usePhysicsItemStore.setState({ items: [] });
 
     // Reset all React state to return to world selection
     setGameStarted(false);

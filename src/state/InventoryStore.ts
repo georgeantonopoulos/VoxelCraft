@@ -114,8 +114,37 @@ interface GameState {
   setCurrentTool: (tool: ItemType.PICKAXE | ItemType.AXE) => void;
 
   setSelectedSlotIndex: (index: number) => void;
+  /** Replace the whole inventory (a world's saved one, or empty for a new world). */
+  loadInventory: (saved: SavedInventory | null) => void;
   cycleSlot: (direction: 1 | -1) => void;
 }
+
+/** The parts of the inventory that belong to a world (saved per world, restored on Continue). */
+export interface SavedInventory {
+  inventoryCount: number;
+  torchCount: number;
+  stickCount: number;
+  stoneCount: number;
+  shardCount: number;
+  luminousFloraCount: number;
+  hasPickaxe: boolean;
+  hasAxe: boolean;
+  customTools: Record<string, CustomTool>;
+  customToolIds: string[];
+}
+
+const EMPTY_INVENTORY: SavedInventory = {
+  inventoryCount: INITIAL_FLORA_COUNT,
+  torchCount: 0,
+  stickCount: 0,
+  stoneCount: 0,
+  shardCount: 0,
+  luminousFloraCount: 0,
+  hasPickaxe: false,
+  hasAxe: false,
+  customTools: {},
+  customToolIds: [],
+};
 
 export const useInventoryStore = create<GameState>((set, get) => ({
   inventoryCount: INITIAL_FLORA_COUNT,
@@ -142,6 +171,13 @@ export const useInventoryStore = create<GameState>((set, get) => ({
     customToolIds: []
   }),
   selectedSlotIndex: 0,
+
+  loadInventory: (saved) => {
+    const inv = { ...EMPTY_INVENTORY, ...(saved ?? {}) };
+    // Drop ids whose tool data is missing (corrupt save).
+    inv.customToolIds = inv.customToolIds.filter((id) => inv.customTools[id]);
+    set({ ...inv, currentTool: ItemType.PICKAXE, inventorySlots: computeSlots(inv), selectedSlotIndex: 0 });
+  },
 
   addItem: (item, amount = 1) => set((state) => {
     const amt = Math.max(0, Math.floor(amount));
