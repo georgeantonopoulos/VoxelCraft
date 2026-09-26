@@ -127,6 +127,7 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
   varying vec3 vGrassNormal;
   varying float vBiomeId;
   varying float vVisible;
+  varying float vBladeRand;
 
   // Hash functions for deterministic randomness
   float hash(vec2 p) {
@@ -240,6 +241,11 @@ export const BLADE_GRASS_VERTEX = /* glsl */ `
     float randCurve = rands.z * 0.3 + 0.1;   // Curvature: 0.1 - 0.4
     // Shorter, sparser blades toward the edge of a grass patch.
     randScale *= mix(0.45, 1.0, smoothstep(0.3, 0.95, matMask));
+    // Tufts: blades clump into taller and shorter patches instead of a
+    // uniform carpet of equal wedges.
+    float clump = texture(uNoiseTexture, vec3((vec2(chunkX, chunkZ) + uChunkOffset.xz) * 0.23, 0.37)).r;
+    randScale *= mix(0.55, 1.3, smoothstep(0.3, 0.72, clump));
+    vBladeRand = rands.x;
 
     // Biome-specific height adjustments
     if (biomeId > 8.5 && biomeId < 9.5) {
@@ -385,6 +391,7 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
   varying vec3 vGrassNormal;
   varying float vBiomeId;
   varying float vVisible;
+  varying float vBladeRand;
 
   vec3 getBiomeTint(float biomeId) {
     // JUNGLE: Deep saturated green
@@ -415,6 +422,12 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
 
     // === Biome Tinting ===
     col *= getBiomeTint(vBiomeId);
+
+    // Per-blade variation: some deeper, some paler, and a few with dry,
+    // straw-coloured tips (a uniform ramp read as paper strips up close).
+    col *= mix(0.82, 1.12, vBladeRand);
+    float dryTip = step(0.74, fract(vBladeRand * 7.31)) * smoothstep(0.5, 1.0, t);
+    col = mix(col, vec3(0.6, 0.56, 0.34), dryTip * 0.6);
 
     // === Noise-based Variation ===
     vec3 noiseCoord = vWorldPos * 0.06;
