@@ -22,6 +22,8 @@ const SWING_WINDUP = SWING_CONTACT * 0.6;
 const SWING_DURATION = SWING_CONTACT + 0.24;
 /** Where the hand holds a long item, in item units below its centre. */
 const HAND_GRIP = 0.0;
+/** Turns the torch hand so the wrist faces down-right in view. */
+const TORCH_HAND_YAW = 0.0;
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -607,6 +609,10 @@ export const FirstPersonTools: React.FC = () => {
             />
             <group ref={torchRef}>
                 <TorchTool active={selectedItem === ItemType.TORCH} />
+                {/* The hand around the torch handle, below the collar. */}
+                <group position={[0, 0.2, 0]} rotation={[0, TORCH_HAND_YAW, 0]} scale={1.25}>
+                    <KeeperFist />
+                </group>
             </group>
             {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
             {selectedItem === ItemType.TORCH && <TorchSound />}
