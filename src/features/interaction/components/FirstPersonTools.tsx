@@ -443,7 +443,9 @@ export const FirstPersonTools: React.FC = () => {
             } else {
                 const torchX = (TORCH_POSE.x + (TORCH_POSE.xOffset ?? 0)) * responsiveX;
                 torchTargetPos.current.set(torchX, TORCH_POSE.y, TORCH_POSE.z);
-                torchHiddenPos.current.set(torchX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8), TORCH_POSE.z);
+                // Parked well below the view: the torch stays visible for shader
+                // warm-up, and at the pose's own offset its flame peeked in.
+                torchHiddenPos.current.set(torchX, TORCH_POSE.y + (TORCH_POSE.hiddenYOffset ?? -0.8) - 1.2, TORCH_POSE.z);
             }
             torchPosTemp.current.copy(torchHiddenPos.current).lerp(torchTargetPos.current, ease);
             torchRef.current.position.copy(torchPosTemp.current);
