@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useControls, button } from 'leva';
 import * as THREE from 'three';
@@ -47,6 +47,14 @@ export const FirstPersonTools: React.FC = () => {
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const activeCustomTool = typeof selectedItem === 'string' ? customTools[selectedItem] : null;
+
+    // What the right hand is actually showing. Switching items lowers the old
+    // one out of view, swaps it there, and raises the new one (it used to pop
+    // from one model to the next in place).
+    const wantedRight = (selectedItem && selectedItem !== ItemType.TORCH && !carriedLog) ? selectedItem : null;
+    const [shownRight, setShownRight] = useState<typeof wantedRight>(wantedRight);
+    const swapPending = useRef(false);
+    const shownTool = typeof shownRight === 'string' && customTools[shownRight] ? customTools[shownRight] : null;
 
     const luminaGlowStartTime = useRef(0);
     const luminaGlowDuration = useRef(1000);
@@ -460,13 +468,22 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = true;
         }
 
-        const rightHandShown = (!!selectedItem || !!activeCustomTool) && selectedItem !== ItemType.TORCH && !carriedLog;
-        rightItemProgress.current = THREE.MathUtils.lerp(rightItemProgress.current, rightHandShown ? 1 : 0, (rightHandShown ? 2.4 : 3.0) * delta);
+        // Raise only once the shown item is the wanted one; otherwise lower
+        // (quickly when another item is waiting), then swap out of view.
+        const switching = shownRight !== wantedRight;
+        const rightHandShown = !!shownRight && !switching;
+        const rate = rightHandShown ? (rightItemProgress.current < 0.5 ? 5.0 : 3.2) : (switching && wantedRight ? 10.0 : 3.0);
+        rightItemProgress.current = THREE.MathUtils.lerp(rightItemProgress.current, rightHandShown ? 1 : 0, Math.min(1, rate * delta));
+        if (switching && rightItemProgress.current < 0.06 && !swapPending.current) {
+            swapPending.current = true;
+            setShownRight(wantedRight);
+        }
+        if (!switching) swapPending.current = false;
         if (rightItemRef.current) {
             const rease = rightItemProgress.current * rightItemProgress.current * (3 - 2 * rightItemProgress.current);
-            const pose = (selectedItem || activeCustomTool)
-                ? (debugMode && (selectedItem === 'stick' || selectedItem === 'stone')
-                    ? (selectedItem === 'stick'
+            const pose = shownRight
+                ? (debugMode && (shownRight === 'stick' || shownRight === 'stone')
+                    ? (shownRight === 'stick'
                         ? {
                             xOffset: rightHandStickPoseDebug.xOffset,
                             y: rightHandStickPoseDebug.y,
@@ -489,11 +506,11 @@ export const FirstPersonTools: React.FC = () => {
                                 z: THREE.MathUtils.degToRad(rightHandStonePoseDebug.rotZDeg)
                             }
                         })
-                    : (activeCustomTool
-                        ? (RIGHT_HAND_HELD_ITEM_POSES[activeCustomTool.baseType] ?? RIGHT_HAND_HELD_ITEM_POSES.stick)
-                        : RIGHT_HAND_HELD_ITEM_POSES[selectedItem as ItemType]))
+                    : (shownTool
+                        ? (RIGHT_HAND_HELD_ITEM_POSES[shownTool.baseType] ?? RIGHT_HAND_HELD_ITEM_POSES.stick)
+                        : RIGHT_HAND_HELD_ITEM_POSES[shownRight as ItemType]))
                 : null;
-            if (pose && rightHandShown) {
+            if (pose) {
                 const animOffsetY = positionY - (debugPos.current.y + swayY);
                 const animOffsetZ = positionZ - debugPos.current.z;
                 const x = (positionX + (pose.xOffset ?? 0) * responsiveX);
@@ -511,7 +528,7 @@ export const FirstPersonTools: React.FC = () => {
                 sw.qFinal.multiplyQuaternions(sw.qSwing, sw.qPose);
                 // Long items turn about the hand near the butt of the handle;
                 // stones and flakes about their centre.
-                const heldItem = activeCustomTool ? activeCustomTool.baseType : selectedItem;
+                const heldItem = shownTool ? shownTool.baseType : shownRight;
                 const long = heldItem === ItemType.STICK || heldItem === ItemType.PICKAXE || heldItem === ItemType.AXE;
                 sw.grip.set(0, long ? -0.3 : 0, 0).multiplyScalar(pose.scale);
                 sw.gripCam.copy(sw.grip).applyQuaternion(sw.qPose).add(rightItemPosTemp.current);
@@ -641,11 +658,7 @@ export const FirstPersonTools: React.FC = () => {
                   Prevent UniversalTool from rendering the torch (and its extra PointLight) 
                   when TorchTool is already handling it in the left hand.
                 */}
-                <UniversalTool item={
-                    (activeCustomTool || selectedItem) === ItemType.TORCH
-                        ? null
-                        : (activeCustomTool || selectedItem)
-                } />
+                <UniversalTool item={shownTool || shownRight} />
             </group>
         </group>
     );
