@@ -41,6 +41,7 @@ import { useEnvironmentStore } from '@state/EnvironmentStore';
 // UI
 import { HUD as UI } from '@ui/HUD';
 import { SceneWarmup } from '@features/environment/components/SceneWarmup';
+import { KeeperLight } from '@features/environment/components/KeeperLight';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { writeLastWorld } from '@state/lastWorld';
@@ -503,6 +504,7 @@ const App: React.FC = () => {
           {gameStarted && terrainLoaded && <AmbienceDirector />}
           {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}
           <PointLightPool />
+          {gameStarted && <KeeperLight />}
           <DebugHandles />
           <SpatialAudioListener />
           <PerformanceMonitor visible={debugMode} />

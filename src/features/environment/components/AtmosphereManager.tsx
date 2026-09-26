@@ -36,6 +36,7 @@ const SKY_SUNSET_TOP = new THREE.Color(0x2a3358); // deep indigo
 const SKY_SUNSET_BOTTOM = new THREE.Color(0xe39a6a); // soft amber, not orange
 const SKY_DAY_TOP = new THREE.Color(0x4a7fb8); // calm blue
 const SKY_DAY_BOTTOM = new THREE.Color(0xbcd4de); // pale haze at the horizon
+const CAVE_FOG = new THREE.Color(0x07090b);
 
 const getSunColor = (sunY: number, radius: number, out: THREE.Color): THREE.Color => {
     const normalizedHeight = sunY / radius;
@@ -146,7 +147,7 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
         // Keeper's glow: enough to read a cave wall a few metres away, fading to dark.
         const caveGlow = THREE.MathUtils.smoothstep(undergroundBlend, 0.25, 0.85);
         const nightGlow = (1 - THREE.MathUtils.smoothstep(sunY, -0.3, -0.05)) * 0.25;
-        sharedUniforms.uPlayerGlow.value = Math.max(caveGlow * 0.55, nightGlow);
+        sharedUniforms.uPlayerGlow.value = Math.max(caveGlow * 1.4, nightGlow);
         frameProfiler.end('ambient-controller');
     });
 
@@ -680,6 +681,11 @@ export const AtmosphereController: React.FC<{
 
         if (scene.fog) {
             scene.fog.color.copy(tunedBottom.current);
+            // Underground the distance fades to darkness, not to the daylight horizon
+            // (caves read as white voids otherwise).
+            const { undergroundBlend } = useEnvironmentStore.getState();
+            const cave = THREE.MathUtils.smoothstep(undergroundBlend, 0.15, 0.7);
+            if (cave > 0) scene.fog.color.lerp(CAVE_FOG, cave);
         }
         if (scene.background instanceof THREE.Color) {
             scene.background.copy(tunedBottom.current);

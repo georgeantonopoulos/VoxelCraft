@@ -547,7 +547,7 @@ export const triplanarFragmentShader = `
     if (uPlayerGlow > 0.001) {
       vec3 toCam = cameraPosition - vWorldPosition;
       float d = length(toCam);
-      float fall = (1.0 / (1.0 + d * d * 0.12)) * (1.0 - smoothstep(5.0, 13.0, d));
+      float fall = (1.0 / (1.0 + d * d * 0.08)) * (1.0 - smoothstep(6.0, 16.0, d));
       float facing = max(dot(N, toCam / max(d, 1e-3)), 0.0) * 0.75 + 0.25;
       keeperGlow = col * uPlayerGlowColor * (uPlayerGlow * fall * facing);
     }
