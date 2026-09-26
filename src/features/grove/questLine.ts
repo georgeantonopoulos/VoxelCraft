@@ -43,8 +43,10 @@ export interface QuestDef {
   title: string;
   /** Short flavour line shown under the title. */
   lore: string;
-  /** Concrete, actionable instruction. */
+  /** Concrete, actionable instruction (mouse and keyboard). */
   hint: string;
+  /** The same instruction for touch play, when it differs (button names instead of keys). */
+  touchHint?: string;
   stat: GroveStatKey;
   /** Target value of `stat` measured from when the quest became active. */
   goal: number;
@@ -68,6 +70,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     title: 'Awaken',
     lore: 'The last grove flickers. Gather what the forest let fall.',
     hint: 'Look at fallen sticks and press Q to gather them.',
+    touchHint: 'Look at fallen sticks and tap Gather.',
     stat: 'sticksGathered',
     goal: 3,
     essence: 10,
@@ -77,6 +80,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     title: 'Stone & Stick',
     lore: 'Every Keeper begins with bone-simple tools.',
     hint: 'Gather stones from the ground with Q.',
+    touchHint: 'Gather stones from the ground with Gather.',
     stat: 'stonesGathered',
     goal: 2,
     essence: 10,
@@ -85,7 +89,8 @@ export const QUEST_LINE: readonly QuestDef[] = [
     id: 'first-tool',
     title: 'First Tool',
     lore: 'Bind stone to wood. Shape the world with intention.',
-    hint: 'Select a stick and press C (or Craft) to work it. Drag stones or shards onto it, or tap one, then a glowing point.',
+    hint: 'Select a stick and press C. Drag stones or shards onto its glowing points.',
+    touchHint: 'Select a stick and tap Craft. Tap a stone or shard, then a glowing point.',
     stat: 'toolsCrafted',
     goal: 1,
     essence: 20,
@@ -95,6 +100,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     title: 'Lumina Glow',
     lore: 'Cyan light still pulses in hidden places.',
     hint: 'Collect glowing Lumina flora with Q.',
+    touchHint: 'Collect glowing Lumina flora with Gather.',
     stat: 'floraGathered',
     goal: 3,
     essence: 20,
@@ -114,6 +120,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     title: 'Rekindle',
     lore: 'Give the light back to the roots.',
     hint: 'Select Lumina flora and place it beside the Root Hollow (right click).',
+    touchHint: 'Select Lumina flora and place it beside the Root Hollow with Use.',
     stat: 'hollowsRestored',
     goal: 1,
     absolute: true,
@@ -133,6 +140,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     title: 'Light the Dark',
     lore: 'Caves remember the Lumina too.',
     hint: 'Place 3 torches (select torch, right click a surface).',
+    touchHint: 'Place 3 torches (select a torch, face a surface, tap Use).',
     stat: 'torchesPlaced',
     goal: 3,
     essence: 30,
@@ -241,7 +249,7 @@ export const computeVitality = (stats: GroveStats): number => {
 
 export type GroveNotice =
   | { kind: 'quest-complete'; title: string; essence: number }
-  | { kind: 'quest-start'; title: string; hint: string }
+  | { kind: 'quest-start'; title: string; hint: string; touchHint?: string }
   | { kind: 'rank-up'; title: string }
   | { kind: 'discovery'; title: string; detail: string };
 
@@ -293,7 +301,7 @@ export const applyStat = (
     questIndex += 1;
     const next = questAt(questIndex);
     questBaseline = stats[next.stat];
-    notices.push({ kind: 'quest-start', title: next.title, hint: next.hint });
+    notices.push({ kind: 'quest-start', title: next.title, hint: next.hint, touchHint: next.touchHint });
   }
 
   const beforeRank = rankIndexFor(prev.essence);

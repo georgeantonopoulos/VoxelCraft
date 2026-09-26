@@ -1,3 +1,4 @@
+import { useSettingsStore } from '@/state/SettingsStore';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useGroveStore, GroveToast } from '@state/GroveStore';
 import { playerState, subscribeThrottled } from '@core/player/PlayerState';
@@ -58,6 +59,7 @@ const ProgressPips: React.FC<{ value: number; goal: number }> = ({ value, goal }
 
 const QuestTracker: React.FC = () => {
   const progression = useGroveStore((s) => s.progression);
+  const touch = useSettingsStore((s) => s.inputMode) === 'touch';
   const quest = questAt(progression.questIndex);
   const { value, goal } = questProgress(progression);
   const essence = progression.essence;
@@ -75,7 +77,7 @@ const QuestTracker: React.FC = () => {
         <ProgressPips value={value} goal={goal} />
         <span className="grove-num text-[12px] text-lichen/90">{value} / {goal}</span>
       </div>
-      <p className="mt-2 text-[14px] font-medium leading-snug text-parchment">{renderHint(quest.hint)}</p>
+      <p className="mt-2 text-[14px] font-medium leading-snug text-parchment">{renderHint(touch && quest.touchHint ? quest.touchHint : quest.hint)}</p>
 
       <div className="mt-4 flex items-center gap-2 text-[12px]" title={next ? `${next.minEssence - essence} essence to ${next.title}` : 'Highest rank'}>
         <span className="font-display text-[16px] font-semibold italic text-ember">{rank.title}</span>
@@ -218,6 +220,7 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
     window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind: toast.notice.kind } }));
   }, [toast.id, toast.notice.kind]);
 
+  const touchMode = useSettingsStore((s) => s.inputMode) === 'touch';
   const n = toast.notice;
   let eyebrow = '';
   let title = '';
@@ -228,7 +231,7 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
       eyebrow = 'Path complete'; title = n.title; detail = `+${n.essence} essence`; tone = '#b5d178';
       break;
     case 'quest-start':
-      eyebrow = 'A new path'; title = n.title; detail = renderHint(n.hint); tone = '#a4f2e4';
+      eyebrow = 'A new path'; title = n.title; detail = renderHint(touchMode && n.touchHint ? n.touchHint : n.hint); tone = '#a4f2e4';
       break;
     case 'rank-up':
       eyebrow = 'You are now'; title = n.title; detail = `Keeper's Stride +${Math.round(STRIDE_PER_RANK * 100)}% · The Grove remembers your name`; tone = '#f2cf7c';
@@ -279,14 +282,21 @@ const CONTROL_ROWS: Array<[string[], string]> = [
   [['Esc'], 'Pause'],
 ];
 
+const CONTROLS_SEEN_KEY = 'vc-controls-seen-v1';
+
 const ControlsHelp: React.FC = () => {
-  const [open, setOpen] = useState(true);
+  // The full list opens by itself only the very first time; after that it
+  // waits behind H (it filled the right side on every world entry).
+  const [open, setOpen] = useState(() => {
+    try { return !window.localStorage.getItem(CONTROLS_SEEN_KEY); } catch { return true; }
+  });
   const hold = useHudPresence((s) => s.hold);
   useEffect(() => hold('controls', open), [open, hold]);
   useEffect(() => () => hold('controls', false), [hold]);
 
   useEffect(() => {
     // First-time players see controls briefly; afterwards H toggles them.
+    try { window.localStorage.setItem(CONTROLS_SEEN_KEY, '1'); } catch { /* storage blocked */ }
     const auto = window.setTimeout(() => setOpen(false), 20000);
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === 'h' && !e.repeat) setOpen((o) => !o);
