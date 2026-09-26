@@ -31,35 +31,59 @@ import { ChunkModification } from '@/state/WorldDB';
 // Helper to find surface height at specific world coordinates
 // Returns a Signed Distance Field (SDF) approximation
 // Negative = Inside Cave (Air), Positive = Outside Cave (Solid)
-function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string): number {
-    const settings = getCaveSettings(biomeId);
+const smoothstep01 = (e0: number, e1: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+};
 
-    // Warp and Noise calculation
+/**
+ * Cave styles, blended by climate. Each voxel used to take its biome's cave
+ * settings, and the styles sample noise at different scales, so under every
+ * biome border tunnels ended in a flat wall where one style met the next.
+ * Now each style's SDF is computed where it has weight and the SDFs are
+ * blended, so tunnels flow across borders.
+ */
+export interface CaveStyleWeights { grass: number; desert: number; cold: number }
+
+const CAVE_STYLES = {
+    grass: getCaveSettings('THE_GROVE'),  // winding tunnels
+    desert: getCaveSettings('DESERT'),    // broad, slow galleries
+    cold: getCaveSettings('SNOW'),        // tight, twisting fissures (snow, ice, mountains)
+};
+
+/** Cave style weights for a column from its climate (sum to 1). */
+export function caveStyleWeights(temp: number, humid: number, erosion: number): CaveStyleWeights {
+    const e01 = (erosion + 1) / 2;
+    let cold = Math.max(smoothstep01(-0.3, -0.7, temp), smoothstep01(0.7, 0.8, e01));
+    let desert = smoothstep01(0.3, 0.7, temp) * smoothstep01(-0.3, -0.7, humid) * (1 - cold);
+    const sum = cold + desert;
+    if (sum > 1) { cold /= sum; desert /= sum; }
+    return { grass: Math.max(0, 1 - cold - desert), desert, cold };
+}
+
+function caveStyleSdf(warpX: number, wy: number, warpZ: number, st: { scale: number; threshold: number; frequency: number }): number {
+    // Tube algorithm: distance from the zero-crossing of two independent noise fields.
+    const noiseA = noise3D(warpX * st.scale, wy * st.scale * 1.5 * st.frequency, warpZ * st.scale);
+    const noiseB = noise3D((warpX + 123.45) * st.scale, (wy + 123.45) * st.scale * 1.5 * st.frequency, (warpZ + 123.45) * st.scale);
+    const tunnelVal = Math.sqrt(noiseA * noiseA + noiseB * noiseB);
+    // (val - threshold) is negative inside; x50 converts noise units to density units.
+    return (tunnelVal - st.threshold) * 50.0;
+}
+
+function getCavernModifier(wx: number, wy: number, wz: number, w: CaveStyleWeights): number {
     const warpStrength = 4.0;
     const warpX = wx + noise3D(wx * 0.01, wy * 0.01, wz * 0.01) * warpStrength;
     const warpZ = wz + noise3D(wx * 0.01 + 100, wy * 0.01, wz * 0.01) * warpStrength;
+    let sdf = 0;
+    if (w.grass > 0.001) sdf += w.grass * caveStyleSdf(warpX, wy, warpZ, CAVE_STYLES.grass);
+    if (w.desert > 0.001) sdf += w.desert * caveStyleSdf(warpX, wy, warpZ, CAVE_STYLES.desert);
+    if (w.cold > 0.001) sdf += w.cold * caveStyleSdf(warpX, wy, warpZ, CAVE_STYLES.cold);
+    return sdf;
+}
 
-    // Tube Algorithm: Sample two independent noise fields
-    const noiseA = noise3D(
-        warpX * settings.scale,
-        wy * settings.scale * 1.5 * settings.frequency,
-        warpZ * settings.scale
-    );
-
-    const noiseB = noise3D(
-        (warpX + 123.45) * settings.scale,
-        (wy + 123.45) * settings.scale * 1.5 * settings.frequency,
-        (warpZ + 123.45) * settings.scale
-    );
-
-    // Calculate distance from "center" of the tube
-    const tunnelVal = Math.sqrt(noiseA * noiseA + noiseB * noiseB);
-
-    // SDF Conversion:
-    // (val - threshold) is negative inside, positive outside.
-    // We multiply by a factor (e.g., 50.0) to convert "noise units" to "density units".
-    // This creates a smooth gradient across the cave wall.
-    return (tunnelVal - settings.threshold) * 50.0;
+/** Cave SDF at a world point for a given climate (exported for continuity tests). */
+export function caveSdfAt(wx: number, wy: number, wz: number, temp: number, humid: number, erosion: number): number {
+    return getCavernModifier(wx, wy, wz, caveStyleWeights(temp, humid, erosion));
 }
 
 // The world currently uses a single vertical chunk stack. If the computed surface height goes
@@ -68,11 +92,6 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
 /** Overhang-noise evaluation band around the column surface (see generateChunk). */
 const OVERHANG_BAND_ABOVE = 8;
 const OVERHANG_BAND_BELOW = 24;
-
-const smoothstep01 = (e0: number, e1: number, x: number) => {
-    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
-    return t * t * (3 - 2 * t);
-};
 
 /** treePositions stride: x, y, z, type, scale. */
 const TREE_STRIDE = 5;
@@ -202,6 +221,7 @@ export class TerrainService {
                 // 0 on gentle ground, 1 on cliffs (~50 degrees and up).
                 const colRockiness = sacredGroveMod.useBarrenMaterial ? 0 : Math.min(1, Math.max(0, (colSlope - 0.85) / 0.5));
                 const colNormBreach = (noise3D(wx * 0.005, 0, wz * 0.005) + 1) * 0.5;
+                const colCaveStyle = caveStyleWeights(climate.temp, climate.humid, climate.erosion);
                 // Overhang noise can only change a decision within this band around the
                 // surface: |overhang| <= ~6.3, so above the band d < ISO regardless, and
                 // below it every threshold (crust 4, soil <= 9, lumina 15) is already
@@ -313,7 +333,7 @@ export class TerrainService {
                         // Apply cave if: below crust AND (either deep enough OR cave is large)
                         // The cave SDF (4 noise lookups) is only needed below the crust.
                         if (isBelowCrust) {
-                            const caveMod = getCavernModifier(wx, wy, wz, biome);
+                            const caveMod = getCavernModifier(wx, wy, wz, colCaveStyle);
                             const isLargeCave = caveMod < MIN_SURFACE_CAVE_SIZE;
                             if (!isNearSurface || isLargeCave) {
                                 d = Math.min(d, caveMod);

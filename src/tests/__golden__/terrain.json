@@ -1,7 +1,7 @@
 {
   "0,0": {
-    "sign": "1a4a9a9a",
-    "material": "67435ddc",
+    "sign": "477e74a5",
+    "material": "52366312",
     "trees": "10:e87cf12f",
     "flora": "44:200b22a9",
     "sticks": "24:58951aa",
@@ -9,9 +9,9 @@
     "largeRocks": "6:3f93b25e",
     "hollows": "0:811c9dc5",
     "fireflies": "0:811c9dc5",
-    "meshPositions": "28623:2e0a7fd5",
-    "meshNormals": "28623:18a6ac4b",
-    "meshIndices": "46464:938c9a7d"
+    "meshPositions": "28581:f6bb54ea",
+    "meshNormals": "28581:be0c0f89",
+    "meshIndices": "46464:2e383324"
   },
   "5,-3": {
     "sign": "9a0e3f93",
@@ -28,8 +28,8 @@
     "meshIndices": "38784:2b0cd510"
   },
   "-12,40": {
-    "sign": "9dc3d99e",
-    "material": "ee01bba3",
+    "sign": "741a7162",
+    "material": "ca61fed3",
     "trees": "0:811c9dc5",
     "flora": "0:811c9dc5",
     "sticks": "0:811c9dc5",
@@ -37,8 +37,8 @@
     "largeRocks": "12:9d051122",
     "hollows": "0:811c9dc5",
     "fireflies": "0:811c9dc5",
-    "meshPositions": "36708:ce13db93",
-    "meshNormals": "36708:4ed2055f",
-    "meshIndices": "63408:13b5d440"
+    "meshPositions": "36645:f7795db4",
+    "meshNormals": "36645:155672ba",
+    "meshIndices": "63318:c7054ec9"
   }
 }

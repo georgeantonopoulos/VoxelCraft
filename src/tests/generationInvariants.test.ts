@@ -229,3 +229,21 @@ describe('Every land can start the Keeper\'s Path', () => {
     }
   }, 300_000);
 });
+
+describe('Caves', () => {
+  it('flow across biome borders (no wall where one cave style meets another)', async () => {
+    const { caveSdfAt } = await import('@features/terrain/logic/terrainService');
+    let worst = 0;
+    for (let p = 0; p < 40; p++) {
+      const x = (p * 37.3) % 400 - 200, y = -10 - (p % 7) * 3, z = (p * 91.7) % 400 - 200;
+      // Sweep the climate through cold -> temperate -> hot-dry: the cave field must change gradually.
+      for (let t = -1; t < 1; t += 0.01) {
+        const a = caveSdfAt(x, y, z, t, -0.8, 0);
+        const b = caveSdfAt(x, y, z, t + 0.01, -0.8, 0);
+        worst = Math.max(worst, Math.abs(b - a));
+      }
+    }
+    // Density units: a wall is a jump of tens; a smooth blend moves a fraction per step.
+    expect(worst).toBeLessThan(2);
+  });
+});
