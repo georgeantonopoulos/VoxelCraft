@@ -142,7 +142,9 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
         // so the land must not go black before it does.
         const day = THREE.MathUtils.smoothstep(sunY, -0.28, 0.25);
         const surface = THREE.MathUtils.lerp(SKY_FILL_NIGHT, SKY_FILL_DAY, day);
-        hemi.intensity = THREE.MathUtils.lerp(surface, SKY_FILL_CAVE, undergroundBlend) * intensityMul;
+        // Under cloud the sky light is more even: a little up, since the sun drops.
+        const overcastFill = 1 + 0.25 * sharedUniforms.uOvercast.value * day;
+        hemi.intensity = THREE.MathUtils.lerp(surface * overcastFill, SKY_FILL_CAVE, undergroundBlend) * intensityMul;
         hemi.color.copy(skyNight).lerp(skyDay, day).lerp(caveTint, undergroundBlend);
         hemi.groundColor.copy(groundNight).lerp(groundDay, day).lerp(caveTint, undergroundBlend);
         // Keeper's glow: enough to read a cave wall a few metres away, fading to dark.
@@ -166,6 +168,7 @@ export const SkyDomeRefLink: React.FC<{
         uExponent: { value: 0.6 },
         uTime: { value: 0 },
         uNightMix: { value: 0 },
+        uOvercast: { value: 0 },
         uSunDir: sharedUniforms.uSunDir,
     }), []);
 
@@ -179,6 +182,7 @@ export const SkyDomeRefLink: React.FC<{
             const angle = calculateOrbitAngle(state.clock.getElapsedTime(), orbitConfig.speed, orbitConfig.offset);
             const sunHeight = Math.cos(angle);
             uniforms.uNightMix.value = 1.0 - THREE.MathUtils.smoothstep(sunHeight, -0.4, -0.1);
+            uniforms.uOvercast.value = sharedUniforms.uOvercast.value;
         }
         frameProfiler.end('sky-dome');
     });
@@ -205,6 +209,7 @@ export const SkyDomeRefLink: React.FC<{
           uniform float uExponent;
           uniform float uTime;
           uniform float uNightMix;
+          uniform float uOvercast;
           uniform vec3 uSunDir;
           varying vec3 vWorldPosition;
 
@@ -283,8 +288,9 @@ export const SkyDomeRefLink: React.FC<{
               vec2 cuv = skyDir.xz / (h + 0.12) * 0.55 + vec2(uTime * 0.004, uTime * 0.0015);
               float shape = fbm(vec3(cuv * 1.3, 0.0));
               float detail = fbm(vec3(cuv * 4.2 + 3.1, uTime * 0.01));
-              float density = smoothstep(0.5, 0.78, shape * 0.8 + detail * 0.35);
-              float cloudA = density * smoothstep(0.0, 0.28, h) * 0.85;
+              // Overcast: the layer thickens into a low, even grey cover.
+              float density = smoothstep(0.5 - 0.42 * uOvercast, 0.78 - 0.25 * uOvercast, shape * 0.8 + detail * 0.35);
+              float cloudA = density * smoothstep(0.0, 0.28, h) * mix(0.85, 0.97, uOvercast);
               vec3 sunD = normalize(uSunDir);
               float sunUp = clamp(sunD.y * 3.0 + 0.3, 0.0, 1.0);
               float toSun = max(dot(skyDir, sunD), 0.0);
@@ -293,6 +299,8 @@ export const SkyDomeRefLink: React.FC<{
               vec3 cloudCol = mix(lit, shade, smoothstep(0.35, 1.0, density) * 0.55);
               cloudCol += vec3(1.0, 0.92, 0.8) * pow(toSun, 10.0) * (1.0 - density) * 0.6 * sunUp;
               cloudCol = mix(cloudCol, uTopColor * 1.6 + vec3(0.01, 0.012, 0.02), uNightMix);
+              // Rain clouds: heavier and darker underneath.
+              cloudCol = mix(cloudCol, shade * vec3(0.86, 0.88, 0.9), uOvercast * 0.55 * smoothstep(0.2, 0.9, density));
               finalColor = mix(finalColor, cloudCol, cloudA);
             }
             gl_FragColor = vec4(finalColor, 1.0);
@@ -431,7 +439,9 @@ export const SunFollower: React.FC<{
                 const depthFade = THREE.MathUtils.smoothstep(undergroundBlend, 0.2, 1.0);
                 const sunDimming = THREE.MathUtils.lerp(1.0, 0.55, depthFade);
 
-                lightRef.current.intensity = baseIntensity * sunDimming * directVis * intensityMul;
+                // Overcast softens the sun to a diffuse glow (shadows fade with it).
+                const cloudDim = 1.0 - 0.72 * sharedUniforms.uOvercast.value;
+                lightRef.current.intensity = baseIntensity * sunDimming * directVis * intensityMul * cloudDim;
 
                 if (sunMeshRef.current) {
                     sunMeshRef.current.position.copy(tmpTargetSunPos.current);
@@ -679,6 +689,8 @@ export const AtmosphereController: React.FC<{
     const tunedTop = useRef(new THREE.Color());
     const tunedBottom = useRef(new THREE.Color());
     const hazeBlend = useRef(new THREE.Color());
+    const greyTop = useRef(new THREE.Color());
+    const greyBottom = useRef(new THREE.Color());
 
     useFrame(({ clock }) => {
         frameProfiler.begin('atmosphere-controller');
@@ -696,6 +708,16 @@ export const AtmosphereController: React.FC<{
         if (clampedHaze > 0) {
             hazeBlend.current.copy(tunedBottom.current).lerp(tunedTop.current, 0.25);
             tunedBottom.current.lerp(hazeBlend.current, clampedHaze);
+        }
+
+        // Overcast: the sky flattens toward a soft grey of the same brightness,
+        // a little darker (it stays dreamy, never stormy black).
+        const oc = sharedUniforms.uOvercast.value;
+        if (oc > 0.001) {
+            const lumT = tunedTop.current.r * 0.2126 + tunedTop.current.g * 0.7152 + tunedTop.current.b * 0.0722;
+            const lumB = tunedBottom.current.r * 0.2126 + tunedBottom.current.g * 0.7152 + tunedBottom.current.b * 0.0722;
+            tunedTop.current.lerp(greyTop.current.setRGB(lumT * 0.78, lumT * 0.8, lumT * 0.84), oc * 0.8);
+            tunedBottom.current.lerp(greyBottom.current.setRGB(lumB * 0.8, lumB * 0.82, lumB * 0.85), oc * 0.75);
         }
 
         gradientRef.current.top.copy(tunedTop.current);

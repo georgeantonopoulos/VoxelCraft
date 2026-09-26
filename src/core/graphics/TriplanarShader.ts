@@ -237,6 +237,7 @@ export const triplanarFragmentShader = `
   uniform float uShaderFogEnabled;
   uniform float uShaderFogStrength;
   uniform float uWetnessEnabled;
+  uniform float uRain;
   uniform float uMossEnabled;
   uniform float uRoughnessMin;
   uniform int uWeightsView;
@@ -526,7 +527,10 @@ export const triplanarFragmentShader = `
     float nonWettableMaterials = vWb.x + vWb.z + vWd.y;
     float wettabilityFactor = clamp(wettableMaterials / max(wettableMaterials + nonWettableMaterials, 0.001), 0.0, 1.0);
     float humidityWetness = totalHumidity * wettabilityFactor * 0.7;
-    float combinedWetness = max(vWetness, humidityWetness);
+    // Rain wets open ground (sky-lit per the baked GI), not cave floors.
+    float skyOpenWet = smoothstep(0.35, 0.8, dot(vLightColor, vec3(0.3333)));
+    float rainWetness = uRain * 0.7 * wettabilityFactor * skyOpenWet;
+    float combinedWetness = max(max(vWetness, humidityWetness), rainWetness);
     // Water pools in low texels: wet darkening follows the height map.
     float wetMask = combinedWetness * mix(1.0, 1.4 - albedoH.a, 0.6);
     if (uWetnessEnabled > 0.5) col = mix(col, col * 0.5, clamp(wetMask, 0.0, 1.0) * 0.9);
@@ -649,7 +653,7 @@ export const triplanarFragmentShader = `
     csm_Emissive = glow + keeperGlow;
     // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
     if (uWetnessEnabled > 0.5) {
-      float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);
+      float roughnessWetness = max(max(vWetness, totalHumidity * wettabilityFactor * 0.7), uRain * 0.7 * wettabilityFactor * smoothstep(0.35, 0.8, dot(vLightColor, vec3(0.3333))));
       // Damp soil, not a mirror: at 0.2 wet ground below sea level caught the
       // sun as a white glare patch.
       accRoughness = mix(accRoughness, 0.45, roughnessWetness * 0.8);

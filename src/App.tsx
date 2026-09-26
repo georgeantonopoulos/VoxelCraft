@@ -20,6 +20,8 @@ import { InteractionHandler } from '@features/interaction/logic/InteractionHandl
 import { InventoryInput } from '@features/interaction/components/InventoryInput';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
 import { ImpactFX } from '@features/interaction/components/ImpactFX';
+import { WeatherDirector } from '@features/environment/components/WeatherDirector';
+import { RainFX } from '@features/environment/components/RainFX';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
 import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
 import { useCraftingStore } from '@state/CraftingStore';
@@ -505,6 +507,7 @@ const App: React.FC = () => {
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}
           {gameStarted && terrainLoaded && <AmbienceDirector />}
+          {gameStarted && <WeatherDirector />}
           {/* Constant real point-light count: see PointLightPool (no shader recompiles). */}
           <PointLightPool />
           {gameStarted && <KeeperLight />}
@@ -577,6 +580,7 @@ const App: React.FC = () => {
               <FloraPlacer />
               {bedrockPlaneEnabled && <BedrockPlane />}
               <PhysicsItemRenderer />
+              {gameStarted && <RainFX />}
               <InteractionHandler />
             </Physics>
             <FirstPersonTools />
