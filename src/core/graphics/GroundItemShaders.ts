@@ -31,7 +31,9 @@ export const STICK_SHADER = {
             vec3 up = normalize(aInstanceNormal);
             vec3 helper = abs(up.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
             vec3 tangent = normalize(cross(helper, up));
-            vec3 bitangent = cross(up, tangent);
+            // tangent x up keeps the basis right-handed. cross(up, tangent)
+            // mirrored every instance: inside-out stones that read as dark holes.
+            vec3 bitangent = cross(tangent, up);
             mat3 alignMat = mat3(tangent, up, bitangent);
 
             mat3 rotX90 = mat3(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -1.0, 0.0);
@@ -161,7 +163,9 @@ export const SHARD_SHADER = {
             vec3 up = normalize(aInstanceNormal);
             vec3 helper = abs(up.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
             vec3 tangent = normalize(cross(helper, up));
-            vec3 bitangent = cross(up, tangent);
+            // tangent x up keeps the basis right-handed. cross(up, tangent)
+            // mirrored every instance: inside-out stones that read as dark holes.
+            vec3 bitangent = cross(tangent, up);
             mat3 alignMat = mat3(tangent, up, bitangent);
 
             pos *= randScale;
@@ -261,7 +265,9 @@ export const ROCK_SHADER = {
             vec3 up = normalize(aInstanceNormal);
             vec3 helper = abs(up.y) > 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
             vec3 tangent = normalize(cross(helper, up));
-            vec3 bitangent = cross(up, tangent);
+            // tangent x up keeps the basis right-handed. cross(up, tangent)
+            // mirrored every instance: inside-out stones that read as dark holes.
+            vec3 bitangent = cross(tangent, up);
             mat3 alignMat = mat3(tangent, up, bitangent);
 
             pos = alignMat * (rotY * pos);
