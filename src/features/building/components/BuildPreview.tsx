@@ -108,6 +108,11 @@ export const BuildPreview: React.FC = () => {
       const flatQ = new THREE.Quaternion().setFromRotationMatrix(
         new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(across, UP), across, UP));
       rot = flatQ;
+      // R / wheel tilts a plank about its length for a pitched roof.
+      if (m === 'upright') {
+        rot = flatQ.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.52));
+      }
+      const pitched = m === 'upright';
       const half = PLANK_THICKNESS / 2;
       if (target?.kind === 'plank') {
         // Lay the next board beside the one aimed at (same direction).
@@ -115,14 +120,16 @@ export const BuildPreview: React.FC = () => {
         const widthDir = new THREE.Vector3(1, 0, 0).applyQuaternion(tmp.q);
         const tPos = new THREE.Vector3(...target.position);
         const k = point.clone().sub(tPos).dot(widthDir) >= 0 ? 1 : -1;
-        pos = tPos.clone().addScaledVector(widthDir, k * (target.radius + carried.radius + 0.01));
+        // Next board of a floor or roof: beside it, same slope; on a pitched
+        // board it continues up/down the slope.
+        pos = tPos.clone().addScaledVector(widthDir, k * (target.radius + carried.radius + 0.005));
         rot = tmp.q.clone();
       } else if (target) {
         tmp.q.set(target.rotation[0], target.rotation[1], target.rotation[2], target.rotation[3]);
         tmp.axis.copy(UP).applyQuaternion(tmp.q);
         const tPos = new THREE.Vector3(...target.position);
         const top = Math.abs(tmp.axis.y) > 0.8 ? tPos.y + target.length / 2 : tPos.y + target.radius;
-        pos = new THREE.Vector3(point.x, top + half, point.z);
+        pos = new THREE.Vector3(point.x, top + half + (pitched ? carried.radius * 0.5 : 0), point.z);
       } else {
         pos = point.clone().addScaledVector(UP, half);
         valid = hit.normal.y > 0.6;
@@ -137,9 +144,22 @@ export const BuildPreview: React.FC = () => {
         if (m === 'upright') { pos = top.clone().addScaledVector(UP, len / 2); rot = uprightQ; }
         else { pos = top.clone().addScaledVector(UP, r); rot = lyingQ; }
       } else if (m === 'lying') {
-        // Stack on the course below: same line, same direction.
-        pos = tPos.clone().addScaledVector(UP, target.radius + r * 0.95);
-        rot = tmp.q.clone();
+        // Aimed near an end: turn the corner. The new log crosses at right
+        // angles over the end, notched half a log higher (log-cabin corner),
+        // so four walls close into a square. Otherwise stack on the course
+        // below: same line, same direction.
+        const a = tmp.axis.clone().setY(0).normalize();
+        const along = point.clone().sub(tPos).dot(a);
+        if (Math.abs(along) > target.length * 0.3) {
+          const end = tPos.clone().addScaledVector(a, Math.sign(along) * (target.length / 2 - target.radius));
+          const b = new THREE.Vector3().crossVectors(a, UP).normalize();
+          const side = point.clone().sub(tPos).dot(b) >= 0 ? 1 : -1;
+          pos = end.addScaledVector(b, side * (len / 2 - r)).addScaledVector(UP, target.radius * 0.5 + r * 0.5);
+          rot = new THREE.Quaternion().setFromUnitVectors(UP, b);
+        } else {
+          pos = tPos.clone().addScaledVector(UP, target.radius + r * 0.95);
+          rot = tmp.q.clone();
+        }
       } else {
         pos = new THREE.Vector3(point.x, tPos.y + target.radius + len / 2, point.z);
         rot = uprightQ;
