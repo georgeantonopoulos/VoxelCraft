@@ -13,12 +13,15 @@ import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
 import { LogMesh } from '@features/building/components/Log';
+import { KeeperFist, KeeperForearm } from './KeeperHand';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
 const SWING_CONTACT = STRIKE_CONTACT_MS / 1000;
 const SWING_WINDUP = SWING_CONTACT * 0.6;
 const SWING_DURATION = SWING_CONTACT + 0.24;
+/** Where the hand holds a long item, in item units below its centre. */
+const HAND_GRIP = 0.0;
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -202,6 +205,13 @@ export const FirstPersonTools: React.FC = () => {
     const digProgress = useRef(0); // seconds into the swing
     const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH' | 'THROW' | 'SAW'>('DIG');
     const swingOff = useMemo(() => new THREE.Vector3(), []);
+    const handRef = useRef<THREE.Group>(null);
+    const armRef = useRef<THREE.Group>(null);
+    const handScratch = useMemo(() => ({
+        axis: new THREE.Vector3(), elbow: new THREE.Vector3(), f: new THREE.Vector3(), z: new THREE.Vector3(),
+        x: new THREE.Vector3(), pivot: new THREE.Vector3(), wrist: new THREE.Vector3(), m: new THREE.Matrix4(),
+        up: new THREE.Vector3(0, 1, 0),
+    }), []);
     const swingScratch = useMemo(() => ({
         ePose: new THREE.Euler(), eSwing: new THREE.Euler(),
         qPose: new THREE.Quaternion(), qSwing: new THREE.Quaternion(), qFinal: new THREE.Quaternion(),
@@ -502,10 +512,43 @@ export const FirstPersonTools: React.FC = () => {
                 sw.back.copy(sw.grip).negate().applyQuaternion(sw.qFinal);
                 rightItemRef.current.position.copy(sw.gripCam).add(sw.back).add(swingOff);
                 rightItemRef.current.quaternion.copy(sw.qFinal);
+
+                // The Keeper's hand closes around the grip of long items and
+                // the forearm runs off to an elbow below the view.
+                const hand = handRef.current, arm = armRef.current;
+                if (hand && arm) {
+                    const show = long && rease > 0.02;
+                    hand.visible = show;
+                    arm.visible = show;
+                    if (show) {
+                        const h = handScratch;
+                        const s = (0.045 * pose.scale) / 0.034;
+                        h.axis.copy(h.up).applyQuaternion(sw.qFinal);
+                        // Hold the shaft a little below its middle (the butt,
+                        // where the swing pivots, is below the screen edge).
+                        h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -HAND_GRIP * pose.scale);
+                        h.elbow.set(0.66 * responsiveX, -1.0, -0.2);
+                        h.f.copy(h.elbow).sub(h.pivot).normalize();
+                        h.z.copy(h.f).addScaledVector(h.axis, -h.f.dot(h.axis)).normalize();
+                        h.x.crossVectors(h.axis, h.z).normalize();
+                        h.m.makeBasis(h.x, h.axis, h.z);
+                        hand.quaternion.setFromRotationMatrix(h.m);
+                        hand.position.copy(h.pivot);
+                        hand.scale.setScalar(s);
+                        h.wrist.copy(h.pivot).addScaledVector(h.z, 0.1 * s);
+                        h.f.copy(h.elbow).sub(h.wrist);
+                        const len = h.f.length();
+                        arm.position.copy(h.wrist);
+                        arm.quaternion.setFromUnitVectors(h.up, h.f.normalize());
+                        arm.scale.set(s, len, s);
+                    }
+                }
                 rightItemRef.current.scale.setScalar(pose.scale);
                 rightItemRef.current.visible = rease > 0.01;
             } else {
                 rightItemRef.current.visible = false;
+                if (handRef.current) handRef.current.visible = false;
+                if (armRef.current) armRef.current.visible = false;
             }
         }
 
@@ -557,6 +600,8 @@ export const FirstPersonTools: React.FC = () => {
                     <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />
                 </group>
             )}
+            <KeeperFist ref={handRef} />
+            <KeeperForearm ref={armRef} />
             <group ref={rightItemRef}>
                 {/* 
                   Prevent UniversalTool from rendering the torch (and its extra PointLight) 

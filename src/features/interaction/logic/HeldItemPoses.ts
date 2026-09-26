@@ -42,18 +42,7 @@ export const TORCH_POSE: HeldItemPose = {
 
 export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>> = {
   [ItemType.PICKAXE]: PICKAXE_POSE,
-  [ItemType.STICK]: {
-    x: PICKAXE_POSE.x, // base
-    xOffset: 0.27,
-    y: -0.457,
-    z: -0.789,
-    scale: 1.234,
-    rot: {
-      x: THREE.MathUtils.degToRad(-18.0),
-      y: THREE.MathUtils.degToRad(89.0),
-      z: THREE.MathUtils.degToRad(162.0) // flipped 180° from -18° so custom tool attachments face correctly
-    }
-  },
+  [ItemType.STICK]: { x: PICKAXE_POSE.x, xOffset: 0.2, y: -0.4, z: -0.78, scale: 1.12, rot: { x: -0.3142, y: 1.5533, z: 2.8274 } },
   [ItemType.STONE]: { x: PICKAXE_POSE.x, xOffset: -0.28, y: -0.33, z: -0.74, scale: 0.4, rot: { x: 0.35, y: 0.6, z: 0.15 } },
   [ItemType.FLORA]: { x: PICKAXE_POSE.x, xOffset: -0.22, y: -0.3, z: -0.7, scale: 0.62, rot: { x: 3, y: 1.4, z: -0.12 } },
   [ItemType.SHARD]: { x: PICKAXE_POSE.x, xOffset: -0.32, y: -0.3, z: -0.7, scale: 1.25, rot: { x: -0.9, y: 0.35, z: 0.45 } },
