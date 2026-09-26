@@ -31,6 +31,7 @@ import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 import { emitSpark } from '@features/interaction/components/SparkSystem';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { fallenTreeBodies } from '@features/flora/components/FallingTree';
 import { emitImpact, type ImpactKind } from '@features/interaction/components/ImpactFX';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
@@ -277,7 +278,7 @@ export function useTerrainInteraction(
     const terrainHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, isTerrainCollider);
 
     // 0.5 CHECK FOR PHYSICS ITEM INTERACTION (TREES, STONES)
-    if (action === 'DIG' || action === 'CHOP' || action === 'SMASH') {
+    if (action === 'DIG' || action === 'CHOP' || action === 'SMASH' || action === 'SAW') {
       // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
       const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
         const userData = collider.parent()?.userData as any;
@@ -396,6 +397,37 @@ export function useTerrainInteraction(
             }
             return;
             } // end else (physics tree is closer)
+          }
+
+          // --- FELLED TREE --- a saw cuts it into logs; anything else just thunks.
+          if (userData.type === 'fallen_tree' && ((physicsHit as any).timeOfImpact ?? Infinity) <= STRIKE_REACH) {
+            const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
+            const held = inventorySlots[selectedSlotIndex];
+            const tool = (typeof held === 'string' && held.startsWith('tool_')) ? customTools[held as string] : (held as ItemType);
+            const caps = getToolCapabilities(tool);
+            const raw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
+            const at = new THREE.Vector3(raw.x, raw.y, raw.z);
+            const away = direction.clone().multiplyScalar(-1).setY(0.6);
+            if (!caps.canSaw) {
+              emitImpact({ position: at, direction: away, kind: 'wood', color: '#a88760', strength: 0.4 });
+              playSound('wood_hit', { pitch: 0.8 });
+              window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: false } }));
+              return;
+            }
+            const trunk = fallenTreeBodies.get(userData.id);
+            const maxHealth = Math.round(6 * (trunk?.scale ?? 1)) + 2;
+            const h = useEntityHistoryStore.getState().damageEntity(`felled-${userData.id}`, 2, maxHealth, 'Felled tree');
+            // Sawdust: fine pale wood that drifts down, plus a few curls.
+            emitImpact({ position: at, direction: away, kind: 'sand', color: '#dcc49a', strength: 1.3, floorY: at.y - 0.6 });
+            emitImpact({ position: at, direction: away, kind: 'wood', color: '#cdb088', strength: 0.4, floorY: at.y - 0.6 });
+            playSound('wood_hit', { pitch: 1.35 + Math.random() * 0.2, volume: 0.6 });
+            window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true } }));
+            if (h <= 0) {
+              useEntityHistoryStore.getState().setTargetEntity(null);
+              window.dispatchEvent(new CustomEvent('vc-tree-sawn', { detail: { id: userData.id } }));
+              playSound('wood_hit', { pitch: 0.7, volume: 1.0 });
+            }
+            return;
           }
 
           // --- STONE PHYSICS ITEM --- (within arm's reach)
@@ -538,6 +570,9 @@ export function useTerrainInteraction(
         }
       }
     }
+
+    // A saw only cuts felled trunks; it never digs the ground.
+    if (action === 'SAW') return;
 
     if (terrainHit) {
       const rapierHitPoint = ray.pointAt(terrainHit.timeOfImpact);

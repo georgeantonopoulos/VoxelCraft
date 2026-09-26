@@ -196,7 +196,7 @@ export const FirstPersonTools: React.FC = () => {
     // (when useTerrainInteraction applies the hit), then a slower recover.
     const isDigging = useRef(false);
     const digProgress = useRef(0); // seconds into the swing
-    const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH' | 'THROW'>('DIG');
+    const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH' | 'THROW' | 'SAW'>('DIG');
     const swingOff = useMemo(() => new THREE.Vector3(), []);
     const swingScratch = useMemo(() => ({
         ePose: new THREE.Euler(), eSwing: new THREE.Euler(),
@@ -238,7 +238,7 @@ export const FirstPersonTools: React.FC = () => {
     useEffect(() => useInputStore.subscribe((st, prev) => {
         const a = st.interactionAction;
         if (a === prev.interactionAction) return;
-        if (a === 'DIG' || a === 'CHOP' || a === 'SMASH') {
+        if (a === 'DIG' || a === 'CHOP' || a === 'SMASH' || a === 'SAW') {
             if (isDigging.current && digProgress.current < SWING_CONTACT) return;
             swingStyle.current = a;
             isDigging.current = true;
@@ -251,7 +251,7 @@ export const FirstPersonTools: React.FC = () => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
             if (!document.pointerLockElement) return;
-            if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH') {
+            if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH' || detail.action === 'SAW') {
                 // Contact: recoil (a hard jolt off unbreakable rock).
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
             } else if (detail.action === 'BUILD') {
@@ -351,7 +351,7 @@ export const FirstPersonTools: React.FC = () => {
         let swingRoll = 0;
         swingOff.set(0, 0, 0);
         // Debug: window.__vcSwingHold = { t, style } freezes the swing at t seconds.
-        const hold = (window as unknown as { __vcSwingHold?: { t: number; style?: 'CHOP' | 'DIG' | 'SMASH' | 'THROW' } }).__vcSwingHold;
+        const hold = (window as unknown as { __vcSwingHold?: { t: number; style?: 'CHOP' | 'DIG' | 'SMASH' | 'THROW' | 'SAW' } }).__vcSwingHold;
         if (hold) {
             isDigging.current = true;
             digProgress.current = hold.t;
@@ -384,6 +384,12 @@ export const FirstPersonTools: React.FC = () => {
                     swingPitch = -down * 0.5;
                     swingRoll = -up * 0.3 + down * 0.5;
                     swingOff.set(up * 0.05 - down * 0.08, up * 0.08 + down * 0.06, -down * 0.12);
+                } else if (style === 'SAW') {
+                    // A push-and-draw stroke along the blade (the saw lies across the view).
+                    const stroke = Math.sin((t / SWING_DURATION) * Math.PI * 2);
+                    swingPitch = -0.35 * (up + down) - 0.1;
+                    swingRoll = 1.05 * Math.min(1, (up + down) * 3);
+                    swingOff.set(-0.12 * Math.min(1, (up + down) * 3), -0.05, -0.2 * stroke - 0.05);
                 } else if (style === 'THROW') {
                     // Draw back beside the ear, then flick forward and up.
                     swingPitch = up * 0.35 - down * 0.4;

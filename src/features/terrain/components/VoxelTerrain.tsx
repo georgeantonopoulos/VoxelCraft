@@ -12,7 +12,10 @@ import { ChunkMesh } from '@features/terrain/components/ChunkMesh';
 import { emitGroveEvent } from '@features/grove/groveEvents';
 import { RootHollow } from '@features/flora/components/RootHollow';
 import { StumpLayer } from '@features/terrain/components/StumpLayer';
-import { FallingTree } from '@features/flora/components/FallingTree';
+import { FallingTree, fallenTreeBodies } from '@features/flora/components/FallingTree';
+import { LogsLayer } from '@features/building/components/Log';
+import { useLogStore, type LogData } from '@/state/LogStore';
+import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
@@ -39,8 +42,12 @@ import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
 /** Shape-changing remeshes dispatched per frame (player edits must feel instant). */
 const MAX_SHAPE_REMESH_PER_FRAME = 4;
 
-/** How long a felled tree prop lives before it is removed from the scene. */
-const FALLING_TREE_LIFETIME_MS = 12000;
+/**
+ * A felled tree lies on the ground long enough to be sawn into logs (it used
+ * to vanish after 12 s). At most MAX_FELLED_TREES stay; the oldest goes first.
+ */
+const FALLING_TREE_LIFETIME_MS = 10 * 60 * 1000;
+const MAX_FELLED_TREES = 8;
 
 /**
  * VoxelTerrain props.
@@ -463,13 +470,58 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   }, []);
 
   const handleTreeFall = useCallback((tree: FallingTreeData) => {
-    setFallingTrees(prev => [...prev, tree]);
+    setFallingTrees(prev => [...prev, tree].slice(-MAX_FELLED_TREES));
     const timer = setTimeout(() => {
       fallingTreeTimers.current.delete(timer);
       setFallingTrees(prev => prev.filter(t => t.id !== tree.id));
     }, FALLING_TREE_LIFETIME_MS);
     fallingTreeTimers.current.add(timer);
     emitGroveEvent({ type: 'tree-felled' });
+  }, []);
+
+  // A sawn trunk falls apart into logs along its length; the crown sheds its
+  // leaves and drops a couple of sticks.
+  useEffect(() => {
+    const onSawn = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      const entry = id ? fallenTreeBodies.get(id) : undefined;
+      if (!id || !entry) return;
+      const t = entry.body.translation();
+      const r = entry.body.rotation();
+      const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+      const origin = new THREE.Vector3(t.x, t.y, t.z);
+      const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      const scale = entry.scale;
+      const usable = 3.6 * scale;
+      const count = THREE.MathUtils.clamp(Math.round(usable / 1.15), 2, 4);
+      const len = Math.min(1.25, usable / count - 0.06);
+      const radius = THREE.MathUtils.clamp(0.2 * scale, 0.13, 0.3);
+      const logs: LogData[] = [];
+      for (let i = 0; i < count; i++) {
+        const along = 0.3 + i * (len + 0.06) + len / 2;
+        const p = origin.clone().addScaledVector(axis, along);
+        logs.push({
+          id: `log_${id}_${i}`,
+          position: [p.x, p.y + 0.05, p.z],
+          rotation: [q.x, q.y, q.z, q.w],
+          length: len,
+          radius: radius * (1 - i * 0.08),
+          bark: entry.bark,
+          state: 'loose',
+        });
+      }
+      useLogStore.getState().addLogs(logs);
+      const crown = origin.clone().addScaledVector(axis, 4.2 * scale);
+      emitImpact({ position: crown, direction: new THREE.Vector3(0, 1, 0), kind: 'leaf', color: '#5d7a3a', strength: 3, floorY: crown.y - 1.5 });
+      const physics = usePhysicsItemStore.getState();
+      for (let i = 0; i < 2; i++) {
+        const p = crown.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.3, (Math.random() - 0.5) * 1.2));
+        physics.spawnItem(ItemType.STICK, [p.x, p.y, p.z], [0, 0, 0]);
+      }
+      setFallingTrees(prev => prev.filter(tr => tr.id !== id));
+    };
+    window.addEventListener('vc-tree-sawn', onSawn);
+    return () => window.removeEventListener('vc-tree-sawn', onSawn);
   }, []);
 
   // Leaves knocked from a crown drift down (they used to fly a coloured
@@ -1634,8 +1686,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         );
       })}
       {fallingTrees.map(tree => (
-        <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} scale={tree.scale} variant={tree.variant} />
+        <FallingTree key={tree.id} id={tree.id} position={tree.position} type={tree.type} seed={tree.seed} scale={tree.scale} variant={tree.variant} />
       ))}
+      <LogsLayer />
       {floraPickups.map((fx) => (
         <ItemPickupFlight
           key={fx.id}

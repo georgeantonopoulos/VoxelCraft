@@ -1,9 +1,9 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { getLeafTexture } from '@features/flora/trees/leafAtlas';
 import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
 import { getNoiseTexture } from '@core/memory/sharedResources';
-import { RigidBody, CylinderCollider } from '@react-three/rapier';
+import { RigidBody, CylinderCollider, type RapierRigidBody } from '@react-three/rapier';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { TreeType } from '@features/terrain/logic/VegetationConfig';
 
@@ -13,10 +13,16 @@ interface FallingTreeProps {
     seed: number; // treeSeed(localX, localZ) of the static tree
     /** Static instance scale and geometry variant, so the felled copy matches. */
     scale: number;
+    /** Identifies the trunk for sawing (userData and fallenTreeBodies). */
+    id: string;
     variant: number;
 }
 
-export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, scale, variant }) => {
+/** Live felled-tree bodies by id, so a saw stroke can find the trunk it hit. */
+export const fallenTreeBodies = new Map<string, { body: RapierRigidBody; type: number; scale: number; bark: string }>();
+
+export const FallingTree: React.FC<FallingTreeProps> = ({ id, position, type, seed, scale, variant }) => {
+    const bodyRef = useRef<RapierRigidBody>(null);
     const { wood, leaves } = useMemo(() => TreeGeometryFactory.getTreeGeometry(type, variant), [type, variant]);
 
     // Same rotation formula as the worker's instance matrices (treeInstance.ts).
@@ -135,7 +141,9 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                 void main() {
                     vLeafUv = uv;
                     vPos = position;
-                    vTreeSeedF = uTreeSeed;
+                    // 0..1 like TreeLayer's per-tree seed: the raw seed is in the
+                    // hundreds and blew brightness out (felled crowns turned white).
+                    vTreeSeedF = fract(uTreeSeed * 0.1731);
 
                     // Offset noise coords by tree seed so each tree samples different noise
                     vec3 treeNoiseOffset = vec3(uTreeSeed * 50.0, uTreeSeed * 37.0, uTreeSeed * 23.0);
@@ -193,7 +201,7 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
 
                     csm_DiffuseColor = vec4(col, 1.0);
                     csm_Emissive = col * 0.05;
-                    csm_Roughness = 0.6;
+                    csm_Roughness = 0.82; // matte like standing leaves
                 }
             `,
             uniforms: {
@@ -214,9 +222,16 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
         leafMaterial.dispose();
     }, [woodMaterial, leafMaterial]);
 
+    useEffect(() => {
+        if (bodyRef.current) fallenTreeBodies.set(id, { body: bodyRef.current, type, scale, bark: colors.base });
+        return () => { fallenTreeBodies.delete(id); };
+    }, [id, type, scale, colors.base]);
+
     return (
         <RigidBody
+            ref={bodyRef}
             position={position}
+            userData={{ type: 'fallen_tree', id }}
             colliders={false}
             type="dynamic"
             linearDamping={6.0}

@@ -267,8 +267,10 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         }
 
         // 2. Tool Interaction (Standard or Custom Tool)
-        if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig)) {
-          if (capabilities.canChop) {
+        if (capabilities && (capabilities.canChop || capabilities.canSmash || capabilities.canDig || capabilities.canSaw)) {
+          if (capabilities.canSaw && !capabilities.canChop && !capabilities.canDig) {
+            setInteractionAction('SAW');
+          } else if (capabilities.canChop) {
             setInteractionAction('CHOP');
           } else if (capabilities.canSmash) {
             setInteractionAction('SMASH');
