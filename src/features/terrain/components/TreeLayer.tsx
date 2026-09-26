@@ -26,6 +26,23 @@ interface TreeLayerProps {
     lodLevel?: number;
 }
 
+/**
+ * A struck tree shudders: trunk and crown shake and settle over ~1 s. One
+ * shared hit (uTreeHitPos/uTreeHitTime, set by useTerrainInteraction) picks
+ * the instance whose base is there; the rest of the forest is untouched.
+ */
+const TREE_HIT_GLSL = /* glsl */ `
+    uniform vec3 uTreeHitPos;
+    uniform float uTreeHitTime;
+    float treeHitShake(float heightFactor) {
+        vec3 o = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
+        float ht = uTime - uTreeHitTime;
+        float near = 1.0 - step(0.8, distance(o.xz, uTreeHitPos.xz));
+        float live = step(0.0, ht) * (1.0 - step(1.6, ht));
+        return near * live * exp(-ht * 4.0) * sin(ht * 24.0) * heightFactor;
+    }
+`;
+
 /** Far crowns dissolve between these distances (m), inside the fog. */
 const LEAF_FADE_START = 84;
 const LEAF_FADE_END = 100;
@@ -160,6 +177,7 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
             varying vec3 vWorldNormal;
             varying vec3 vBranchAxis;
             varying vec3 vBranchOrigin;
+            ${TREE_HIT_GLSL}
 
             void main() {
                 vDepth = aBranchDepth;
@@ -176,6 +194,9 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
                 vec3 pos = position;
                 pos.x += sway;
                 pos.z += sway * 0.5;
+                float shudder = treeHitShake(clamp(position.y / 6.0, 0.0, 1.5));
+                pos.x += shudder * 0.07;
+                pos.z += shudder * 0.045;
                 csm_Position = pos;
             }
         `,
@@ -306,6 +327,7 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
         vertexShader: `
             uniform float uTime;
             uniform float uLeafHueVariation;
+            ${TREE_HIT_GLSL}
             attribute float aLeafRand;
             varying vec3 vPos;
             varying vec3 vWorldNormal;
@@ -345,6 +367,10 @@ const getTreeLeafMaterial = (type: number, colors: any) => {
                 pos.x += sway; 
                 float wobble = sin(time * 3.0 + phase * 2.0) * 0.05;
                 pos.y += wobble;
+                float shudder = treeHitShake(clamp(position.y / 6.0, 0.0, 1.5));
+                pos.x += shudder * 0.13;
+                pos.z += shudder * 0.08;
+                pos.y += shudder * 0.03;
 
                 csm_Position = pos;
             }
@@ -429,6 +455,7 @@ const getTreeLeafDepthMaterial = (type: number) => {
         vertexShader: `
             uniform float uTime;
             varying vec2 vLeafUv;
+            ${TREE_HIT_GLSL}
             void main() {
                 vLeafUv = uv;
                 float time = uTime * 1.5;
@@ -436,6 +463,9 @@ const getTreeLeafDepthMaterial = (type: number) => {
                 vec3 pos = position;
                 pos.x += sin(time + phase) * 0.1;
                 pos.y += sin(time * 3.0 + phase * 2.0) * 0.05;
+                float shudder = treeHitShake(clamp(position.y / 6.0, 0.0, 1.5));
+                pos.x += shudder * 0.13;
+                pos.z += shudder * 0.08;
                 csm_Position = pos;
             }
         `,
@@ -446,7 +476,7 @@ const getTreeLeafDepthMaterial = (type: number) => {
                 if (texture(uLeafMap, vLeafUv).a < 0.45) discard;
             }
         `,
-        uniforms: { uTime: sharedUniforms.uTime, uLeafMap: { value: getLeafTexture(type as TreeType) } },
+        uniforms: { uTime: sharedUniforms.uTime, uTreeHitPos: sharedUniforms.uTreeHitPos, uTreeHitTime: sharedUniforms.uTreeHitTime, uLeafMap: { value: getLeafTexture(type as TreeType) } },
         side: THREE.DoubleSide,
     });
     return leafDepthMaterialPool[key];

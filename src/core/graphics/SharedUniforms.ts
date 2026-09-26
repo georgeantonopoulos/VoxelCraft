@@ -48,6 +48,9 @@ export const sharedUniforms = {
     uTerrainSaturation: { value: 1.1 },       // 1.0=neutral, >1=more saturated, <1=desaturated
 
     // Keeper's glow (AmbientController): soft light around the camera in caves / deep night.
+    // Last tree struck (TreeLayer shudders the tree whose base is here).
+    uTreeHitPos: { value: new THREE.Vector3(0, -9999, 0) },
+    uTreeHitTime: { value: -100 },
     uPlayerGlow: { value: 0.0 },
     uPlayerGlowColor: { value: new THREE.Color('#d8e6cf') },
 

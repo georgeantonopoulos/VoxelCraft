@@ -30,6 +30,7 @@ import { simulationManager } from '@features/flora/logic/SimulationManager';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 import { emitSpark } from '@features/interaction/components/SparkSystem';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { emitImpact, type ImpactKind } from '@features/interaction/components/ImpactFX';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
@@ -72,6 +73,12 @@ function getLeafColorForTreeType(treeType: number): string {
 const STRIKE_REACH = 4.5;
 /** Press-to-contact time of the first-person swing (FirstPersonTools SWING_*). */
 export const STRIKE_CONTACT_MS = 140;
+
+/** Make the tree rooted at (x, y, z) shudder (TreeLayer TREE_HIT_GLSL). */
+const shudderTree = (x: number, y: number, z: number) => {
+  sharedUniforms.uTreeHitPos.value.set(x, y, z);
+  sharedUniforms.uTreeHitTime.value = sharedUniforms.uTime.value;
+};
 
 /**
  * Where an axe meets a trunk: on the bark facing the striker, at about
@@ -340,6 +347,7 @@ export function useTerrainInteraction(
 
               // Visuals
               const woodPos = trunkStrikePoint(x, y, z, origin);
+              shudderTree(x, y, z);
               const woodDir = origin.clone().sub(woodPos).normalize();
               emitParticle({
                 pos: woodPos,
@@ -617,6 +625,7 @@ export function useTerrainInteraction(
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
                   // Leaves shaken loose drift down to the tree's foot.
+                  shudderTree(x, y, z);
                   emitImpact({ position: leafPos, direction: new THREE.Vector3(0, -1, 0), kind: 'leaf', color: leafColor, strength: 1.3, floorY: y + 0.02 });
                   if (!treeSoundPlayed) {
                     playSound('wood_hit', { pitch: 0.85 });
@@ -661,6 +670,7 @@ export function useTerrainInteraction(
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
                   // Leaves shaken loose drift down to the tree's foot.
+                  shudderTree(x, y, z);
                   emitImpact({ position: leafPos, direction: new THREE.Vector3(0, -1, 0), kind: 'leaf', color: leafColor, strength: 1.3, floorY: y + 0.02 });
                   if (!treeSoundPlayed) {
                     playSound('wood_hit', { pitch: 0.85 });
@@ -670,6 +680,7 @@ export function useTerrainInteraction(
                 } else {
                   // CHOP Animation
                   const woodPos = trunkStrikePoint(x, y, z, origin);
+                  shudderTree(x, y, z);
                   const woodDir = origin.clone().sub(woodPos).normalize();
                   emitParticle({
                     pos: woodPos,
