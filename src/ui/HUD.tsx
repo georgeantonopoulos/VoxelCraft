@@ -5,6 +5,7 @@ import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { TargetHealthBar } from '@/ui/TargetHealthBar';
 import { GroveHUD, VitalityRing } from '@/ui/GroveHUD';
+import { LuminaVeil } from './LuminaVeil';
 import { PauseVeil } from '@/ui/PauseVeil';
 import { HudPresenceDirector } from '@/ui/HudPresenceDirector';
 import { useHudPresence, presenceStyle } from '@state/HudPresenceStore';
@@ -283,6 +284,7 @@ export const HUD: React.FC = () => {
         </button>
       </div>
 
+      <LuminaVeil />
       {inputMode === 'mouse' && <PauseVeil />}
     </div>
   );

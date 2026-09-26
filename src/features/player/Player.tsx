@@ -183,9 +183,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       const exit = LuminaExitFinder.findClosestExit(pos.x, pos.y, pos.z);
 
       if (exit) {
-        luminaTarget.current = new THREE.Vector3(exit.x, exit.y, exit.z);
-        setIsLuminaDashing(true);
+        // The veil (LuminaVeil) rises first; the passage happens behind it.
         window.dispatchEvent(new CustomEvent('lumina-glow-start', { detail: { duration: 1000 } }));
+        window.setTimeout(() => {
+          luminaTarget.current = new THREE.Vector3(exit.x, exit.y, exit.z);
+          setIsLuminaDashing(true);
+        }, 380);
       }
     };
     window.addEventListener('lumina-special-action', handleLumina);

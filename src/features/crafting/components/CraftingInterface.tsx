@@ -77,6 +77,9 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
             {caps.canSmash && statRow('Smashing', caps.shatterForce.toFixed(1), '#f0b3a3')}
             {caps.canSaw && statRow('Sawing', 'felled trees', '#d9b98a')}
             {caps.isLuminaTool && statRow('Lumina', `×${caps.luminaCount}`, '#a4f2e4')}
+            {caps.isLuminaTool && (
+              <p className="pl-4 font-display text-[13px] italic text-lumina/70">In a cave, tap three times to follow the light out.</p>
+            )}
             {!caps.canDig && !caps.canChop && !caps.canSmash && !caps.canSaw && (
               <>
                 {statRow('Against wood', caps.woodDamage.toFixed(1), 'rgba(215,220,182,0.5)')}
