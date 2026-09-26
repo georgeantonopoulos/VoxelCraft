@@ -213,7 +213,7 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 `CinematicComposer.tsx`: SunShafts → N8AO → Bloom + GroveGrade (merged) → [underwater CA] → SMAA, `multisampling={0}`.
 - `effects/GroveEffects.ts`: `GroveGradeEffect` (exposure, AgX, vitality grade, restore pulse, underwater, vignette, grain) and `SunShaftsEffect` (depth + convolution). Uniforms are written in `useFrame`, **never via props** (prop changes recreate effects and recompile shaders).
 - SunShafts must stay before N8AO (otherwise GL feedback loop).
-- Rendering is capped at 60 fps (`FrameLimiter`, Canvas `frameloop="never"` driven from rAF): 120 Hz ProMotion MacBooks rendered 120 fps and ran hot. Defaults are the Medium preset; settings v1 migrated saved High/Ultra/Custom to Medium once.
+- Rendering is capped at 60 fps (`FrameLimiter`, Canvas `frameloop="never"` driven from rAF): 120 Hz ProMotion MacBooks rendered 120 fps and ran hot. While paused (mouse free in mouse mode, or Settings open) it idles at 20 fps, so FPS benchmarks in an automated browser without pointer lock read 20. `advance()` takes seconds on the scene clock (milliseconds ran the world 1000x fast). Defaults are the Medium preset; settings v1 migrated saved High/Ultra/Custom to Medium once.
 - `AdaptiveResolution.tsx`: dynamic DPR (50/58 FPS hysteresis, min 0.55× of user resolution). Debug: `window.__vcDynamicResolution`.
 - Presets low/medium/high/ultra in `SettingsStore` (`godRays`, `antialias`, `dynamicResolution`, `aoQuality`).
 

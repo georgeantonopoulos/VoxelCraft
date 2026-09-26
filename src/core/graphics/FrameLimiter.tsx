@@ -1,19 +1,28 @@
 import { useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
+import { useSettingsStore } from '@/state/SettingsStore';
 
 /**
  * Caps rendering at MAX_FPS. The Canvas runs with frameloop="never" and this
  * drives it from requestAnimationFrame, skipping frames that come too soon.
  * On 120 Hz displays (ProMotion MacBooks) the game otherwise rendered 120
  * frames a second: twice the GPU work and heat for no visible gain here.
+ * While paused it idles at PAUSED_FPS (the world only shows behind the veil).
  */
 const MAX_FPS = 60;
+/** While paused (mouse free in mouse mode, or Settings open) the world only idles behind the veil. */
+const PAUSED_FPS = 20;
 
 export const FrameLimiter: React.FC = () => {
   const advance = useThree((s) => s.advance);
   const clock = useThree((s) => s.clock);
   useEffect(() => {
     const minGap = 1000 / MAX_FPS - 1.5; // tolerance so a 60 Hz display never drops frames
+    const pausedGap = 1000 / PAUSED_FPS - 1.5;
+    const paused = () => {
+      const st = useSettingsStore.getState();
+      return st.isSettingsOpen || (st.inputMode === 'mouse' && !document.pointerLockElement);
+    };
     let last = -Infinity;
     let id = 0;
     // advance() takes SECONDS on the scene clock (frameloop "never": delta =
@@ -23,7 +32,7 @@ export const FrameLimiter: React.FC = () => {
     let startT = -1;
     const tick = (t: number) => {
       id = requestAnimationFrame(tick);
-      if (t - last < minGap) return;
+      if (t - last < (paused() ? pausedGap : minGap)) return;
       last = t;
       if (startT < 0) startT = t;
       advance(startClock + (t - startT) / 1000);
