@@ -1194,8 +1194,22 @@ export class TerrainService {
             let innerRadius = 0.35;
             if (wantsBoulder) {
                 const radius = 0.9 + hash01p(wx, centre.worldY, wz, 4251) * 1.4; // ~0.9..2.3
-                largeRockCandidates.push(cxLocal, centre.worldY + 0.05, czLocal, radius, variant, p);
-                innerRadius = radius * 0.75;
+                // Rest it on the lowest ground under its footprint: set at the
+                // centre height, a boulder on a slope hung its downhill edge in
+                // the air. Its flat underside sits ~0.3 r below its origin, so
+                // it beds into the uphill side instead. Too steep: no boulder.
+                let lowY = centre.worldY, highY = centre.worldY;
+                for (let s = 0; s < 8; s++) {
+                    const a = (s / 8) * Math.PI * 2;
+                    const ring = findTopSurfaceAtLocalXZ(cxLocal + Math.cos(a) * radius * 0.9, czLocal + Math.sin(a) * radius * 0.9);
+                    if (!ring) continue;
+                    lowY = Math.min(lowY, ring.worldY);
+                    highY = Math.max(highY, ring.worldY);
+                }
+                if (highY - lowY < radius * 1.3) {
+                    largeRockCandidates.push(cxLocal, lowY + 0.05, czLocal, radius, variant, p);
+                    innerRadius = radius * 0.75;
+                }
             }
 
             const count = minStones + Math.floor(hash01p(wx, centre.worldY, wz, 4223) * (maxStones - minStones + 1));

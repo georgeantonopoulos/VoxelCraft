@@ -59,6 +59,8 @@ const CAPSULE_HALF_HEIGHT_CROUCHED = 0.1;
 const CAPSULE_RADIUS = 0.4;
 /** Distance below the capsule's feet that still counts as standing (slopes, steps). */
 const GROUND_TOLERANCE = 0.35;
+/** Ground steeper than this (normal.y = cos 50 degrees) is not stood on: the player slides. */
+const WALKABLE_NORMAL_Y = 0.64;
 /** How far below the spawn point to look for a terrain collider before releasing the player. */
 const SPAWN_GROUND_SEARCH = 64;
 /** Downward reach of the unloaded-ground guard (deeper than any column: surface to bedrock). */
@@ -115,6 +117,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       },
       look: (yaw: number, pitch: number) => {
         camera.rotation.set(pitch, yaw, 0, 'YXZ');
+      },
+      /** Player body position, velocity and gravity scale, plus the current input. */
+      player: () => {
+        const b = body.current;
+        if (!b) return null;
+        return { t: b.translation(), v: b.linvel(), gravity: b.gravityScale(), input: getInput() };
       },
       /** Terrain rigid bodies in the physics world: chunk key, translation, collider shape types. */
       terrainBodies: () => {
@@ -381,6 +389,27 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       const below = world.castRay(groundProbeRay, UNLOADED_GROUND_SEARCH, true, undefined, undefined, undefined, undefined, isTerrainCollider);
       if (!below) yVelocity = 0;
     }
+
+    // Standing still on a slope: the body is frictionless, so gravity pressing
+    // it into the ground made the solver slide it downhill every step. While
+    // idle on walkable ground, switch gravity off and hold still; steep faces
+    // (normal below ~50 degrees from up) still slide.
+    let holdOnSlope = false;
+    if (!isFlying && !inWater && spawnSettled && scratchMoveDir.lengthSq() < 1e-4
+      && yVelocity <= 0.5 && !(jump && !spacePressHandled.current)) {
+      const halfHeight = isCrouching.current ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL;
+      groundProbeRay.origin.x = pos.x;
+      groundProbeRay.origin.y = pos.y;
+      groundProbeRay.origin.z = pos.z;
+      // On a slope the capsule rests on its side, so the ground under its
+      // centre sits halfHeight + radius / normal.y below it. Only hold when
+      // actually resting there (never hover above a step).
+      const hit = world.castRayAndGetNormal(groundProbeRay, halfHeight + CAPSULE_RADIUS / WALKABLE_NORMAL_Y + 0.06, true, undefined, undefined, undefined, body.current);
+      holdOnSlope = !!hit && hit.normal.y > WALKABLE_NORMAL_Y
+        && hit.timeOfImpact <= halfHeight + CAPSULE_RADIUS / hit.normal.y + 0.06;
+    }
+    if (holdOnSlope) yVelocity = 0;
+    if (!isFlying && spawnSettled) body.current.setGravityScale(holdOnSlope ? 0 : 1, false);
 
     if (!jump && wasJumpPressed.current) spacePressHandled.current = false;
     wasJumpPressed.current = jump;
