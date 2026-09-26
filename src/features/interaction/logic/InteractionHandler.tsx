@@ -193,9 +193,13 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                 // If not enough sticks, fall through to normal SMASH behavior
                 const kindlingId = `kindling-${targetItem.id}`;
                 if (nearbySticks.length > 0 && nearbySticks.length < 4) {
-                  // Teach the recipe: sticks are near but not enough to catch.
+                  // A stone with sticks around it is a hearth: teach the recipe
+                  // and never knap it (players broke their hearth stone into
+                  // flakes while trying to light it).
                   const need = 4 - nearbySticks.length;
+                  emitSpark(hitPoint);
                   useEntityHistoryStore.getState().setProgress(kindlingId, 0, 10, `Kindling: ${need} more stick${need === 1 ? '' : 's'} around the stone`);
+                  return;
                 }
                 if (nearbySticks.length >= 4) {
                   // Only emit spark for fire-starting (knapping sparks are in useTerrainInteraction)
