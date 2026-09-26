@@ -187,12 +187,23 @@ export const FireflyField: React.FC<{ count?: number; className?: string }> = ({
 };
 
 /**
- * The key-art logo, cropped to the lettering. Mask, screen blend and the fade
- * all sit on the <img> itself: a mask or animated opacity on a wrapper makes
- * an isolated layer, and the blend would then never reach the backdrop.
+ * The key-art logo, cropped to the lettering. Its near-black background is
+ * turned into transparency by an SVG filter (alpha from luminance, with gain),
+ * so it sits cleanly over any backdrop. A screen blend only worked over the
+ * title's black page: over the loading flyover it showed a dark box, because
+ * the overlay's own layer isolated the blend from the canvas behind it.
  */
 export const GroveLogo: React.FC<{ src: string; className?: string }> = ({ src, className = '' }) => (
   <div className={`relative aspect-[2.3/1] w-full select-none ${className}`}>
+    <svg width="0" height="0" className="absolute" aria-hidden="true">
+      <filter id="grove-logo-alpha" colorInterpolationFilters="sRGB">
+        {/* RGB kept (slightly lifted); A = 3.2 * luma - 0.3 (clamped). */}
+        <feColorMatrix
+          type="matrix"
+          values={'1.08 0 0 0 0  0 1.08 0 0 0  0 0 1.08 0 0  0.68 2.29 0.23 0 -0.3'}
+        />
+      </filter>
+    </svg>
     <img
       src={src}
       alt="The Grove"
@@ -200,8 +211,7 @@ export const GroveLogo: React.FC<{ src: string; className?: string }> = ({ src, 
       className="grove-fade-in absolute inset-0 h-full w-full object-cover"
       style={{
         objectPosition: '50% 47%',
-        mixBlendMode: 'screen',
-        filter: 'contrast(1.15) brightness(0.96)',
+        filter: 'url(#grove-logo-alpha)',
         WebkitMaskImage: 'radial-gradient(ellipse 60% 50% at 50% 50%, #000 62%, transparent 96%)',
         maskImage: 'radial-gradient(ellipse 60% 50% at 50% 50%, #000 62%, transparent 96%)',
       }}
