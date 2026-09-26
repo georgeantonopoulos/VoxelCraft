@@ -155,7 +155,7 @@ export const StoneMesh: React.FC<StoneMeshProps> = ({
                 color={mat.color}
                 roughness={mat.roughness}
                 metalness={mat.metalness}
-                emissive={mat.emissive ? new THREE.Color(mat.emissive) : undefined}
+                emissive={mat.emissive || '#000000'}
                 emissiveIntensity={mat.emissiveIntensity || 0}
             />
         </mesh>
@@ -216,7 +216,7 @@ export const ShardMesh: React.FC<ShardMeshProps> = ({
                 color={mat.color}
                 roughness={mat.roughness}
                 metalness={mat.metalness}
-                emissive={mat.emissive ? new THREE.Color(mat.emissive) : undefined}
+                emissive={mat.emissive || '#000000'}
                 emissiveIntensity={mat.emissiveIntensity || 0}
             />
         </mesh>
