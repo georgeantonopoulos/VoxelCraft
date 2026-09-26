@@ -67,42 +67,142 @@ const limb = (r0: number, r1: number, len: number, x: number, top: number, z: nu
   return g;
 };
 
+interface LoftRing { p: [number, number, number]; rx: number; ry: number }
+
+/**
+ * Smooth tube along a spine with an elliptical cross-section per ring
+ * (Catmull-Rom between rings). Used for deer torso, neck/head and legs so
+ * they read as one continuous body instead of stacked ellipsoids.
+ */
+const loft = (rings: LoftRing[], seg = 12, sub = 4): THREE.BufferGeometry => {
+  const curve = new THREE.CatmullRomCurve3(rings.map((r) => new THREE.Vector3(...r.p)), false, 'centripetal');
+  const n = (rings.length - 1) * sub + 1;
+  const verts: number[] = [];
+  const idx: number[] = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  const T = new THREE.Vector3(), S = new THREE.Vector3(), N = new THREE.Vector3(), P = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const u = i / (n - 1);
+    // Parametric (not arc-length) sampling keeps ring k at control point k, so
+    // the radii below line up with the spine points they belong to.
+    curve.getPoint(u, P);
+    curve.getTangent(u, T);
+    const f = u * (rings.length - 1), k = Math.min(rings.length - 2, Math.floor(f)), t = f - k;
+    const rx = THREE.MathUtils.lerp(rings[k].rx, rings[k + 1].rx, t);
+    const ry = THREE.MathUtils.lerp(rings[k].ry, rings[k + 1].ry, t);
+    if (i === 0) {
+      const ref = Math.abs(T.dot(up)) > 0.95 ? new THREE.Vector3(0, 0, 1) : up;
+      S.crossVectors(ref, T).normalize();
+    } else {
+      // Parallel transport: carry the previous side vector along the spine
+      // (re-deriving it from a fixed up flipped the frame on near-vertical
+      // legs and twisted the tube at the hock).
+      S.addScaledVector(T, -S.dot(T)).normalize();
+    }
+    N.crossVectors(T, S).normalize();
+    for (let j = 0; j < seg; j++) {
+      const a = (j / seg) * Math.PI * 2;
+      verts.push(
+        P.x + S.x * Math.cos(a) * rx + N.x * Math.sin(a) * ry,
+        P.y + S.y * Math.cos(a) * rx + N.y * Math.sin(a) * ry,
+        P.z + S.z * Math.cos(a) * rx + N.z * Math.sin(a) * ry,
+      );
+    }
+  }
+  for (let i = 0; i < n - 1; i++) for (let j = 0; j < seg; j++) {
+    const a = i * seg + j, b = i * seg + ((j + 1) % seg), c = a + seg, d = b + seg;
+    idx.push(a, b, c, b, d, c); // outward-facing ((S,N,T) is right-handed)
+  }
+  // Caps (fan to the end centres).
+  const capStart = verts.length / 3; const p0 = curve.getPoint(0); verts.push(p0.x, p0.y, p0.z);
+  const capEnd = capStart + 1; const p1 = curve.getPoint(1); verts.push(p1.x, p1.y, p1.z);
+  for (let j = 0; j < seg; j++) {
+    idx.push(capStart, (j + 1) % seg, j);
+    const last = (n - 1) * seg;
+    idx.push(capEnd, last + j, last + ((j + 1) % seg));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((verts.length / 3) * 2), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+};
+
 function buildDeer(): THREE.BufferGeometry {
-  const fur = '#9a6236';
-  const shade = (y: number, _x: number, z: number, c: THREE.Color) => {
-    // Pale belly/throat, dark dorsal stripe, rump patch.
-    c.lerp(new THREE.Color('#ecdfc6'), THREE.MathUtils.smoothstep(1.02, 0.84, y) * 0.85);
-    c.lerp(new THREE.Color('#5e3a20'), THREE.MathUtils.smoothstep(1.22, 1.34, y) * 0.6);
-    c.lerp(new THREE.Color('#efe6d6'), THREE.MathUtils.smoothstep(-0.5, -0.64, z) * 0.7);
+  const coat = new THREE.Color('#8b5530');
+  const back = new THREE.Color('#5f3a20');
+  const belly = new THREE.Color('#e3d3b6');
+  const legDark = new THREE.Color('#4a3322');
+  const hoof = new THREE.Color('#1c1612');
+  // Coat: darker along the back, pale underneath (by height within the torso).
+  const torsoShade = (y: number, _x: number, z: number, c: THREE.Color) => {
+    c.copy(coat);
+    c.lerp(back, THREE.MathUtils.smoothstep(y, 1.24, 1.38) * 0.4);
+    c.lerp(belly, (1 - THREE.MathUtils.smoothstep(y, 0.93, 1.05)) * 0.85);
+    c.lerp(belly, THREE.MathUtils.smoothstep(-z, 0.52, 0.66) * 0.8); // pale rump
   };
-  const legC = (y: number, _x: number, _z: number, c: THREE.Color) => {
-    c.lerp(new THREE.Color('#3a2616'), THREE.MathUtils.smoothstep(0.25, 0.05, y)); // dark hooves
+  const neckShade = (_y: number, _x: number, z: number, c: THREE.Color) => {
+    c.copy(coat);
+    c.lerp(new THREE.Color('#3a2618'), THREE.MathUtils.smoothstep(z, 0.98, 1.06)); // dark muzzle tip
   };
-  const hipY = 1.0, shoulderY = 1.02;
-  const neck = limb(0.085, 0.13, 0.62, 0, 1.62, 0.0).rotateX(0.5).translate(0, 0.02, 0.5);
-  const leg = (part: number, x: number, z: number, top: number, thick: number) => [
-    // Upper leg (thigh / shoulder muscle) and a slim lower leg with a hoof.
-    tag(ellipsoid(0.075 * thick, 0.24, 0.12 * thick, x, top - 0.12, z), part, [x, top, z], fur, shade),
-    tag(limb(0.05 * thick, 0.035, 0.5, x, top - 0.3, z + (z > 0 ? 0.0 : -0.03)), part, [x, top, z], fur, legC),
-    tag(limb(0.034, 0.028, 0.34, x, top - 0.68, z + (z > 0 ? 0.02 : -0.05)), part, [x, top, z], fur, legC),
-  ];
+  const legShade = (y: number, _x: number, _z: number, c: THREE.Color) => {
+    c.copy(coat);
+    c.lerp(legDark, (1 - THREE.MathUtils.smoothstep(y, 0.35, 0.7)) * 0.8);
+    c.lerp(hoof, 1 - THREE.MathUtils.smoothstep(y, 0.03, 0.09));
+  };
+
+  const torso = loft([
+    { p: [0, 1.14, -0.66], rx: 0.07, ry: 0.07 },
+    { p: [0, 1.14, -0.55], rx: 0.2, ry: 0.22 },
+    { p: [0, 1.12, -0.3], rx: 0.23, ry: 0.25 },
+    { p: [0, 1.1, 0.0], rx: 0.2, ry: 0.22 },
+    { p: [0, 1.12, 0.28], rx: 0.21, ry: 0.27 },
+    { p: [0, 1.17, 0.46], rx: 0.14, ry: 0.19 },
+  ], 14, 4);
+
+  // Neck and head: one loft rising from inside the chest, so the head can
+  // pivot at the chest (grazing) without tearing away from the body.
+  const neckHead = loft([
+    { p: [0, 1.12, 0.3], rx: 0.13, ry: 0.16 },
+    { p: [0, 1.3, 0.5], rx: 0.1, ry: 0.13 },
+    { p: [0, 1.52, 0.62], rx: 0.075, ry: 0.09 },
+    { p: [0, 1.7, 0.72], rx: 0.085, ry: 0.095 },
+    { p: [0, 1.72, 0.84], rx: 0.08, ry: 0.085 },
+    { p: [0, 1.66, 0.97], rx: 0.05, ry: 0.055 },
+    { p: [0, 1.63, 1.04], rx: 0.035, ry: 0.035 },
+  ], 12, 4);
+
+  const legRings = (x: number, pts: Array<[number, number, number]>): LoftRing[] =>
+    pts.map(([y, z, r]) => ({ p: [x, y, z], rx: r, ry: r * 1.15 }));
+  // Front leg: straight column, slim cannon bone. Hind leg: thigh, then the
+  // backward hock that gives a deer its silhouette.
+  const frontLeg = (x: number) => loft(legRings(x, [
+    [1.15, 0.28, 0.085], [0.9, 0.32, 0.06], [0.55, 0.35, 0.03], [0.3, 0.35, 0.024], [0.1, 0.37, 0.022], [0.0, 0.39, 0.03],
+  ]), 7, 3);
+  const hindLeg = (x: number) => loft(legRings(x, [
+    [1.2, -0.36, 0.12], [0.92, -0.3, 0.085], [0.58, -0.44, 0.036], [0.26, -0.43, 0.024], [0.1, -0.42, 0.022], [0.0, -0.4, 0.03],
+  ]), 7, 3);
+
+  const HEAD_PIVOT: [number, number, number] = [0, 1.18, 0.4];
+  const ear = (side: number) => {
+    const g = ellipsoid(0.045, 0.1, 0.018, 0, 0, 0, 8);
+    g.rotateZ(side * -0.7).rotateY(side * 0.3).translate(side * 0.09, 1.82, 0.74);
+    return g;
+  };
   const parts = [
-    tag(ellipsoid(0.24, 0.26, 0.58, 0, 1.1, -0.02, 14), PART_BODY, [0, 0, 0], fur, shade),
-    tag(ellipsoid(0.23, 0.28, 0.24, 0, 1.08, 0.3, 12), PART_BODY, [0, 0, 0], fur, shade),   // chest
-    tag(ellipsoid(0.22, 0.25, 0.22, 0, 1.12, -0.38, 12), PART_BODY, [0, 0, 0], fur, shade), // haunches
-    tag(ellipsoid(0.07, 0.11, 0.05, 0, 1.2, -0.62), PART_TAIL, [0, 1.25, -0.58], '#f4ede0'),
-    tag(neck, PART_HEAD, [0, 1.15, 0.42], fur, shade),
-    tag(ellipsoid(0.1, 0.11, 0.2, 0, 1.64, 0.83), PART_HEAD, [0, 1.15, 0.42], fur, shade),
-    tag(ellipsoid(0.06, 0.06, 0.1, 0, 1.6, 0.99), PART_HEAD, [0, 1.15, 0.42], '#4a2f1c'),   // muzzle
-    tag(ellipsoid(0.028, 0.028, 0.028, 0, 1.6, 1.08), PART_HEAD, [0, 1.15, 0.42], '#111111'),
-    tag(ellipsoid(0.02, 0.02, 0.02, 0.075, 1.69, 0.9), PART_HEAD, [0, 1.15, 0.42], '#0b0b0b'),
-    tag(ellipsoid(0.02, 0.02, 0.02, -0.075, 1.69, 0.9), PART_HEAD, [0, 1.15, 0.42], '#0b0b0b'),
-    tag(ellipsoid(0.04, 0.11, 0.025, 0.1, 1.8, 0.76).rotateZ(-0.35), PART_HEAD, [0, 1.15, 0.42], '#7a4e2c'),
-    tag(ellipsoid(0.04, 0.11, 0.025, -0.1, 1.8, 0.76).rotateZ(0.35), PART_HEAD, [0, 1.15, 0.42], '#7a4e2c'),
-    ...leg(PART_LEG_FL, 0.13, 0.36, shoulderY, 1),
-    ...leg(PART_LEG_FR, -0.13, 0.36, shoulderY, 1),
-    ...leg(PART_LEG_BL, 0.14, -0.38, hipY, 1.25),
-    ...leg(PART_LEG_BR, -0.14, -0.38, hipY, 1.25),
+    tag(torso, PART_BODY, [0, 0, 0], coat, torsoShade),
+    tag(neckHead, PART_HEAD, HEAD_PIVOT, coat, neckShade),
+    tag(ear(1), PART_HEAD, HEAD_PIVOT, '#6e4527'),
+    tag(ear(-1), PART_HEAD, HEAD_PIVOT, '#6e4527'),
+    tag(ellipsoid(0.018, 0.02, 0.018, 0.065, 1.74, 0.87, 6), PART_HEAD, HEAD_PIVOT, '#0b0806'),
+    tag(ellipsoid(0.018, 0.02, 0.018, -0.065, 1.74, 0.87, 6), PART_HEAD, HEAD_PIVOT, '#0b0806'),
+    tag(ellipsoid(0.028, 0.022, 0.02, 0, 1.64, 1.055, 6), PART_HEAD, HEAD_PIVOT, '#0e0b09'),
+    tag(ellipsoid(0.055, 0.09, 0.03, 0, 1.2, -0.67, 8), PART_TAIL, [0, 1.24, -0.64], '#f1e8d8'),
+    tag(frontLeg(0.1), PART_LEG_FL, [0.1, 1.1, 0.3], coat, legShade),
+    tag(frontLeg(-0.1), PART_LEG_FR, [-0.1, 1.1, 0.3], coat, legShade),
+    tag(hindLeg(0.1), PART_LEG_BL, [0.1, 1.16, -0.38], coat, legShade),
+    tag(hindLeg(-0.1), PART_LEG_BR, [-0.1, 1.16, -0.38], coat, legShade),
   ];
   return BufferGeometryUtils.mergeGeometries(parts)!;
 }
