@@ -124,6 +124,8 @@ export interface ChunkState {
 
   floraPositions?: Float32Array;
   treePositions?: Float32Array;
+  /** Stumps of felled trees (stride 5 like treePositions: x, y, z, type, scale; chunk-local). */
+  felledStumps?: Float32Array;
   // Pre-computed instance matrices (worker-computed to avoid main-thread loops).
   // Key is "type:variant", value contains count and pre-built 4x4 matrices.
   treeInstanceBatches?: Record<string, { type: number; variant: number; count: number; matrices: Float32Array; originalIndices: Int32Array }>;

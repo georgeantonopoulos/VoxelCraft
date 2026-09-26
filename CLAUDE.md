@@ -491,7 +491,7 @@ Also resolved (2026-09, second pass):
 - Chunk-border shading seams: normals are smoothed over a non-rendered one-cell border band, and the material/cavity blend kernel shrinks to radius 1 next to border planes (`src/tests/chunkSeams.test.ts`).
 - Water through caves/pits: the water sheet is built only over sea-level water cells (dilated one cell, merged into rectangles) instead of a chunk-wide quad.
 - Grass floating over digs: REMESH rebuilds the grass height/material/normal/cave textures; BladeGrassLayer swaps textures in place instead of recreating its material.
-- Felled trees returning: persisted as `'tree'` ground-pickup records keyed by position (`src/state/pickupKeys.ts`).
+- Felled trees returning: persisted as `'tree'` ground-pickup records keyed by position (`src/state/pickupKeys.ts`). Also: ChunkDataManager had no listener set for `chunk-generated`, so `on()` silently dropped the subscriber and no saved pickup (sticks, stones, flora, trees) re-applied on reload; `on()` now creates sets on demand. A felled tree leaves a stump (`chunk.felledStumps`, player-owned; `FelledStumpLayer` + `felledStump.ts`: the species' trunk base and root flares cut at knee height, ring-textured cut face).
 - LuminaFlora shared uniforms: per-flora seed is a vertex attribute (`aSeed`); time comes from sharedUniforms.
 - Production builds generated no terrain: the terrain worker was constructed from a URL variable, so Vite never bundled it (see Worker construction above).
 - Crouch was on Ctrl (Ctrl+W closed the tab); it is now Z. Crouching keeps the feet planted and won't stand up under a ceiling.

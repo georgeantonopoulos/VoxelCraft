@@ -23,7 +23,7 @@ import { WorkerPool } from '@core/workers/WorkerPool';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { getGroundPickups, makeWorldKey, setWorldKey } from '@state/WorldDB';
-import { filterRemovedTrees } from '@state/pickupKeys';
+import { filterRemovedTrees, removedTreeEntries, addFelledStumps } from '@state/pickupKeys';
 import { BiomeManager, getFogSettings, BiomeFogSettings } from '@features/terrain/logic/BiomeManager';
 
 // Extracted modules
@@ -688,6 +688,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
         if (removedTrees.size > 0 && updatedChunk.treePositions) {
           const filtered = filterRemovedTrees(updatedChunk.treePositions, removedTrees);
           if (filtered !== updatedChunk.treePositions) {
+            updatedChunk.felledStumps = addFelledStumps(updatedChunk.felledStumps, removedTreeEntries(updatedChunk.treePositions, removedTrees));
             updatedChunk.treePositions = filtered;
             updatedChunk.treeInstanceBatches = undefined; // TreeLayer recomputes from positions
             modified = true;

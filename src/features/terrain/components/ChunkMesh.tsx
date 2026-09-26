@@ -11,6 +11,7 @@ import { ChunkState } from '@/types';
 import { VegetationLayer } from './VegetationLayer';
 import { BladeGrassLayer } from './BladeGrassLayer';
 import { TreeLayer } from './TreeLayer';
+import { FelledStumpLayer } from './FelledStumpLayer';
 import { LuminaLayer } from './LuminaLayer';
 import { GroundItemsLayer } from './GroundItemsLayer';
 
@@ -333,6 +334,10 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
               simplified={lodLevel > 1}
               lodLevel={lodLevel}
             />
+          )}
+
+          {lodLevel <= LOD_DISTANCE_TREES_ANY && chunk.felledStumps && chunk.felledStumps.length > 0 && (
+            <FelledStumpLayer data={chunk.felledStumps} collidersEnabled={colliderEnabled} />
           )}
 
           {lodLevel <= LOD_DISTANCE_VEGETATION_ANY && (chunk.drySticks?.length || chunk.jungleSticks?.length || chunk.rockDataBuckets || chunk.largeRockPositions?.length) ? (

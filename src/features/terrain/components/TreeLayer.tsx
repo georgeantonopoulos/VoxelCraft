@@ -157,6 +157,21 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
     );
 });
 
+/** Bark and leaf-tip colours per tree type. */
+export const treeColors = (type: number): { base: string; tip: string } => {
+    // Bark: warm grey-browns (red-browns read mauve under the cool sky fill).
+    if (type === TreeType.OAK) return { base: '#5b4a38', tip: '#4CAF50' };
+    if (type === TreeType.PINE) return { base: '#4d3b2a', tip: '#1B5E20' };
+    if (type === TreeType.PALM) return { base: '#795548', tip: '#8BC34A' };
+    if (type === TreeType.ACACIA) return { base: '#6e5b45', tip: '#CDDC39' };
+    if (type === TreeType.CACTUS) return { base: '#2E7D32', tip: '#43A047' };
+    if (type === TreeType.JUNGLE) return { base: '#56483a', tip: '#2E7D32' };
+    return { base: '#3e2723', tip: '#00FFFF' };
+};
+
+/** A tree type's own bark material (instanced meshes only): the stump of a felled tree. */
+export const getTreeBarkMaterial = (type: number): THREE.Material => getTreeWoodMaterial(type, treeColors(type));
+
 // Material pools for trees to avoid per-chunk creation.
 const treeWoodMaterialPool: Record<string, THREE.Material> = {};
 const treeLeafMaterialPool: Record<string, THREE.Material> = {};
@@ -570,20 +585,7 @@ const InstancedTreeBatch: React.FC<{
         });
     }, [collisionData, matrices, count, type, chunkKey, originalIndices]);
 
-    const colors = useMemo(() => {
-        let base = '#3e2723';
-        let tip = '#00FFFF';
-
-        // Bark: warm grey-browns (red-browns read mauve under the cool sky fill).
-        if (type === TreeType.OAK) { base = '#5b4a38'; tip = '#4CAF50'; }
-        else if (type === TreeType.PINE) { base = '#4d3b2a'; tip = '#1B5E20'; }
-        else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
-        else if (type === TreeType.ACACIA) { base = '#6e5b45'; tip = '#CDDC39'; }
-        else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
-        else if (type === TreeType.JUNGLE) { base = '#56483a'; tip = '#2E7D32'; }
-
-        return { base, tip };
-    }, [type]);
+    const colors = useMemo(() => treeColors(type), [type]);
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
     const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors), [type, colors]);

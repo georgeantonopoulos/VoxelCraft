@@ -19,7 +19,7 @@ import { playerState } from '@core/player/PlayerState';
 export const logBodies = new Map<string, RapierRigidBody>();
 
 let ringTexture: THREE.CanvasTexture | null = null;
-const getRingTexture = (): THREE.CanvasTexture => {
+export const getRingTexture = (): THREE.CanvasTexture => {
   if (ringTexture) return ringTexture;
   const n = 128;
   const c = document.createElement('canvas');

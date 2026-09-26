@@ -53,7 +53,7 @@ import { MaterialType, ChunkState, ItemType } from '@/types';
 import { getRandomDigSound } from '@core/audio';
 import { treeVariant } from '@features/flora/logic/treeInstance';
 import { saveGroundPickup } from '@state/WorldDB';
-import { treeRecordIndex } from '@state/pickupKeys';
+import { treeRecordIndex, addFelledStumps } from '@state/pickupKeys';
 
 // Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
 function getLeafColorForTreeType(treeType: number): string {
@@ -384,7 +384,9 @@ export function useTerrainInteraction(
                 saveGroundPickup(chunk.cx, chunk.cz, 'tree', treeRecordIndex(positions[posIdx], positions[posIdx + 2]));
 
                 // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
-                const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
+                // The tree leaves its stump behind.
+                const felledStumps = addFelledStumps(chunk.felledStumps, Array.from(positions.subarray(posIdx, posIdx + 5)));
+                const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, felledStumps, visualVersion: chunk.visualVersion + 1 };
                 chunkDataRef.current?.set(chunkKey, updatedChunk);
                 chunkDataManager.replaceChunk(chunkKey, updatedChunk);
                 chunkDataManager.markDirty(chunkKey);
@@ -815,7 +817,8 @@ export function useTerrainInteraction(
               }
 
               // Clear treeInstanceBatches to force TreeLayer to recompute from treePositions
-              const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, visualVersion: chunk.visualVersion + 1 };
+              const felledStumps = addFelledStumps(chunk.felledStumps, hitIndices.flatMap((idx) => Array.from(positions.subarray(idx, idx + 5))));
+              const updatedChunk = { ...chunk, treePositions: newPositions, treeInstanceBatches: undefined, felledStumps, visualVersion: chunk.visualVersion + 1 };
               chunkDataRef.current?.set(key, updatedChunk);
               chunkDataManager.replaceChunk(key, updatedChunk);
               chunkDataManager.markDirty(key);

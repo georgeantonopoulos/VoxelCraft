@@ -131,6 +131,12 @@ class Buf {
   get vertexCount() { return this.pos.length / 3; }
 }
 
+/** Trunk radius and root flare of a species (for the stump a felled tree leaves). */
+export const speciesTrunk = (type: TreeType): { radius: number; buttress: number } => {
+  const sp = SPECIES[type] ?? SPECIES[TreeType.OAK];
+  return { radius: sp.trunkRadius, buttress: sp.buttress };
+};
+
 export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMeshData {
   const sp = SPECIES[type] ?? SPECIES[TreeType.OAK];
   const rand = mulberry32(0x7a3e + type * 7919 + variant * 104729);
