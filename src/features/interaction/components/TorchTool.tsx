@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useControls } from 'leva';
 import * as THREE from 'three';
+import { TorchFlame } from './TorchFlame';
 
 /**
  * TorchTool
@@ -21,57 +22,8 @@ export interface TorchToolProps {
   active: boolean;
 }
 
-const FLAME_VERT = /* glsl */ `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-// Procedural teardrop flame: flickering width, upward-scrolling turbulence,
-// white-gold core to orange to deep red at the edges. Additive.
-const FLAME_FRAG = /* glsl */ `
-  uniform float uTime;
-  varying vec2 vUv;
-  float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-  float n2(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y);
-  }
-  void main() {
-    float y = vUv.y;
-    float t = uTime;
-    // Turbulence rises with the flame and sways the tip more than the base.
-    float turb = n2(vec2(vUv.x * 4.0, y * 3.0 - t * 2.6)) * 0.6 + n2(vec2(vUv.x * 9.0, y * 6.0 - t * 4.1)) * 0.4;
-    float sway = (n2(vec2(t * 0.9, 1.7)) - 0.5) * 0.18 * y * y;
-    float x = vUv.x - 0.5 - sway - (turb - 0.5) * 0.12 * y;
-    float width = 0.38 * pow(max(1.0 - y, 0.0), 0.7) * smoothstep(0.0, 0.18, y) * (0.85 + 0.3 * turb);
-    float body = 1.0 - smoothstep(width * 0.35, max(width, 1e-3), abs(x));
-    body *= 1.0 - smoothstep(0.55, 1.0, y + (turb - 0.5) * 0.25);
-    float core = (1.0 - smoothstep(0.0, max(width * 0.45, 1e-3), abs(x))) * (1.0 - smoothstep(0.1, 0.55, y));
-    vec3 col = mix(vec3(0.75, 0.16, 0.03), vec3(1.0, 0.55, 0.14), body);
-    col = mix(col, vec3(1.0, 0.93, 0.72), core);
-    float a = clamp(body * 0.9 + core * 0.5, 0.0, 1.0);
-    if (a < 0.01) discard;
-    gl_FragColor = vec4(col * a * 1.6, a);
-  }
-`;
-
 export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
-  const flameRef = useRef<THREE.Mesh>(null);
-  const flameMaterial = useMemo(() => new THREE.ShaderMaterial({
-    vertexShader: FLAME_VERT,
-    fragmentShader: FLAME_FRAG,
-    uniforms: { uTime: { value: 0 } },
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-    side: THREE.DoubleSide,
-  }), []);
-  const parentQuat = useMemo(() => new THREE.Quaternion(), []);
+
   const torchRef = useRef<THREE.Group>(null);
   const flameLightRef = useRef<THREE.SpotLight>(null);
   const lightTargetRef = useRef<THREE.Object3D>(null);
@@ -197,14 +149,6 @@ export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
       flameLightRef.current.penumbra = torchLightDebug.penumbra;
     }
 
-    // Flame card faces the camera; time drives the flicker.
-    flameMaterial.uniforms.uTime.value += delta;
-    const flame = flameRef.current;
-    if (flame && flame.parent) {
-      flame.parent.getWorldQuaternion(parentQuat);
-      flame.quaternion.copy(parentQuat.invert()).multiply(state.camera.quaternion);
-    }
-
     // Particle update: drift upward and respawn in place.
     const mesh = particlesRef.current;
     if (!mesh || !active) return;
@@ -260,9 +204,7 @@ export const TorchTool: React.FC<TorchToolProps> = ({ active }) => {
       </mesh>
 
       {/* Flame: a camera-facing procedural card rising from the collar. */}
-      <mesh ref={flameRef} position={[0, 0.58, 0]} material={flameMaterial} renderOrder={2}>
-        <planeGeometry args={[0.2, 0.34]} />
-      </mesh>
+      <TorchFlame position={[0, 0.58, 0]} />
       </group>
 
       {/* Spotlight for forward cave visibility (outside the visibility toggle; see TorchToolProps) */}

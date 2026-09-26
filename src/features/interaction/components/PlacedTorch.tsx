@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
+import { TorchFlame } from './TorchFlame';
 
 /**
  * PlacedTorch
@@ -52,18 +53,8 @@ export const PlacedTorch: React.FC<{
         <meshStandardMaterial color="#3a3a44" roughness={0.4} metalness={0.6} />
       </mesh>
 
-      {/* Ember core */}
-      <mesh position={[0, 0.54, 0]} castShadow>
-        <sphereGeometry args={[0.06, 12, 10]} />
-        <meshStandardMaterial
-          color="#ff9b47"
-          emissive="#ff6b1a"
-          emissiveIntensity={2.0}
-          roughness={0.3}
-          metalness={0.0}
-          toneMapped={false}
-        />
-      </mesh>
+      {/* Flame */}
+      <TorchFlame position={[0, 0.64, 0]} scale={0.9} />
 
       {/* Warm point light */}
       <PooledPointLight
