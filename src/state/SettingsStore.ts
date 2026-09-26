@@ -65,16 +65,17 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
       resolutionScale: 1.0, // DPR 1.0 = CSS pixel resolution (good balance for most displays)
-      qualityPreset: 'high',
+      // Medium by default: laptops (M1 MacBooks) ran hot on High/Ultra.
+      qualityPreset: 'medium',
       shadows: true,
       ao: false,
       bloom: true,
-      viewDistance: 1.0,
-      godRays: true,
+      viewDistance: 0.8,
+      godRays: false,
       antialias: true,
       dynamicResolution: true,
       aoQuality: 'performance',
-      grassDensity: 1.0,
+      grassDensity: 0.6,
       masterVolume: 0.8,
       ambienceVolume: 1.0,
       musicVolume: 0.6,
@@ -163,6 +164,22 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'voxel-settings-storage', // name of the item in the storage (must be unique)
+      // v1: one-time step down to Medium (Ultra/High ran M1 laptops hot). The
+      // player can raise it again in Settings; later choices are kept.
+      version: 1,
+      migrate: (persisted, version) => {
+        const s = (persisted ?? {}) as Partial<SettingsState>;
+        if (version < 1 && (s.qualityPreset === 'high' || s.qualityPreset === 'ultra' || s.qualityPreset === 'custom')) {
+          return {
+            ...s,
+            qualityPreset: 'medium',
+            shadows: true, ao: false, bloom: true, godRays: false, antialias: true,
+            aoQuality: 'performance', grassDensity: 0.6, viewDistance: 0.8,
+            resolutionScale: Math.min(s.resolutionScale ?? 1, 1),
+          } as SettingsState;
+        }
+        return s as SettingsState;
+      },
       partialize: (state) => ({
         // Persist these fields
         resolutionScale: state.resolutionScale,

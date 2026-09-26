@@ -49,6 +49,7 @@ import { KeeperLight } from '@features/environment/components/KeeperLight';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { recordWorldEntered } from '@state/savedWorlds';
+import { FrameLimiter } from '@core/graphics/FrameLimiter';
 import { bindInventoryToWorld } from '@state/inventoryPersistence';
 import { bindWorldObjects, flushWorldObjects } from '@state/worldObjectsPersistence';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
@@ -540,7 +541,10 @@ const App: React.FC = () => {
           // near 0.05: the near plane's corners reach ~0.09 m at fov 75, inside
           // Player's 0.15 m camera wall margin (0.1 reached ~0.18 m and clipped walls).
           camera={{ fov: 75, near: 0.05, far: 2000 }}
+          // Driven by FrameLimiter (60 fps cap: 120 Hz displays doubled the work).
+          frameloop="never"
         >
+          <FrameLimiter />
           <SceneWarmup ready={gameStarted && terrainLoaded} />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}

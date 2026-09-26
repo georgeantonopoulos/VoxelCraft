@@ -194,6 +194,8 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 - Tokens and components live in `src/index.css` (`@theme` colours night/bark/moss/lichen/parchment/lumina/ember/spore; `grove-panel`, `grove-button`, `grove-button-quiet`, `grove-choice`, `grove-key`, `grove-eyebrow`, `grove-text-shadow`). Fonts: Cormorant Garamond (display) + Alegreya Sans (body), loaded in `index.html`. No slate/emerald Tailwind defaults, no emoji icons, no dark boxes behind floating text (text shadow only).
 - Shared ornaments: `src/ui/grove/GroveOrnaments.tsx` (VineRule, RealmGlyph, FireflyField, GroveLogo). GroveLogo blends the key art with `mix-blend-mode: screen` on the `<img>` itself: a mask or animated opacity on a wrapper isolates it and the blend stops working.
 - Quiet HUD: `HudPresenceStore` + `HudPresenceDirector`. Quest tracker, vitality, controls fade out after calm spells; compass rests at 50%, hotbar at 28%. The hotbar has no tray: round hollows on a faint vine thread (`grove-thread`, `grove-slot` in index.css), empty slots are a seed dot, the chosen one glows ember with a leaf mark. Woken by progress, pickups, item switches, Tab (hold), pause. Touch mode holds it awake.
+- No hand or arm geometry on held items (George: it looked bad and is hard to get right); items float in view as before.
+- Hotbar wheel: `wheelStepper.ts` steps once per notch's worth of scroll (100 px, 40 px per line) with a 140 ms pause (320 ms for turning a carried log); trackpads sent dozens of events per flick.
 - Controls list opens by itself only on the first ever play (`vc-controls-seen-v1`), then waits behind H. Quest hints speak the player's input: `QuestDef.touchHint` (button names) in touch mode, `hint` (keys) otherwise, in the tracker and quest-start toasts.
 - `PauseVeil`: shown whenever the pointer is unlocked in mouse mode ("Click to begin" / "Paused").
 - Touch controls (`TouchControls.tsx`, `grove-touch` hollows): buttons are named for what they do now (Gather/Set down, Use/Place, Dig/Chop/Saw/Strike/Turn from the held tool or carried log), plus Craft when a stick or tool is selected (`openCraftingForSelected`, shared with key C). At the bench, tapping a hotbar item picks it up (`draggedItem`) and tapping a glowing point attaches it; touch has no HTML drag and drop.
@@ -211,6 +213,7 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 `CinematicComposer.tsx`: SunShafts → N8AO → Bloom + GroveGrade (merged) → [underwater CA] → SMAA, `multisampling={0}`.
 - `effects/GroveEffects.ts`: `GroveGradeEffect` (exposure, AgX, vitality grade, restore pulse, underwater, vignette, grain) and `SunShaftsEffect` (depth + convolution). Uniforms are written in `useFrame`, **never via props** (prop changes recreate effects and recompile shaders).
 - SunShafts must stay before N8AO (otherwise GL feedback loop).
+- Rendering is capped at 60 fps (`FrameLimiter`, Canvas `frameloop="never"` driven from rAF): 120 Hz ProMotion MacBooks rendered 120 fps and ran hot. Defaults are the Medium preset; settings v1 migrated saved High/Ultra/Custom to Medium once.
 - `AdaptiveResolution.tsx`: dynamic DPR (50/58 FPS hysteresis, min 0.55× of user resolution). Debug: `window.__vcDynamicResolution`.
 - Presets low/medium/high/ultra in `SettingsStore` (`godRays`, `antialias`, `dynamicResolution`, `aoQuality`).
 
