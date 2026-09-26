@@ -24,11 +24,14 @@ beforeAll(() => {
 describe('Surface materials', () => {
   it('keeps subsoil off the exposed surface (no dirt lines where overhang noise fades)', () => {
     // The top solid voxel of a column is DIRT only in dirt-surfaced biomes
-    // (savanna); in grassy chunks the topsoil post-pass restores grass.
+    // (savanna) and the drained ground around dormant Root Hollows; in grassy
+    // chunks the topsoil post-pass restores grass.
     const SX = TOTAL_SIZE_XZ, SY = TOTAL_SIZE_Y;
     let grassTops = 0, dirtTops = 0;
-    for (const c of chunks.values()) {
+    for (const [key, c] of chunks) {
+      const [cx, cz] = key.split(',').map(Number);
       for (let z = 2; z < SX - 2; z++) for (let x = 2; x < SX - 2; x++) {
+        if (BiomeManager.getSacredGroveInfo(cx * CHUNK_SIZE_XZ + x - 2, cz * CHUNK_SIZE_XZ + z - 2).inGrove) continue;
         for (let y = SY - 1; y >= 0; y--) {
           const i = x + y * SX + z * SX * SY;
           if (c.density[i] <= ISO_LEVEL) continue;

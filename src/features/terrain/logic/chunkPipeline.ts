@@ -161,7 +161,9 @@ const generateMaterialMaskTexture = (
     density: Float32Array,
     sizeX: number,
     sizeY: number,
-    pad: number
+    pad: number,
+    cx: number,
+    cz: number
 ): Uint8Array => {
     const tex = new Uint8Array(32 * 32);
     // Grass-friendly materials: GRASS=4, DIRT=3, JUNGLE_GRASS=14, MOSSY_STONE=10
@@ -169,6 +171,8 @@ const generateMaterialMaskTexture = (
 
     for (let z = 0; z < 32; z++) {
         for (let x = 0; x < 32; x++) {
+            // The drained ground around a dormant Root Hollow is bare earth.
+            if (BiomeManager.getSacredGroveInfo(cx * CHUNK_SIZE_XZ + x, cz * CHUNK_SIZE_XZ + z).inGrove) continue;
             const dx = x + pad;
             const dz = z + pad;
 
@@ -457,7 +461,7 @@ export function buildGeneratedChunk(
     // Generate procedural grass textures (GPU-friendly replacement for vegetationData)
     const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
     const grassHeightTex = generateSurfaceHeightTexture(density, sizeX, sizeY, pad);
-    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
+    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad, cx, cz);
     const grassNormalTex = generateNormalTexture(density, sizeX, sizeY, pad);
     const grassBiomeTex = generateBiomeTexture(cx, cz);
     const grassCaveTex = generateCaveMaskTexture(density, sizeX, sizeY, pad);
@@ -512,7 +516,7 @@ export function buildRemeshedChunk(request: RemeshRequest, grownTrees: GrownTree
 
     const pad = 2, sizeX = TOTAL_SIZE_XZ, sizeY = TOTAL_SIZE_Y;
     // The grass material mask follows material edits in both modes.
-    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad);
+    const grassMaterialTex = generateMaterialMaskTexture(material, density, sizeX, sizeY, pad, cx, cz);
     response.grassMaterialTex = grassMaterialTex;
     transfers.push(grassMaterialTex.buffer);
 

@@ -336,9 +336,10 @@ export class TerrainService {
                             if (noise3D(wx * 0.1, wy * 0.1, wz * 0.1) > 0.2) material[idx] = MaterialType.GRASS;
                         } else {
                             // --- Standard Surface & Cavern Materials ---
-                            // Sacred Grove Override: Use barren RED_SAND material
+                            // Sacred Grove Override: drained, dry earth (not orange sand):
+                            // quiet to look at, and as soil it can green again (humidity).
                             const biomeMat = sacredGroveMod.useBarrenMaterial
-                                ? MaterialType.RED_SAND
+                                ? MaterialType.DIRT
                                 : BiomeManager.getSurfaceMaterial(biome);
 
                             const soilNoise = noise3D(wx * 0.1, wy * 0.1, wz * 0.1);
@@ -363,10 +364,9 @@ export class TerrainService {
                                     // Steep slopes and cliffs shed soil (and snow): bare rock.
                                     material[idx] = BiomeManager.getUndergroundMaterials(biome).primary;
                                 } else if (sacredGroveMod.useBarrenMaterial) {
-                                    // Sacred Grove: Barren desert-like surface
-                                    // Deeper layers use terracotta for visual variety
-                                    material[idx] = MaterialType.RED_SAND;
-                                    if (depth > 2.5) { material[idx] = MaterialType.TERRACOTTA; topsoil[idx] = MaterialType.RED_SAND; }
+                                    // Sacred Grove: drained dry earth over stone.
+                                    material[idx] = MaterialType.DIRT;
+                                    if (depth > 2.5) { material[idx] = MaterialType.STONE; topsoil[idx] = MaterialType.DIRT; }
                                 } else if (biome === 'BEACH') {
                                     // Beaches need a thicker sand cap than deserts for smooth meshing:
                                     // material weights are neighborhood-splatted, so a 1-2 voxel cap often

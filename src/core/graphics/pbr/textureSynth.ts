@@ -16,7 +16,7 @@ export const PBR_TEXTURE_SIZE = 512;
  * Bump whenever synthesis output changes: generated layers are cached in
  * IndexedDB under this version (TerrainTextureArrays.ts).
  */
-export const PBR_SYNTH_VERSION = 3;
+export const PBR_SYNTH_VERSION = 4;
 export const PBR_LAYER_COUNT = 16;
 
 /** World size (metres) covered by one repeat of each layer's texture. */
@@ -284,14 +284,14 @@ const PAL = {
   bedrock: hex('#2c2c30'), bedrockAlt: hex('#3b3a3c'),
   stone: hex('#8a8c8a'), stoneAlt: hex('#6f6b64'),
   dirt: hex('#6b4a32'), dirtDark: hex('#3e2a1c'),
-  grassDark: hex('#28501a'), grassLight: hex('#6aa83c'), grassDry: hex('#a39a52'),
+  grassDark: hex('#2a4a1c'), grassLight: hex('#6a9444'), grassDry: hex('#9a9358'),
   sand: hex('#dcc896'), sandShade: hex('#b59f72'),
   snow: hex('#f4f7fb'), snowShade: hex('#c9d6e8'),
   clay: hex('#a8795a'), clayDark: hex('#6e4a35'),
   moss: hex('#4f7030'), mossLight: hex('#7a9a3e'),
   redSand: hex('#c8663e'), redSandShade: hex('#8e4128'),
   ice: hex('#bfe3f7'), iceDeep: hex('#6fa9d4'),
-  jungleDark: hex('#23502a'), jungleLight: hex('#4f9a38'), jungleDry: hex('#7a7832'),
+  jungleDark: hex('#23502a'), jungleLight: hex('#4c8c3a'), jungleDry: hex('#7a7832'),
   obsidian: hex('#0c0a12'), obsidianSheen: hex('#2a2238'),
 } as const;
 
@@ -313,10 +313,11 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
         mulRGB(o, 0.92 + 0.12 * fine);
         let h = 0.4 + 0.2 * clump + 0.05 * fine;
         let r = 0.93;
-        // Irregular pebbles: warped cells of varied size, only some cells occupied.
+        // Irregular pebbles: warped cells of varied size, few cells occupied
+        // (half the cells read as a busy repeated pattern over large areas).
         worley(u + 0.012 * fbm(u, v, 24, 2, s + 4), v + 0.012 * fbm(u, v, 24, 2, s + 5), 14, s + 2, 1);
-        const radius = 0.18 + 0.2 * hash2(Math.floor(W.id * 7919), 3, s);
-        const peb = smooth(radius, radius - 0.07, W.f1) * (W.id > 0.5 ? 1 : 0);
+        const radius = 0.13 + 0.13 * hash2(Math.floor(W.id * 7919), 3, s);
+        const peb = smooth(radius, radius - 0.07, W.f1) * (W.id > 0.84 ? 0.75 : 0);
         if (peb > 0) {
           const tone = hash2(Math.floor(W.id * 7919), 4, s);
           const pc: RGB = tone > 0.7 ? [0.6, 0.57, 0.52] : tone > 0.35 ? [0.45, 0.4, 0.34] : [0.34, 0.3, 0.27];
