@@ -198,8 +198,10 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
     float sky = step(0.99999, readDepth(p));
     vec3 texel = scrub(texture2D(inputBuffer, p).rgb);
     float bright = smoothstep(1.2, 4.0, dot(texel, vec3(0.2126, 0.7152, 0.0722)));
-    float nearSun = exp(-length((p - uSunUv) * vec2(uAspect, 1.0)) * 4.0);
-    acc += max(sky * 0.65, bright) * nearSun * weight;
+    // Source is the sky close to the sun only: a wide source smeared a milky
+    // veil over half the frame instead of rays breaking through trees.
+    float nearSun = exp(-length((p - uSunUv) * vec2(uAspect, 1.0)) * 7.0);
+    acc += max(sky * 0.45, bright) * nearSun * weight;
     weight *= 0.955;
     p += stepv;
   }

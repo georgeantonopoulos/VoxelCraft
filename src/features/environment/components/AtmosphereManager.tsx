@@ -164,7 +164,8 @@ export const SkyDomeRefLink: React.FC<{
         uBottomColor: { value: new THREE.Color('#87CEEB') },
         uExponent: { value: 0.6 },
         uTime: { value: 0 },
-        uNightMix: { value: 0 }
+        uNightMix: { value: 0 },
+        uSunDir: sharedUniforms.uSunDir,
     }), []);
 
     useFrame((state) => {
@@ -203,6 +204,7 @@ export const SkyDomeRefLink: React.FC<{
           uniform float uExponent;
           uniform float uTime;
           uniform float uNightMix;
+          uniform vec3 uSunDir;
           varying vec3 vWorldPosition;
 
           float hash(vec3 p) {
@@ -272,6 +274,25 @@ export const SkyDomeRefLink: React.FC<{
               float nebMask = smoothstep(0.4, 0.8, cloud * cloud2);
               vec3 nebColor = mix(vec3(0.02, 0.0, 0.05), vec3(0.05, 0.02, 0.08), cloud);
               finalColor += nebColor * nebMask * uNightMix * 1.2;
+            }
+
+            // Soft high clouds on a sky plane: slow drift, thin coverage,
+            // sun-lit with a silver edge near the sun, dim at night.
+            if (h > 0.0) {
+              vec2 cuv = skyDir.xz / (h + 0.12) * 0.55 + vec2(uTime * 0.004, uTime * 0.0015);
+              float shape = fbm(vec3(cuv * 1.3, 0.0));
+              float detail = fbm(vec3(cuv * 4.2 + 3.1, uTime * 0.01));
+              float density = smoothstep(0.5, 0.78, shape * 0.8 + detail * 0.35);
+              float cloudA = density * smoothstep(0.0, 0.28, h) * 0.85;
+              vec3 sunD = normalize(uSunDir);
+              float sunUp = clamp(sunD.y * 3.0 + 0.3, 0.0, 1.0);
+              float toSun = max(dot(skyDir, sunD), 0.0);
+              vec3 lit = mix(uBottomColor * 1.06, vec3(1.0, 0.98, 0.95), 0.55 * sunUp);
+              vec3 shade = mix(uTopColor, uBottomColor, 0.5) * 0.82;
+              vec3 cloudCol = mix(lit, shade, smoothstep(0.35, 1.0, density) * 0.55);
+              cloudCol += vec3(1.0, 0.92, 0.8) * pow(toSun, 10.0) * (1.0 - density) * 0.6 * sunUp;
+              cloudCol = mix(cloudCol, uTopColor * 1.6 + vec3(0.01, 0.012, 0.02), uNightMix);
+              finalColor = mix(finalColor, cloudCol, cloudA);
             }
             gl_FragColor = vec4(finalColor, 1.0);
           }
@@ -516,8 +537,8 @@ export const SunFollower: React.FC<{
               coreMid = pow(coreMid, 2.0);
               float core = coreInner * 1.2 + coreMid * 0.4;
               // Soft, wide glow only: no starburst spikes (they read as a cartoon sun).
-              float halo = exp(-dist * 12.0) * 0.28;
-              halo += exp(-dist * 5.0) * 0.16;
+              float halo = exp(-dist * 12.0) * 0.26;
+              halo += exp(-dist * 7.5) * 0.08;
               float finalGlow = core + halo;
               vec3 coreCol = vec3(1.0, 1.0, 0.95);
               vec3 scatteringCol = uColor;

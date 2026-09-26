@@ -200,7 +200,7 @@ export const DebugControls: React.FC<{
                 'Bloom': folder({
                     bloomEnabled: { value: true, onChange: (v) => props.setBloomEnabled(!!v), label: 'Enabled' },
                     bloomIntensity: { value: 0.6, min: 0.0, max: 2.0, step: 0.01, onChange: props.setBloomIntensity, label: 'Intensity' },
-                    bloomThreshold: { value: 0.4, min: 0.0, max: 1.5, step: 0.01, onChange: props.setBloomThreshold, label: 'Threshold' },
+                    bloomThreshold: { value: 0.95, min: 0.0, max: 1.5, step: 0.01, onChange: props.setBloomThreshold, label: 'Threshold' },
                 }, { collapsed: true }),
                 'Exposure': folder({
                     exposureSurface: { value: 1.0, min: 0.2, max: 2.0, step: 0.01, onChange: props.setExposureSurface, label: 'Surface' },

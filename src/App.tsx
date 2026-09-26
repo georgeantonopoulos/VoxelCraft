@@ -276,7 +276,9 @@ const App: React.FC = () => {
   const [exposureCaveMax, setExposureCaveMax] = useState(1.5);
   const [exposureUnderwater, setExposureUnderwater] = useState(0.9);
   const [bloomIntensity, setBloomIntensity] = useState(0.6);
-  const [bloomThreshold, setBloomThreshold] = useState(0.4);
+  // 0.95: only real highlights bloom (sun, Lumina, fire). At 0.4 the whole
+  // daylight sky bloomed into a milky veil over the scene.
+  const [bloomThreshold, setBloomThreshold] = useState(0.95);
 
   const [heightFogEnabled, setHeightFogEnabled] = useState(true);
   const [heightFogStrength, setHeightFogStrength] = useState(0.16);
