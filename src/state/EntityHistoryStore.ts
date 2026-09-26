@@ -15,6 +15,8 @@ interface EntityHistoryState {
     targetEntityId: string | null;
     damageEntity: (id: string, damage: number, maxHealth: number, label: string) => number; // returns new health
     setTargetEntity: (id: string | null) => void;
+    /** Show a filling bar (progress, not damage), e.g. kindling a fire. */
+    setProgress: (id: string, value: number, max: number, label: string) => void;
     clearDeadEntities: () => void;
     reset: () => void;
 }
@@ -42,6 +44,11 @@ export const useEntityHistoryStore = create<EntityHistoryState>((set, get) => ({
     },
 
     setTargetEntity: (id) => set({ targetEntityId: id }),
+
+    setProgress: (id, value, max, label) => {
+        const entities = { ...get().entities, [id]: { id, maxHealth: max, health: Math.max(0, Math.min(max, value)), lastHitTime: Date.now(), label } };
+        set({ entities, targetEntityId: id });
+    },
 
     reset: () => set({ entities: {}, targetEntityId: null }),
 

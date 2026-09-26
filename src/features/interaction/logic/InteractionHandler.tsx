@@ -11,6 +11,8 @@ import { useSettingsStore } from '@state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
+import { emitImpact } from '../components/ImpactFX';
+import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 
 /** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
 const THROW_SPAWN_CLEARANCE = 0.8;
@@ -189,9 +191,24 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
                 // FIX: Only proceed with fire logic if there are enough sticks nearby
                 // If not enough sticks, fall through to normal SMASH behavior
+                const kindlingId = `kindling-${targetItem.id}`;
+                if (nearbySticks.length > 0 && nearbySticks.length < 4) {
+                  // Teach the recipe: sticks are near but not enough to catch.
+                  const need = 4 - nearbySticks.length;
+                  useEntityHistoryStore.getState().setProgress(kindlingId, 0, 10, `Kindling: ${need} more stick${need === 1 ? '' : 's'} around the stone`);
+                }
                 if (nearbySticks.length >= 4) {
                   // Only emit spark for fire-starting (knapping sparks are in useTerrainInteraction)
                   emitSpark(hitPoint);
+                  // Heat builds: the bar fills and the kindling smokes more with every strike.
+                  const heatNow = Math.min(10, (targetItem.heat || 0) + 1);
+                  useEntityHistoryStore.getState().setProgress(kindlingId, heatNow, 10, 'Kindling');
+                  emitImpact({
+                    position: new THREE.Vector3(livePosition.x, livePosition.y + 0.15, livePosition.z),
+                    direction: new THREE.Vector3(0, 1, 0),
+                    kind: 'sand', color: '#8c877e', strength: 0.4 + heatNow * 0.12,
+                    floorY: livePosition.y - 0.1,
+                  });
                   if (!targetItem.isAnchored) {
                     usePhysicsItemStore.getState().updateItem(targetItem.id, { isAnchored: true });
                   }
@@ -199,6 +216,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
                   if (currentHeat >= 10) {
                     // Use bulk removal to avoid 5+ separate React reconciliation cycles
                     // This prevents the 3-second freeze when fire starts
+                    useEntityHistoryStore.getState().setTargetEntity(null);
                     const idsToRemove = nearbySticks.slice(0, 4).map(s => s.id);
                     idsToRemove.push(targetItem.id); // Also remove the rock
                     usePhysicsItemStore.getState().bulkRemoveItems(idsToRemove);
