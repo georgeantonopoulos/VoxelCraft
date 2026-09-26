@@ -5,7 +5,7 @@ import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useWorldStore } from '@state/WorldStore';
 import { ItemType } from '@/types';
-import { FractalTree } from '@features/flora/components/FractalTree';
+import { LuminaTree } from '@features/flora/components/LuminaTree';
 import { LumaSwarm } from '@features/flora/components/LumaSwarm';
 import { HollowFireflies } from '@features/flora/components/HollowFireflies';
 import { useGroveStore } from '@state/GroveStore';
@@ -22,7 +22,6 @@ const STUMP_CONFIG = {
 
 // Stable props for FractalTree: fresh objects each render invalidated its
 // physics memo (keyed on userData) on every RootHollow re-render.
-const TREE_LOCAL_POSITION = new THREE.Vector3(0, 0, 0);
 const FLORA_TREE_USER_DATA = { type: 'flora_tree' } as const;
 
 interface RootHollowProps {
@@ -218,11 +217,6 @@ export const RootHollow: React.FC<RootHollowProps> = ({
         [px, py, pz]
     );
 
-    const treeWorldPosition = useMemo(() => {
-        // Tree grows from ground level (y=0 in local space of the stump group)
-        // The stump group is already embedded, so y=0 is at terrain surface
-        return new THREE.Vector3(0, 0, 0).applyQuaternion(quaternion).add(groupPosition);
-    }, [quaternion, groupPosition]);
 
     return (
         <group position={groupPosition} quaternion={quaternion}>
@@ -268,17 +262,11 @@ export const RootHollow: React.FC<RootHollowProps> = ({
                 </group>
             )}
 
-            {(status === 'CHARGING' || status === 'GROWING') && (
-                <FractalTree
+            {status === 'GROWING' && (
+                <LuminaTree
                     seed={Math.abs(px * 31 + pz * 17)}
-                    position={TREE_LOCAL_POSITION}
-                    baseRadius={stumpRadius * 0.7}
+                    grown={restoredOnMountRef.current}
                     userData={FLORA_TREE_USER_DATA}
-                    orientation={quaternion}
-                    worldPosition={treeWorldPosition}
-                    worldQuaternion={quaternion}
-                    active={status === 'GROWING'}
-                    visible={status === 'GROWING'}
                 />
             )}
         </group>

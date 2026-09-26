@@ -46,6 +46,22 @@ describe('Keeper quest line', () => {
     expect(s.questIndex).toBe(2);
   });
 
+  it('completes an absolute milestone reached before its quest was active', () => {
+    let s = initialProgression();
+    const seek = QUEST_LINE.findIndex((q) => q.id === 'seek-the-hollow');
+    // Find a hollow early, then work through the chain up to the seek quest.
+    s = applyStat(s, 'hollowsFound', 1).state;
+    for (let i = 0; i < seek; i++) {
+      const q = questAt(s.questIndex);
+      s = applyStat(s, q.stat, q.goal).state;
+    }
+    // The seek quest completed on arrival; the chain moved on to Rekindle.
+    expect(questAt(s.questIndex).id).toBe('rekindle');
+    expect(questProgress(s).value).toBe(0);
+    s = applyStat(s, 'hollowsRestored', 1).state;
+    expect(questAt(s.questIndex).id).toBe('old-wood');
+  });
+
   it('ignores non-positive increments', () => {
     const s = initialProgression();
     expect(applyStat(s, 'sticksGathered', 0).state).toBe(s);

@@ -81,6 +81,9 @@ export const GroveDirector: React.FC<{ seed: number; sunDirection: THREE.Vector3
       case 'hollow-found': grove.markHollowFound(event.hollowId); break;
       case 'hollow-awakened': grove.markHollowFound(event.hollowId); break;
       case 'hollow-restored':
+        if (!grove.restoredHollows[event.hollowId]) {
+          grove.announce({ kind: 'discovery', title: 'A hollow wakes', detail: 'Its tree remembers the light' });
+        }
         grove.markHollowRestored(event.hollowId);
         window.dispatchEvent(new CustomEvent('vc-music-cue', { detail: { kind: 'hollow-restored' } }));
         break;

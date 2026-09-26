@@ -44,6 +44,26 @@ const DEBUG_LUMA_SIMPLE_MATERIAL = false; // Renders all instances at origin (no
 let cachedParticleData: { targets: Float32Array; randoms: Float32Array; count: number } | null = null;
 let cachedParticleKey: string | null = null;
 
+let coreGlowMaterial: THREE.SpriteMaterial | null = null;
+/** Radial Lumina glow for the swarm core (shared, additive). */
+const getCoreGlowMaterial = (): THREE.SpriteMaterial => {
+    if (coreGlowMaterial) return coreGlowMaterial;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d')!;
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.12, 'rgba(190,250,240,0.95)');
+    grad.addColorStop(0.35, 'rgba(98,230,216,0.45)');
+    grad.addColorStop(1, 'rgba(98,230,216,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    coreGlowMaterial = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false });
+    return coreGlowMaterial;
+};
+
 export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null);
     const materialRef = useRef<any>(null);
@@ -248,7 +268,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
         uTime: { value: 0 },
         uProgress: { value: 0 }, // 0=Start, 1=Formed
         uDissipate: { value: 0 }, // 0=Solid, 1=Gone
-        uColor: { value: new THREE.Color('#4deeea') } // Luma Cyan
+        uColor: { value: new THREE.Color('#62e6d8') } // Lumina teal
     }), []);
 
     if (!particleData) {
@@ -272,16 +292,10 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
 
             {/* The Core Luma (Visual Clone) */}
             <group ref={coreRef}>
-                <PooledPointLight ref={coreLightRef} color="#4deeea" distance={10} decay={2} intensity={2} />
-                <mesh>
-                    <sphereGeometry args={[0.25, 32, 32]} />
-                    <meshStandardMaterial
-                        emissive="#4deeea"
-                        emissiveIntensity={2.0}
-                        toneMapped={false}
-                        color="#222"
-                    />
-                </mesh>
+                <PooledPointLight ref={coreLightRef} color="#62e6d8" distance={10} decay={2} intensity={2} />
+                {/* A soft glow, not a solid ball (an opaque emissive sphere read as a flat disc). */}
+                <sprite scale={[1.6, 1.6, 1.6]} material={getCoreGlowMaterial()} />
+                <sprite scale={[0.45, 0.45, 0.45]} material={getCoreGlowMaterial()} />
             </group>
 
             {/* The Particle Swarm */}
@@ -308,7 +322,7 @@ export const LumaSwarm: React.FC<LumaSwarmProps> = ({ dissipating }) => {
                         depthWrite={false} // Don't write to depth buffer for transparency
                         uniforms={uniforms}
                         toneMapped={false}
-                        emissive="#4deeea"
+                        emissive="#62e6d8"
                         emissiveIntensity={2.0}
                         vertexShader={`
                         attribute vec3 aTargetPos;

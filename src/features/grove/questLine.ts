@@ -48,6 +48,12 @@ export interface QuestDef {
   stat: GroveStatKey;
   /** Target value of `stat` measured from when the quest became active. */
   goal: number;
+  /**
+   * Measure `goal` against the stat's total instead of from activation.
+   * For milestones the player may already have reached (a hollow found on
+   * the way, biomes crossed early): a relative goal would never complete.
+   */
+  absolute?: boolean;
   essence: number;
 }
 
@@ -100,6 +106,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     hint: 'Follow the Lumina Sense compass to a Root Hollow.',
     stat: 'hollowsFound',
     goal: 1,
+    absolute: true,
     essence: 25,
   },
   {
@@ -109,6 +116,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     hint: 'Select Lumina flora and place it beside the Root Hollow (right click).',
     stat: 'hollowsRestored',
     goal: 1,
+    absolute: true,
     essence: 60,
   },
   {
@@ -136,6 +144,7 @@ export const QUEST_LINE: readonly QuestDef[] = [
     hint: 'Discover 4 different biomes.',
     stat: 'biomesDiscovered',
     goal: 4,
+    absolute: true,
     essence: 40,
   },
   {
@@ -153,7 +162,8 @@ export const QUEST_LINE: readonly QuestDef[] = [
     lore: 'Three hearts beating as one network.',
     hint: 'Restore 3 Root Hollows in total.',
     stat: 'hollowsRestored',
-    goal: 2,
+    goal: 3,
+    absolute: true,
     essence: 150,
   },
 ];
@@ -250,7 +260,7 @@ export interface ProgressionResult {
 
 export const questProgress = (state: ProgressionState): { value: number; goal: number } => {
   const quest = questAt(state.questIndex);
-  const value = Math.max(0, state.stats[quest.stat] - state.questBaseline);
+  const value = Math.max(0, state.stats[quest.stat] - (quest.absolute ? 0 : state.questBaseline));
   return { value: Math.min(value, quest.goal), goal: quest.goal };
 };
 
@@ -271,10 +281,13 @@ export const applyStat = (
   let questIndex = prev.questIndex;
   let questBaseline = prev.questBaseline;
 
-  // Chain completions: a quest can only complete once per call, but the next
-  // quest starts with a fresh baseline so it never completes instantly.
-  const quest = questAt(questIndex);
-  if (stats[quest.stat] - questBaseline >= quest.goal) {
+  // Chain completions. A relative quest starts from a fresh baseline so it
+  // never completes instantly; an absolute one already reached completes
+  // straight away (e.g. the hollow was found before the quest asked for it).
+  for (let guard = 0; guard < QUEST_LINE.length; guard++) {
+    const quest = questAt(questIndex);
+    const base = quest.absolute ? 0 : questBaseline;
+    if (stats[quest.stat] - base < quest.goal) break;
     essence += quest.essence;
     notices.push({ kind: 'quest-complete', title: quest.title, essence: quest.essence });
     questIndex += 1;
