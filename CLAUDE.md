@@ -192,7 +192,7 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 - Shared ornaments: `src/ui/grove/GroveOrnaments.tsx` (VineRule, RealmGlyph, FireflyField, GroveLogo). GroveLogo blends the key art with `mix-blend-mode: screen` on the `<img>` itself: a mask or animated opacity on a wrapper isolates it and the blend stops working.
 - Quiet HUD: `HudPresenceStore` + `HudPresenceDirector`. Quest tracker, vitality, controls fade out after calm spells; compass rests at 50%, hotbar at 28%. Woken by progress, pickups, item switches, Tab (hold), pause. Touch mode holds it awake.
 - `PauseVeil`: shown whenever the pointer is unlocked in mouse mode ("Click to begin" / "Paused").
-- Title screen offers Continue for the last world (`src/state/lastWorld.ts`; progress is per seed).
+- Title screen lists saved worlds (`src/state/savedWorlds.ts`, localStorage `vc-worlds-v1`): Continue for the most recent, the others below, each named from its seed (`worldNameFor`). Letting a world go erases its IndexedDB rows (`<seed>:<type>:` prefix) and its per-seed Grove progress and builds unless another listed world shares the seed.
 - Surface stones are placed as composed groups (tide-line stones, a boulder with stones at its foot), not an even scatter.
 - Sun path is tilted (`ORBIT_TILT` in celestial.ts, noon ~56°) and the sky fill is ~1/6 of the sun, so light always has a direction. Fog: clear to ~30 m, soft distance (exp2 density 2.2/range).
 - Haze budget: bloom threshold 0.95 (only sun/Lumina/fire bloom; 0.4 bloomed the whole sky into a veil), sun shafts sample only sky near the sun, small sun disc without starburst, soft cloud layer in the sky dome.

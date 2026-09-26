@@ -48,7 +48,7 @@ import { SceneWarmup } from '@features/environment/components/SceneWarmup';
 import { KeeperLight } from '@features/environment/components/KeeperLight';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
-import { writeLastWorld } from '@state/lastWorld';
+import { recordWorldEntered } from '@state/savedWorlds';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 
@@ -474,7 +474,7 @@ const App: React.FC = () => {
 
       {!worldType ? (
         <WorldSelectionScreen onSelect={(type, seed) => {
-          writeLastWorld(type, seed);
+          recordWorldEntered(type, seed);
           setWorldSeed(seed);
           setWorldType(type);
         }} />

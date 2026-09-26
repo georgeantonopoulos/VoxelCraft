@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { audioManager } from '@core/audio/AudioManager';
 import { WorldType } from '@features/terrain/logic/BiomeManager';
 import { WorldSeed } from '@core/WorldSeed';
-import { readLastWorld } from '@state/lastWorld';
+import { forgetWorld, listWorlds, playedAgo, worldNameFor, type SavedWorld } from '@state/savedWorlds';
 import { peekGroveProgress } from '@state/GroveStore';
 import { RANKS, rankIndexFor } from '@features/grove/questLine';
 import logo from '@assets/images/thegrove_logo.jpg';
@@ -35,15 +35,36 @@ const REALMS: RealmOption[] = [
 
 const realmName = (type: WorldType) => REALMS.find((r) => r.type === type)?.name ?? 'Unknown land';
 
+const worldSummary = (w: SavedWorld): string => {
+  const parts = [realmName(w.type)];
+  const progress = peekGroveProgress(w.seed);
+  if (progress) {
+    parts.push(RANKS[rankIndexFor(progress.essence)].title);
+    if (progress.hollowsRestored > 0) {
+      parts.push(`${progress.hollowsRestored} hollow${progress.hollowsRestored === 1 ? '' : 's'} restored`);
+    }
+  }
+  return parts.join(' · ');
+};
+
 /**
- * Title screen: the key art over a night backdrop, Continue for the last world
- * (terrain edits and Keeper progress are saved per seed), or a new world.
+ * Title screen: the key art over a night backdrop, Continue for the last world,
+ * the other saved worlds (terrain edits, Keeper progress and builds are saved
+ * per world), or a new world.
  */
 export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSelect }) => {
-  const lastWorld = useMemo(() => readLastWorld(), []);
-  const lastProgress = useMemo(() => (lastWorld ? peekGroveProgress(lastWorld.seed) : null), [lastWorld]);
+  const [worlds, setWorlds] = useState<SavedWorld[]>(() => listWorlds());
+  const lastWorld = worlds[0] ?? null;
+  const others = worlds.slice(1);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const letGo = useCallback((w: SavedWorld) => {
+    void forgetWorld(w.type, w.seed);
+    setWorlds((list) => list.filter((x) => !(x.type === w.type && x.seed === w.seed)));
+    setConfirming(null);
+  }, []);
 
   const [choosing, setChoosing] = useState(!lastWorld);
+  useEffect(() => { if (!lastWorld) setChoosing(true); }, [lastWorld]);
   const [selected, setSelected] = useState<WorldType>(WorldType.DEFAULT);
   const [hovered, setHovered] = useState<WorldType | null>(null);
   const [seedInput, setSeedInput] = useState<string>(() => String(WorldSeed.fromURLOrRandom()));
@@ -66,17 +87,8 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
 
   const reroll = useCallback(() => setSeedInput(String(WorldSeed.generateRandom())), []);
 
-  const continueLabel = useMemo(() => {
-    if (!lastWorld) return '';
-    const parts = [realmName(lastWorld.type)];
-    if (lastProgress) {
-      parts.push(RANKS[rankIndexFor(lastProgress.essence)].title);
-      if (lastProgress.hollowsRestored > 0) {
-        parts.push(`${lastProgress.hollowsRestored} hollow${lastProgress.hollowsRestored === 1 ? '' : 's'} restored`);
-      }
-    }
-    return parts.join(' · ');
-  }, [lastWorld, lastProgress]);
+  const continueLabel = useMemo(() => (lastWorld ? worldSummary(lastWorld) : ''), [lastWorld]);
+  const existing = worlds.find((w) => w.type === selected && w.seed === parsedSeed);
 
   return (
     <div className="absolute inset-0 z-50 overflow-y-auto overflow-x-hidden bg-night text-parchment select-none">
@@ -113,10 +125,58 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
             >
               Continue
             </button>
-            <div className="-mt-1 text-center text-[13px] tracking-wide text-lichen/80">
-              {continueLabel}
-              <span className="text-lichen/55"> · seed <span className="grove-num">{lastWorld.seed}</span></span>
+            <div className="-mt-1 text-center">
+              <div className="font-display text-[19px] italic text-parchment/85">{lastWorld.name}</div>
+              <div className="text-[13px] tracking-wide text-lichen/80">
+                {continueLabel}
+                <span className="text-lichen/55"> · {playedAgo(lastWorld.lastPlayed)}</span>
+              </div>
             </div>
+
+            {others.length > 0 && (
+              <div className="mt-3 flex w-[min(460px,90vw)] flex-col items-stretch">
+                <div className="grove-eyebrow mb-2 text-center">Other worlds</div>
+                <div className="grove-scroll flex max-h-[228px] flex-col overflow-y-auto">
+                  {others.map((w) => {
+                    const id = `${w.type}:${w.seed}`;
+                    const asking = confirming === id;
+                    return (
+                      <div key={id} className="group flex items-center gap-3 border-t border-lichen/10 py-2 first:border-t-0">
+                        {asking ? (
+                          <>
+                            <span className="flex-1 text-[13.5px] text-parchment/80">
+                              Let <span className="font-display text-[16px] italic">{w.name}</span> go? Its hollows and builds are lost.
+                            </span>
+                            <button className="grove-button-quiet px-3 py-1 text-[12.5px]" onClick={() => letGo(w)}>Let go</button>
+                            <button className="grove-button-quiet px-3 py-1 text-[12.5px]" onClick={() => setConfirming(null)}>Keep</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="flex flex-1 flex-col items-start rounded px-1 text-left" onClick={() => enter(w.type, w.seed)}>
+                              <span className="font-display text-[18px] leading-tight text-parchment/85 transition-colors group-hover:text-parchment">{w.name}</span>
+                              <span className="text-[12.5px] tracking-wide text-lichen/60">
+                                {worldSummary(w)} · {playedAgo(w.lastPlayed)}
+                              </span>
+                            </button>
+                            <button
+                              className="rounded-full p-1.5 text-lichen/30 opacity-0 transition-opacity hover:text-parchment focus:opacity-100 group-hover:opacity-100"
+                              onClick={() => setConfirming(id)}
+                              title="Let this world go"
+                              aria-label={`Let ${w.name} go`}
+                            >
+                              <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                                <path d="M5.5 5.5 L14.5 14.5 M14.5 5.5 L5.5 14.5" />
+                              </svg>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <button className="grove-button-quiet mt-2 px-6 py-1.5 text-[13px]" onClick={() => setChoosing(true)}>
               Begin a new world
             </button>
@@ -184,9 +244,14 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
                 </button>
               )}
               <button className="grove-button px-14 py-3.5 text-[20px]" onClick={() => enter(selected, parsedSeed)}>
-                Begin
+                {existing ? 'Continue' : 'Begin'}
               </button>
             </div>
+            <p className="mt-3 h-5 text-center text-[12.5px] tracking-wide text-lichen/55">
+              {existing
+                ? <>You have walked this land before: <span className="font-display text-[15px] italic text-parchment/70">{existing.name}</span></>
+                : <>It will be called <span className="font-display text-[15px] italic text-parchment/70">{worldNameFor(parsedSeed)}</span></>}
+            </p>
           </div>
         )}
       </div>
