@@ -462,7 +462,8 @@ export function useTerrainInteraction(
             if (h <= 0) {
               useEntityHistoryStore.getState().setTargetEntity(null);
               // Two boards lying flat along the log's line, side by side.
-              const body = logBodies.get(log.id);
+              const live = logBodies.get(log.id);
+              const body = live && live.isValid() ? live : undefined;
               const t = body ? body.translation() : { x: log.position[0], y: log.position[1], z: log.position[2] };
               const r = body ? body.rotation() : { x: log.rotation[0], y: log.rotation[1], z: log.rotation[2], w: log.rotation[3] };
               const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w));

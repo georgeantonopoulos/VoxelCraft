@@ -487,7 +487,7 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     const onSawn = (e: Event) => {
       const id = (e as CustomEvent<{ id: string }>).detail?.id;
       const entry = id ? fallenTreeBodies.get(id) : undefined;
-      if (!id || !entry) return;
+      if (!id || !entry || !entry.body.isValid()) return; // never touch a removed body (Rapier panics)
       const t = entry.body.translation();
       const r = entry.body.rotation();
       const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);

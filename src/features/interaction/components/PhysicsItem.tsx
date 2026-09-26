@@ -58,10 +58,12 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
   const lastVel = useRef(new THREE.Vector3());
 
-  // Register the body so the world save can record where the item came to rest.
+  // Register a getter so the world save can record where the item came to
+  // rest: it reads the currently mounted body (planting remounts it).
   useEffect(() => {
-    if (rigidBody.current) physicsItemBodies.set(item.id, rigidBody.current);
-    return () => { physicsItemBodies.delete(item.id); };
+    const get = () => rigidBody.current;
+    physicsItemBodies.set(item.id, get);
+    return () => { if (physicsItemBodies.get(item.id) === get) physicsItemBodies.delete(item.id); };
   }, [item.id]);
 
   // Lifecycle guard (throttled): items used to live forever. Far from the player

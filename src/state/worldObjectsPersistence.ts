@@ -18,11 +18,13 @@ interface SavedWorldObjects { items: ActivePhysicsItem[]; entities: SavedEntity[
 export const worldObjectsKey = (type: string, seed: number) => `${PREFIX}${seed}:${type}`;
 
 const livePosition = (item: ActivePhysicsItem): [number, number, number] => {
-  const body = physicsItemBodies.get(item.id);
-  try {
-    if (body) { const t = body.translation(); return [t.x, t.y, t.z]; }
-  } catch { /* body already removed from the physics world */ }
-  return item.position;
+  // Planted/anchored items are fixed at their stored position: no need to ask physics.
+  if (item.isPlanted || item.isAnchored) return item.position;
+  const body = physicsItemBodies.get(item.id)?.();
+  // Never touch a body that is not in the world (a Rapier panic poisons the whole world).
+  if (!body || !body.isValid?.()) return item.position;
+  const t = body.translation();
+  return [t.x, t.y, t.z];
 };
 
 const snapshot = (): SavedWorldObjects => {
@@ -37,10 +39,11 @@ const snapshot = (): SavedWorldObjects => {
     } else if (e.type === ItemType.FLORA) {
       // Planted flora is a physics body: save where it settled.
       let p: [number, number, number] = [e.position.x, e.position.y, e.position.z];
-      try {
-        const t = e.bodyRef?.current?.translation?.();
-        if (t) p = [t.x, t.y, t.z];
-      } catch { /* body gone */ }
+      const body = e.bodyRef?.current;
+      if (body && typeof body.isValid === 'function' && body.isValid()) {
+        const t = body.translation();
+        p = [t.x, t.y, t.z];
+      }
       entities.push({ id: e.id, type: ItemType.FLORA, p });
     }
   }

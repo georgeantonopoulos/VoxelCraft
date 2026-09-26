@@ -178,7 +178,7 @@ export const LogsLayer: React.FC = () => {
         }
         if (l.state === 'loose') {
           const body = logBodies.get(l.id);
-          if (body) {
+          if (body && body.isValid()) {
             const t = body.translation(), r = body.rotation();
             return { ...l, position: [t.x, t.y, t.z], rotation: [r.x, r.y, r.z, r.w] };
           }
