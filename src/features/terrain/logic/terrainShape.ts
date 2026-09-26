@@ -56,8 +56,23 @@ const TERRACE_STEP = 4.5;
 /** River noise frequency (1/m): meander wavelength ~ 600 m. */
 const RIVER_FREQ = 0.0016;
 /** |noise| below this is river valley. Wider band = wider valleys. */
-const RIVER_WIDTH = 0.075;
+export const RIVER_WIDTH = 0.075;
 const RIVER_BED = WATER_LEVEL - 2.5;
+
+/** Signed river noise from the column's domain-warp offset (the channel is |n| ~ 0). */
+const riverNoise = (wx: number, wz: number, qx: number, qz: number): number =>
+  noise3D(wx * RIVER_FREQ + qx * 0.0015, 7.7, wz * RIVER_FREQ + qz * 0.0015);
+
+/**
+ * Signed river noise at a column (warp = the column's warp from columnInfo).
+ * The channel runs along n = 0, so the direction along a river is the
+ * perpendicular of this field's gradient (continuous along each river).
+ */
+export function riverSignedAt(wx: number, wz: number, warp: number): number {
+  const qx = noise3D(wx * 0.008, 0, wz * 0.008) * warp;
+  const qz = noise3D(wx * 0.008 + 5.2, 0, wz * 0.008 + 1.3) * warp;
+  return riverNoise(wx, wz, qx, qz);
+}
 
 /** Unclamped surface height for a column. */
 export function shapeColumnHeight(wx: number, wz: number, p: ColumnShapeInput): number {
@@ -116,7 +131,7 @@ export function shapeColumnHeight(wx: number, wz: number, p: ColumnShapeInput): 
   // 4. River valleys: the channel always reaches below sea level (the water
   // post-pass fills it), so rivers run wet all the way to the coast. In
   // mountains the valley narrows into a gorge instead of a broad trench.
-  const rv = Math.abs(noise3D(wx * RIVER_FREQ + qx * 0.0015, 7.7, wz * RIVER_FREQ + qz * 0.0015));
+  const rv = Math.abs(riverNoise(wx, wz, qx, qz));
   const width = RIVER_WIDTH * (1 - 0.2 * m);
   if (rv < width && h > RIVER_BED) {
     const x = rv / width; // 0 at the channel centre, 1 at the valley rim

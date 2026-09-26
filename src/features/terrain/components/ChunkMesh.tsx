@@ -296,7 +296,7 @@ export const ChunkMesh: React.FC<ChunkMeshProps> = React.memo(({
           renderOrder={1}
         >
           {/* Seabed heights give the shader true water depth (shoreline, colour, foam). */}
-          <WaterMaterial seabedHeights={chunk.grassHeightTex} />
+          <WaterMaterial seabedHeights={chunk.grassHeightTex} cx={chunk.cx} cz={chunk.cz} />
         </mesh>
       )}
 

@@ -5,6 +5,7 @@ import { getNoiseTexture } from '@core/memory/sharedResources';
 import { CHUNK_SIZE_XZ, WATER_LEVEL } from '@/constants';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { MAX_WATER_RIPPLES, waterRippleUniform } from '@core/graphics/waterRipples';
+import { computeRiverFlow, FLOW_GRID, FLOW_STEP } from '@features/terrain/logic/waterFlow';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 
 /**
@@ -66,6 +67,8 @@ const WATER_FRAGMENT = /* glsl */ `
   uniform float uOvercast;
   uniform float uRain;
   uniform vec4 uRipples[${MAX_WATER_RIPPLES}];
+  uniform sampler2D uFlow; // rg: river direction (0..1 encoded), b: strength
+  uniform float uHasFlow;
   uniform int uDebugMode;
 
   varying vec3 vWorldPos;
@@ -118,6 +121,30 @@ const WATER_FRAGMENT = /* glsl */ `
       g += d / max(r, 1e-4) * ring;
     }
     return g * 0.35;
+  }
+
+  // River current: ripples stretched along the flow and carried downstream.
+  // Two copies half a cycle apart, each advected for one period then reset
+  // while the other takes over, so the drift never visibly jumps back.
+  // Returns slope in xy, and drifting foam flecks in z.
+  vec3 currentSlope(vec2 p, vec2 dir, float t) {
+    const float PERIOD = 3.2;
+    const float SPEED = 0.8;
+    vec2 perp = vec2(-dir.y, dir.x);
+    vec2 q = vec2(dot(p, dir), dot(p, perp));
+    vec3 acc = vec3(0.0);
+    for (int k = 0; k < 2; k++) {
+      float ph = fract(t / PERIOD + float(k) * 0.5);
+      float w = 1.0 - abs(2.0 * ph - 1.0);
+      vec2 qq = q - vec2(SPEED * PERIOD * ph, 0.0) + float(k) * vec2(3.7, 1.9);
+      // Long along the flow, tight across it: streaks.
+      vec3 uvw = vec3(qq.x * 0.28, 0.61 + float(k) * 0.23, qq.y * 0.95);
+      vec2 sl = vec2(texture(uNoiseTexture, uvw).r, texture(uNoiseTexture, uvw * 2.1 + 0.4).g) - 0.5;
+      float fleck = smoothstep(0.66, 0.74, texture(uNoiseTexture, vec3(qq.x * 0.9, 0.17 + float(k) * 0.31, qq.y * 1.6)).b);
+      acc += vec3(sl, fleck) * w;
+    }
+    vec2 slope = dir * acc.x * 0.5 + perp * acc.y;
+    return vec3(slope, acc.z);
   }
 
   // Rings from things touching the water: x, z, start time, strength.
@@ -179,6 +206,20 @@ const WATER_FRAGMENT = /* glsl */ `
     vec2 slope = waveSlope(vWorldPos, uTime, fine);
     if (uRain > 0.01) slope += rainSlope(vWorldPos.xz, uTime) * uRain * fine;
     slope += touchSlope(vWorldPos.xz, uTime);
+    // River current (none in the open sea or deep water).
+    float current = 0.0;
+    float flecks = 0.0;
+    if (uHasFlow > 0.5) {
+      vec3 fl = texture2D(uFlow, (vLocal / ${FLOW_STEP.toFixed(1)} + 0.5) / ${FLOW_GRID.toFixed(1)}).rgb;
+      vec2 fdir = fl.rg * 2.0 - 1.0;
+      float flen = length(fdir);
+      current = fl.b * smoothstep(0.2, 0.6, flen) * (1.0 - smoothstep(3.5, 6.0, depth));
+      if (current > 0.01) {
+        vec3 cs = currentSlope(vWorldPos.xz, fdir / flen, uTime);
+        slope = mix(slope, slope * 0.5 + cs.xy * 0.55, current);
+        flecks = cs.z * current;
+      }
+    }
     // Calm the surface in the shallows (short fetch, less chop).
     slope *= smoothstep(0.0, 2.0, depth) * 0.7 + 0.3;
     vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
@@ -224,6 +265,8 @@ const WATER_FRAGMENT = /* glsl */ `
     float foamBand = 1.0 - smoothstep(0.03, 0.22, depth);
     float foamWave = 0.55 + 0.45 * sin(uTime * 1.6 - depth * 18.0 + foamNoise * 6.0);
     float foam = foamBand * foamWave * smoothstep(0.45, 0.7, foamNoise + foamBand * 0.3);
+    // Bits of foam riding the current.
+    foam = max(foam, flecks * 0.45);
 
     // Blend over the scene behind: dst * (1 - a) is the bed seen through the
     // water, so a and colour are chosen to give
@@ -271,7 +314,7 @@ const getTemplate = (): THREE.ShaderMaterial => {
 };
 
 /** Build a per-chunk material that shares the compiled program and frame uniforms. */
-const createChunkWaterMaterial = (seabed: THREE.Texture | null): THREE.ShaderMaterial => {
+const createChunkWaterMaterial = (seabed: THREE.Texture | null, flow: THREE.Texture | null): THREE.ShaderMaterial => {
   const mat = getTemplate().clone();
   const u = mat.uniforms;
   u.uTime = sharedUniforms.uTime;
@@ -286,6 +329,8 @@ const createChunkWaterMaterial = (seabed: THREE.Texture | null): THREE.ShaderMat
   u.uOvercast = sharedUniforms.uOvercast;
   u.uRain = sharedUniforms.uRain;
   u.uRipples = waterRippleUniform;
+  u.uFlow = { value: flow };
+  u.uHasFlow = { value: flow ? 1 : 0 };
   u.uNoiseTexture = { value: getNoiseTexture() };
   u.uSeabed = { value: seabed };
   u.uHasSeabed = { value: seabed ? 1 : 0 };
@@ -311,6 +356,29 @@ export const createSeabedTexture = (heights: Float32Array | undefined): THREE.Da
   return tex;
 };
 
+/** River current texture for a chunk, or null when no river runs through it. */
+export const createFlowTexture = (cx: number, cz: number): THREE.DataTexture | null => {
+  const flow = computeRiverFlow(cx, cz);
+  const data = new Uint8Array(FLOW_GRID * FLOW_GRID * 4);
+  let any = false;
+  for (let i = 0; i < FLOW_GRID * FLOW_GRID; i++) {
+    const strength = flow[i * 3 + 2];
+    if (strength > 0.01) any = true;
+    data[i * 4] = Math.round((flow[i * 3] * 0.5 + 0.5) * 255);
+    data[i * 4 + 1] = Math.round((flow[i * 3 + 1] * 0.5 + 0.5) * 255);
+    data[i * 4 + 2] = Math.round(strength * 255);
+    data[i * 4 + 3] = 255;
+  }
+  if (!any) return null;
+  const tex = new THREE.DataTexture(data, FLOW_GRID, FLOW_GRID, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+};
+
 // Debug: window.__waterDebug(1) shows water depth as greyscale, 0 = normal.
 if (typeof window !== 'undefined') {
   (window as unknown as { __waterDebug?: (mode: number) => void }).__waterDebug = (mode: number) => {
@@ -321,16 +389,21 @@ if (typeof window !== 'undefined') {
 export interface WaterMaterialProps {
   /** Chunk surface heights (world Y, 32x32), i.e. chunk.grassHeightTex. */
   seabedHeights?: Float32Array;
+  /** Chunk coordinates, for the river current. */
+  cx: number;
+  cz: number;
 }
 
-export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({ seabedHeights }) => {
+export const WaterMaterial: React.FC<WaterMaterialProps> = React.memo(({ seabedHeights, cx, cz }) => {
   const seabed = useMemo(() => createSeabedTexture(seabedHeights), [seabedHeights]);
-  const material = useMemo(() => createChunkWaterMaterial(seabed), [seabed]);
+  const flow = useMemo(() => createFlowTexture(cx, cz), [cx, cz]);
+  const material = useMemo(() => createChunkWaterMaterial(seabed, flow), [seabed, flow]);
 
   useEffect(() => () => {
     material.dispose();
-    seabed?.dispose();
-  }, [material, seabed]);
+  }, [material]);
+  useEffect(() => () => { seabed?.dispose(); }, [seabed]);
+  useEffect(() => () => { flow?.dispose(); }, [flow]);
 
   useFrame((state) => {
     if (lastUpdateFrame === state.gl.info.render.frame) return;
