@@ -49,3 +49,8 @@ export const presenceStyle = (awake: boolean, rest = 0): React.CSSProperties => 
   pointerEvents: awake || rest > 0 ? undefined : 'none',
   transition: `opacity ${awake ? 350 : 1600}ms ease`,
 });
+
+// Debug handle (browser checks): window.__hudPresence.getState()
+if (typeof window !== 'undefined') {
+  (window as unknown as { __hudPresence?: typeof useHudPresence }).__hudPresence = useHudPresence;
+}

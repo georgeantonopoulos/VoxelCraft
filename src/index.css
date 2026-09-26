@@ -330,3 +330,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .grove-mist { animation: none; }
 }
+
+/* Thin, quiet scrollbars (settings, long menus). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(215, 220, 182, 0.22) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(215, 220, 182, 0.2); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: rgba(215, 220, 182, 0.35); }
