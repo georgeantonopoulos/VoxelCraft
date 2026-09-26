@@ -740,6 +740,32 @@ export class BiomeManager {
     return dCold * wCold + dTemp * wTemperate + dHot * wHot;
   }
 
+  /**
+   * Chance (0..1) that a 4 m cell holds a tree, blended continuously over the
+   * climate like getVegetationDensity (a per-biome constant made tree density
+   * jump in a line at every border). Forest patches and clearings are applied
+   * by the caller on top of this.
+   */
+  static getTreeCover(temp: number, humid: number, erosion: number, biome: BiomeType): number {
+    if (biome === 'BEACH') return 0.025;           // the odd palm
+    const cw = 0.2;
+    const wCold = smoothstep(-0.5 + cw, -0.5 - cw, temp);
+    const wHot = smoothstep(0.5 - cw, 0.5 + cw, temp);
+    const wTemp = 1 - wCold - wHot;
+    const wDry = smoothstep(-0.5 + cw, -0.5 - cw, humid);
+    const wWet = smoothstep(0.5 - cw, 0.5 + cw, humid);
+    const wMid = 1 - wDry - wWet;
+    //                dry    mid    wet
+    const cold = 0.05 * wDry + 0.10 * wMid + 0.015 * wWet; // taiga pines; ice fields bare
+    const mild = 0.03 * wDry + 0.11 * wMid + 0.45 * wWet;  // plains, groves, damp woods
+    const hot = 0.012 * wDry + 0.035 * wMid + 0.62 * wWet; // cacti, lone acacias, jungle
+    let cover = cold * wCold + mild * wTemp + hot * wHot;
+    // Rugged high ground: sparser, scattered.
+    const e01 = (erosion + 1) / 2;
+    cover *= 1 - 0.55 * smoothstep(0.65, 0.9, e01);
+    return cover;
+  }
+
   // --- 5. Sacred Grove System ---
   // Sacred Groves are isolated barren clearings that spawn Root Hollows.
   // When a FractalTree grows, the area gradually transforms from barren to lush.

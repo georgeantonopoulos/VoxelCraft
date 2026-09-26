@@ -167,3 +167,32 @@ describe('Early-game resources', () => {
     expect(surfaceStones / lowlandChunks).toBeGreaterThan(1.0);
   }, 300_000);
 });
+
+describe('Tree cover', () => {
+  it('follows the climate: jungle dense, savanna and taiga sparse but present, open plains near bare', () => {
+    const cover = (t: number, h: number, biome: Parameters<typeof BiomeManager.getTreeCover>[3]) => BiomeManager.getTreeCover(t, h, 0, biome);
+    expect(cover(0.9, 0.9, 'JUNGLE')).toBeGreaterThan(0.5);
+    expect(cover(0.9, 0, 'SAVANNA')).toBeGreaterThan(0.02);
+    expect(cover(-0.9, 0, 'SNOW')).toBeGreaterThan(0.05);
+    expect(cover(0, -0.9, 'PLAINS')).toBeLessThan(0.05);
+    // Continuous across a border: a small climate step never jumps the density.
+    for (let t = -1; t < 1; t += 0.01) {
+      expect(Math.abs(cover(t + 0.01, 0.3, 'THE_GROVE') - cover(t, 0.3, 'THE_GROVE'))).toBeLessThan(0.03);
+    }
+  });
+
+  it('fills dense forest chunks evenly (the tree cap no longer starves the far rows)', () => {
+    BiomeManager.setWorldType(WorldType.LUSH);
+    let near = 0, far = 0;
+    try {
+      for (let cx = 0; cx < 3; cx++) for (let cz = 0; cz < 2; cz++) {
+        const t = TerrainService.generateChunk(cx, cz).treePositions;
+        for (let i = 0; i < t.length; i += 5) (t[i + 2] < CHUNK_SIZE_XZ / 2 ? near++ : far++);
+      }
+    } finally {
+      BiomeManager.setWorldType(WorldType.DEFAULT);
+    }
+    expect(near + far).toBeGreaterThan(40);
+    expect(far / (near + far)).toBeGreaterThan(0.35);
+  }, 120_000);
+});

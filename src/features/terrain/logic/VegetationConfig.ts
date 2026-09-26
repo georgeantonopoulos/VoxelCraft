@@ -111,9 +111,8 @@ export const getVegetationForBiome = (biome: BiomeType, noiseVal: number): Veget
 export const getTreeForBiome = (biome: BiomeType, noiseVal: number): TreeType | null => {
   switch (biome) {
     case 'BEACH':
-      // Sparse palms: allow the terrain tree spawner to skip placement when null is returned.
-      if (noiseVal > 0.95) return TreeType.PALM;
-      return null;
+      // Palms (how sparse is set by BiomeManager.getTreeCover).
+      return TreeType.PALM;
     case 'THE_GROVE':
     case 'PLAINS':
     case 'SKY_ISLANDS':

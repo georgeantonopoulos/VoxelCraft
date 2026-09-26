@@ -1,6 +1,6 @@
 
 import { CHUNK_SIZE_XZ, CHUNK_SIZE_Y, PAD, TOTAL_SIZE_XZ, TOTAL_SIZE_Y, WATER_LEVEL, ISO_LEVEL, MESH_Y_OFFSET, SNAP_EPSILON } from '@/constants';
-import { noise as noise3D, hash01 } from '@core/math/noise';
+import { noise as noise3D, hash01, noiseToUniform } from '@core/math/noise';
 import { MaterialType, ChunkMetadata } from '@/types';
 import { BiomeManager, getCaveSettings } from './BiomeManager';
 import { columnInfo, ColumnInfo, MAX_SURFACE_Y, overhangFade } from './terrainShape';
@@ -68,6 +68,11 @@ function getCavernModifier(wx: number, wy: number, wz: number, biomeId: string):
 /** Overhang-noise evaluation band around the column surface (see generateChunk). */
 const OVERHANG_BAND_ABOVE = 8;
 const OVERHANG_BAND_BELOW = 24;
+
+const smoothstep01 = (e0: number, e1: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+    return t * t * (3 - 2 * t);
+};
 
 /** treePositions stride: x, y, z, type, scale. */
 const TREE_STRIDE = 5;
@@ -641,10 +646,12 @@ export class TerrainService {
         // AAA FIX: Use Jittered Grid Sampling (4x4) to keep physics count sane.
         const TREE_GRID_SIZE = 4;
         const MAX_TREES_PER_CHUNK = 32; // Hard cap to prevent Rapier collider explosion
-        let treesPlaced = 0;
+        // All accepted trees first, then thinned evenly if over the cap (stopping
+        // at the cap in row order left the far rows of dense chunks bare).
+        const treeAccepted: { entry: number[]; rank: number }[] = [];
 
-        for (let z = 0; z < sizeZ - TREE_GRID_SIZE && treesPlaced < MAX_TREES_PER_CHUNK; z += TREE_GRID_SIZE) {
-            for (let x = 0; x < sizeX - TREE_GRID_SIZE && treesPlaced < MAX_TREES_PER_CHUNK; x += TREE_GRID_SIZE) {
+        for (let z = 0; z < sizeZ - TREE_GRID_SIZE; z += TREE_GRID_SIZE) {
+            for (let x = 0; x < sizeX - TREE_GRID_SIZE; x += TREE_GRID_SIZE) {
                 // Determine world position for noise/biome lookups
                 const cellWx = (x - PAD) + worldOffsetX;
                 const cellWz = (z - PAD) + worldOffsetZ;
@@ -652,38 +659,18 @@ export class TerrainService {
                 // 1. Biome & Distribution Logic
                 const biome = BiomeManager.getBiomeAt(cellWx, cellWz);
 
-                // Combined Density Noise: Large-scale patches + local jitter
-                // Sampling at slightly different frequencies to avoid alignment artifacts
-                const forestPatch = noise3D(cellWx * 0.04, 0, cellWz * 0.04);
-                const localDistribution = noise3D(cellWx * 0.18, 5.5, cellWz * 0.18);
-                const cellHash = Math.abs(noise3D(cellWx * 0.17 + 10, 0, cellWz * 0.17 + 10));
-
-                let treeThreshold = 0.6; // Default
-                let patchThreshold = -0.2; // Default clearing size (noise is -1 to 1)
-
-                if (biome === 'JUNGLE') {
-                    treeThreshold = -0.25; // Reduced density by ~15% (was -0.4)
-                    patchThreshold = -0.8;
-                } else if (biome === 'THE_GROVE') {
-                    treeThreshold = 0.35; // Reduced density by ~15% (was 0.2)
-                    patchThreshold = -0.3; // Slightly higher to reduce forest patch size
-                } else if (biome === 'SAVANNA') {
-                    treeThreshold = 0.7;
-                    patchThreshold = 0.2;
-                } else if (biome === 'MOUNTAINS') {
-                    // Sparse alpine forest - scattered pines on rocky slopes
-                    treeThreshold = 0.65;
-                    patchThreshold = 0.2;
-                } else if (biome === 'BEACH' || biome === 'DESERT' || biome === 'RED_DESERT' || biome === 'ICE_SPIKES') {
-                    // Raw noise rarely exceeds ~0.55 (sigma ~0.25), so the old 0.95/0.8
-                    // gates meant palms and cacti practically never spawned. These give
-                    // sparse (~1-2% of cells) but real vegetation.
-                    treeThreshold = 0.5;
-                    patchThreshold = 0.25;
-                }
-
-                // Distribution Check
-                if (forestPatch < patchThreshold || localDistribution < treeThreshold) continue;
+                // Tree cover from the climate (continuous across borders), then
+                // forest patches and clearings on top. Perlin is mapped to uniform
+                // so the numbers are real probabilities (raw noise clusters near 0:
+                // savanna and mountains came out nearly treeless, jungle nearly full).
+                const cellClimate = BiomeManager.getClimate(cellWx, cellWz);
+                const cover = BiomeManager.getTreeCover(cellClimate.temp, cellClimate.humid, cellClimate.erosion, biome);
+                const forestPatch = noiseToUniform(noise3D(cellWx * 0.04, 0, cellWz * 0.04));
+                const clustering = 0.25 + 1.5 * smoothstep01(0.35, 0.75, forestPatch);
+                const chance = Math.min(0.9, cover * clustering);
+                const cellRoll = hash01(cellWx, 0, cellWz, 4409);
+                if (cellRoll >= chance) continue;
+                const cellHash = hash01(cellWx, 1, cellWz, 4411);
 
                 // 2. Jittered Position within the grid cell
                 const offX = (cellHash * 13.3) % TREE_GRID_SIZE;
@@ -775,17 +762,19 @@ export class TerrainService {
                     // Slope component (0.75) matches slopeSinkFactor used by ground items
                     const sink = 0.15 + (1.0 - normalY) * 0.75;
 
-                    treeCandidates.push(
-                        (localX - PAD),
-                        wy - sink,
-                        (localZ - PAD),
-                        treeType,
-                        baseScale
-                    );
-                    treesPlaced++;
+                    treeAccepted.push({
+                        entry: [(localX - PAD), wy - sink, (localZ - PAD), treeType, baseScale],
+                        rank: hash01(wx, 2, wz, 4417),
+                    });
                 }
             }
         }
+
+        if (treeAccepted.length > MAX_TREES_PER_CHUNK) {
+            treeAccepted.sort((a, b) => a.rank - b.rank);
+            treeAccepted.length = MAX_TREES_PER_CHUNK;
+        }
+        for (const t of treeAccepted) treeCandidates.push(...t.entry);
 
         // --- Helper Functions for Surface Detection ---
         // These are used by Root Hollow, Stick, and Rock placement

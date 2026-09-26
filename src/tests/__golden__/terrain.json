@@ -2,13 +2,13 @@
   "0,0": {
     "sign": "1a4a9a9a",
     "material": "67435ddc",
-    "trees": "25:b4592783",
+    "trees": "10:e87cf12f",
     "flora": "44:200b22a9",
-    "sticks": "72:4c08ed16",
+    "sticks": "24:58951aa",
     "rocks": "48:c89734a2",
     "largeRocks": "6:3f93b25e",
     "hollows": "0:811c9dc5",
-    "fireflies": "64:6ec011b1",
+    "fireflies": "0:811c9dc5",
     "meshPositions": "28623:2e0a7fd5",
     "meshNormals": "28623:18a6ac4b",
     "meshIndices": "46464:938c9a7d"
@@ -16,13 +16,13 @@
   "5,-3": {
     "sign": "9a0e3f93",
     "material": "21ccabb7",
-    "trees": "0:811c9dc5",
+    "trees": "25:33390e4e",
     "flora": "4:bdc4dc66",
-    "sticks": "0:811c9dc5",
+    "sticks": "48:68596e88",
     "rocks": "48:861ee62f",
     "largeRocks": "0:811c9dc5",
     "hollows": "0:811c9dc5",
-    "fireflies": "28:26207d58",
+    "fireflies": "136:a5551706",
     "meshPositions": "23712:d194f499",
     "meshNormals": "23712:8528f7b2",
     "meshIndices": "38784:2b0cd510"
