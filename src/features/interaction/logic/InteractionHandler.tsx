@@ -13,6 +13,7 @@ import { useRapier } from '@react-three/rapier';
 import { emitSpark } from '../components/SparkSystem';
 import { emitImpact } from '../components/ImpactFX';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
+import { useLogStore } from '@/state/LogStore';
 
 /** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
 const THROW_SPAWN_CLEARANCE = 0.8;
@@ -122,6 +123,12 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
     // `fromTouch` marks presses from the on-screen touch buttons (no pointer lock on touch).
     const handleMouseDown = (e: MouseEvent | { button: number; fromTouch: true }) => {
       if (!('fromTouch' in e) && !document.pointerLockElement) return;
+
+      // Hands full: a carried log can only be set in place (right click).
+      if (useLogStore.getState().carriedId) {
+        if (e.button === 2) window.dispatchEvent(new CustomEvent('vc-log-place-request'));
+        return;
+      }
 
       const selectedItem = inventorySlots[selectedSlotIndex];
       // Resolve CustomTool object if the item is a tool ID string

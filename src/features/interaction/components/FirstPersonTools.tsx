@@ -11,6 +11,8 @@ import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilitie
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
+import { useLogStore } from '@/state/LogStore';
+import { LogMesh } from '@features/building/components/Log';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
@@ -25,6 +27,8 @@ export const FirstPersonTools: React.FC = () => {
     const rightItemRef = useRef<THREE.Group>(null); // right hand
     const luminaLightRef = useRef<THREE.PointLight>(null);
     const fillLightRef = useRef<THREE.PointLight>(null);
+    // A log carried in both hands, across the lower view (hands are busy).
+    const carriedLog = useLogStore((st) => (st.carriedId ? st.logs[st.carriedId] : null));
     // Body motion carried into the hands: stride bob, look lag, landing dip.
     const motion = useMemo(() => ({
         lastCam: new THREE.Vector3(), primed: false, speed: 0, phase: 0, lastVy: 0, dip: 0,
@@ -417,7 +421,7 @@ export const FirstPersonTools: React.FC = () => {
         positionZ += impactKick.current * 0.06;
         rotationX += impactKick.current * 0.10;
 
-        const leftHandShown = selectedItem === 'torch';
+        const leftHandShown = selectedItem === 'torch' && !carriedLog;
         torchProgress.current = THREE.MathUtils.lerp(torchProgress.current, leftHandShown ? 1 : 0, (leftHandShown ? 2.2 : 2.8) * delta);
         if (torchRef.current) {
             const ease = torchProgress.current * torchProgress.current * (3 - 2 * torchProgress.current);
@@ -440,7 +444,7 @@ export const FirstPersonTools: React.FC = () => {
             torchRef.current.visible = ease > 0.01;
         }
 
-        const rightHandShown = (!!selectedItem || !!activeCustomTool) && selectedItem !== ItemType.TORCH;
+        const rightHandShown = (!!selectedItem || !!activeCustomTool) && selectedItem !== ItemType.TORCH && !carriedLog;
         rightItemProgress.current = THREE.MathUtils.lerp(rightItemProgress.current, rightHandShown ? 1 : 0, (rightHandShown ? 2.4 : 3.0) * delta);
         if (rightItemRef.current) {
             const rease = rightItemProgress.current * rightItemProgress.current * (3 - 2 * rightItemProgress.current);
@@ -548,6 +552,11 @@ export const FirstPersonTools: React.FC = () => {
             </group>
             {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
             {selectedItem === ItemType.TORCH && <TorchSound />}
+            {carriedLog && (
+                <group position={[0.05, -0.56, -1.0]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
+                    <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />
+                </group>
+            )}
             <group ref={rightItemRef}>
                 {/* 
                   Prevent UniversalTool from rendering the torch (and its extra PointLight) 

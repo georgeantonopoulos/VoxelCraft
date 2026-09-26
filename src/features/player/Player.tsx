@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { MaterialType } from '@/types';
+import { useLogStore } from '@/state/LogStore';
 import { useGroveStore } from '@state/GroveStore';
 import { strideMultiplier } from '@features/grove/questLine';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
@@ -325,7 +326,9 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const crouchMul = isCrouching.current ? CROUCH_SPEED_MULTIPLIER : 1.0;
     // Keeper rank perk: faster stride on foot (see questLine.strideMultiplier).
     const strideMul = strideMultiplier(useGroveStore.getState().progression.essence);
-    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul * strideMul);
+    // Carrying a log slows the walk.
+    const carryMul = useLogStore.getState().carriedId ? 0.65 : 1.0;
+    const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul * strideMul * carryMul);
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
     if (scratchMoveDir.lengthSq() > 1.0) scratchMoveDir.normalize();

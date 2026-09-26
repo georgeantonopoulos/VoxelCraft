@@ -5,6 +5,8 @@ import CustomShaderMaterial from 'three-custom-shader-material';
 import { STICK_SHADER } from '@core/graphics/GroundItemShaders';
 import { getNoiseTexture } from '@core/memory/sharedResources';
 import { useLogStore, type LogData } from '@/state/LogStore';
+import { useGroveStore } from '@/state/GroveStore';
+import { BuildPreview } from './BuildPreview';
 
 /**
  * A sawn log: a bark cylinder (the stick bark shader, so logs and sticks read
@@ -107,12 +109,38 @@ const Log: React.FC<{ log: LogData }> = ({ log }) => {
   );
 };
 
+const PLACED_PREFIX = 'vc-logs-v1-';
+
 /** Every loose and placed log (carried ones are drawn in the player's hands). */
 export const LogsLayer: React.FC = () => {
   const logs = useLogStore((s) => s.logs);
+  const seed = useGroveStore((s) => s.seed);
+
+  // Builds persist per world seed: placed logs load with the world and save
+  // whenever the set of placed logs changes.
+  useEffect(() => {
+    if (seed == null) return;
+    // A different world: its own logs only.
+    useLogStore.setState({ logs: {}, carriedId: null });
+    try {
+      const raw = window.localStorage.getItem(PLACED_PREFIX + seed);
+      const saved = raw ? (JSON.parse(raw) as LogData[]) : [];
+      if (saved.length) useLogStore.getState().addLogs(saved.map((l) => ({ ...l, state: 'placed' as const })));
+    } catch { /* storage unavailable or corrupt: start empty */ }
+    let last = '';
+    return useLogStore.subscribe((st) => {
+      const placed = Object.values(st.logs).filter((l) => l.state === 'placed');
+      const json = JSON.stringify(placed);
+      if (json === last) return;
+      last = json;
+      try { window.localStorage.setItem(PLACED_PREFIX + seed, json); } catch { /* ignore */ }
+    });
+  }, [seed]);
+
   return (
     <>
       {Object.values(logs).filter((l) => l.state !== 'carried').map((l) => <Log key={`${l.id}-${l.state}`} log={l} />)}
+      <BuildPreview />
     </>
   );
 };

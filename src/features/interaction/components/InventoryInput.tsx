@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useInventoryStore } from '@state/InventoryStore';
+import { useLogStore } from '@/state/LogStore';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -20,6 +21,11 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
       if (!document.pointerLockElement) return;
       // Prevent the page from scrolling while in pointer lock on some browsers.
       e.preventDefault();
+      // Carrying a log: the wheel turns it (upright / lying), not the hotbar.
+      if (useLogStore.getState().carriedId) {
+        window.dispatchEvent(new CustomEvent('vc-build-rotate'));
+        return;
+      }
       const direction = e.deltaY > 0 ? 1 : -1;
       cycleSlot(direction);
     };

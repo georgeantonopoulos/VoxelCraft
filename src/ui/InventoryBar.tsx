@@ -19,6 +19,7 @@ const SelectedName: React.FC<{ name: string; slot: number }> = ({ name, slot }) 
     );
 };
 import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
+import { useLogStore } from '@/state/LogStore';
 import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
@@ -66,7 +67,9 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const customTools = useInventoryStore(state => state.customTools);
-    const selectedName = !selectedItem ? ''
+    const carrying = useLogStore(state => !!state.carriedId);
+    const selectedName = carrying ? 'Carrying a log · right click to place · Q to set down'
+        : !selectedItem ? ''
         : (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
             ? toolDisplayName(customTools[selectedItem])
             : (getItemMetadata(selectedItem)?.name ?? '');

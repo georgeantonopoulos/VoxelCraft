@@ -21,6 +21,7 @@ import {
   rayHitsTorch,
 } from '@features/terrain/logic/raycastUtils';
 import { ChunkState, ItemType, CustomTool } from '@/types';
+import { useLogStore } from '@/state/LogStore';
 import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
 
 export interface PickupEffect {
@@ -60,7 +61,37 @@ export function useItemPickup({
 
       const origin = camera.position.clone();
       const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-      const maxDist = 10.0;
+      // Arm's reach (it was 10 m: things vanished from across a clearing).
+      const maxDist = 4.0;
+
+      // Logs are carried in both hands, not pocketed: Q takes one up or sets
+      // the carried one down in front.
+      const logs = useLogStore.getState();
+      if (logs.carriedId) {
+        const flat = new THREE.Vector3(dir.x, 0, dir.z);
+        if (flat.lengthSq() < 1e-6) flat.set(0, 0, -1);
+        flat.normalize();
+        const at = origin.clone().addScaledVector(flat, 1.3);
+        at.y -= 0.6;
+        // Lay it across the view: long axis sideways.
+        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-flat.z, 0, flat.x));
+        logs.updateLog(logs.carriedId, { state: 'loose', position: [at.x, at.y, at.z], rotation: [q.x, q.y, q.z, q.w] });
+        logs.setCarried(null);
+        window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.6, volume: 0.5 } } }));
+        return;
+      }
+      const logHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined,
+        (c: { parent: () => { userData?: unknown } | null }) => (c.parent()?.userData as { type?: string } | undefined)?.type === 'log');
+      if (logHit?.collider) {
+        const id = (logHit.collider.parent()?.userData as { id?: string } | undefined)?.id;
+        const log = id ? logs.logs[id] : undefined;
+        if (log && (log.state === 'loose' || log.state === 'placed')) {
+          logs.updateLog(log.id, { state: 'carried' });
+          logs.setCarried(log.id);
+          window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.75, volume: 0.45 } } }));
+          return;
+        }
+      }
 
       // Pick a single closest target along the ray:
       // 1) placed flora entities (WorldStore)
