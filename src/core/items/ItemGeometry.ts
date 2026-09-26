@@ -42,7 +42,7 @@ export const ITEM_COLORS = {
 
     // Shard (blade) colors - typically darker/more metallic
     shard: {
-        default: '#34313b',    // Obsidian: dark glass, lit by its highlights
+        default: '#5c5850',    // Flint: what a grey field stone knaps into
         flint: '#4d4a44',      // Flint grey-brown
         volcanic: '#2e2222',   // Dark red-black
     },
@@ -91,7 +91,7 @@ export const STONE_MATERIALS: Record<StoneVariant, MaterialProps> = {
 export const SHARD_MATERIALS: Record<ShardVariant, MaterialProps> = {
     // Stone and glass are dielectrics: metalness ~0. At 0.8-0.95 they reflected
     // an empty environment and rendered as black slivers.
-    default: { color: ITEM_COLORS.shard.default, roughness: 0.18, metalness: 0.0 },
+    default: { color: ITEM_COLORS.shard.default, roughness: 0.34, metalness: 0.0 },
     flint: { color: ITEM_COLORS.shard.flint, roughness: 0.4, metalness: 0.0 },
     volcanic: { color: ITEM_COLORS.shard.volcanic, roughness: 0.22, metalness: 0.0 },
 };
@@ -347,7 +347,8 @@ export function createStoneGeometry(isThumbnail = false, variant = 0): THREE.Buf
 export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
     const key = `shard-${isThumbnail ? 'thumb' : 'world'}`;
     return getCachedGeometry(key, () => {
-        const L = 0.44, W = 0.075, T = 0.03, edge = 0.004;
+        // A hand-sized flake (~22 cm): the size a fist stone actually yields.
+        const L = 0.22, W = 0.05, T = 0.018, edge = 0.003;
         const N = 12; // outline points per side
         const outline: Array<[number, number]> = [];
         // Right side from tip down to the butt, then left side back up.
@@ -355,12 +356,12 @@ export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
             const t = i / N; // 0 tip, 1 butt
             const y = L / 2 - t * L;
             const w = W * Math.pow(Math.sin(Math.min(1, t * 1.15) * Math.PI * 0.5), 0.8) * (t > 0.85 ? 1 - (t - 0.85) * 2.5 : 1);
-            const jag = (hash3(i, 1, 0, 3.3) - 0.5) * 0.012 * (t > 0.08 ? 1 : 0);
+            const jag = (hash3(i, 1, 0, 3.3) - 0.5) * 0.007 * (t > 0.08 ? 1 : 0);
             outline.push([w + jag, y]);
         }
         for (let i = N - 1; i >= 1; i--) {
             const [x, y] = outline[i];
-            outline.push([-x + (hash3(i, 2, 0, 4.4) - 0.5) * 0.012, y]);
+            outline.push([-x + (hash3(i, 2, 0, 4.4) - 0.5) * 0.007, y]);
         }
         const ridge = (y: number) => {
             const t = (L / 2 - y) / L;
@@ -384,7 +385,7 @@ export function createShardGeometry(isThumbnail = false): THREE.BufferGeometry {
             const ridgePts = outline.map(([x0, y0], i) => {
                 const [x1, y1] = outline[(i + 1) % M];
                 const my = (y0 + y1) / 2;
-                const rx = (x0 + x1) * 0.12 + (hash3(i, side, 5, 6.6) - 0.5) * 0.012;
+                const rx = (x0 + x1) * 0.12 + (hash3(i, side, 5, 6.6) - 0.5) * 0.007;
                 return [rx, my, side * ridge(my)];
             });
             for (let i = 0; i < M; i++) {

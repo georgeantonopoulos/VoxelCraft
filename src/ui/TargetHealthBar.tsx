@@ -12,9 +12,10 @@ export const TargetHealthBar: React.FC = () => {
     useEffect(() => {
         if (entity) {
             setVisible(true);
+            // Broken or felled: let the empty bar register, then go.
             const timer = setTimeout(() => {
                 setVisible(false);
-            }, 3000);
+            }, entity.health <= 0 ? 500 : 3000);
             return () => clearTimeout(timer);
         }
     }, [entity?.health, entity?.id]);

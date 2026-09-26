@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo, startTransition, useLayoutEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { useThree, useFrame } from '@react-three/fiber';
-import CustomShaderMaterial from 'three-custom-shader-material';
 import { metadataDB } from '@state/MetadataDB';
 import { simulationManager, SimUpdate } from '@features/flora/logic/SimulationManager';
 import { useInventoryStore } from '@state/InventoryStore';
@@ -30,10 +29,11 @@ import { buildFloraHotspots, buildChunkLocalHotspots } from '@features/terrain/l
 import {
   useTerrainInteraction,
   ParticleState,
-  ParticleKind,
   FallingTreeData,
 } from '@features/terrain/hooks/useTerrainInteraction';
 import { useItemPickup } from '@features/terrain/hooks/useItemPickup';
+import { emitImpact } from '@features/interaction/components/ImpactFX';
+import { emitSpark } from '@features/interaction/components/SparkSystem';
 import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
 
 /** Shape-changing remeshes dispatched per frame (player edits must feel instant). */
@@ -139,174 +139,6 @@ const LeafPickupEffect = ({
         </mesh>
       )}
     </group>
-  );
-};
-
-const Particles = ({
-  burstId,
-  position,
-  color,
-  direction,
-  kind
-}: {
-  burstId: number;
-  active: boolean;
-  position: THREE.Vector3;
-  color: string;
-  direction: THREE.Vector3;
-  kind: ParticleKind;
-}) => {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  const count = 512;
-  const nextIdx = useRef(0);
-
-  // GPU Attributes
-  const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  const directionsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  const colorsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  // Stable identity: the CSM React wrapper rebuilds its material whenever the
-  // uniforms object changes, and this component re-renders on every burst.
-  const uniforms = useMemo(() => ({ uTime: { value: 0 } }), []);
-
-  const VSHADER = `
-    attribute vec3 aOffset;
-    attribute vec4 aDirection; // [vx, vy, vz, startTime]
-    attribute vec3 aParams;    // [life, scale, type] type 0: debris, 1: spark
-    attribute vec3 aColor;
-    uniform float uTime;
-    varying vec3 vColor;
-    varying float vType;
-
-    void main() {
-      float startTime = aDirection.w;
-      float life = aParams.x;
-      float age = uTime - startTime;
-
-      if (age < 0.0 || age > life) {
-          csm_Position = vec3(0.0, -9999.0, 0.0);
-      } else { // no early return: CSM inlines main() (gl_Position must be written)
-
-      vColor = aColor;
-      vType = aParams.z;
-
-      float progress = age / life;
-      
-      // Gravity
-      float gravity = mix(25.0, 32.0, vType);
-      
-      // Drag/Velocity dampening (fake)
-      float drag = mix(3.5, 6.0, vType);
-      vec3 animatedPos = aOffset + aDirection.xyz * (1.0 - exp(-drag * age)) / drag;
-      animatedPos.y -= 0.5 * gravity * age * age;
-
-      float s = aParams.y * (vType > 0.5 ? (1.0 - progress) * (1.0 - progress) : (1.0 - progress));
-      
-      // Rotation for debris
-      if (vType < 0.5) {
-          float rX = age * 10.0 + float(gl_InstanceID);
-          float rZ = age * 5.0 + float(gl_InstanceID) * 1.1;
-          
-          // X rotation
-          float sX = sin(rX);
-          float cX = cos(rX);
-          vec3 p = csm_Position;
-          csm_Position.y = p.y * cX - p.z * sX;
-          csm_Position.z = p.y * sX + p.z * cX;
-          
-          // Z rotation
-          float sZ = sin(rZ);
-          float cZ = cos(rZ);
-          p = csm_Position;
-          csm_Position.x = p.x * cZ - p.y * sZ;
-          csm_Position.y = p.x * sZ + p.y * cZ;
-      }
-
-      csm_Position = animatedPos + csm_Position * s;
-    }
-    }
-  `;
-
-  useEffect(() => {
-    if (burstId === 0) return;
-    const mesh = meshRef.current;
-    if (!mesh || !offsetsAttr.current || !directionsAttr.current || !paramsAttr.current || !colorsAttr.current) return;
-
-    const time = performance.now() / 1000;
-    const num = 28;
-    const col = new THREE.Color(color);
-
-    for (let i = 0; i < num; i++) {
-      const idx = nextIdx.current;
-
-      // Origin with jitter
-      const jitter = kind === 'spark' ? 0.10 : 0.22;
-      offsetsAttr.current.setXYZ(idx,
-        position.x + (Math.random() - 0.5) * jitter,
-        position.y + (Math.random() - 0.5) * jitter,
-        position.z + (Math.random() - 0.5) * jitter
-      );
-
-      // Velocity
-      const spread = kind === 'spark' ? 0.7 : 1.1;
-      const speed = kind === 'spark' ? 10.5 : 7.5;
-      const vx = direction.x * speed + (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
-      const vy = Math.max(direction.y * speed + (Math.random() * 1.0) * spread * (kind === 'spark' ? 2.6 : 3.2), kind === 'spark' ? 2.0 : 3.0);
-      const vz = direction.z * speed + (Math.random() - 0.5) * spread * (kind === 'spark' ? 2.6 : 3.2);
-      directionsAttr.current.setXYZW(idx, vx, vy, vz, time);
-
-      // Params
-      const life = (kind === 'spark' ? 0.16 : 0.28) + Math.random() * (kind === 'spark' ? 0.18 : 0.42);
-      const baseScale = kind === 'spark' ? 0.06 : 0.14;
-      const scaleVar = kind === 'spark' ? 0.05 : 0.18;
-      const s = baseScale + Math.random() * scaleVar;
-      paramsAttr.current.setXYZ(idx, life, s, kind === 'spark' ? 1 : 0);
-
-      // Color
-      colorsAttr.current.setXYZ(idx, col.r, col.g, col.b);
-
-      nextIdx.current = (nextIdx.current + 1) % count;
-    }
-
-    offsetsAttr.current.needsUpdate = true;
-    directionsAttr.current.needsUpdate = true;
-    paramsAttr.current.needsUpdate = true;
-    colorsAttr.current.needsUpdate = true;
-  }, [burstId]);
-
-  useFrame((state) => {
-    if (!meshRef.current) return;
-    const mat = meshRef.current.material as any;
-    if (mat.uniforms) {
-      mat.uniforms.uTime.value = state.clock.getElapsedTime();
-    }
-  });
-
-  return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, count]} frustumCulled={false}>
-      <icosahedronGeometry args={[0.12, 0]}>
-        <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(count * 3), 3]} />
-        <instancedBufferAttribute ref={directionsAttr} attach="attributes-aDirection" args={[new Float32Array(count * 4), 4]} />
-        <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={[new Float32Array(count * 3), 3]} />
-        <instancedBufferAttribute ref={colorsAttr} attach="attributes-aColor" args={[new Float32Array(count * 3), 3]} />
-      </icosahedronGeometry>
-      <CustomShaderMaterial
-        baseMaterial={THREE.MeshStandardMaterial}
-        vertexShader={VSHADER}
-        fragmentShader={`
-            varying vec3 vColor;
-            varying float vType;
-            void main() {
-                float emissive = vType > 0.5 ? 1.35 : 0.35;
-                csm_Emissive = vColor * emissive;
-                csm_DiffuseColor = vec4(vColor, 1.0);
-            }
-        `}
-        uniforms={uniforms}
-        roughness={0.8}
-        toneMapped={false}
-      />
-    </instancedMesh>
   );
 };
 
@@ -702,34 +534,25 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const colliderEnablePending = useRef<Set<string>>(new Set());
   const lastColliderCenterKey = useRef<string>('');
 
-  // Particle "burst" state: increment id to guarantee a re-trigger even when spamming clicks.
-  const [particleState, setParticleState] = useState<{
-    burstId: number;
-    pos: THREE.Vector3;
-    dir: THREE.Vector3;
-    color: string;
-    kind: ParticleKind;
-    active: boolean;
-  }>({
-    burstId: 0,
-    pos: new THREE.Vector3(),
-    dir: new THREE.Vector3(0, 1, 0),
-    color: '#fff',
-    kind: 'debris',
-    active: false
-  });
   const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
   const [floraPickups, setFloraPickups] = useState<PickupEffect[]>([]);
 
   const [fallingTrees, setFallingTrees] = useState<FallingTreeData[]>([]);
 
   // Callbacks for terrain interaction hook
+  // Bursts go straight to ImpactFX (an event, no React state): routing them
+  // through state re-rendered the whole terrain on every hit.
   const handleParticle = useCallback((state: Partial<ParticleState> & { burstId?: number }) => {
-    setParticleState(prev => ({
-      ...prev,
-      ...state,
-      burstId: state.burstId ?? prev.burstId,
-    }));
+    if (state.active === false || !state.pos) return;
+    const kind = state.fx ?? (state.kind === 'spark' ? 'stone' : 'earth');
+    emitImpact({
+      position: state.pos,
+      direction: state.dir,
+      kind,
+      color: state.color ?? '#8a867c',
+      strength: state.strength,
+    });
+    if (state.kind === 'spark') emitSpark(state.pos);
   }, []);
 
   // Felled trees are transient physics props; drop them once they have settled so
@@ -1909,14 +1732,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           </React.Fragment>
         );
       })}
-      <Particles
-        burstId={particleState.burstId}
-        active={particleState.active}
-        position={particleState.pos}
-        direction={particleState.dir}
-        kind={particleState.kind}
-        color={particleState.color}
-      />
       {fallingTrees.map(tree => (
         <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} scale={tree.scale} variant={tree.variant} />
       ))}

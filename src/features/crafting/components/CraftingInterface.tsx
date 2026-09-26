@@ -330,7 +330,7 @@ export const CraftingInterface: React.FC = () => {
                       document.body.style.cursor = 'auto';
                     }}
                   >
-                    {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh scale={0.6} />}
+                    {attachedItems[slot.id] === ItemType.SHARD && <ShardMesh scale={1.2} />}
                     {attachedItems[slot.id] === ItemType.STONE && <StoneMesh scale={0.5} />}
                     {attachedItems[slot.id] === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
                     {attachedItems[slot.id] === ItemType.FLORA && <FloraMesh scale={0.4} />}

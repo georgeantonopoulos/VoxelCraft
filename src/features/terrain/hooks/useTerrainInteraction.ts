@@ -30,6 +30,7 @@ import { simulationManager } from '@features/flora/logic/SimulationManager';
 import { chunkDataManager } from '@core/terrain/ChunkDataManager';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 import { emitSpark } from '@features/interaction/components/SparkSystem';
+import { emitImpact, type ImpactKind } from '@features/interaction/components/ImpactFX';
 import { getTreeName, TreeType, VEGETATION_ASSETS } from '@features/terrain/logic/VegetationConfig';
 import { RockVariant } from '@features/terrain/logic/GroundItemKinds';
 
@@ -67,6 +68,9 @@ function getLeafColorForTreeType(treeType: number): string {
 // Types
 // ============================================================================
 
+/** How far a hand-held strike reaches (knapping stones on the ground). */
+const STRIKE_REACH = 4.5;
+
 export type ParticleKind = 'debris' | 'spark';
 
 export interface ParticleState {
@@ -76,7 +80,32 @@ export interface ParticleState {
   color: string;
   kind: ParticleKind;
   active: boolean;
+  /** What flies off (ImpactFX). Defaults: spark -> stone, debris -> earth. */
+  fx?: ImpactKind;
+  /** 0.5 tap .. 1 strike .. 2 breaking. */
+  strength?: number;
 }
+
+/** Fragments a dug or struck terrain material throws. */
+export const impactKindForMaterial = (mat: MaterialType): ImpactKind => {
+  switch (mat) {
+    case MaterialType.SAND:
+    case MaterialType.RED_SAND:
+      return 'sand';
+    case MaterialType.SNOW:
+    case MaterialType.ICE:
+      return 'snow';
+    case MaterialType.STONE:
+    case MaterialType.BEDROCK:
+    case MaterialType.MOSSY_STONE:
+    case MaterialType.OBSIDIAN:
+    case MaterialType.GLOW_STONE:
+    case MaterialType.TERRACOTTA:
+      return 'stone';
+    default:
+      return 'earth';
+  }
+};
 
 export interface FallingTreeData {
   id: string;
@@ -152,6 +181,33 @@ export function useTerrainInteraction(
     });
   };
 
+  /**
+   * A stone gives way: a burst of chips and dust, and 2-3 flakes that pop off
+   * away from the striker (not straight up), low enough to land close by.
+   */
+  const knapShards = (at: THREE.Vector3, strikeDir: THREE.Vector3) => {
+    emitImpact({ position: at, direction: new THREE.Vector3(strikeDir.x, 0.6, strikeDir.z), kind: 'stone', color: '#8a867c', strength: 2, floorY: at.y - 0.1 });
+    emitSpark(at);
+    playSound('rock_hit', { pitch: 0.8, volume: 1.0 });
+    useEntityHistoryStore.getState().setTargetEntity(null);
+    const physicsStore = usePhysicsItemStore.getState();
+    const count = 2 + (Math.random() < 0.5 ? 1 : 0);
+    const flat = new THREE.Vector3(strikeDir.x, 0, strikeDir.z);
+    if (flat.lengthSq() < 1e-6) flat.set(1, 0, 0);
+    flat.normalize();
+    for (let i = 0; i < count; i++) {
+      const a = (i / count - 0.5) * 2.2 + (Math.random() - 0.5) * 0.5; // fan across the strike
+      const dx = flat.x * Math.cos(a) - flat.z * Math.sin(a);
+      const dz = flat.x * Math.sin(a) + flat.z * Math.cos(a);
+      const speed = 1.2 + Math.random() * 0.9;
+      physicsStore.spawnItem(ItemType.SHARD, [at.x + dx * 0.12, at.y + 0.25, at.z + dz * 0.12], [
+        dx * speed,
+        1.8 + Math.random() * 1.0,
+        dz * speed
+      ]);
+    }
+  };
+
   // Helper to play sounds via AudioManager with throttling
   // Note: pitch is playbackRate (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
   const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
@@ -190,8 +246,11 @@ export function useTerrainInteraction(
       // Filter out terrain colliders - we want to hit physics items (trees, stones, etc.)
       const physicsHit = world.castRay(ray, maxRayDistance, true, undefined, undefined, undefined, undefined, (collider) => {
         const userData = collider.parent()?.userData as any;
-        // Include physics items and flora trees, exclude terrain
-        return userData?.type !== 'terrain';
+        // Tagged bodies only (physics items, flora trees), never terrain. The
+        // ray starts inside the player's own untagged capsule: accepting
+        // untagged bodies made every strike hit the player, so a stone lying
+        // on the ground could never be knapped.
+        return !!userData?.type && userData.type !== 'terrain';
       });
       if (physicsHit && physicsHit.collider) {
         const parent = physicsHit.collider.parent();
@@ -258,7 +317,8 @@ export function useTerrainInteraction(
                 pos: woodPos,
                 dir: woodDir,
                 kind: 'debris',
-                color: '#8B4513'
+                fx: 'wood',
+                color: '#a88760'
               });
               playSound('wood_hit', { pitch: 0.5 });
 
@@ -302,8 +362,8 @@ export function useTerrainInteraction(
             } // end else (physics tree is closer)
           }
 
-          // --- STONE PHYSICS ITEM ---
-          if (userData.type === ItemType.STONE) {
+          // --- STONE PHYSICS ITEM --- (within arm's reach)
+          if (userData.type === ItemType.STONE && ((physicsHit as any).timeOfImpact ?? Infinity) <= STRIKE_REACH) {
             const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
             const selectedItem = inventorySlots[selectedSlotIndex];
             const currentTool = (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
@@ -322,7 +382,7 @@ export function useTerrainInteraction(
             if (damage > 0) {
               const damageStore = useEntityHistoryStore.getState();
               const stoneId = userData.id;
-              const h = damageStore.damageEntity(stoneId, damage, 10, 'Hard Stone');
+              const h = damageStore.damageEntity(stoneId, damage, 10, 'Stone');
 
               // Visuals
               if (capabilities.canSmash || selectedItem === ItemType.STONE) {
@@ -336,23 +396,15 @@ export function useTerrainInteraction(
                 pos: hitPoint,
                 dir: direction.clone().multiplyScalar(-1),
                 kind: 'debris',
-                color: '#888888'
+                fx: 'stone',
+                color: '#8a867c'
               });
 
               if (h <= 0) {
                 // Break!
                 const physicsStore = usePhysicsItemStore.getState();
                 physicsStore.removeItem(stoneId);
-                const count = 2 + Math.floor(Math.random() * 2);
-                for (let i = 0; i < count; i++) {
-                  // Spawn shards higher up (0.4 units above hit point) to prevent
-                  // them from falling through terrain when stone is on ground
-                  physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
-                    (Math.random() - 0.5) * 3,
-                    2 + Math.random() * 2,
-                    (Math.random() - 0.5) * 3
-                  ]);
-                }
+                knapShards(hitPoint, direction);
               }
             }
             return;
@@ -362,7 +414,7 @@ export function useTerrainInteraction(
 
       // 0.7 CHECK FOR NATURAL ROCK INTERACTION (GENERATED GROUND PICKUPS)
       if (action === 'SMASH' || action === 'DIG') {
-        const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current!, origin, direction, maxRayDistance, 0.55);
+        const groundHit = rayHitsGeneratedGroundPickup(chunkDataRef.current!, origin, direction, STRIKE_REACH, 0.55);
         if (groundHit && groundHit.array === 'rockPositions') {
           const { inventorySlots, selectedSlotIndex, customTools } = useInventoryStore.getState();
           const selectedItem = inventorySlots[selectedSlotIndex];
@@ -374,7 +426,7 @@ export function useTerrainInteraction(
           if (capabilities.stoneDamage > 0) {
             const rockId = `natural-rock-${groundHit.key}-${groundHit.index}`;
             const damageStore = useEntityHistoryStore.getState();
-            const h = damageStore.damageEntity(rockId, capabilities.stoneDamage, 10, 'Natural Rock');
+            const h = damageStore.damageEntity(rockId, capabilities.stoneDamage, 10, 'Stone');
 
             const hitPoint = groundHit.position;
             emitSpark(hitPoint);
@@ -386,7 +438,8 @@ export function useTerrainInteraction(
               pos: hitPoint,
               dir: direction.clone().multiplyScalar(-1),
               kind: 'debris',
-              color: '#888888'
+              fx: 'stone',
+              color: '#8a867c'
             });
 
             if (h <= 0) {
@@ -442,18 +495,7 @@ export function useTerrainInteraction(
               };
 
               removeGround(groundHit);
-
-              const physicsStore = usePhysicsItemStore.getState();
-              const count = 2 + Math.floor(Math.random() * 2);
-              for (let i = 0; i < count; i++) {
-                // Spawn shards higher up (0.4 units above hit point) to prevent
-                // them from falling through terrain
-                physicsStore.spawnItem(ItemType.SHARD, [hitPoint.x, hitPoint.y + 0.4, hitPoint.z], [
-                  (Math.random() - 0.5) * 3,
-                  2 + Math.random() * 2,
-                  (Math.random() - 0.5) * 3
-                ]);
-              }
+              knapShards(hitPoint, direction);
             }
             return;
           }
@@ -551,6 +593,7 @@ export function useTerrainInteraction(
                     pos: leafPos,
                     dir: new THREE.Vector3(0, -1, 0),
                     kind: 'debris',
+                    fx: 'leaf',
                     color: leafColor
                   });
                   if (!treeSoundPlayed) {
@@ -600,6 +643,7 @@ export function useTerrainInteraction(
                     pos: leafPos,
                     dir: new THREE.Vector3(0, -1, 0),
                     kind: 'debris',
+                    fx: 'leaf',
                     color: leafColor
                   });
                   if (!treeSoundPlayed) {
@@ -615,7 +659,8 @@ export function useTerrainInteraction(
                     pos: woodPos,
                     dir: woodDir,
                     kind: 'debris',
-                    color: '#8B4513'
+                    fx: 'wood',
+                    color: '#a88760'
                   });
                   setTimeout(() => onParticle({ active: false }), 120);
                   if (!treeSoundPlayed) {
@@ -695,7 +740,8 @@ export function useTerrainInteraction(
                     pos: vegPos,
                     dir: vegDir,
                     kind: 'debris',
-                    color: asset ? asset.color : '#00ff00'
+                    fx: 'leaf',
+                    color: asset ? asset.color : '#5d7a3a'
                   });
                 }
               }
@@ -866,6 +912,7 @@ export function useTerrainInteraction(
           pos: particlePos,
           dir: particleDir,
           kind: 'debris',
+          fx: impactKindForMaterial(primaryMat),
           color: getMaterialColor(primaryMat)
         });
         // Let the burst breathe a bit longer so it actually reads as impact.

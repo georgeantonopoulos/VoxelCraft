@@ -481,7 +481,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
 
                 return (
                     <group key={slotId} position={slot.position} rotation={slot.rotation}>
-                        {attachmentType === ItemType.SHARD && <ShardMesh scale={0.6} isThumbnail={isThumbnail} />}
+                        {attachmentType === ItemType.SHARD && <ShardMesh scale={1.2} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.STONE && <StoneMesh scale={0.5} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.STICK && <StickMesh scale={0.4} height={0.5} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.FLORA && (

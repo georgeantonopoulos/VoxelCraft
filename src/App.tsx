@@ -19,6 +19,7 @@ import { PhysicsItemRenderer } from '@features/interaction/components/PhysicsIte
 import { InteractionHandler } from '@features/interaction/logic/InteractionHandler';
 import { InventoryInput } from '@features/interaction/components/InventoryInput';
 import { SparkSystem } from '@features/interaction/components/SparkSystem';
+import { ImpactFX } from '@features/interaction/components/ImpactFX';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
 import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
 import { useCraftingStore } from '@state/CraftingStore';
@@ -603,6 +604,7 @@ const App: React.FC = () => {
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
           <SparkSystem />
+          <ImpactFX />
           <BubbleSystem />
         </Canvas>
 

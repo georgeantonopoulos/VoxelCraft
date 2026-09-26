@@ -10,6 +10,8 @@ import { ItemType, ActivePhysicsItem, MaterialType } from '@/types';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
+import { emitImpact } from './ImpactFX';
+import { emitSpark } from './SparkSystem';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import CustomShaderMaterial from 'three-custom-shader-material';
 
@@ -106,13 +108,15 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       if (shatteredItemIds.size > 512) shatteredItemIds.clear(); // ids are unique; bound the set
 
       // A broken shard just breaks: spawning shards from shards multiplied them.
-      const shardCount = targetType === ItemType.STONE ? 3 : 0;
+      const shardCount = targetType === ItemType.STONE ? 2 + (Math.random() < 0.5 ? 1 : 0) : 0;
       for (let i = 0; i < shardCount; i++) {
-        const vx = (Math.random() - 0.5) * 4;
-        const vy = (Math.random() * 3) + 2;
-        const vz = (Math.random() - 0.5) * 4;
-        spawnItem(ItemType.SHARD, [position.x, position.y + 0.5, position.z], [vx, vy, vz]);
+        const a = Math.random() * Math.PI * 2;
+        const speed = 1.0 + Math.random() * 1.0;
+        spawnItem(ItemType.SHARD, [position.x, position.y + 0.25, position.z], [Math.cos(a) * speed, 1.8 + Math.random(), Math.sin(a) * speed]);
       }
+      const at = new THREE.Vector3(position.x, position.y, position.z);
+      emitImpact({ position: at, kind: 'stone', color: '#8a867c', strength: targetType === ItemType.STONE ? 2 : 1, floorY: position.y - 0.1 });
+      emitSpark(at);
 
       // Play shatter sound (NEW: using stone_hit.mp3)
       playSound('rock_hit', { pitch: 1.2, volume: 0.5 });
@@ -245,7 +249,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
         <>
           {item.type === ItemType.STONE && <CuboidCollider args={[0.22, 0.22, 0.22]} />}
           {item.type === ItemType.STICK && <CapsuleCollider args={[0.25, 0.04]} />}
-          {item.type === ItemType.SHARD && <CuboidCollider args={[0.08, 0.08, 0.08]} />}
+          {/* Matches the flake (22 x 10 x 4 cm), so it lies flat instead of half-sunk. */}
+          {item.type === ItemType.SHARD && <CuboidCollider args={[0.045, 0.11, 0.02]} />}
           {item.type === ItemType.FLORA && <CuboidCollider args={[0.2, 0.2, 0.2]} />}
           {item.type === ItemType.PICKAXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
           {item.type === ItemType.AXE && <CuboidCollider args={[0.3, 0.3, 0.3]} />}
