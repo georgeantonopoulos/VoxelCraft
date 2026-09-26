@@ -50,6 +50,7 @@ import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
 import { recordWorldEntered } from '@state/savedWorlds';
 import { bindInventoryToWorld } from '@state/inventoryPersistence';
+import { bindWorldObjects, flushWorldObjects } from '@state/worldObjectsPersistence';
 import { usePhysicsItemStore } from '@state/PhysicsItemStore';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
@@ -135,8 +136,17 @@ const App: React.FC = () => {
     return bindInventoryToWorld(worldType, worldSeed);
   }, [worldType, worldSeed]);
 
+  // Fires, torches, planted flora and dropped items: restored once the ground
+  // is solid (gameStarted), saved while playing.
+  useEffect(() => {
+    if (!worldType || !gameStarted) return;
+    return bindWorldObjects(worldType, worldSeed);
+  }, [worldType, worldSeed, gameStarted]);
+
   // Handler for restarting with a new world (returns to world selection)
   const handleRestartWorld = useCallback(() => {
+    // Save what lies in this world before the stores below are cleared.
+    flushWorldObjects();
     // Clear all cached data from singletons FIRST, before resetting React state
     // This ensures the new world doesn't spawn on stale terrain
     chunkDataManager.clear(); // flushes pending edits under the outgoing world key

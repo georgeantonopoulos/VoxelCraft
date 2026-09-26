@@ -109,6 +109,7 @@ export class GroveMusic {
 
   /** Called from the ambience tick (10 Hz). */
   update(mood: MusicMood): void {
+    if (this.ctx.state === 'closed') return; // page leaving: nothing can sound
     this.mood = mood;
     const t = this.ctx.currentTime;
     const night = 1 - mood.daylight;
@@ -129,6 +130,7 @@ export class GroveMusic {
 
   /** Short motif for a moment worth marking. */
   cue(kind: MusicCue): void {
+    if (this.ctx.state === 'closed') return;
     const t = this.ctx.currentTime + 0.1;
     const dark = Math.max(1 - this.mood.daylight, this.mood.underground) > 0.5;
     const set = dark ? NIGHT_SET : DAY_SET;
