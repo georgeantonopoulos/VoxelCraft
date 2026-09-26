@@ -39,9 +39,20 @@ export const BuildPreview: React.FC = () => {
   const placement = useRef<Placement | null>(null);
   const tmp = useMemo(() => ({ dir: new THREE.Vector3(), flat: new THREE.Vector3(), q: new THREE.Quaternion(), axis: new THREE.Vector3() }), []);
 
-  // Wheel or R switches between upright and lying while a log is carried.
+  // Planks start flat and keep their own pitched/flat toggle (they shared the
+  // log's upright default and came out pitched).
+  const [plankPitched, setPlankPitched] = useState(false);
+  const pitchedRef = useRef(false);
+  pitchedRef.current = plankPitched;
+
+  // Wheel or R switches between upright and lying (logs) or flat and pitched (planks).
   useEffect(() => {
-    const toggle = () => setMode((m) => (m === 'upright' ? 'lying' : 'upright'));
+    const toggle = () => {
+      const st = useLogStore.getState();
+      const kind = st.carriedId ? st.logs[st.carriedId]?.kind : undefined;
+      if (kind === 'plank') setPlankPitched((v) => !v);
+      else setMode((m) => (m === 'upright' ? 'lying' : 'upright'));
+    };
     const onKey = (e: KeyboardEvent) => { if (e.code === 'KeyR' && useLogStore.getState().carriedId) toggle(); };
     window.addEventListener('vc-build-rotate', toggle);
     window.addEventListener('keydown', onKey);
@@ -109,10 +120,10 @@ export const BuildPreview: React.FC = () => {
         new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(across, UP), across, UP));
       rot = flatQ;
       // R / wheel tilts a plank about its length for a pitched roof.
-      if (m === 'upright') {
+      const pitched = pitchedRef.current;
+      if (pitched) {
         rot = flatQ.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.52));
       }
-      const pitched = m === 'upright';
       const half = PLANK_THICKNESS / 2;
       if (target?.kind === 'plank') {
         // Lay the next board beside the one aimed at (same direction).
