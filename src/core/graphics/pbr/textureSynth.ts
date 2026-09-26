@@ -16,7 +16,7 @@ export const PBR_TEXTURE_SIZE = 512;
  * Bump whenever synthesis output changes: generated layers are cached in
  * IndexedDB under this version (TerrainTextureArrays.ts).
  */
-export const PBR_SYNTH_VERSION = 5;
+export const PBR_SYNTH_VERSION = 8;
 export const PBR_LAYER_COUNT = 16;
 
 /** World size (metres) covered by one repeat of each layer's texture. */
@@ -193,7 +193,7 @@ function blendTo(out: Float32Array, c: RGB, t: number) {
  * not a closed cell network), mineral speckle, iron staining and lichen.
  * Shared by stone, mossy stone, bedrock and glow stone.
  */
-function rockPixel(u: number, v: number, out: Float32Array, seed: number, base: RGB, alt: RGB, lichen: number) {
+function rockPixel(u: number, v: number, out: Float32Array, seed: number, base: RGB, alt: RGB, lichen: number, facetAmt = 1) {
   const wu = u + 0.08 * fbm(u, v, 2, 4, seed + 1);
   const wv = v + 0.08 * fbm(u, v, 2, 4, seed + 2);
   const mass = fbm(wu, wv, 3, 6, seed + 3);
@@ -201,17 +201,17 @@ function rockPixel(u: number, v: number, out: Float32Array, seed: number, base: 
   worley(wu, wv, 6, seed + 4, 1);
   const tiltA = (hash2(Math.floor(W.id * 9973), 1, seed) - 0.5) * 0.9;
   const tiltB = (hash2(Math.floor(W.id * 9973), 2, seed) - 0.5) * 0.9;
-  const facet = W.cx * tiltA + W.cy * tiltB;
-  const facetEdge = 1 - smooth(0.0, 0.05, W.f2 - W.f1);
+  const facet = (W.cx * tiltA + W.cy * tiltB) * facetAmt;
+  const facetEdge = (1 - smooth(0.0, 0.05, W.f2 - W.f1)) * facetAmt;
   // Fractures: thin lines where ridged noise peaks, masked so they break up.
   const f1 = smooth(0.93, 0.985, ridged(wu, wv, 3, 3, seed + 5)) * smooth(-0.1, 0.25, fbm(u, v, 2, 2, seed + 6));
   const f2 = smooth(0.95, 0.99, ridged(wu + 0.37, wv, 7, 2, seed + 7)) * 0.6;
-  const crack = Math.max(f1, f2);
+  const crack = Math.max(f1, f2) * (0.35 + 0.65 * facetAmt);
   const grit = fbm(u, v, 48, 3, seed + 8);
   const speck = hash2(Math.floor(u * 384), Math.floor(v * 384), seed + 9);
 
   const h = 0.5 + 0.4 * mass + 0.14 * facet + 0.04 * grit - 0.45 * crack - 0.02 * facetEdge;
-  mixRGB(out, base, alt, clamp01(0.5 + 1.1 * mass + 0.25 * (W.id - 0.5)));
+  mixRGB(out, base, alt, clamp01(0.5 + 1.1 * mass + 0.25 * (W.id - 0.5) * facetAmt));
   mulRGB(out, 0.86 + 0.14 * grit + 0.3 * facet + 0.25 * mass);
   if (speck > 0.965) mulRGB(out, speck > 0.985 ? 1.3 : 0.8); // feldspar / mafic grains
   // Iron staining in low-frequency patches.
@@ -302,9 +302,11 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
   const s = 1000 + layer * 97;
   switch (layer) {
     case 1: // BEDROCK
-      return synth(size, 5, 0.9, (u, v, o) => rockPixel(u, v, o, s, PAL.bedrock, PAL.bedrockAlt, 0));
+      // Deep cave floors: worn and smooth. Facet cells and ring-like cracks
+      // read as a crackle-glaze pattern on large flat floors in low light.
+      return synth(size, 3.5, 0.9, (u, v, o) => rockPixel(u, v, o, s, PAL.bedrock, PAL.bedrockAlt, 0, 0.12));
     case 2: // STONE
-      return synth(size, 6, 1.0, (u, v, o) => rockPixel(u, v, o, s, PAL.stone, PAL.stoneAlt, 0.6));
+      return synth(size, 6, 1.0, (u, v, o) => rockPixel(u, v, o, s, PAL.stone, PAL.stoneAlt, 0.3));
     case 3: // DIRT: clumpy soil with pebbles
       return synth(size, 4, 0.8, (u, v, o) => {
         const clump = fbm(u, v, 6, 5, s);
@@ -412,17 +414,22 @@ export function synthesizeLayer(layer: number, size = PBR_TEXTURE_SIZE): LayerMa
         o[3] = mix(o[3], 0.7, vein);
         o[4] = mix(o[4], 0.3, vein);
       });
-    case 15: // OBSIDIAN: glassy conchoidal fractures
-      return synth(size, 3, 0.5, (u, v, o) => {
-        worley(u + 0.05 * fbm(u, v, 3, 3, s + 2), v + 0.05 * fbm(u, v, 3, 3, s + 3), 4, s, 1);
-        // Conchoidal shells: warped, fading ripples around each fracture origin.
-        const ring = (0.5 + 0.5 * Math.cos(W.f1 * (18 + 14 * W.id) + W.id * 6)) * smooth(0.9, 0.2, W.f1);
-        const flow = fbm(u, v * 3, 3, 4, s + 1);
-        mixRGB(o, PAL.obsidian, PAL.obsidianSheen, clamp01(0.25 * ring + 0.35 * (flow * 0.5 + 0.5)));
-        const edge = 1 - smooth(0.0, 0.04, W.f2 - W.f1);
-        blendTo(o, [0.35, 0.33, 0.4], edge * 0.5);
-        o[3] = 0.5 + 0.12 * ring * (1 - W.f1) - 0.2 * edge;
-        o[4] = 0.05 + 0.1 * edge + 0.05 * ring;
+    case 15: // OBSIDIAN: dark volcanic glass with soft flow banding
+      // (A Voronoi cell network with ring shells read as crackle glaze and
+      // bullseyes across whole cave floors; real obsidian shows flow bands and
+      // only occasional conchoidal fractures.)
+      return synth(size, 2.5, 0.5, (u, v, o) => {
+        const warp = fbm(u, v, 2, 4, s + 2);
+        const flow = fbm(u + 0.15 * warp, v * 2.5 + 0.3 * warp, 3, 5, s + 1);
+        const bands = 0.5 + 0.5 * Math.sin((v + 0.2 * warp) * Math.PI * 2 * 6 + flow * 5);
+        mixRGB(o, PAL.obsidian, PAL.obsidianSheen, clamp01(0.25 + 0.35 * flow + 0.18 * bands));
+        // Sparse, broken fracture lines (ridged-noise crests, masked).
+        const frac = smooth(0.94, 0.985, ridged(u, v, 3, 3, s + 5)) * smooth(0.1, 0.4, fbm(u, v, 2, 2, s + 6));
+        blendTo(o, [0.26, 0.24, 0.3], frac * 0.35);
+        const grain = fbm(u, v, 40, 2, s + 7);
+        mulRGB(o, 0.94 + 0.08 * grain);
+        o[3] = 0.5 + 0.06 * flow + 0.03 * bands - 0.12 * frac;
+        o[4] = 0.12 + 0.08 * (1 - bands) + 0.1 * frac;
       });
     default: // AIR and unknown
       return synth(size, 0, 0, (_u, _v, o) => { setRGB(o, PAL.stone); o[3] = 0.5; o[4] = 0.9; });
