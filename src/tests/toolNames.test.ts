@@ -15,6 +15,14 @@ describe('crafted tool names follow what the tool can do', () => {
     expect(toolDisplayName(tool({ side_left: ItemType.STICK }))).toBe('Bound stick');
   });
 
+  it('three edge flakes make a saw', () => {
+    const saw = tool({ edge_1: ItemType.SHARD, edge_2: ItemType.SHARD, edge_3: ItemType.SHARD });
+    expect(getToolCapabilities(saw).canSaw).toBe(true);
+    expect(getToolCapabilities(saw).canChop).toBe(false);
+    expect(toolDisplayName(saw)).toBe('Flint saw');
+    expect(getToolCapabilities(tool({ edge_1: ItemType.SHARD, edge_2: ItemType.SHARD })).canSaw).toBe(false);
+  });
+
   it('marks Lumina-bound tools', () => {
     const t = tool({ tip_center: ItemType.SHARD, side_left: ItemType.SHARD, side_right: ItemType.FLORA });
     expect(getToolCapabilities(t).canChop).toBe(true);

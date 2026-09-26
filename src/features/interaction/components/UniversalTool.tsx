@@ -301,8 +301,13 @@ export const LashingMesh: React.FC<LashingMeshProps> = ({ slotId, attachmentType
     const slot = STICK_SLOTS.find(s => s.id === slotId);
     if (!slot) return null;
 
-    // Position lashing at the junction point
-    const lashingY = slotId === 'tip_center' ? 0.42 : slot.position[1] - 0.08;
+    // Position lashing at the junction point. The saw edge is bound once at
+    // each end (a binding per flake hid the flakes).
+    if (slotId === 'edge_2') return null;
+    const lashingY = slotId === 'tip_center' ? 0.42
+        : slotId === 'edge_1' ? slot.position[1] + 0.1
+        : slotId === 'edge_3' ? slot.position[1] - 0.1
+        : slot.position[1] - 0.08;
 
     return (
         <mesh
@@ -488,7 +493,7 @@ export const UniversalTool: React.FC<UniversalToolProps> = ({ item, isThumbnail 
                 if (!slot) return null;
 
                 return (
-                    <group key={slotId} position={slot.position} rotation={slot.rotation}>
+                    <group key={slotId} position={slot.position} rotation={slot.rotation} scale={slot.scale ?? 1}>
                         {attachmentType === ItemType.SHARD && <ShardMesh scale={1.2} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.STONE && <StoneMesh scale={0.5} isThumbnail={isThumbnail} />}
                         {attachmentType === ItemType.STICK && <StickMesh scale={0.4} height={0.5} isThumbnail={isThumbnail} />}

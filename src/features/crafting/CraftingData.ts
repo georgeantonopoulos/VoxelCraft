@@ -5,6 +5,8 @@ export interface AttachmentSlot {
   position: [number, number, number];
   rotation: [number, number, number];
   allowedItems: ItemType[];
+  /** Size of what is bound here, relative to a head slot (saw teeth are small). */
+  scale?: number;
 }
 
 export interface CraftingRecipe {
@@ -33,8 +35,14 @@ export const STICK_SLOTS: AttachmentSlot[] = [
     position: [0, 0.5, 0],
     rotation: [0, 0, 0],
     allowedItems: [ItemType.SHARD, ItemType.STONE, ItemType.STICK, ItemType.FLORA]
-  }
+  },
+  // Saw edge: three small flakes set edge-out along one side of the shaft.
+  { id: 'edge_1', position: [-0.075, 0.15, 0], rotation: [0, 0, 0.15], allowedItems: [ItemType.SHARD], scale: 0.7 },
+  { id: 'edge_2', position: [-0.075, 0.01, 0], rotation: [0, 0, 0.15], allowedItems: [ItemType.SHARD], scale: 0.7 },
+  { id: 'edge_3', position: [-0.075, -0.13, 0], rotation: [0, 0, 0.15], allowedItems: [ItemType.SHARD], scale: 0.7 },
 ];
+
+export const SAW_EDGE_SLOTS = ['edge_1', 'edge_2', 'edge_3'] as const;
 
 export const RECIPES: CraftingRecipe[] = [
   {

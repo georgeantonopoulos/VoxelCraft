@@ -94,6 +94,14 @@ const Crafted = ({ tool }: { tool: CustomTool }) => {
   // The icon follows what the tool does (same rules as its name).
   const caps = getToolCapabilities(tool);
   const head = flora ? LUMINA : FLINT;
+  if (caps.canSaw && !caps.canDig && !caps.canChop) {
+    return (
+      <g {...common}>
+        <path d="M8 27 L21 8" stroke={BARK} strokeWidth={2.2} />
+        <path d="M13.5 20 L10 18.5 L15 16.5 L11.5 15 L16.5 13 L13 11.5 L18 9.5" fill="none" stroke={head} strokeWidth={1.3} />
+      </g>
+    );
+  }
   if (caps.canDig) return <Pickaxe head={head} />;
   if (caps.canChop) return <Axe head={head} />;
   if (shards > 0 && !stones) {

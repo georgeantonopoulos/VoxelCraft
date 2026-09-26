@@ -75,8 +75,9 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
             {caps.canDig && statRow('Mining', caps.digPower.toFixed(1), '#f2cf7c')}
             {caps.canChop && statRow('Chopping', caps.woodDamage.toFixed(1), '#9dbd62')}
             {caps.canSmash && statRow('Smashing', caps.shatterForce.toFixed(1), '#f0b3a3')}
+            {caps.canSaw && statRow('Sawing', 'felled trees', '#d9b98a')}
             {caps.isLuminaTool && statRow('Lumina', `×${caps.luminaCount}`, '#a4f2e4')}
-            {!caps.canDig && !caps.canChop && !caps.canSmash && (
+            {!caps.canDig && !caps.canChop && !caps.canSmash && !caps.canSaw && (
               <>
                 {statRow('Against wood', caps.woodDamage.toFixed(1), 'rgba(215,220,182,0.5)')}
                 {statRow('Against stone', caps.stoneDamage.toFixed(1), 'rgba(215,220,182,0.5)')}
@@ -304,6 +305,7 @@ export const CraftingInterface: React.FC = () => {
                   <group
                     position={slot.position}
                     rotation={slot.rotation}
+                    scale={slot.scale ?? 1}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDetach(slot.id, attachedItems[slot.id]);
