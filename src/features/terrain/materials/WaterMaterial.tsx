@@ -134,7 +134,9 @@ const WATER_FRAGMENT = /* glsl */ `
         g += d / max(r, 1e-3) * ring * s.w * 1.2;
       }
     }
-    return g;
+    // Overlapping rings never tilt the surface into a flat bright band.
+    float m = length(g);
+    return m > 0.35 ? g * (0.35 / m) : g;
   }
 
   // The sky dome seen in direction r (same gradient and a soft cloud layer).

@@ -463,7 +463,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       if (rippleTimer.current <= 0) {
         const moving = Math.min(1, horizSpeed / 3);
         rippleTimer.current = moving > 0.15 ? 0.45 : 2.2;
-        addWaterRipple(pos.x, pos.z, 0.25 + 0.75 * moving);
+        addWaterRipple(pos.x, pos.z, 0.15 + 0.45 * moving);
       }
     }
     wasAtSurface.current = atSurface;
