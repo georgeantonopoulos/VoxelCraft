@@ -169,9 +169,11 @@ export const WildlifeManager: React.FC<{ enabled: boolean }> = ({ enabled }) => 
         }
         groups.current.push(g);
       };
-      if (daylight > 0.2 && count('bird') < Math.round(4 * life)) trySpawn('bird', [5, 9]);
-      if (count('deer') < Math.round(3 * life)) trySpawn('deer', [2, 5]);
-      if (count('fish') < 4) trySpawn('fish', [5, 9]);
+      // Sightings stay rare and small so each one is noticed: a faded world
+      // holds one small flock and a lone deer or pair; healing adds a little more.
+      if (daylight > 0.2 && count('bird') < Math.max(1, Math.round(2 * life))) trySpawn('bird', [3, 6]);
+      if (count('deer') < Math.max(1, Math.round(2 * life))) trySpawn('deer', [1, 3]);
+      if (count('fish') < 3) trySpawn('fish', [3, 6]);
 
       // Rootling guide: appears when the Lumina compass has somewhere to go.
       const r = rootling.current;

@@ -11,7 +11,7 @@ const SHADOW_UPDATE_HZ = 15;
 
 /** Hemisphere sky-fill intensities (see AmbientController). */
 const SKY_FILL_DAY = 0.8; // sun:sky ~6:1 so light has a clear direction
-const SKY_FILL_NIGHT = 0.12;
+const SKY_FILL_NIGHT = 0.16;
 const SKY_FILL_CAVE = 0.05;
 
 /**
@@ -30,12 +30,12 @@ const SUN_GOLDEN = new THREE.Color(0xffd580);
 const GLOW_NIGHT = new THREE.Color(0x4a5a7a);
 const GLOW_WARM = new THREE.Color(0xffb070);
 const GLOW_DAY = new THREE.Color(0xfff4d6);
-const SKY_NIGHT_TOP = new THREE.Color(0x020210);
-const SKY_NIGHT_BOTTOM = new THREE.Color(0x101025);
-const SKY_SUNSET_TOP = new THREE.Color(0x2c3e50);
-const SKY_SUNSET_BOTTOM = new THREE.Color(0xff8c42);
-const SKY_DAY_TOP = new THREE.Color(0x1e90ff);
-const SKY_DAY_BOTTOM = new THREE.Color(0x87CEEB);
+const SKY_NIGHT_TOP = new THREE.Color(0x03050d);
+const SKY_NIGHT_BOTTOM = new THREE.Color(0x0d1626);
+const SKY_SUNSET_TOP = new THREE.Color(0x2a3358); // deep indigo
+const SKY_SUNSET_BOTTOM = new THREE.Color(0xe39a6a); // soft amber, not orange
+const SKY_DAY_TOP = new THREE.Color(0x4a7fb8); // calm blue
+const SKY_DAY_BOTTOM = new THREE.Color(0xbcd4de); // pale haze at the horizon
 
 const getSunColor = (sunY: number, radius: number, out: THREE.Color): THREE.Color => {
     const normalizedHeight = sunY / radius;
@@ -136,7 +136,9 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
         // Read per frame (no React re-render while blends animate).
         const { undergroundBlend } = useEnvironmentStore.getState();
         const sunY = sharedUniforms.uSunDir.value.y;
-        const day = THREE.MathUtils.smoothstep(sunY, -0.12, 0.25);
+        // Twilight keeps some sky light: the sky stays bright well after sunset,
+        // so the land must not go black before it does.
+        const day = THREE.MathUtils.smoothstep(sunY, -0.28, 0.25);
         const surface = THREE.MathUtils.lerp(SKY_FILL_NIGHT, SKY_FILL_DAY, day);
         hemi.intensity = THREE.MathUtils.lerp(surface, SKY_FILL_CAVE, undergroundBlend) * intensityMul;
         hemi.color.copy(skyNight).lerp(skyDay, day).lerp(caveTint, undergroundBlend);
@@ -465,7 +467,8 @@ export const SunFollower: React.FC<{
                 />
                 <primitive object={target} />
                 <mesh ref={sunMeshRef}>
-                    <sphereGeometry args={[15, 32, 32]} />
+                    {/* ~2.3 deg across at 350 m (was ~4.9 deg). */}
+                    <sphereGeometry args={[7, 32, 32]} />
                     <meshBasicMaterial ref={sunMaterialRef} color="#fffee0" toneMapped={false} fog={false} />
                 </mesh>
                 <mesh ref={glowMeshRef}>
@@ -507,16 +510,10 @@ export const SunFollower: React.FC<{
               float coreMid = 1.0 / (dist * 20.0 + 0.8);
               coreMid = pow(coreMid, 2.0);
               float core = coreInner * 1.2 + coreMid * 0.4;
-              float halo = exp(-dist * 12.0) * 0.3;
-              halo += exp(-dist * 4.5) * 0.15;
-              float rayA = noise(angle * 6.0 + t * 0.15);
-              float rayB = noise(angle * 18.0 - t * 0.45);
-              float rayC = noise(angle * 42.0 + t * 1.2);
-              float rays = (rayA * 0.5 + rayB * 0.3 + rayC * 0.2);
-              rays = pow(max(0.0, rays), 5.5);
-              float rayLen = 0.1 + 0.08 * noise(angle * 4.0 + t * 0.1);
-              float rayMask = 1.0 - smoothstep(0.0, rayLen, dist);
-              float finalGlow = core + halo + (rays * rayMask * 2.5);
+              // Soft, wide glow only: no starburst spikes (they read as a cartoon sun).
+              float halo = exp(-dist * 12.0) * 0.28;
+              halo += exp(-dist * 5.0) * 0.16;
+              float finalGlow = core + halo;
               vec3 coreCol = vec3(1.0, 1.0, 0.95);
               vec3 scatteringCol = uColor;
               vec3 finalColor = mix(scatteringCol, coreCol, clamp(core * 0.8, 0.0, 1.0));

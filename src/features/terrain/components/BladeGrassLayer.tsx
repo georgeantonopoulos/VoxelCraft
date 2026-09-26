@@ -230,12 +230,13 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
         uHeightFogOffset: sharedUniforms.uHeightFogOffset,
         uShaderFogStrength: sharedUniforms.uShaderFogStrength,
 
-        // Grass colors (base to tip gradient) - vibrant saturated greens
+        // Grass colors (base to tip gradient): moss to dry olive
         uBaseColor: { value: new THREE.Color(0x2f5322) }, // Deep moss at the root
         uTipColor: { value: new THREE.Color(0x93a452) },  // Dry olive at the tips
       },
       color: 0x41a024,
-      roughness: 0.6,
+      // Matte: at 0.6 grazing-angle Fresnel turned sunlit blades into white strips.
+      roughness: 0.95,
       metalness: 0.0,
       side: THREE.DoubleSide,
       toneMapped: false,

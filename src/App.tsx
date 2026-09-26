@@ -364,6 +364,11 @@ const App: React.FC = () => {
     if (autoStart) setGameStarted(true);
   }, [worldType, worldSeed, findSpawnForBiome, autoStart]);
 
+  // Browser checks: window.__vcSetTimeOffset(radians) shifts the sun/moon orbit (~2.4 = night).
+  useEffect(() => {
+    (window as unknown as { __vcSetTimeOffset?: (v: number) => void }).__vcSetTimeOffset = setSunTimeOffset;
+  }, []);
+
   useEffect(() => {
     document.documentElement.style.setProperty('--vc-leva-scale', String(levaScale));
   }, [levaScale]);
