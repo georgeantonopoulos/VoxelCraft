@@ -24,7 +24,7 @@ describe('ItemRegistry', () => {
     });
 
     it('should retrieve correct colors', () => {
-        expect(getItemColor(ItemType.FLORA)).toBe('#00FFFF');
+        expect(getItemColor(ItemType.FLORA)).toBe('#62e6d8'); // Lumina teal
         expect(getItemColor('invalid')).toBe('#ffffff');
     });
 
