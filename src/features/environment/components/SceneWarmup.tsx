@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Campfire } from '@features/interaction/components/Campfire';
 import { TorchModel } from '@features/interaction/components/TorchModel';
-import { KeeperFist } from '@features/interaction/components/KeeperHand';
 import { UniversalTool } from '@features/interaction/components/UniversalTool';
 import { LogMesh, PlankMesh } from '@features/building/components/Log';
 import { ItemType } from '@/types';
@@ -71,7 +70,6 @@ export const SceneWarmup: React.FC<{ ready: boolean }> = ({ ready }) => {
         <group position={[0, -4000, 0]}>
             <Campfire />
             <TorchModel length={0.5} />
-            <KeeperFist />
             <LogMesh length={1} radius={0.15} bark="#5b4a38" />
             <PlankMesh length={1} halfWidth={0.14} bark="#5b4a38" />
             {[ItemType.STICK, ItemType.STONE, ItemType.SHARD, ItemType.FLORA].map((t) => <UniversalTool key={t} item={t} />)}

@@ -13,17 +13,12 @@ import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
 import { LogMesh, PlankMesh } from '@features/building/components/Log';
-import { KeeperFist, KeeperForearm } from './KeeperHand';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
 const SWING_CONTACT = STRIKE_CONTACT_MS / 1000;
 const SWING_WINDUP = SWING_CONTACT * 0.6;
 const SWING_DURATION = SWING_CONTACT + 0.24;
-/** Where the hand holds a long item, in item units below its centre. */
-const HAND_GRIP = 0.0;
-/** Turns the torch hand so the wrist faces down-right in view. */
-const TORCH_HAND_YAW = 0.0;
 
 export const FirstPersonTools: React.FC = () => {
     const { camera, scene, size } = useThree(); // Needed for parenting and responsive logic
@@ -215,13 +210,6 @@ export const FirstPersonTools: React.FC = () => {
     const digProgress = useRef(0); // seconds into the swing
     const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH' | 'THROW' | 'SAW'>('DIG');
     const swingOff = useMemo(() => new THREE.Vector3(), []);
-    const handRef = useRef<THREE.Group>(null);
-    const armRef = useRef<THREE.Group>(null);
-    const handScratch = useMemo(() => ({
-        axis: new THREE.Vector3(), elbow: new THREE.Vector3(), f: new THREE.Vector3(), z: new THREE.Vector3(),
-        x: new THREE.Vector3(), pivot: new THREE.Vector3(), wrist: new THREE.Vector3(), m: new THREE.Matrix4(),
-        up: new THREE.Vector3(0, 1, 0),
-    }), []);
     const swingScratch = useMemo(() => ({
         ePose: new THREE.Euler(), eSwing: new THREE.Euler(),
         qPose: new THREE.Quaternion(), qSwing: new THREE.Quaternion(), qFinal: new THREE.Quaternion(),
@@ -536,57 +524,10 @@ export const FirstPersonTools: React.FC = () => {
                 rightItemRef.current.position.copy(sw.gripCam).add(sw.back).add(swingOff);
                 rightItemRef.current.quaternion.copy(sw.qFinal);
 
-                // The Keeper's hand closes around the grip of long items and
-                // the forearm runs off to an elbow below the view.
-                const hand = handRef.current, arm = armRef.current;
-                if (hand && arm) {
-                    const small = heldItem === ItemType.STONE || heldItem === ItemType.SHARD || heldItem === ItemType.FLORA;
-                    const show = (long || small) && rease > 0.02;
-                    hand.visible = show;
-                    arm.visible = show;
-                    if (show) {
-                        const h = handScratch;
-                        let s: number;
-                        if (long) {
-                            s = (0.045 * pose.scale) / 0.034;
-                            h.axis.copy(h.up).applyQuaternion(sw.qFinal);
-                            // Hold the shaft around its middle (the butt, where the
-                            // swing pivots, is below the screen edge).
-                            h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -HAND_GRIP * pose.scale);
-                        } else if (heldItem === ItemType.STONE) {
-                            // Cupped from below, fingers curled under the stone.
-                            s = 1.35;
-                            h.axis.set(0.45, 0.9, 0.1).normalize();
-                            h.pivot.copy(rightItemRef.current.position).add(h.elbow.set(0.01, -0.075, 0.02));
-                        } else {
-                            // Shard held by its butt like a knife; flora by the stem.
-                            s = heldItem === ItemType.SHARD ? 1.1 : 0.9;
-                            h.axis.copy(h.up).applyQuaternion(sw.qFinal);
-                            const down = heldItem === ItemType.SHARD ? 0.075 * pose.scale : 0.11;
-                            h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -down);
-                        }
-                        h.elbow.set(0.66 * responsiveX, -1.0, -0.2);
-                        h.f.copy(h.elbow).sub(h.pivot).normalize();
-                        h.z.copy(h.f).addScaledVector(h.axis, -h.f.dot(h.axis)).normalize();
-                        h.x.crossVectors(h.axis, h.z).normalize();
-                        h.m.makeBasis(h.x, h.axis, h.z);
-                        hand.quaternion.setFromRotationMatrix(h.m);
-                        hand.position.copy(h.pivot);
-                        hand.scale.setScalar(s);
-                        h.wrist.copy(h.pivot).addScaledVector(h.z, 0.1 * s);
-                        h.f.copy(h.elbow).sub(h.wrist);
-                        const len = h.f.length();
-                        arm.position.copy(h.wrist);
-                        arm.quaternion.setFromUnitVectors(h.up, h.f.normalize());
-                        arm.scale.set(s, len, s);
-                    }
-                }
                 rightItemRef.current.scale.setScalar(pose.scale);
                 rightItemRef.current.visible = rease > 0.01;
             } else {
                 rightItemRef.current.visible = false;
-                if (handRef.current) handRef.current.visible = false;
-                if (armRef.current) armRef.current.visible = false;
             }
         }
 
@@ -630,10 +571,6 @@ export const FirstPersonTools: React.FC = () => {
             />
             <group ref={torchRef}>
                 <TorchTool active={selectedItem === ItemType.TORCH} />
-                {/* The hand around the torch handle, below the collar. */}
-                <group position={[0, 0.2, 0]} rotation={[0, TORCH_HAND_YAW, 0]} scale={1.25}>
-                    <KeeperFist />
-                </group>
             </group>
             {/* Fire sound for held torch - conditionally rendered so mount/unmount controls playback */}
             {selectedItem === ItemType.TORCH && <TorchSound />}
@@ -642,17 +579,8 @@ export const FirstPersonTools: React.FC = () => {
                     {carriedLog.kind === 'plank'
                         ? <group rotation={[0, 1.2, 0]}><PlankMesh length={carriedLog.length} halfWidth={carriedLog.radius} bark={carriedLog.bark} /></group>
                         : <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />}
-                    {/* Both hands on the near side of the log, one toward each end
-                        (log axis is local Y; local +Z faces the camera). */}
-                    {[-0.3, 0.3].map((f) => (
-                        <group key={f} position={[-carriedLog.radius * 0.35, f * carriedLog.length, carriedLog.radius * 0.85]} rotation={[0, 0.35, 0]} scale={1.5}>
-                            <KeeperFist />
-                        </group>
-                    ))}
                 </group>
             )}
-            <KeeperFist ref={handRef} />
-            <KeeperForearm ref={armRef} />
             <group ref={rightItemRef}>
                 {/* 
                   Prevent UniversalTool from rendering the torch (and its extra PointLight) 
