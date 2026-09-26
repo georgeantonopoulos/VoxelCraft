@@ -4,6 +4,7 @@ import { WorldSeed } from '@core/WorldSeed';
 import { BiomeManager, WorldType } from '@features/terrain/logic/BiomeManager';
 import { audioManager } from '@core/audio/AudioManager';
 import { VineRule } from '@ui/grove/GroveOrnaments';
+import { worldNameFor } from '@state/savedWorlds';
 
 interface SettingsMenuProps {
   onRestartWorld?: () => void;
@@ -131,8 +132,10 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({ onRestartWorld }) =>
         <Section title="This world">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <div className="font-display text-[20px] font-semibold">{worldType ? WORLD_NAMES[worldType as WorldType] ?? worldType : 'The Grove'}</div>
-              <div className="text-[12.5px] text-lichen/55">seed <span className="grove-num">{WorldSeed.get()}</span> · your progress is kept for this seed</div>
+              <div className="font-display text-[20px] font-semibold">{worldNameFor(WorldSeed.get())}</div>
+              <div className="text-[12.5px] text-lichen/55">
+                {worldType ? WORLD_NAMES[worldType as WorldType] ?? worldType : 'The Grove'} · seed <span className="grove-num">{WorldSeed.get()}</span> · saved as you play
+              </div>
             </div>
             {onRestartWorld && (
               <button onClick={handleRestartWorld} className="grove-button-quiet shrink-0 px-4 py-1.5 text-[12.5px]" title="Return to the title screen">
