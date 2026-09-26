@@ -7,7 +7,6 @@ import { TreeType } from '@features/terrain/logic/VegetationConfig';
 import { TreeGeometryFactory } from '@features/flora/logic/TreeGeometryFactory';
 import { getLeafTexture } from '@features/flora/trees/leafAtlas';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
-import { LOD_DISTANCE_SIMPLIFIED, LOD_DISTANCE_TREES_ANY } from '@/constants';
 
 // Type for pre-computed tree instance data from worker
 interface TreeInstanceBatch {
@@ -27,21 +26,11 @@ interface TreeLayerProps {
     lodLevel?: number;
 }
 
-const smoothstep = (edge0: number, edge1: number, x: number) => {
-    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-    return t * t * (3 - 2 * t);
-};
-
-const getLeafLodAlpha = (lodLevel: number) => {
-    const simplifyFade = smoothstep(LOD_DISTANCE_SIMPLIFIED - 0.2, LOD_DISTANCE_SIMPLIFIED + 0.5, lodLevel);
-    const densityAfterSimplify = 0.85;
-    const densityBase = 1.0 - (1.0 - densityAfterSimplify) * simplifyFade;
-    const fadeOut = smoothstep(LOD_DISTANCE_TREES_ANY - 0.6, LOD_DISTANCE_TREES_ANY + 0.2, lodLevel);
-    return Math.max(0, Math.min(1, densityBase * (1.0 - fadeOut)));
-};
+/** Far crowns dissolve between these distances (m), inside the fog. */
+const LEAF_FADE_START = 84;
+const LEAF_FADE_END = 100;
 
 export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInstanceBatches, collidersEnabled, chunkKey, simplified, lodLevel = 0 }) => {
-    const leafLodAlpha = useMemo(() => getLeafLodAlpha(lodLevel), [lodLevel]);
 
     // Use pre-computed batches if available, otherwise fall back to client-side batching
     const batches = useMemo(() => {
@@ -144,7 +133,6 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
                     collidersEnabled={collidersEnabled}
                     chunkKey={chunkKey}
                     simplified={simplified}
-                    leafLodAlpha={leafLodAlpha}
                     lodLevel={lodLevel}
                 />
             ))}
@@ -155,7 +143,6 @@ export const TreeLayer: React.FC<TreeLayerProps> = React.memo(({ data, treeInsta
 // Material pools for trees to avoid per-chunk creation.
 const treeWoodMaterialPool: Record<string, THREE.Material> = {};
 const treeLeafMaterialPool: Record<string, THREE.Material> = {};
-const treeLeafOpaqueMaterialPool: Record<string, THREE.Material> = {};
 
 const getTreeWoodMaterial = (type: number, colors: any) => {
     const key = `${type}`;
@@ -302,16 +289,14 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
 };
 
 /**
- * Leaf materials are pooled per (type, opaque, LOD alpha). The alpha used to be
- * written in onBeforeRender on one shared material, but three.js skips material
- * uniform uploads between consecutive draws with the same material, so every
- * chunk drew with whichever value happened to be uploaded first. Materials
- * with different alphas share one compiled program.
+ * One leaf material per tree type, shared by both LODs. Far crowns fade out by
+ * each tree's own distance (dithered, inside the fog), not by chunk LOD tier:
+ * per-chunk alpha steps thinned every crown in a chunk at once as the player
+ * crossed a chunk border.
  */
-const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha = 1) => {
-    const alpha = Math.round(Math.max(0, Math.min(1, lodAlpha)) * 100) / 100;
-    const key = `${type}${opaque ? ':opaque' : ''}:a${alpha}`;
-    const pool = opaque ? treeLeafOpaqueMaterialPool : treeLeafMaterialPool;
+const getTreeLeafMaterial = (type: number, colors: any) => {
+    const key = `${type}`;
+    const pool = treeLeafMaterialPool;
     if (pool[key]) return pool[key];
 
     pool[key] = new (CustomShaderMaterial as any)({
@@ -330,6 +315,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
             varying float vHueCos;
             varying float vHueSin;
             varying vec2 vLeafUv;
+            varying float vTreeDist;
 
             float hash11(float p) {
                 return fract(sin(p) * 43758.5453123);
@@ -339,6 +325,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
                 vLeafUv = uv;
                 vPos = position;
                 vWorldNormal = normalize(mat3(modelMatrix) * normal);
+                vTreeDist = distance(cameraPosition, (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz);
                 vTreeSeed = fract(sin(dot(instanceMatrix[3].xyz, vec3(12.9898, 78.233, 37.719))) * 43758.5453123);
                 vec3 treeNoiseOffset = vec3(vTreeSeed * 50.0, vTreeSeed * 37.0, vTreeSeed * 23.0);
                 vNoisePos = position + treeNoiseOffset;
@@ -374,7 +361,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
             uniform vec3 uColorTip;
             uniform sampler3D uNoiseTexture;
             uniform float uTime;
-            uniform float uLeafLodAlpha;
+            varying float vTreeDist;
             uniform sampler2D uLeafMap;
             varying vec2 vLeafUv;
 
@@ -385,7 +372,8 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
 
             void main() {
                 float lodRand = fract(sin(vLeafRand * 173.1 + vTreeSeed * 19.7) * 43758.5453123);
-                if (lodRand > uLeafLodAlpha) {
+                float keep = 1.0 - smoothstep(${LEAF_FADE_START.toFixed(1)}, ${LEAF_FADE_END.toFixed(1)}, vTreeDist);
+                if (lodRand > keep) {
                     discard;
                 }
 
@@ -418,14 +406,12 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
             uNoiseTexture: { value: getNoiseTexture() },
             ...sharedUniforms,
             uLeafHueVariation: { value: 0.18 },
-            uLeafLodAlpha: { value: alpha },
             uLeafMap: { value: getLeafTexture(type as TreeType) },
         },
         side: THREE.DoubleSide,
         toneMapped: false,
     });
 
-    // Return from the pool we just filled (opaque LOD leaves previously got undefined -> default material).
     return pool[key];
 };
 
@@ -475,9 +461,8 @@ const InstancedTreeBatch: React.FC<{
     collidersEnabled: boolean;
     chunkKey: string;
     simplified?: boolean;
-    leafLodAlpha: number;
     lodLevel: number;
-}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, leafLodAlpha, lodLevel }) => {
+}> = ({ type, variant, matrices, originalIndices, count, collidersEnabled, chunkKey, simplified, lodLevel }) => {
     const woodMesh = useRef<THREE.InstancedMesh>(null);
     const leafMesh = useRef<THREE.InstancedMesh>(null);
     const [deferredCollidersEnabled, setDeferredCollidersEnabled] = React.useState(false);
@@ -560,7 +545,7 @@ const InstancedTreeBatch: React.FC<{
     }, [type]);
 
     const woodMaterial = useMemo(() => getTreeWoodMaterial(type, colors), [type, colors]);
-    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors, simplified, leafLodAlpha), [type, colors, simplified, leafLodAlpha]);
+    const leafMaterial = useMemo(() => getTreeLeafMaterial(type, colors), [type, colors]);
     const leafDepthMaterial = useMemo(() => getTreeLeafDepthMaterial(type), [type]);
 
     const colliderGeometries = useMemo(() => {

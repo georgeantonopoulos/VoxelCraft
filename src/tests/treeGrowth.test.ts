@@ -43,4 +43,15 @@ describe('tree growth', () => {
     expect(Array.from(a.wood.positions.slice(0, 30))).toEqual(Array.from(b.wood.positions.slice(0, 30)));
     expect(a.wood.positions.length === c.wood.positions.length && a.height === c.height).toBe(false);
   });
+
+  it('keeps the same shape and leaves across LODs (no popping at LOD switches)', () => {
+    for (const type of [TreeType.OAK, TreeType.PINE, TreeType.PALM, TreeType.JUNGLE, TreeType.ACACIA]) {
+      const high = growTree(type, 1, 'high');
+      const low = growTree(type, 1, 'low');
+      expect(low.height).toBeCloseTo(high.height, 5);
+      expect(Array.from(low.leaves.positions)).toEqual(Array.from(high.leaves.positions));
+      expect(low.collision.length).toBe(high.collision.length);
+      expect(low.wood.positions.length).toBeLessThan(high.wood.positions.length);
+    }
+  });
 });

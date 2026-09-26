@@ -170,7 +170,9 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
   const trunk = growBranch(new THREE.Vector3(0, -0.4, 0), trunkDir, trunkLen + 0.4, sp.trunkRadius, 0);
 
   const spawnChildren = (parent: Branch) => {
-    if (parent.depth >= sp.depth - (low ? 1 : 0) || sp.children[1] === 0) return;
+    // Both LODs grow the same skeleton (same random stream), so a tree keeps
+    // its shape when it switches LOD; 'low' only simplifies the wood mesh.
+    if (parent.depth >= sp.depth || sp.children[1] === 0) return;
     const nodes = parent.nodes;
     const first = Math.max(1, Math.floor(nodes.length * sp.childStart));
     const count = sp.whorl && parent.depth > 0 ? Math.round(rr(1, 3)) : Math.round(rr(sp.children[0], sp.children[1]));
@@ -244,6 +246,8 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
   const BARK_TILE = 1.2; // metres per bark UV repeat
 
   for (const br of branches) {
+    // Far trees: twigs are sub-pixel, so skip their tubes (their leaves stay).
+    if (low && sp.depth >= 2 && br.depth >= sp.depth) continue;
     const sides = br.depth === 0 ? (low ? 6 : 10) : br.depth === 1 ? (low ? 4 : 6) : br.depth === 2 ? (low ? 3 : 4) : 3;
     const nodes = br.nodes;
     const base = wood.vertexCount;
@@ -359,12 +363,11 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
     }
   };
 
-  const densityMul = low ? 0.45 : 1;
   const [lw, lh] = sp.leafSize;
 
   if (type === TreeType.PALM) {
     const tip = trunk.nodes[trunk.nodes.length - 1].p;
-    const fronds = low ? 7 : 12;
+    const fronds = 12;
     for (let i = 0; i < fronds; i++) {
       const a = (i / fronds) * Math.PI * 2 + rr(-0.2, 0.2);
       const outDir = new THREE.Vector3(Math.cos(a), rr(0.15, 0.6), Math.sin(a)).normalize();
@@ -375,7 +378,7 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
       addCard(center, normal, outDir, lw * 0.32, rr(lh * 0.85, lh), rr(0.25, 0.4));
     }
   } else if (sp.leafDensity > 0) {
-    const effectiveDepth = sp.depth - (low ? 1 : 0);
+    const effectiveDepth = sp.depth;
     const leafMin = Math.max(1, effectiveDepth - 1);
     for (const br of branches) {
       if (br.depth < leafMin && !(sp.whorl && br.depth >= 1)) continue;
@@ -386,7 +389,7 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
         const segLen = seg.length();
         const frac = i / (nodes.length - 1);
         if (frac < (br.depth >= effectiveDepth ? 0.15 : 0.5)) continue;
-        acc += segLen * sp.leafDensity * densityMul;
+        acc += segLen * sp.leafDensity;
         while (acc >= 1) {
           acc -= 1;
           const center = nodes[i - 1].p.clone().addScaledVector(seg, rand());
@@ -409,7 +412,7 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
           const s = rr(0.8, 1.2);
           addCard(center, normal, tangent, lw * s, (sp.leafAlong ? lh : lw) * s, 0);
           // A second, crossed card for volume (not for flat acacia crowns).
-          if (!low && !sp.leafFlat && rand() < 0.5) {
+          if (!sp.leafFlat && rand() < 0.5) {
             addCard(center, tangent.clone().cross(normal).normalize(), normal, lw * s * 0.9, (sp.leafAlong ? lh : lw) * s * 0.9, 0);
           }
         }
