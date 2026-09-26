@@ -105,8 +105,10 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
       <div className="grove-mist pointer-events-none fixed inset-0" />
       <FireflyField count={70} className="fixed" />
 
-      <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-10">
-        <div className="w-[min(860px,94vw)]">
+      <div className="relative flex min-h-full flex-col items-center justify-center px-6 py-6">
+        {/* The logo gives way to the height the rest needs, so Continue and the
+            other worlds fit on a laptop screen without scrolling. */}
+        <div style={{ width: `max(340px, min(860px, 94vw, calc((100svh - ${!choosing && others.length > 0 ? 600 : 420}px) * 2.4)))` }}>
           <GroveLogo src={logo} />
         </div>
 
@@ -136,7 +138,7 @@ export const WorldSelectionScreen: React.FC<WorldSelectionScreenProps> = ({ onSe
             {others.length > 0 && (
               <div className="mt-3 flex w-[min(460px,90vw)] flex-col items-stretch">
                 <div className="grove-eyebrow mb-2 text-center">Other worlds</div>
-                <div className="grove-scroll flex max-h-[228px] flex-col overflow-y-auto">
+                <div className="grove-scroll flex max-h-[180px] flex-col overflow-y-auto">
                   {others.map((w) => {
                     const id = `${w.type}:${w.seed}`;
                     const asking = confirming === id;
