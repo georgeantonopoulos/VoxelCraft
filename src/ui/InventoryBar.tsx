@@ -23,7 +23,7 @@ import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
 import { ItemType } from '@/types';
 import { useHudPresence, presenceStyle } from '@/state/HudPresenceStore';
-import { ItemThumbnail } from '@/features/interaction/components/ItemThumbnail';
+import { ItemGlyph } from '@/ui/grove/ItemGlyph';
 
 export const InventoryBar: React.FC = React.memo(() => {
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -96,7 +96,7 @@ export const InventoryBar: React.FC = React.memo(() => {
                         </span>
 
                         {item ? (
-                            <ItemThumbnail item={item} />
+                            <ItemGlyph item={item} className="h-9 w-9" />
                         ) : (
                             <span className="h-1 w-1 rounded-full bg-lichen/20" />
                         )}

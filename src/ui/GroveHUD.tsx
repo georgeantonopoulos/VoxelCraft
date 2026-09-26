@@ -70,20 +70,20 @@ const QuestTracker: React.FC = () => {
     <div className="grove-veil grove-text-shadow w-[300px]">
       <div className="grove-eyebrow">Keeper&apos;s Path</div>
       <h2 className="mt-0.5 font-display text-[27px] font-semibold leading-[1.05] text-parchment">{quest.title}</h2>
-      <p className="mt-1 font-display text-[15px] italic leading-snug text-lichen/70">{quest.lore}</p>
+      <p className="mt-1 font-display text-[16px] font-semibold italic leading-snug text-lichen">{quest.lore}</p>
       <div className="mt-2.5 flex items-center gap-3">
         <ProgressPips value={value} goal={goal} />
-        <span className="grove-num text-[12px] text-lichen/70">{value} / {goal}</span>
+        <span className="grove-num text-[12px] text-lichen/90">{value} / {goal}</span>
       </div>
-      <p className="mt-2 text-[14px] leading-snug text-parchment/90">{renderHint(quest.hint)}</p>
+      <p className="mt-2 text-[14px] font-medium leading-snug text-parchment">{renderHint(quest.hint)}</p>
 
       <div className="mt-4 flex items-center gap-2 text-[12px]" title={next ? `${next.minEssence - essence} essence to ${next.title}` : 'Highest rank'}>
-        <span className="font-display text-[16px] italic text-ember">{rank.title}</span>
+        <span className="font-display text-[16px] font-semibold italic text-ember">{rank.title}</span>
         <span className="h-[3px] w-16 overflow-hidden rounded-full bg-ember/15">
           <span className="block h-full rounded-full bg-ember/80 transition-[width] duration-700" style={{ width: `${rankPct}%` }} />
         </span>
-        <span className="grove-num text-lumina/85">{essence}</span>
-        <span className="text-lichen/50">essence</span>
+        <span className="grove-num font-medium text-lumina">{essence}</span>
+        <span className="font-medium text-lichen">essence</span>
       </div>
     </div>
   );
@@ -99,8 +99,8 @@ export const VitalityRing: React.FC = () => {
   return (
     <div className="flex items-center gap-2.5 grove-text-shadow" title={`World vitality · ${restored} hollow${restored === 1 ? '' : 's'} restored`}>
       <div className="text-right leading-tight">
-        <div className="grove-eyebrow text-[9.5px]">Vitality</div>
-        <div className="text-[11px] text-lichen/60">{restored} hollow{restored === 1 ? '' : 's'}</div>
+        <div className="grove-eyebrow">Vitality</div>
+        <div className="text-[11.5px] font-medium text-lichen">{restored} hollow{restored === 1 ? '' : 's'}</div>
       </div>
       <div className="relative h-11 w-11">
         <svg viewBox="0 0 44 44" className="h-11 w-11 -rotate-90">
@@ -199,7 +199,7 @@ const LuminaCompass: React.FC = () => {
           </div>
         )}
       </div>
-      <div className="mt-0.5 text-[11px] tracking-[0.2em] text-lumina/85 uppercase">
+      <div className="mt-0.5 text-[11px] font-medium tracking-[0.2em] text-lumina uppercase">
         {compass ? <>Lumina Sense · {label} · <span className="grove-num tracking-normal">{dist}</span></> : <span className="text-lichen/55">The Lumina is silent here</span>}
       </div>
     </div>
@@ -250,8 +250,9 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
 
 const ToastStack: React.FC = () => {
   const toasts = useGroveStore((s) => s.toasts);
-  // Only the newest two: a burst (quest done + rank up + new quest) stays readable.
-  const shown = toasts.slice(-2);
+  // One at a time, in order: a burst (quest done, rank up, new quest) plays as
+  // a short sequence instead of stacking mid-screen. Each dismisses itself.
+  const shown = toasts.slice(0, 1);
   return (
     <div className="absolute left-1/2 top-[18%] flex -translate-x-1/2 flex-col items-center gap-7">
       {shown.map((t) => <ToastItem key={t.id} toast={t} />)}
@@ -300,15 +301,15 @@ const ControlsHelp: React.FC = () => {
   }
 
   return (
-    <div className="grove-panel px-4 py-3 text-[12.5px]">
-      <div className="grove-eyebrow mb-2">Controls</div>
+    <div className="grove-text-shadow text-[12.5px]">
+      <div className="grove-eyebrow mb-1.5 text-right">Controls</div>
       {CONTROL_ROWS.map(([keys, action]) => (
-        <div key={action} className="flex items-center justify-between gap-5 leading-[26px]">
-          <span className="whitespace-nowrap">{keys.map((k) => <span key={k} className="grove-key">{k}</span>)}</span>
-          <span className="text-right text-lichen/80">{action}</span>
+        <div key={action} className="flex items-center justify-end gap-3 leading-[25px]">
+          <span className="text-right font-medium text-parchment">{action}</span>
+          <span className="min-w-[88px] whitespace-nowrap text-right">{keys.map((k) => <span key={k} className="grove-key">{k}</span>)}</span>
         </div>
       ))}
-      <div className="mt-2 text-right text-[11px] text-lichen/45"><span className="grove-key">H</span> to hide</div>
+      <div className="mt-1.5 text-right text-[11px] text-lichen/75"><span className="grove-key">H</span> to hide</div>
     </div>
   );
 };
