@@ -220,6 +220,12 @@ const WATER_FRAGMENT = /* glsl */ `
         flecks = cs.z * current;
       }
     }
+    if (uDebugMode == 4) {
+      // Current: hue = direction, brightness = strength (grey = none).
+      vec3 fl = uHasFlow > 0.5 ? texture2D(uFlow, (vLocal / ${FLOW_STEP.toFixed(1)} + 0.5) / ${FLOW_GRID.toFixed(1)}).rgb : vec3(0.5, 0.5, 0.0);
+      gl_FragColor = vec4(mix(vec3(0.3), vec3(fl.r, fl.g, 1.0 - fl.r), current), 1.0);
+      return;
+    }
     // Calm the surface in the shallows (short fetch, less chop).
     slope *= smoothstep(0.0, 2.0, depth) * 0.7 + 0.3;
     vec3 n = normalize(vec3(slope.x, 1.0, slope.y));
@@ -379,7 +385,7 @@ export const createFlowTexture = (cx: number, cz: number): THREE.DataTexture | n
   return tex;
 };
 
-// Debug: window.__waterDebug(1) shows water depth as greyscale, 0 = normal.
+// Debug: window.__waterDebug(1) shows water depth as greyscale, 4 the river current, 0 = normal.
 if (typeof window !== 'undefined') {
   (window as unknown as { __waterDebug?: (mode: number) => void }).__waterDebug = (mode: number) => {
     sharedDebugMode.value = mode;
