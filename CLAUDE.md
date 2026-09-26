@@ -14,7 +14,7 @@ npm run preview      # Preview production build
 
 ## General Instructions
 
-- **Exploration**: Use `ls -R`, `grep`, and `cat` to fully understand the existing architecture and patterns before proposing changes.
+- **Exploration**: Read the code you are changing and its callers before proposing changes.
 - **Incremental Development**: Break complex tasks into small, logical steps. Verify each step by running tests or builds.
 - **Verification**: Always run `npm run test:unit` and `npm run build` after modifications. If changes affect the UI, suggest a manual smoke test via `npm run dev`.
 - **Clarification**: If an instruction is ambiguous or contradicts the existing architecture, stop and ask for clarification rather than making assumptions.
@@ -394,70 +394,18 @@ npm run dev          # Start dev server
 - **Event naming**: Custom events must match exactly (`'vc-audio-play'`, not `'audio-play'`).
 - **Initialization order**: AudioManager MUST initialize before any audio events are dispatched.
 
-## Subagent Usage Guide
+## Project Subagents
 
-Claude Code has access to specialized subagents for different tasks. **Use these proactively** - they reduce context usage and provide better results for their specialized domains.
+These agents exist for this project. Spawn one only when the user asks for it (or for delegation); otherwise use Read/Grep directly.
 
-### Available Subagents
+| Agent | Helps with |
+|-------|-----------|
+| **root-cause-analyst** | A deep investigation of an error or broken behaviour, before any fix |
+| **shader-debugger** | GLSL compile errors, shader artifacts, CSM integration |
+| **docs-sync** | Syncing CLAUDE.md / AGENTS.md after a significant change |
+| **test-architect** | Regression or coverage tests after a hard fix or a finished feature |
 
-| Agent | When to Use | Example Triggers |
-|-------|-------------|------------------|
-| **Explore** | Codebase exploration, finding files, understanding architecture | "Where is X handled?", "How does Y work?", "Find all files that..." |
-| **Plan** | Designing implementation strategies for new features or refactors | "Add crafting system", "Refactor terrain pipeline", multi-file changes |
-| **root-cause-analyst** | Debugging errors, stack traces, unexpected behavior | Error messages, "X is broken", "doesn't work", crashes |
-| **docs-sync** | Updating CLAUDE.md/AGENTS.md after completing changes | After refactors, new features, architecture changes |
-| **claude-code-guide** | Questions about Claude Code itself, hooks, MCP servers | "Can Claude do...", "How do I configure..." |
-| **test-architect** | After implementing features, use to design and verify tests | New features, bug fixes needing regression tests |
-
-### When to Use Each Agent
-
-**Explore Agent** - Use for ANY open-ended codebase questions:
-```
-❌ Direct Glob/Grep for "where are errors handled?"
-✅ Task(Explore): "Find where client errors are handled and explain the error handling pattern"
-```
-
-**Plan Agent** - Use BEFORE implementing non-trivial features:
-```
-❌ Start coding a new feature immediately
-✅ Task(Plan): "Design implementation for player crafting system with inventory integration"
-```
-
-**Root Cause Analyst** - Use when user reports issues:
-```
-❌ Immediately try to fix based on error message
-✅ Task(root-cause-analyst): "Investigate why terrain chunks aren't loading - user reports [error]"
-```
-
-**Docs Sync** - Use AFTER completing significant changes:
-```
-❌ Forget to update documentation
-✅ Task(docs-sync): "Update CLAUDE.md and AGENTS.md after GI lighting system implementation"
-```
-
-**Test Architect** - Use AFTER implementing new features or fixing bugs:
-```
-❌ Implement feature without considering test coverage
-✅ Task(test-architect): "Design tests for the new audio spatial system"
-```
-
-### Agent Usage Rules
-
-1. **Prefer agents over direct tool calls** for complex searches - they explore more thoroughly
-2. **Launch agents in parallel** when investigating multiple independent questions
-3. **Always summarize agent results** back to the user - agent output is not visible to them
-4. **Resume agents** using their ID for follow-up work in the same domain
-5. **Use appropriate thoroughness** for Explore: "quick" for simple lookups, "very thorough" for architecture questions
-
-6. **Shader debugger** - GLSL-specific debugging and optimization
-
-### Missing Agents (Request These)
-
-If you find yourself repeatedly doing similar complex tasks, consider requesting these specialized agents:
-- **Performance profiler** - Systematic performance investigation
-- **Test writer** - Generate tests for new functionality
-
-- **Worker debugger** - Web Worker message flow analysis
+When an agent runs, relay what matters from its result: its output is not visible to the user.
 
 ## Detailed Engineering Guidance
 
@@ -515,7 +463,7 @@ Also resolved (2026-09, second pass):
 
 ### Sacred Grove Ecosystem (Planned)
 Root Hollows are terraforming seeds that transform the landscape:
-1. **Barren Zone**: Area around dormant Root Hollow is desert-like (RED_DESERT material)
+1. **Barren Zone**: Area around a dormant Root Hollow is drained dirt over stone, with no blade grass (see UI Design Language)
 2. **Tree Growth**: When the hollow's LuminaTree grows, it begins spreading life (NOT YET IMPLEMENTED)
 3. **Humidity Spreading**: Gradual biome transformation from barren to lush (NOT YET IMPLEMENTED)
 4. **Vegetation Spawning**: Trees and flora spawn in transformed areas (NOT YET IMPLEMENTED) 

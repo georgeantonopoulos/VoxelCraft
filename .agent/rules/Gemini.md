@@ -10,7 +10,7 @@ trigger: always_on
 - Use Centigrade for any thermal or hardware-related metrics. 🌡️
 
 ## Execution Flow
-1. **Analyze:** Before coding, describe the 'how' and 'why' in a thought block. Always READ   AGENTS.md first. Always UPDATE AGENTS.md with your findings.
+1. **Analyze:** Before coding, describe the 'how' and 'why' in a thought block. Read AGENTS.md first. Update it only as its "How agents should update this file" section allows.
 2. **Scan:** Verify existing project structure before creating new files.
 3. **Draft:** Present code in clean, modular chunks. 
 4. **Verify:** Self-correct for common errors (imports, types, security).

@@ -15,7 +15,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 4. If you do a **visual inspection**:
    - Wait **10 seconds** after entering the world (streaming settles).
    - Use the in-game controls to capture **4 screenshots** from different angles/states.
-   - Add a **1–3 line** summary under “Worklog (short)” (include what changed and what you verified).
 5. Back-check any new “facts” against the codebase before writing them here.
 6. If something here is important and missing, add it.
 7. If something here is wrong, fix it.
@@ -28,7 +27,6 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - **Do not force GLSL versions** (avoid adding `#version ...` unless you fully understand the shader pipeline impact).
 - Always run **both** `npm run build` and a quick `npm run dev` smoke-start before finishing work.
 - Always run vite tests, check Testing Strategy section
-- **Comments**: DO NOT remove code comments. Add clarifying comments when missing.
 ---
 
 ## Quick Project Facts (verified)
@@ -54,13 +52,13 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
 - `src/ui/`: React-based HUD, settings menu, startup screens, and debug overlays.
 
 #### Terrain System
-- **Generation**: `TerrainService.generateChunk` uses 3D Simplex noise (`src/core/math/noise.ts`) to create a density field.
+- **Generation**: `TerrainService.generateChunk` (`src/features/terrain/logic/terrainService.ts`) builds the density field; column surface height comes from `columnInfo()` in `terrainShape.ts`.
   - **Density > ISO_LEVEL (0.5)** = Solid.
   - **Materials**: Determined by height, slope, and noise (Bedrock, Stone, Dirt, Grass, etc.).
-  - **Caverns**: Stateless "Noodle" Algorithm using domain-warped 3D ridged noise (`abs(noise) < threshold`) in `TerrainService.ts`. Configured per-biome via `BiomeManager.ts`.
+  - **Caverns**: three cave styles whose SDFs are blended by column climate (`caveStyleWeights`), not picked per voxel biome (see CLAUDE.md, Biome climate).
 - **Lighting**: `src/core/lighting/lightPropagation.ts` generates a voxel-based GI light grid (8×32×8 cells per chunk).
   - **Light Grid**: Low-resolution 3D grid (LIGHT_CELL_SIZE=4, each cell = 4×4×4 voxels).
-  - **Sky Light**: Traces down from above, attenuates through solid voxels (SKY_LIGHT_ATTENUATION=0.7).
+  - **Sky Light**: Traces down from above, attenuates through solid voxels (SKY_LIGHT_ATTENUATION=0.15, retained per solid cell).
   - **Point Lights**: Torches and Lumina flora seed the grid with colored light (inverse-square falloff).
   - **Propagation**: 6-iteration flood-fill spreads light through 6-connected neighbors (LIGHT_FALLOFF=0.82).
   - **Critical Order**: Light grid MUST be generated before meshing (worker calls `generateLightGrid()` then `generateMesh()`).
@@ -74,11 +72,12 @@ This file exists to prevent repeat bugs and speed up safe changes. It should sta
   - **GI Integration**: Fragment shader reads `vLightColor` (interpolated from vertices) and applies it as ambient/indirect lighting. Replaces flat ambient light (now reduced to 0.08 surface / 0.04 cave).
 
 ## Testing Strategy
-- **Headless Tests**: Run via `npm test` (Vitest).
+- **Headless Tests**: Run via `npm run test:unit` (Vitest, single run; `npm test` starts watch mode).
 - **Location**: All unit/kernel tests live in `src/tests/` (centralized).
 - **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
 - **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
 - **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
+- If implementing significant new feature, add a new test.
 
 ### Browser-Only Systems (Cannot Unit Test)
 Some systems require browser APIs and MUST be tested via `npm run dev`:
@@ -127,7 +126,7 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 
 ## Workers & Messages (verified)
 
-- Terrain generation/remesh runs via `src/features/terrain/workers/terrain.worker.ts`, managed by a **WorkerPool** (`src/core/utils/WorkerPool.ts`) in `src/features/terrain/components/VoxelTerrain.tsx`.
+- Terrain generation/remesh runs via `src/features/terrain/workers/terrain.worker.ts`, managed by a **WorkerPool** (`src/core/workers/WorkerPool.ts`) in `src/features/terrain/components/VoxelTerrain.tsx`.
 - Worker message convention is `{ type, payload }` (see `terrain.worker.ts`, `simulation.worker.ts`).
 - Performance: Transfers large Float32Arrays to avoid main-thread serialization overhead.
 - Simulation runs via `src/features/flora/workers/simulation.worker.ts` managed by `src/features/flora/logic/SimulationManager.ts` and posts `type: 'CHUNKS_UPDATED'`.
@@ -148,7 +147,7 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 ## Known Pitfalls (keep this list small)
 
 - **Audio System Centralization**: All audio playback MUST go through AudioManager (`src/core/audio/AudioManager.ts`). NEVER call `new Audio()` directly. Always dispatch `vc-audio-play` events. Sound definitions live in `soundRegistry.ts`. **Critical**: `SoundCategory` must be imported as a value (`import { SoundCategory }`), NOT as a type (`import type { SoundCategory }`), because it's used in runtime code (`Object.values(SoundCategory)`). Type-only imports compile successfully but fail at runtime.
-- **Item Geometry Centralization**: All item visuals (sticks, stones, shards, flora, tools) MUST use geometry factories and colors from `src/core/items/ItemGeometry.ts`. Never define item geometry, colors, or materials inline. This ensures visual consistency across held items, ground clutter, crafting UI, and physics items. Shard geometry is octahedron-based (blade-like), not cone-based.
+- **Item Geometry Centralization**: All item visuals (sticks, stones, shards, flora, tools) MUST use geometry factories and colors from `src/core/items/ItemGeometry.ts`. Never define item geometry, colors, or materials inline. This ensures visual consistency across held items, ground clutter, crafting UI, and physics items. Shards are knapped flakes (`createShardGeometry`).
 - **Shared references from `Array(n).fill(obj)`**: Use `Array.from({ length: n }, () => new Obj())` for per-particle/per-instance objects (common particle bug class).
 - **React StrictMode timer bugs**: Effects can mount/unmount twice in dev; store timeout IDs in refs and clear them before setting new ones (see `src/features/flora/components/RootHollow.tsx`).
 - **InstancedMesh scaling can “shrink your shader space”**: If instance matrices scale, shader-driven offsets may also scale; size particles via geometry radius when offsets must stay in world units (see `src/features/flora/components/LumaSwarm.tsx`).
@@ -170,7 +169,7 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 - **Trimesh Collider Creation is Expensive**: Rapier's `trimesh` colliders require building a BVH acceleration structure on the main thread. When `colliderEnabled` flips to `true`, the `<RigidBody colliders="trimesh">` creation can cause a 10-30ms stall depending on mesh complexity. The current throttled queue (`colliderEnableQueue` in `VoxelTerrain.tsx`) spreads this out, but doesn't eliminate the synchronous creation. Future optimization: use `requestIdleCallback` or pre-build colliders in a worker (if Rapier supports it).
 - **Instance Matrix Calculations in Render Effects**: `TreeLayer.tsx` and `VegetationLayer.tsx` compute instance matrices in `useLayoutEffect` loops. For dense chunks (jungle trees, 100+ instances), this can block the main thread for 2-5ms. Consider pre-computing matrices in the terrain worker and passing them in the `GENERATED` payload.
 - **Lumina Stride Mismatch**: `floraPositions` has stride 4 (x,y,z,type). Using stride 3 for extraction (e.g. for light positions in `LuminaLayer.tsx`) causes coordinate shifting and invisible/misplaced lights.
-- **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. ALWAYS cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`). Avoid using `useState` inside `useFrame` to toggle these lights; use imperative `visible` control via refs to bypass React's reconciler (see `LuminaLayer.tsx`).
+- **Point Light React Overhead**: Spawning hundreds of `PointLight` components (even if culled) kills React/R3F performance due to thousands of `useFrame` handlers and reconciliation checks. Cap point lights per chunk (e.g. `MAX_LIGHTS_PER_CHUNK = 8`) and use `<PooledPointLight>`. Never toggle `visible` or mount/unmount lights during play: dim them to intensity 0 (a change in visible light count recompiles every lit shader; see CLAUDE.md, Constant light count).
 - **Chunk Bounding Spheres and Frustum Culling**: If chunks disappear when viewed at grazing angles, verify `geometry.boundingSphere`. It must be centered at the chunk's visual center (e.g. `[16, 64, 16]`) and have a radius spanning the full volume. Misalignment (e.g. due to `PAD` offsets) will cause Three.js to cull the chunk prematurely. (Fixed in `ChunkMesh.tsx`).
 - **Chunk Cache Restoration**: For items/trees to persist on revisit, ALL entity data (flora, trees, sticks, rocks, hotspots, and processed buckets/batches) MUST be saved to and correctly restored from `CachedChunk` in `terrain.worker.ts`.
 - **HeightfieldCollider Pattern**: For heightfield colliders to work correctly: (1) Use `colliders={false}` on RigidBody to disable auto-generation, (2) Add `<HeightfieldCollider>` as a child with `args=[nRows, nCols, heights, scale]`, (3) Heights must be in column-major order (`heights[z + x * numSamplesZ]`), (4) Scale defines TOTAL size (`{x: 32, y: 1, z: 32}`), (5) Position at center of chunk (`[16, 0, 16]`). For cave chunks, use `colliders="trimesh"` which auto-generates from the first child mesh.
@@ -178,17 +177,6 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 - **Version Add vs Increment Distinction**: `queueVersionAdd(key)` adds new chunks with version 1. `queueVersionIncrement(key)` increments existing entries. Using increment for new chunks does nothing (the `if (next[k] !== undefined)` guard fails). During initial load, new chunks MUST use `queueVersionAdd`, not `queueVersionIncrement`.
 - **Initial Load vs Post-Load Code Paths**: `initialLoadTriggered.current` gates two different streaming behaviors. During initial load (`false`): chunks go directly to version state for immediate rendering. After initial load (`true`): chunks go through `mountQueue` for throttled addition. Mixing these paths causes spawn chunk to not appear.
 - **Light Grid Dimensions**: `LIGHT_CELL_SIZE` MUST divide evenly into both `CHUNK_SIZE_XZ` and `CHUNK_SIZE_Y`. Current: 4 divides into 32 and 128 cleanly (8×32×8 grid). Changing to non-divisible values causes index out-of-bounds in `getCellOcclusion()` and mesher light sampling. See `src/core/lighting/lightPropagation.ts` and `src/constants.ts`.
-
----
-
-## Testing Strategy (verified)
-
-- **Headless Tests**: Run via `npm test` (Vitest).
-- **Location**: All unit/kernel tests live in `src/tests/` (centralized).
-- **Scope**: Focus on mathematical kernels (mesher, noise, data structures) and logic (digging, inventory).
-- **Avoid**: Testing UI/React components heavily; prefer visual verification for those.
-- **Key Files**: `src/tests/terrainService.test.ts`, `src/tests/mesher.test.ts`.
-- If implementing significant new feature, add a new test. 
 
 ---
 
@@ -233,235 +221,3 @@ Some systems require browser APIs and MUST be tested via `npm run dev`:
 ## Worklog (short)
 
 - 2026-08-23: Stabilized inventory/entity lifecycles, extracted Q pickup from `VoxelTerrain.tsx`, added touch pickup, and removed remesh/postprocessing/startup/atmosphere overhead. Verified 82 tests plus native-GPU gameplay after a 10-second settle; captured movement/settings/touch-look/lazy routes (`output/web-game/native/`) and exercised the touch pickup control.
-
-## Worklog (last 5 entries)
-
-- 2026-01-07: **Centralized Audio System (AudioManager)**.
-  - **Goal**: Implement a centralized audio manager to prevent duplicate sound triggers, manage audio pooling, and provide category-based volume control.
-  - **Implementation**:
-    1. Created `src/core/audio/AudioManager.ts` as singleton for all audio playback:
-       - Pool-based architecture: each sound has multiple HTMLAudioElement instances for overlapping playback.
-       - Event-driven: listens to `vc-audio-play`, `vc-audio-stop`, `vc-audio-ambient-enter`, `vc-audio-ambient-exit` custom events.
-       - Category-based volume control: SFX_IMPACT, SFX_DIG, SFX_CHOP, SFX_INTERACT, AMBIENT, UI, MUSIC.
-       - Features: pitch variation, volume control, delayed playback, looping ambient sounds.
-    2. Created `src/core/audio/soundRegistry.ts` as single source of truth for sound definitions:
-       - Registered sounds: dig_1/2/3, pickaxe_dig, rock_hit, wood_hit, clunk, fire_loop.
-       - Each sound: id, URL, category, baseVolume, pitchVariation, poolSize.
-       - Helpers: `getRandomDigSound()`, `isSoundRegistered()`.
-    3. Created `src/core/audio/types.ts` for type safety:
-       - `SoundCategory` enum (must be value import, not type import).
-       - Interfaces: SoundDefinition, PlayOptions, AudioPlayEventDetail, etc.
-    4. Integrated into `App.tsx`: `audioManager.initialize(SOUND_REGISTRY)` on mount, `dispose()` on unmount.
-    5. Integrated into `useTerrainInteraction.ts`: Dig/build/chop sounds via `vc-audio-play` events.
-    6. Integrated into `PhysicsItem.tsx`: Stone impact sounds on collision.
-  - **Testing Lessons**:
-    - **Unit tests cannot catch**: Type-only imports (`import type { SoundCategory }`) compile but fail at runtime when used as values. Browser API usage (HTMLAudioElement, window events) requires `npm run dev` testing.
-    - **Smoke test required**: After audio changes, always verify in browser: (1) "[AudioManager] Initialized" log, (2) trigger digging/impacts, (3) check for import errors in DevTools.
-  - **Files**: `AudioManager.ts` (new), `soundRegistry.ts` (new), `types.ts` (new), `index.ts` (new), `App.tsx`, `useTerrainInteraction.ts`, `PhysicsItem.tsx`.
-  - **Documentation**: Updated CLAUDE.md and AGENTS.md with audio testing strategy and import pitfalls.
-
-- 2026-01-04: **Item Geometry Centralization**.
-  - **Goal**: Eliminate duplicate item geometry/color definitions across UniversalTool, GroundItemsLayer, and future physics items. Ensure visual consistency.
-  - **Implementation**:
-    1. Created `src/core/items/ItemGeometry.ts` as single source of truth:
-       - Unified color palette (ITEM_COLORS) matching terrain materials.
-       - Material variant system (obsidian, basalt, sandstone, clay stones; flint, volcanic shards).
-       - Geometry factories with caching: createStickGeometry(), createStoneGeometry(), createShardGeometry(), createLargeRockGeometry(), createLashingGeometry().
-       - Canonical dimensions (ITEM_DIMENSIONS) for all item types.
-    2. **Shard Geometry Change**: Replaced cone geometry with stretched octahedron (scaleX=0.6, scaleY=1.8, scaleZ=0.3) for blade-like appearance.
-    3. **Lashing Geometry**: Procedural helix curves for tool bindings (wraps, radius, tube params).
-    4. Updated UniversalTool.tsx to use shared factories for all mesh components (StoneMesh, ShardMesh, StickMesh, LashingMesh).
-    5. Updated GroundItemsLayer.tsx to use ITEM_COLORS and geometry factories for terrain clutter.
-    6. Added SHARD_SHADER to GroundItemShaders.ts for blade displacement on octahedron.
-    7. Enhanced CraftingInterface.tsx with ToolStatsPanel (live capability preview) and LashingMesh support.
-  - **Architecture**: ItemGeometry.ts consumed by UniversalTool (held/crafting), GroundItemsLayer (instanced), PhysicsItem (thrown), ItemThumbnail (inventory).
-  - **Files**: `ItemGeometry.ts` (new), `UniversalTool.tsx`, `GroundItemsLayer.tsx`, `GroundItemShaders.ts`, `CraftingInterface.tsx`.
-
-- 2026-01-04: **Fog System Investigation**.
-  - **Goal**: Identify all variables and systems producing the current fog state.
-  - **Findings**: Fog is a hybrid of native `THREE.Fog` (for objects/sky) and custom `TriplanarShader.ts` GLSL (for terrain). Key variables: `fogNear` (40), `fogFar` (220 * viewDistance), `atmosphereHaze` (0.25), `heightFogStrength` (0.35).
-  - **Files**: `AtmosphereManager.tsx`, `TriplanarShader.ts`, `App.tsx`, `SharedUniforms.ts`.
-  - **Issue**: Attaching `ItemType.FLORA` (Lumina flora) to a tool in the crafting menu did not render the model, making it appear invisible/disconnected.
-  - **Fix**: 
-    1. Extracted `FloraMesh` as a reusable component in `UniversalTool.tsx`.
-    2. Added the missing `ItemType.FLORA` case to the attachment rendering loop in `CraftingInterface.tsx`.
-  - **Files**: `UniversalTool.tsx`, `CraftingInterface.tsx`.
-
-- 2026-01-04: **VoxelTerrain.tsx Refactor - Separation of Concerns**.
-  - **Goal**: Reduce VoxelTerrain.tsx complexity by extracting interaction logic and raycast utilities.
-  - **Changes**:
-    1. Extracted `raycastUtils.ts` (348 lines) - Pure functions for ray intersection tests (`getMaterialColor`, `isTerrainCollider`, `rayHitsFlora/Torch/Lumina/GroundPickup`, `buildFloraHotspots`).
-    2. Extracted `useTerrainInteraction.ts` hook (782 lines) - All dig/build/chop/smash handling, physics item interaction, particle effects, audio feedback, terrain modification triggers.
-    3. VoxelTerrain.tsx reduced from 2701 → 1792 lines (34% reduction). Now focuses on chunk streaming, LOD updates, meshing orchestration.
-  - **Architecture**: Clean separation between streaming (VoxelTerrain) and interaction (useTerrainInteraction hook). Hook consumes raycast utils for hit detection.
-  - **Files**: `src/features/terrain/logic/raycastUtils.ts` (new), `src/features/terrain/hooks/useTerrainInteraction.ts` (new), `VoxelTerrain.tsx` (refactored).
-
-- 2026-01-04: **Voxel-based Global Illumination System**.
-  - **Goal**: Replace flat ambient lighting with dynamic, environment-aware indirect lighting that responds to sky, caves, and point lights.
-  - **Implementation**:
-    1. **Light Grid Generation** (`src/core/lighting/lightPropagation.ts`):
-       - Low-res 3D grid (8×32×8 = 2048 cells per chunk, LIGHT_CELL_SIZE=4 voxels).
-       - Sky light traces vertically, attenuates through solid voxels (SKY_LIGHT_ATTENUATION=0.7).
-       - Point lights (torches, Lumina) seed grid with inverse-square falloff.
-       - 6-iteration flood-fill propagation (LIGHT_FALLOFF=0.82).
-       - Reinhard tone mapping to Uint8 RGBA output.
-    2. **Worker Integration** (`terrain.worker.ts`):
-       - `generateLightGrid()` called BEFORE `generateMesh()`.
-       - Lumina flora extracted from `floraPositions` via `extractLuminaLights()`.
-       - Sky light config derived from sun height via `getSkyLightConfig()`.
-    3. **Mesher GI Baking** (`mesher.ts`):
-       - Per-vertex light colors sampled from grid via trilinear interpolation.
-       - New `aLightColor` attribute (vec3) added to mesh geometry.
-    4. **Shader Integration** (`TriplanarShader.ts`):
-       - `aLightColor` attribute → `vLightColor` varying.
-       - `getGILight()` replaces flat ambient lookup.
-       - `uGIEnabled` (0/1 toggle), `uGIIntensity` (default 1.2) for runtime control.
-    5. **Ambient Reduction** (`AtmosphereManager.tsx`):
-       - Surface ambient: 0.30 → 0.08 (73% reduction).
-       - Cave ambient: 0.14 → 0.04 (71% reduction).
-       - GI now provides all indirect/ambient lighting.
-  - **Performance**: Zero runtime cost. Light is fully baked during mesh generation in worker.
-  - **Files**: `lightPropagation.ts` (new), `constants.ts` (light grid constants), `terrain.worker.ts` (integration), `mesher.ts` (vertex baking), `TriplanarShader.ts` (shader), `AtmosphereManager.tsx` (ambient reduction), `ChunkMesh.tsx` (attribute binding).
-  - **Debug**: `uGIEnabled` = 0 falls back to 0.35 flat ambient. `uGIIntensity` scales GI contribution.
-
-- 2026-01-04: **ChunkDataManager Integration (6-phase)**.
-  - **Goal**: Centralize chunk data ownership, implement LRU cache, and add dirty tracking for player modifications.
-  - **Changes**:
-    1. Created `ChunkDataManager` (`src/core/terrain/ChunkDataManager.ts`) as single source of truth for chunk data.
-    2. LRU cache (maxSize=150) evicts clean chunks when over capacity. Dirty chunks protected from eviction.
-    3. Dirty tracking for player modifications (digging, flora pickup, tree removal, rock smash).
-    4. Event system (`chunk-ready`, `chunk-updated`, `chunk-remove`, `chunk-dirty`) for view layer synchronization.
-    5. IndexedDB persistence via `WorldDB.saveChunkModificationsBulk()` (debounced 2s). Only modified voxels persisted.
-    6. `VoxelTerrain.tsx` refactored to use `chunkDataManager.getChunk()` throughout (40+ call sites).
-    7. `visibilitychange`/`beforeunload` handlers ensure dirty chunks saved before exit.
-  - **Files**: `ChunkDataManager.ts` (new), `WorldDB.ts` (add bulk save/clear), `VoxelTerrain.tsx` (integration), `FrameProfiler.ts` (disable noisy logging).
-  - **Debug**: `window.__chunkDataManager.getStats()` for cache metrics.
-
-- 2026-01-03: **React Reconciliation Performance Fix**.
-  - **Issue**: 60-90ms frame spikes labeled "unknown" in profiler caused by multiple `setChunkVersions` calls per frame triggering React reconciliation.
-  - **Root Cause**: ~20 direct `setChunkVersions` calls scattered throughout `VoxelTerrain.tsx` (worker messages, LOD updates, chunk mounts, removals).
-  - **Fix**: Implemented batched version update system:
-    1. Three queues: `pendingVersionAdds`, `pendingVersionUpdates`, `pendingVersionRemovals` (refs, not state).
-    2. Helper functions: `queueVersionAdd()`, `queueVersionIncrement()`, `queueVersionRemoval()`.
-    3. Single `flushVersionUpdates()` call at end of `useFrame` processes all queued changes in one `setState`.
-    4. Post-initial-load flushes wrapped in `startTransition()` for non-blocking updates.
-  - **Critical Bug Fixed**: Spawn chunk not appearing - initial load chunks were using `queueVersionIncrement` (does nothing for non-existent keys) instead of `queueVersionAdd`.
-  - **Files**: `VoxelTerrain.tsx` (keyword: `BATCHED VERSION UPDATES`), `FrameProfiler.ts` (spike detection), `HUD.tsx` (minimap optimization), `ChunkMesh.tsx` (collider deferral).
-  - **Debug Flags Added**: `?nocolliders`, `?nosim`, `?nominimap`, `?profile` for performance isolation.
-
-- 2025-12-24: **Fixed Water Z-Fighting and Chunk Seams**.
-  - **Issue 1**: Water surface disappearing when viewed at certain angles due to depth buffer precision issues.
-  - **Fix 1**: Enabled `logarithmicDepthBuffer: true` in Canvas WebGL config (`App.tsx`). Provides better depth precision across the entire depth range (near: 0.1 to far: 2000).
-  - **Issue 2**: Water chunks not seamlessly blending, leaving visible gaps between chunks (caused by shore falloff geometry).
-  - **Fix 2**: Reverted water mesh to simple chunk-spanning quad (4 vertices at chunk corners, 0 to `CHUNK_SIZE_XZ`). Shoreline transitions are handled entirely by the shore mask SDF in the `WaterMaterial` shader.
-  - **Files**: `App.tsx` (log depth), `mesher.ts` (water mesh)
-
-- 2025-12-24: **Fixed Water Disappearing at Certain Angles (Z-Fighting)**.
-  - **Issue**: Water surface would disappear when camera rotated to shallow/grazing angles, even from the same position. The water mesh is geometrically thin and sits at nearly the same depth as the terrain, causing depth buffer precision issues.
-  - **Root Cause**: When the camera views the water at shallow angles, depth values conflict (z-fighting) AND standard culling metrics may fail for flat planes relative to camera frustum.
-  - **Fix**: 
-    1. Forced `frustumCulled={false}` on Water mesh.
-    2. Removed `polygonOffset` (unreliable at grazing angles).
-    3. Applied explicit physical Y-offset of `+0.1` to the water mesh.
-    4. Set `renderOrder={1}`.
-- 2025-12-24: Fixed `Shader Error: uTime : undeclared identifier` in `TriplanarShader.ts`.
-  - **Issue**: The vertex shader for the terrain material was trying to animate grass waves using `uTime`, but `uTime` was only declared in the fragment shader. 
-  - **Fix**: Added `uniform float uTime;` to the `triplanarVertexShader` definition.
-
-- 2025-12-24: Fixed `Uncaught ReferenceError: scene is not defined` in `VoxelTerrain.tsx`.
-  - **Root Cause**: The `updateSharedUniforms` function was being called inside `useFrame` using a reference to `scene` that was failing to be resolved from the component scope in some environments (likely due to broken HMR or scope-mangling during transformation).
-  - **Fix**: Replaced the closure-based `scene` and `camera` references inside the `useFrame` hook with explicit `state.scene` and `state.camera` lookups. Since `state` is the first argument to the frame loop callback, this bypasses potential destructuring or scope issues.
-
-- 2025-12-24: **Fixed Game Freezes on Fire/Torch Actions**.
-  - **Root Cause**: Interacting with fire or torches (creation, pickup, placement) caused a ~1s freeze due to unexpected shader recompilation and shadow map initialization.
-  - **Fixes**:
-    - **Scene Warmup**: Implemented `SceneWarmup.tsx` to pre-mount dummy lights (Spot, Point) and pre-compile Fire/Spark shaders during app load.
-    - **Shadow Opt**: Disabled `castShadow` on the Fire `PointLight` (terrain shadows are sufficient from the sun).
-    - **Logic Fix**: Updated `FirstPersonTools.tsx` to prevent `UniversalTool` from rendering the torch when `TorchTool` is active.
-
-- 2025-12-24: Fixed TriplanarMaterial & WaterMaterial Uniform Errors.
-    - Resolved `TypeError: Cannot set properties of undefined (setting 'value')` in `TriplanarMaterial.tsx` by explicitly mapping missing uniforms from `sharedUniforms`.
-    - Optimized `TriplanarMaterial` updates by moving `lastUpdateFrame` to module-level, reducing per-frame uniform updates from $N_{chunks}$ to $1$.
-    - Fixed `TypeError: Failed to execute 'uniform3fv' on 'WebGL2RenderingContext'` in `WaterMaterial.tsx` caused by incorrect uniform initialization in `shaderMaterial`.
-    - Standardized `useFrame` callbacks to use `state.scene` and `state.camera` for more robust scoping.
-
-- 2025-12-24: **PERFORMANCE INVESTIGATION** - 20-30 FPS on M1 Mac Studio with constant stuttering.
-  - **Root Causes**: Trimesh BVH construction, 81+ active chunks, LOD thrashing, expensive post-processing (AO).
-  - **Fixes Applied**:
-    1. Reduced `RENDER_DISTANCE` from 4 to 3 (49 chunks instead of 81, **40% reduction**).
-    2. Disabled AO by default (even on 'high' preset).
-    3. **LOD System Overhaul**: Changed from continuous distance to discrete integer tiers (0-4), only triggering updates when chunks cross actual LOD thresholds.
-
-- 2025-12-24: **Improved Terrain Texture/Normal Mapping**.
-  - **Goal**: Apply "noise based ridges" (similar to Beach effect) to all terrains.
-  - **Implementation**: Updated `TriplanarShader.ts` vertex shader with distinct normal perturbation logic for different material groups:
-    - **Rock/Strata**: Sharp, stratified horizontal ridges (Channels 1, 2, 9, 15).
-    - **Grass/Jungle**: Strong static directional ridges (removed wind animation for performance) (Channels 4, 13).
-    - **Dirt/Clay**: High-contrast lumpy/grid bumps (Channels 3, 7, 11).
-    - **Snow/Ice**: Large, smooth static drifts (Channels 6, 12).
-    - **Sand/Red Sand**: Preserved existing wind ripples (Channels 5, 10).
-- 2026-01-04: **Ambient Lighting Adjustment**.
-  - **Goal**: Increase indirect lighting slightly to avoid harsh blacks in shadows while maintaining contrast.
-  - **Changes**:
-    - `AtmosphereManager.tsx`: Surface ambient `0.08` → `0.10`, Cave `0.04` → `0.05`.
-    - `TriplanarMaterial.tsx`: `uGIIntensity` `1.2` → `1.35`.
-  - **Result**: Softens deep shadows without washing out directional contrast.
-- 2026-01-04: **Disabled Shader Fog**.
-  - **Goal**: Disable the custom exponential shader fog and height fog system as it was found to negatively impact visual clarity (e.g., causing "blue beach" syndrome).
-  - **Changes**:
-    - `SharedUniforms.ts`: Set default `uShaderFogEnabled` to `0.0`.
-    - `TriplanarMaterial.tsx`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`: Set default `shaderFogEnabled` / `terrainShaderFogEnabled` props to `false`.
-  - **Result**: Visual clarity improved; atmospheric blue tinting now depends solely on sky/ambient light and standard Three.js distance fog.
-- 2026-01-04: **Adjusted Fog and LOD Distances**.
-  - **Goal**: Tune standard distance fog for better visibility and bias LOD transitions toward the player's view direction.
-  - **Changes**:
-    - Fog: Set `uFogNear` = 23, `uFogFar` = 85 (standardized across `SharedUniforms.ts`, components, and `App.tsx` state).
-    - LOD: Updated `getChunkLodTier` in `VoxelTerrain.tsx` with a `0.5` chunk forward bias using `streamForward` vector.
-  - **Result**: More atmospheric distance fog and guaranteed "Full LOD" (Tier 0) for the current chunk and the next one in front.
-- 2026-01-04: **Cleaned up Debug Logs**.
-  - **Goal**: Silenced high-frequency console logs (noise initialization, seed setting, LOD updates, worker loop status, etc.) to improve development console experience.
-  - **Changes**: Commented out `console.log` and `console.warn` calls in `noise.ts`, `WorldSeed.ts`, `BiomeManager.ts`, `simulation.worker.ts`, `VoxelTerrain.tsx`, `ChunkMesh.tsx`, and `App.tsx`.
-  - **Result**: A much cleaner game console, focusing only on critical system events.
-- 2026-01-04: **Merged biome-enhancement to main**.
-  - **Goal**: Merge the latest biome improvements and logging cleanups into the main branch.
-  - **Changes**: 
-    - Merged branch `biome-enhancement` into `main` using `--no-ff`.
-    - Verified build via `npm run build` and tests via `npm run test:unit`.
-  - **Result**: Main branch is now up to date with feature developments.
-
-- 2026-01-04: **Removed ChunkMesh Reconstruction Logs**.
-  - **Goal**: Final silence of the high-frequency "[ChunkMesh] Recreating geometry" log which was missed in previous cleanups.
-  - **Changes**: Commented out the `console.log` on line 133 of `ChunkMesh.tsx`.
-  - **Result**: Console is now free of terrain-reconstruction spam during digging/modification.
-
-- 2026-01-06: **Git Worktree Creation**.
-  - **Goal**: Create a new git worktree 'saw' from the 'crafting' branch.
-  - **Implementation**: Created worktree at `worktrees/saw` and checked out new branch `saw`.
-  - **Result**: Worktree is available for concurrent development in the `worktrees/saw` directory.
-
-[diff_block_end]
-
-- 2026-01-07: **Fixed Root Hollow Placement Logic**.
-  - **Issue**: Root Hollows were either clustered or non-existent due to a random "designated spot" logic in the super-grid de-duplication.
-  - **Fix**: Replaced random super-grid sampling with Local Maximum Detection. Now, each sample point checks if it is the "peak" of the grove noise compared to its neighbors.
-  - **Result**: Exactly one Root Hollow is placed at the absolute center of each Sacred Grove, consistent across chunk boundaries.
-
-- 2026-01-10: **Lumabee Orientation and Debug Interface**.
-  - **Goal**: Correct the orientation of the Lumabee model and provide a way to tune creature parameters interactively.
-  - **Implementation**:
-    1. Created `BeeDebugScene.tsx`: A dedicated debug interface for tuning bee orientation (yaw/pitch/roll), hover animations, and flight behavior using Leva.
-    2. Integrated `?debug=bee` route in `App.tsx`: Allows quick access to the debug scene.
-    3. Updated `LumabeeCharacter.tsx`: Set `MODEL_YAW_OFFSET` to `Math.PI`. This corrects for the Blender +Z forward convention to Three.js -Z forward.
-    4. Fixed TypeScript cast: Added `unknown` cast when using `useGLTF` to avoid type errors with custom models.
-  - **Result**: Lumabee now correctly faces its flight direction. The debug scene is available for future creature/animation tuning.
-  - **Files**: `BeeDebugScene.tsx` (new), `App.tsx`, `LumabeeCharacter.tsx`, `CLAUDE.md`.
-
-- 2026-01-10: **Lumabee Performance and Stability Optimizations**.
-  - **Goal**: Reduce per-frame overhead and improve animation stability for the Lumabee feature.
-  - **Implementation**:
-    1. **Terrain Caching**: Added `cachedTerrainHeightRef` in `LumabeeCharacter.tsx` to skip `getHeightAt` (noise) queries unless the bee moves > 2 units.
-    2. **Imperative Lighting**: Switched harvest glow from conditional rendering to `harvestLightRef.current.visible = true/false` in `useFrame` to bypass React's reconciler.
-    3. **Log Gating**: Introduced `?profile` URL flag and `shouldProfile()` helper to silence high-frequency debug logs in normal dev mode.
-    4. **VFX Latch**: Added `hasCompletedRef` to `NectarVFX.tsx` to prevent duplicate completion events.
-  - **Result**: Significant reduction in main-thread frame spikes during active bee flight. Improved stability of the nectar harvesting animation.
-  - **Files**: `LumabeeCharacter.tsx`, `BeeManager.tsx`, `NectarVFX.tsx`.
