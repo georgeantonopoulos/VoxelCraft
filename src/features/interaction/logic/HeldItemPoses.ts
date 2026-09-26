@@ -62,14 +62,7 @@ export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>>
     scale: 1.234,
     rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
   },
-  [ItemType.FLORA]: {
-    x: PICKAXE_POSE.x,
-    xOffset: 0.123,
-    y: -0.457,
-    z: -0.789,
-    scale: 1.234,
-    rot: { x: 0.1111, y: 0.2222, z: 0.3333 }
-  },
+  [ItemType.FLORA]: { x: PICKAXE_POSE.x, xOffset: -0.22, y: -0.3, z: -0.7, scale: 0.62, rot: { x: 3, y: 1.4, z: -0.12 } },
   [ItemType.SHARD]: {
     x: PICKAXE_POSE.x,
     xOffset: 0.123,

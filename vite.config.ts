@@ -4,8 +4,11 @@ import type { Plugin } from 'vite';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
+type PoseKey = 'stick' | 'stone' | 'flora' | 'shard';
 type RightHandPosePayload = {
-  kind: 'stick' | 'stone' | 'both';
+  kind: 'stick' | 'stone' | 'both' | 'flora' | 'shard';
+  flora?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
+  shard?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
   stick?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
   stone?: { xOffset?: number; y: number; z: number; scale: number; rotOffset?: { x: number; y: number; z: number } };
 };
@@ -43,15 +46,21 @@ const vcPoseWriterPlugin = (): Plugin => ({
           return `{ x: PICKAXE_POSE.x, xOffset: ${xOffset}, y: ${y}, z: ${z}, scale: ${scale}, rot: { x: ${rx}, y: ${ry}, z: ${rz} } }`;
         };
 
-        const replacePose = (key: 'stick' | 'stone', pose: NonNullable<RightHandPosePayload['stick']>) => {
-          // Updated regex to support computed keys like [ItemType.STICK] or simple keys.
+        const replacePose = (key: PoseKey, pose: NonNullable<RightHandPosePayload['stick']>) => {
+          // Supports computed keys like [ItemType.STICK] or simple keys, and both
+          // one-line entries and multi-line blocks (closing brace at the key's
+          // indentation). The one-line-only pattern silently failed on the
+          // multi-line entries in HeldItemPoses.ts.
           const enumKey = key.toUpperCase();
-          const re = new RegExp(`^\\s*(\\[ItemType\\.${enumKey}\\]|${key})\\s*:\\s*\\{[^\\n]*\\}\\s*,?\\s*$`, 'm');
-          if (!re.test(content)) throw new Error(`Could not find ${key} pose line in HeldItemPoses.ts`);
-          const match = content.match(re);
-          const matchedKey = match ? match[1] : key;
+          const keyPat = `(\\[ItemType\\.${enumKey}\\]|${key})`;
+          const single = new RegExp(`^[ \\t]*${keyPat}\\s*:\\s*\\{[^\\n]*\\}\\s*,?[ \\t]*$`, 'm');
+          const multi = new RegExp(`^([ \\t]*)${keyPat}\\s*:\\s*\\{[^\\n]*\\n[\\s\\S]*?^\\1\\},?[ \\t]*$`, 'm');
+          const m1 = content.match(single);
+          const m2 = m1 ? null : content.match(multi);
+          if (!m1 && !m2) throw new Error(`Could not find ${key} pose in HeldItemPoses.ts`);
+          const matchedKey = m1 ? m1[1] : m2![2];
           const replacement = `  ${matchedKey}: ${formatPose(pose)},`;
-          content = content.replace(re, replacement);
+          content = content.replace(m1 ? single : multi, replacement);
         };
 
         if (body.kind === 'stick' || body.kind === 'both') {
@@ -61,6 +70,14 @@ const vcPoseWriterPlugin = (): Plugin => ({
         if (body.kind === 'stone' || body.kind === 'both') {
           if (!body.stone) throw new Error('Missing stone payload');
           replacePose('stone', body.stone);
+        }
+        if (body.kind === 'flora') {
+          if (!body.flora) throw new Error('Missing flora payload');
+          replacePose('flora', body.flora);
+        }
+        if (body.kind === 'shard') {
+          if (!body.shard) throw new Error('Missing shard payload');
+          replacePose('shard', body.shard);
         }
 
         // Safety net: keep the previous file contents so tuning mistakes are reversible.

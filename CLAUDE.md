@@ -284,7 +284,7 @@ See `AGENTS.md` for the complete list. Most critical:
 2. **Collider throttling**: Trimesh creation causes 10-30ms stalls. Always use `colliderEnableQueue`.
 3. **CustomShaderMaterial**: Use `three-custom-shader-material/vanilla` for class usage. Never redeclare `normal`, `vNormal`, `vViewDir`, or `vViewPosition` in custom shaders — these are reserved by Three.js's base material chunks.
 4. **Material channels**: Mesher outputs matWeightsA-D bound in ChunkMesh.tsx. Shader expects this structure.
-5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling.
+5. **Held item poses**: Never edit HeldItemPoses.ts directly - use in-game pose tooling. The tool is the dev-server endpoint `POST /__vc/held-item-poses` ({ kind: 'stick'|'stone'|'both'|'flora'|'shard', <kind>: { xOffset, y, z, scale, rotOffset } }); it rewrites one entry (single-line or multi-line) and keeps a `.bak`.
 6. **Point light caps**: MAX_LIGHTS_PER_CHUNK = 8 to avoid React overhead.
 7. **Light grid order**: Light grid generated BEFORE meshing in terrain.worker.ts. Mesher samples grid to bake per-vertex colors.
 8. **Item visual consistency**: ItemGeometry.ts is the single source of truth for all item geometry, colors, and materials. Never define item visuals elsewhere.
