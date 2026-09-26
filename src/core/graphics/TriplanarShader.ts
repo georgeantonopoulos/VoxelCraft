@@ -559,7 +559,9 @@ export const triplanarFragmentShader = `
     col = clamp(col, 0.0, 5.0); col += glow;
     if (!lowDetail && vWetness > 0.05 && vWorldPosition.y < uWaterLevel && uSunDirection.y > 0.0) {
         float waterDepth = uWaterLevel - vWorldPosition.y;
-        float depthMask = 1.0 - smoothstep(0.0, 16.0, waterDepth); // AAA FIX: Tighter depth mask (16m)
+        // Fade in with real depth: ground a few cm under sea level is usually dry
+        // (no water sheet there), and full caustics drew a white shimmer on it.
+        float depthMask = (1.0 - smoothstep(0.0, 16.0, waterDepth)) * smoothstep(0.35, 0.9, waterDepth);
         float normalMask = clamp(dot(N, uSunDirection), 0.0, 1.0);
         float openMask = 1.0 - smoothstep(0.0, 0.3, vCavity);
         float floorMask = smoothstep(0.25, 0.65, N.y);
@@ -635,6 +637,12 @@ export const triplanarFragmentShader = `
           tintedFogColor = clamp(uFogColor + uBiomeFogTint, 0.0, 1.0);
       }
 
+      // Fog only glows where light reaches: inside caves (baked GI ~0) it fades
+      // to dark, so a cave mouth seen from the surface is a dark opening, not a
+      // white hole of fully fogged walls.
+      float fogLit = smoothstep(0.03, 0.45, dot(giLight, vec3(0.3333)));
+      tintedFogColor *= mix(0.05, 1.0, fogLit);
+
       col = mix(col, tintedFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
@@ -642,7 +650,9 @@ export const triplanarFragmentShader = `
     // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
     if (uWetnessEnabled > 0.5) {
       float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);
-      accRoughness = mix(accRoughness, 0.2, roughnessWetness);
+      // Damp soil, not a mirror: at 0.2 wet ground below sea level caught the
+      // sun as a white glare patch.
+      accRoughness = mix(accRoughness, 0.45, roughnessWetness * 0.8);
     }
     accRoughness = max(accRoughness, clamp(uRoughnessMin, 0.0, 1.0));
     csm_Roughness = accRoughness;

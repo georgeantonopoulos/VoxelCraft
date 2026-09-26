@@ -306,6 +306,40 @@ export function floodShallows(seaMask: Uint8Array, tops: Float32Array, w: number
   return out;
 }
 
+/**
+ * Remove wet components that never get deep: a dip a few centimetres under
+ * sea level became a puddle that was all "shoreline", so the shader painted it
+ * as a solid white foam slab. Components touching the chunk border are kept
+ * (they may be part of a larger body next door).
+ */
+export function dropShallowPools(wet: Uint8Array, tops: Float32Array, w: number, h: number, waterLevel: number, minDepth: number): Uint8Array {
+  const out = wet.slice();
+  const seen = new Uint8Array(w * h);
+  const comp: number[] = [];
+  for (let start = 0; start < out.length; start++) {
+    if (!out[start] || seen[start]) continue;
+    comp.length = 0;
+    comp.push(start);
+    seen[start] = 1;
+    let deepest = 0;
+    let touchesBorder = false;
+    for (let head = 0; head < comp.length; head++) {
+      const i = comp[head];
+      const x = i % w, z = (i / w) | 0;
+      if (x === 0 || z === 0 || x === w - 1 || z === h - 1) touchesBorder = true;
+      deepest = Math.max(deepest, waterLevel - tops[i]);
+      const neighbours = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < h - 1 ? i + w : -1];
+      for (const n of neighbours) {
+        if (n < 0 || seen[n] || !out[n]) continue;
+        seen[n] = 1;
+        comp.push(n);
+      }
+    }
+    if (!touchesBorder && deepest < minDepth) for (const i of comp) out[i] = 0;
+  }
+  return out;
+}
+
 /** Grow a cell mask by one cell in all 8 directions (stays inside the grid). */
 export function dilateWaterMask(mask: Uint8Array, w: number, h: number): Uint8Array {
   const out = new Uint8Array(w * h);
@@ -366,7 +400,8 @@ export function generateWaterSurfaceMesh(density: Float32Array, material: Uint8A
     // below sea level (shallow flats between y 4.0 and 4.5 never get a water
     // voxel, which left a hard-edged dry patch). One cell of dilation lets the
     // sheet reach past the shoreline; the shader fades it by seabed depth.
-    const wet = floodShallows(waterMask, columnTopHeights(density), waterW, waterH, WATER_LEVEL);
+    const tops = columnTopHeights(density);
+    const wet = dropShallowPools(floodShallows(waterMask, tops, waterW, waterH, WATER_LEVEL), tops, waterW, waterH, WATER_LEVEL, 0.5);
     const covered = dilateWaterMask(wet, waterW, waterH);
     // Shared-vertex grid over covered cells: watertight (merged rectangles left
     // hairline cracks at T-junctions).

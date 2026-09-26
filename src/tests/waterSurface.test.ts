@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dilateWaterMask, generateWaterSurfaceMesh, floodShallows } from '@features/terrain/logic/mesher';
+import { dilateWaterMask, generateWaterSurfaceMesh, floodShallows, dropShallowPools } from '@features/terrain/logic/mesher';
 import { TOTAL_SIZE_XZ, TOTAL_SIZE_Y, PAD, MESH_Y_OFFSET, WATER_LEVEL, CHUNK_SIZE_XZ } from '@/constants';
 import { MaterialType } from '@/types';
 
@@ -42,5 +42,32 @@ describe('Shallow flats', () => {
     const sea = new Uint8Array([1, 0, 0, 0, 0]);
     const tops = new Float32Array([-2, 4.2, 4.4, 6.0, 3.0]); // col 4 is below sea level but cut off by land
     expect(Array.from(floodShallows(sea, tops, w, h, 4.5))).toEqual([1, 1, 1, 0, 0]);
+  });
+});
+
+describe('dropShallowPools', () => {
+  // 5x3 grid: a lone 10 cm puddle in the middle, a deep pool at the right edge.
+  const w = 5, h = 3;
+  const wet = Uint8Array.from([
+    0, 0, 0, 0, 1,
+    0, 1, 0, 0, 1,
+    0, 0, 0, 0, 1,
+  ]);
+  const tops = Float32Array.from([
+    9, 9, 9, 9, 2,
+    9, 4.4, 9, 9, 2,
+    9, 9, 9, 9, 2,
+  ]);
+
+  it('removes an interior puddle that never gets deep (it rendered as a foam slab)', () => {
+    const out = dropShallowPools(wet, tops, w, h, 4.5, 0.5);
+    expect(out[1 + 1 * w]).toBe(0);
+  });
+
+  it('keeps deep water and water touching the chunk border', () => {
+    const out = dropShallowPools(wet, tops, w, h, 4.5, 0.5);
+    expect(out[4]).toBe(1);
+    const deepInterior = dropShallowPools(wet, Float32Array.from(tops.map((t, i) => (i === 6 ? 3.0 : t))), w, h, 4.5, 0.5);
+    expect(deepInterior[6]).toBe(1);
   });
 });
