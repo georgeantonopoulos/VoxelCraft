@@ -196,7 +196,7 @@ export const FirstPersonTools: React.FC = () => {
     // (when useTerrainInteraction applies the hit), then a slower recover.
     const isDigging = useRef(false);
     const digProgress = useRef(0); // seconds into the swing
-    const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH'>('DIG');
+    const swingStyle = useRef<'CHOP' | 'DIG' | 'SMASH' | 'THROW'>('DIG');
     const swingOff = useMemo(() => new THREE.Vector3(), []);
     const swingScratch = useMemo(() => ({
         ePose: new THREE.Euler(), eSwing: new THREE.Euler(),
@@ -222,6 +222,17 @@ export const FirstPersonTools: React.FC = () => {
 
     // Debug controls
     const { debugPos, debugRot } = usePickaxeDebug();
+
+    // Throw: the same swing timeline in a flick style.
+    useEffect(() => {
+        const onThrow = () => {
+            swingStyle.current = 'THROW';
+            isDigging.current = true;
+            digProgress.current = 0;
+        };
+        window.addEventListener('vc-throw', onThrow);
+        return () => window.removeEventListener('vc-throw', onThrow);
+    }, []);
 
     // Swing whenever a strike starts (mouse or touch), in the style of the action.
     useEffect(() => useInputStore.subscribe((st, prev) => {
@@ -340,7 +351,7 @@ export const FirstPersonTools: React.FC = () => {
         let swingRoll = 0;
         swingOff.set(0, 0, 0);
         // Debug: window.__vcSwingHold = { t, style } freezes the swing at t seconds.
-        const hold = (window as unknown as { __vcSwingHold?: { t: number; style?: 'CHOP' | 'DIG' | 'SMASH' } }).__vcSwingHold;
+        const hold = (window as unknown as { __vcSwingHold?: { t: number; style?: 'CHOP' | 'DIG' | 'SMASH' | 'THROW' } }).__vcSwingHold;
         if (hold) {
             isDigging.current = true;
             digProgress.current = hold.t;
@@ -373,6 +384,11 @@ export const FirstPersonTools: React.FC = () => {
                     swingPitch = -down * 0.5;
                     swingRoll = -up * 0.3 + down * 0.5;
                     swingOff.set(up * 0.05 - down * 0.08, up * 0.08 + down * 0.06, -down * 0.12);
+                } else if (style === 'THROW') {
+                    // Draw back beside the ear, then flick forward and up.
+                    swingPitch = up * 0.35 - down * 0.4;
+                    swingRoll = -up * 0.1;
+                    swingOff.set(up * 0.04 - down * 0.06, up * 0.12 + down * 0.08, up * 0.12 - down * 0.35);
                 } else if (style === 'SMASH') {
                     swingPitch = up * 0.15 - down * 0.5;
                     swingRoll = down * 0.15;

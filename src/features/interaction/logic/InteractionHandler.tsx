@@ -17,6 +17,7 @@ import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 /** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
 const THROW_SPAWN_CLEARANCE = 0.8;
 import { getToolCapabilities } from './ToolCapabilities';
+import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 interface InteractionHandlerProps {
 }
@@ -77,6 +78,12 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
       if (!isCustom && !isStandard) return false;
 
+      // The hand flicks forward (FirstPersonTools) and the item leaves it at
+      // the flick's release, aimed where the player looks at that moment.
+      window.dispatchEvent(new CustomEvent('vc-throw'));
+      window.setTimeout(() => {
+      // A quick double press schedules two releases: only throw what is still held.
+      if (useInventoryStore.getState().getItemCount(selectedItem) < 1) return;
       // Calculate Throw Vector
       const origin = camera.position.clone();
       const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -107,6 +114,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
         spawnPhysicsItem(selectedItem as ItemType, [spawnPos.x, spawnPos.y, spawnPos.z], [velocity.x, velocity.y, velocity.z]);
         removeItem(selectedItem as ItemType, 1);
       }
+      }, STRIKE_CONTACT_MS);
 
       return true;
     };
