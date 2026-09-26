@@ -517,16 +517,31 @@ export const FirstPersonTools: React.FC = () => {
                 // the forearm runs off to an elbow below the view.
                 const hand = handRef.current, arm = armRef.current;
                 if (hand && arm) {
-                    const show = long && rease > 0.02;
+                    const small = heldItem === ItemType.STONE || heldItem === ItemType.SHARD || heldItem === ItemType.FLORA;
+                    const show = (long || small) && rease > 0.02;
                     hand.visible = show;
                     arm.visible = show;
                     if (show) {
                         const h = handScratch;
-                        const s = (0.045 * pose.scale) / 0.034;
-                        h.axis.copy(h.up).applyQuaternion(sw.qFinal);
-                        // Hold the shaft a little below its middle (the butt,
-                        // where the swing pivots, is below the screen edge).
-                        h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -HAND_GRIP * pose.scale);
+                        let s: number;
+                        if (long) {
+                            s = (0.045 * pose.scale) / 0.034;
+                            h.axis.copy(h.up).applyQuaternion(sw.qFinal);
+                            // Hold the shaft around its middle (the butt, where the
+                            // swing pivots, is below the screen edge).
+                            h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -HAND_GRIP * pose.scale);
+                        } else if (heldItem === ItemType.STONE) {
+                            // Cupped from below, fingers curled under the stone.
+                            s = 1.35;
+                            h.axis.set(0.45, 0.9, 0.1).normalize();
+                            h.pivot.copy(rightItemRef.current.position).add(h.elbow.set(0.01, -0.075, 0.02));
+                        } else {
+                            // Shard held by its butt like a knife; flora by the stem.
+                            s = heldItem === ItemType.SHARD ? 1.1 : 0.9;
+                            h.axis.copy(h.up).applyQuaternion(sw.qFinal);
+                            const down = heldItem === ItemType.SHARD ? 0.075 * pose.scale : 0.11;
+                            h.pivot.copy(rightItemRef.current.position).addScaledVector(h.axis, -down);
+                        }
                         h.elbow.set(0.66 * responsiveX, -1.0, -0.2);
                         h.f.copy(h.elbow).sub(h.pivot).normalize();
                         h.z.copy(h.f).addScaledVector(h.axis, -h.f.dot(h.axis)).normalize();
