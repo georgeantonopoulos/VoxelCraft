@@ -1,11 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
+import { useSettingsStore } from '@/state/SettingsStore';
 
 export const TargetHealthBar: React.FC = () => {
     const targetEntityId = useEntityHistoryStore(state => state.targetEntityId);
     const entities = useEntityHistoryStore(state => state.entities);
 
     const [visible, setVisible] = useState(false);
+    // Paused (mouse free in mouse mode): the pause veil owns the centre of the screen.
+    const mouseMode = useSettingsStore(state => state.inputMode) === 'mouse';
+    const [locked, setLocked] = useState(() => !!document.pointerLockElement);
+    useEffect(() => {
+        const onChange = () => setLocked(!!document.pointerLockElement);
+        document.addEventListener('pointerlockchange', onChange);
+        return () => document.removeEventListener('pointerlockchange', onChange);
+    }, []);
 
     const entity = targetEntityId ? entities[targetEntityId] : null;
 
@@ -20,7 +29,7 @@ export const TargetHealthBar: React.FC = () => {
         }
     }, [entity?.health, entity?.id]);
 
-    if (!entity || !visible) return null;
+    if (!entity || !visible || (mouseMode && !locked)) return null;
 
     const percent = Math.max(0, Math.min(100, (entity.health / entity.maxHealth) * 100));
 
