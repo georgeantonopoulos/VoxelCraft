@@ -124,9 +124,10 @@ const getSkyGradient = (
  */
 export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensityMul = 1.0 }) => {
     const hemiRef = useRef<THREE.HemisphereLight>(null);
-    const skyDay = useMemo(() => new THREE.Color('#bcd6ff'), []);
+    // Greyer sky fill: a saturated blue fill turned red-brown bark mauve in shade.
+    const skyDay = useMemo(() => new THREE.Color('#c6d3e2'), []);
     const skyNight = useMemo(() => new THREE.Color('#3a4a78'), []);
-    const groundDay = useMemo(() => new THREE.Color('#8a7a5a'), []);
+    const groundDay = useMemo(() => new THREE.Color('#8f8260'), []);
     const groundNight = useMemo(() => new THREE.Color('#1e2230'), []);
     const caveTint = useMemo(() => new THREE.Color('#556070'), []);
 

@@ -405,7 +405,7 @@ const getTreeLeafMaterial = (type: number, colors: any, opaque = false, lodAlpha
                 csm_DiffuseColor = vec4(col, 1.0);
                 // Light passing through the leaf when it faces away from the sun.
                 csm_Emissive = col * 0.05;
-                csm_Roughness = 0.62;
+                csm_Roughness = 0.82; // matte: glossy cards glinted white in distant crowns
             }
         `,
         uniforms: {
@@ -543,12 +543,13 @@ const InstancedTreeBatch: React.FC<{
         let base = '#3e2723';
         let tip = '#00FFFF';
 
-        if (type === TreeType.OAK) { base = '#4e342e'; tip = '#4CAF50'; }
-        else if (type === TreeType.PINE) { base = '#3e2723'; tip = '#1B5E20'; }
+        // Bark: warm grey-browns (red-browns read mauve under the cool sky fill).
+        if (type === TreeType.OAK) { base = '#5b4a38'; tip = '#4CAF50'; }
+        else if (type === TreeType.PINE) { base = '#4d3b2a'; tip = '#1B5E20'; }
         else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
-        else if (type === TreeType.ACACIA) { base = '#6D4C41'; tip = '#CDDC39'; }
+        else if (type === TreeType.ACACIA) { base = '#6e5b45'; tip = '#CDDC39'; }
         else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
-        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; }
+        else if (type === TreeType.JUNGLE) { base = '#56483a'; tip = '#2E7D32'; }
 
         return { base, tip };
     }, [type]);
