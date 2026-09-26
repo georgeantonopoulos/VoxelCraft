@@ -195,6 +195,10 @@ Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed 
 - Title screen offers Continue for the last world (`src/state/lastWorld.ts`; progress is per seed).
 - Surface stones are placed as composed groups (tide-line stones, a boulder with stones at its foot), not an even scatter.
 - Sun path is tilted (`ORBIT_TILT` in celestial.ts, noon ~56°) and the sky fill is ~1/6 of the sun, so light always has a direction. Fog: clear to ~30 m, soft distance (exp2 density 2.2/range).
+- Haze budget: bloom threshold 0.95 (only sun/Lumina/fire bloom; 0.4 bloomed the whole sky into a veil), sun shafts sample only sky near the sun, small sun disc without starburst, soft cloud layer in the sky dome.
+- Underground: fog colour blends to near-black; terrain fog is scaled by baked GI so cave mouths read dark from outside. Keeper's glow (`uPlayerGlow` emissive in TriplanarShader + pooled `KeeperLight` for objects) lights a few metres around the player in caves and faintly at deep night.
+- Wet ground roughness bottoms out at ~0.45 and caustics fade in with depth (ground just under sea level is usually dry). Water sheet drops interior pools shallower than 0.5 m (`dropShallowPools`).
+- Dormant Root Hollows sit in drained DIRT over stone (no blade grass: `generateMaterialMaskTexture` skips grove columns). Wildlife is rare by design (one small flock, a lone deer or pair).
 
 ### Post-Processing Pipeline
 
