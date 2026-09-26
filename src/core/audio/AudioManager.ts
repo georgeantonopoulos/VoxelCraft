@@ -18,7 +18,7 @@
  */
 
 import { SoundCategory } from './types';
-import { ProceduralAmbience, type FootstepSurface } from './ambience/ProceduralAmbience';
+import { ProceduralAmbience, type FootstepSurface, type WoodworkSound } from './ambience/ProceduralAmbience';
 import type { MusicCue } from './ambience/GroveMusic';
 import type {
   SoundDefinition,
@@ -63,6 +63,11 @@ export class AudioManager {
   private readonly handleFootstep = (e: Event) => {
     const d = (e as CustomEvent<{ surface?: FootstepSurface; loudness?: number }>).detail;
     if (d?.surface) this.ambience.footstep(d.surface, d.loudness ?? 0.7);
+  };
+  /** vc-audio-woodwork: { kind: 'saw' | 'sawDone' | 'split' | 'splitDone', loudness? } */
+  private readonly handleWoodwork = (e: Event) => {
+    const d = (e as CustomEvent<{ kind?: WoodworkSound; loudness?: number }>).detail;
+    if (d?.kind) this.ambience.woodwork(d.kind, d.loudness ?? 1);
   };
   private readonly handleMusicCue = (e: Event) => {
     const kind = (e as CustomEvent<{ kind?: MusicCue }>).detail?.kind;
@@ -163,6 +168,7 @@ export class AudioManager {
     // The AudioContext may only start after a user gesture.
     window.addEventListener('vc-music-cue', this.handleMusicCue);
     window.addEventListener('vc-audio-footstep', this.handleFootstep);
+    window.addEventListener('vc-audio-woodwork', this.handleWoodwork);
     window.addEventListener('pointerdown', this.startAmbience);
     window.addEventListener('keydown', this.startAmbience);
   }
@@ -442,6 +448,7 @@ export class AudioManager {
     window.removeEventListener('vc-audio-ambient-exit', this.boundHandleAmbientExitEvent);
     window.removeEventListener('vc-music-cue', this.handleMusicCue);
     window.removeEventListener('vc-audio-footstep', this.handleFootstep);
+    window.removeEventListener('vc-audio-woodwork', this.handleWoodwork);
     window.removeEventListener('pointerdown', this.startAmbience);
     window.removeEventListener('keydown', this.startAmbience);
     this.ambience.dispose();

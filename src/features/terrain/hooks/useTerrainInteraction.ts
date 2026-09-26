@@ -233,6 +233,10 @@ export function useTerrainInteraction(
 
   // Helper to play sounds via AudioManager with throttling
   // Note: pitch is playbackRate (1.0 = normal, 0.5 = half speed, 2.0 = double speed)
+  // Saw strokes and log splitting: synthesised in the ambience engine (AudioManager routes the event).
+  const woodwork = (kind: 'saw' | 'sawDone' | 'split' | 'splitDone') =>
+    window.dispatchEvent(new CustomEvent('vc-audio-woodwork', { detail: { kind } }));
+
   const playSound = (soundId: string, options?: { pitch?: number; volume?: number }) => {
     const now = performance.now();
     const timeSinceLastSound = now - lastSoundTimestamp.current;
@@ -422,12 +426,12 @@ export function useTerrainInteraction(
             // Sawdust: fine pale wood that drifts down, plus a few curls.
             emitImpact({ position: at, direction: away, kind: 'sand', color: '#dcc49a', strength: 1.3, floorY: at.y - 0.6 });
             emitImpact({ position: at, direction: away, kind: 'wood', color: '#cdb088', strength: 0.4, floorY: at.y - 0.6 });
-            playSound('wood_hit', { pitch: 1.35 + Math.random() * 0.2, volume: 0.6 });
+            woodwork('saw');
             window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true } }));
             if (h <= 0) {
               useEntityHistoryStore.getState().setTargetEntity(null);
               window.dispatchEvent(new CustomEvent('vc-tree-sawn', { detail: { id: userData.id } }));
-              playSound('wood_hit', { pitch: 0.7, volume: 1.0 });
+              woodwork('sawDone');
             }
             return;
           }
@@ -451,6 +455,7 @@ export function useTerrainInteraction(
             const h = useEntityHistoryStore.getState().damageEntity(`split-${log.id}`, caps.woodDamage, 10, 'Log');
             emitImpact({ position: at, direction: away, kind: 'wood', color: '#c9ab80', strength: 1.1, floorY: at.y - 0.4 });
             playSound('wood_hit', { pitch: 0.95 + Math.random() * 0.1 });
+            if (h > 0) woodwork('split');
             window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true } }));
             if (h <= 0) {
               useEntityHistoryStore.getState().setTargetEntity(null);
@@ -473,7 +478,7 @@ export function useTerrainInteraction(
                 rotation: [q.x, q.y, q.z, q.w] as [number, number, number, number],
                 length: log.length, radius: half, bark: log.bark, state: 'loose' as const, kind: 'plank' as const,
               })));
-              playSound('wood_hit', { pitch: 0.75, volume: 1.0 });
+              woodwork('splitDone');
             }
             return;
           }

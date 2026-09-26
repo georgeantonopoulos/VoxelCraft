@@ -59,6 +59,8 @@ export interface LeafSource {
 }
 
 export type FootstepSurface = 'grass' | 'dirt' | 'sand' | 'stone' | 'snow' | 'water';
+/** Woodworking sounds: a saw stroke, a trunk sawn through, an axe biting a log, a log splitting open. */
+export type WoodworkSound = 'saw' | 'sawDone' | 'split' | 'splitDone';
 
 interface StepVoice {
   filter: BiquadFilterType;
@@ -635,6 +637,82 @@ export class ProceduralAmbience {
   setWeather(rain: number, sheltered: boolean): void {
     this.rainLevel = Math.max(0, Math.min(1, rain));
     this.rainSheltered = sheltered;
+  }
+
+  /** Woodworking: rasping saw strokes, the creak of a trunk parting, the crack of a log splitting. */
+  woodwork(kind: WoodworkSound, loudness = 1): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.stepNoise) return;
+    const t = ctx.currentTime + 0.005;
+    const L = Math.max(0.1, Math.min(1.2, loudness));
+    // Filtered noise burst with an attack/decay envelope; optional tooth-rate rasp.
+    const noise = (at: number, dur: number, type: BiquadFilterType, f0: number, f1: number, q: number, gain: number, rasp = 0) => {
+      const src = ctx.createBufferSource();
+      src.buffer = this.stepNoise; src.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = type; f.Q.value = q;
+      f.frequency.setValueAtTime(f0, at); f.frequency.linearRampToValueAtTime(f1, at + dur);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(gain, at + Math.min(0.06, dur * 0.3));
+      env.gain.setValueAtTime(gain, at + dur * 0.7);
+      env.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      let out: AudioNode = src.connect(f).connect(env);
+      if (rasp > 0) {
+        // Saw teeth: the noise chopped at the tooth rate.
+        const am = ctx.createGain(); am.gain.value = 0.45;
+        const lfo = ctx.createOscillator(); lfo.type = 'sawtooth'; lfo.frequency.value = rasp;
+        const depth = ctx.createGain(); depth.gain.value = 0.55;
+        lfo.connect(depth).connect(am.gain);
+        out = out.connect(am);
+        lfo.start(at); lfo.stop(at + dur + 0.05);
+      }
+      out.connect(this.muffle);
+      src.start(at, this.rand() * 0.4); src.stop(at + dur + 0.05);
+    };
+    const thump = (at: number, f0: number, f1: number, dur: number, gain: number) => {
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(f0, at); o.frequency.exponentialRampToValueAtTime(f1, at + dur);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(gain, at + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      o.connect(env).connect(this.muffle);
+      o.start(at); o.stop(at + dur + 0.02);
+    };
+    const creak = (at: number, f0: number, f1: number, dur: number, gain: number) => {
+      const o = ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f0, at); o.frequency.linearRampToValueAtTime(f1, at + dur);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 700; bp.Q.value = 6;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(gain, at + dur * 0.4);
+      env.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      o.connect(bp).connect(env).connect(this.muffle);
+      o.start(at); o.stop(at + dur + 0.02);
+    };
+    const j = () => 0.9 + this.rand() * 0.2;
+    if (kind === 'saw') {
+      // Push and pull: two rasping strokes, the pull a touch lower.
+      noise(t, 0.26, 'bandpass', 1900 * j(), 2600 * j(), 2.2, 0.28 * L, 95 * j());
+      noise(t + 0.3, 0.24, 'bandpass', 2300 * j(), 1700 * j(), 2.2, 0.23 * L, 85 * j());
+    } else if (kind === 'sawDone') {
+      // The trunk parts: a long creak, a crack, the halves settling.
+      creak(t, 95, 62, 0.55, 0.03 * L);
+      noise(t + 0.45, 0.05, 'highpass', 1400, 1200, 0.7, 0.07 * L);
+      thump(t + 0.47, 150, 70, 0.18, 0.08 * L);
+      thump(t + 0.85, 120, 60, 0.2, 0.06 * L);
+    } else if (kind === 'split') {
+      // The axe bites: a dry crack over the blow.
+      noise(t, 0.035, 'highpass', 1800 * j(), 1500, 0.7, 0.08 * L);
+      creak(t + 0.02, 240 * j(), 190, 0.09, 0.02 * L);
+    } else {
+      // The log splits open: a sharp crack, a fibrous tear, two boards falling apart.
+      noise(t, 0.04, 'highpass', 1600, 1300, 0.7, 0.09 * L);
+      noise(t + 0.03, 0.22, 'bandpass', 1300, 700, 1.2, 0.05 * L);
+      thump(t + 0.02, 180, 80, 0.16, 0.08 * L);
+      thump(t + 0.32, 140, 70, 0.14, 0.055 * L);
+      thump(t + 0.41, 125, 65, 0.14, 0.045 * L);
+    }
   }
 
   /** A fire or torch doused by rain: a steam hiss with a few crackles. */
