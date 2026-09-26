@@ -178,6 +178,8 @@ export const SkyDomeRefLink: React.FC<{
             meshRef.current.position.copy(state.camera.position);
             uniforms.uTopColor.value.copy(gradientRef.current.top);
             uniforms.uBottomColor.value.copy(gradientRef.current.bottom);
+            sharedUniforms.uSkyTop.value.copy(gradientRef.current.top);
+            sharedUniforms.uSkyBottom.value.copy(gradientRef.current.bottom);
             uniforms.uTime.value = state.clock.getElapsedTime();
             const angle = calculateOrbitAngle(state.clock.getElapsedTime(), orbitConfig.speed, orbitConfig.offset);
             const sunHeight = Math.cos(angle);

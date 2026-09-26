@@ -51,6 +51,9 @@ export const sharedUniforms = {
     // Weather (WeatherDirector): 0 clear .. 1 fully overcast / raining.
     uOvercast: { value: 0 },
     uRain: { value: 0 },
+    // Sky dome gradient (SkyDomeRefLink), so water can reflect the real sky.
+    uSkyTop: { value: new THREE.Color('#87CEEB') },
+    uSkyBottom: { value: new THREE.Color('#bcd4de') },
     // Last tree struck (TreeLayer shudders the tree whose base is here).
     uTreeHitPos: { value: new THREE.Vector3(0, -9999, 0) },
     uTreeHitTime: { value: -100 },

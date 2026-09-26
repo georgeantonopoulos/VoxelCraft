@@ -8,6 +8,8 @@ import { useLogStore } from '@/state/LogStore';
 import { useGroveStore } from '@state/GroveStore';
 import { strideMultiplier } from '@features/grove/questLine';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
+import { addWaterRipple } from '@core/graphics/waterRipples';
+import { emitImpact } from '@features/interaction/components/ImpactFX';
 import { usePlayerInput } from './usePlayerInput';
 import { useWorldStore } from '@/state/WorldStore';
 import { useEnvironmentStore } from '@/state/EnvironmentStore';
@@ -95,6 +97,9 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const lastSpacePress = useRef<number>(0);
   const wasJumpPressed = useRef<boolean>(false);
   const strideDistance = useRef(0);
+  // Rings on the water around the body (wading, swimming, landing in it).
+  const rippleTimer = useRef(0);
+  const wasAtSurface = useRef(false);
   const spacePressHandled = useRef<boolean>(false);
 
   const setPlayerParams = useWorldStore((state) => state.setPlayerParams);
@@ -444,6 +449,24 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     } else {
       strideDistance.current = Math.min(strideDistance.current, 1.0);
     }
+
+    // The body breaks the surface: rings spread from it, more often and
+    // stronger when moving; dropping in throws up a splash.
+    const atSurface = seaSurfaceY != null && footY - 0.4 < seaSurfaceY && headY + 0.4 > seaSurfaceY;
+    if (atSurface && seaSurfaceY != null) {
+      if (!wasAtSurface.current && vel.y < -3) {
+        const strength = Math.min(2, -vel.y / 6);
+        addWaterRipple(pos.x, pos.z, 1.2 + strength * 0.5);
+        emitImpact({ position: new THREE.Vector3(pos.x, seaSurfaceY, pos.z), kind: 'water', color: '#d6e4e2', strength, floorY: seaSurfaceY });
+      }
+      rippleTimer.current -= delta;
+      if (rippleTimer.current <= 0) {
+        const moving = Math.min(1, horizSpeed / 3);
+        rippleTimer.current = moving > 0.15 ? 0.45 : 2.2;
+        addWaterRipple(pos.x, pos.z, 0.25 + 0.75 * moving);
+      }
+    }
+    wasAtSurface.current = atSurface;
 
     // Sync camera to body eye level with wall collision detection
     // Start with intended eye position (lower when crouching)

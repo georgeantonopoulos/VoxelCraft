@@ -12,6 +12,7 @@ import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
 import { emitImpact } from './ImpactFX';
+import { addWaterRipple } from '@core/graphics/waterRipples';
 import { Campfire } from './Campfire';
 import { emitSpark } from './SparkSystem';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
@@ -57,6 +58,8 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
 
 
   const lastVel = useRef(new THREE.Vector3());
+  // Above the water last frame (null: unknown), to catch the moment it goes in.
+  const wasAboveWater = useRef<boolean | null>(null);
 
   // Register a getter so the world save can record where the item came to
   // rest: it reads the currently mounted body (planting remounts it).
@@ -92,6 +95,25 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
     if (rigidBody.current && !item.isPlanted) {
       const v = rigidBody.current.linvel();
       lastVel.current.set(v.x, v.y, v.z);
+
+      // Entering water: rings and a splash sized by the speed it hits at.
+      if (v.y < -1) {
+        const t = rigidBody.current.translation();
+        const surface = terrainRuntime.getSeaSurfaceYAtWorld(t.x, t.z);
+        if (surface != null) {
+          const above = t.y > surface;
+          if (wasAboveWater.current && !above) {
+            const strength = Math.min(1.6, -v.y / 7);
+            addWaterRipple(t.x, t.z, 0.6 + strength);
+            emitImpact({ position: new THREE.Vector3(t.x, surface, t.z), kind: 'water', color: '#d6e4e2', strength, floorY: surface });
+          }
+          wasAboveWater.current = above;
+        } else {
+          wasAboveWater.current = null;
+        }
+      } else if (wasAboveWater.current !== null) {
+        wasAboveWater.current = null;
+      }
 
       // OPTIMIZATION: Removed per-frame store sync of item.position.
       // The store position is now only updated when the item is planted or removed.

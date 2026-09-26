@@ -17,7 +17,7 @@ import CustomShaderMaterial from 'three-custom-shader-material/vanilla';
  * the future, so they never appeared.
  */
 
-export type ImpactKind = 'stone' | 'earth' | 'sand' | 'wood' | 'leaf' | 'snow';
+export type ImpactKind = 'stone' | 'earth' | 'sand' | 'wood' | 'leaf' | 'snow' | 'water';
 
 export interface ImpactOptions {
   position: THREE.Vector3;
@@ -58,6 +58,8 @@ const PROFILES: Record<ImpactKind, KindProfile> = {
   sand: { chips: 5, size: [0.015, 0.03], shape: [1.0, 0.9, 1.0], speed: [1.4, 2.6], life: [0.8, 1.2], dust: 1.4, dustTint: 0.2, gravity: GRAVITY },
   wood: { chips: 7, size: [0.03, 0.06], shape: [0.35, 0.18, 1.6], speed: [2.4, 4.4], life: [1.8, 2.6], dust: 0, dustTint: 0, gravity: GRAVITY },
   leaf: { chips: 8, size: [0.035, 0.055], shape: [1.0, 0.06, 0.7], speed: [0.4, 1.2], life: [3.2, 4.4], dust: 0, dustTint: 0, gravity: 1.6 },
+  // Droplets: short hops that vanish as they fall back (floorY = the surface).
+  water: { chips: 9, size: [0.018, 0.034], shape: [1.0, 1.0, 1.0], speed: [1.4, 3.0], life: [0.35, 0.6], dust: 0.5, dustTint: 0.6, gravity: GRAVITY },
   snow: { chips: 6, size: [0.025, 0.05], shape: [1.0, 0.9, 1.0], speed: [1.2, 2.4], life: [0.8, 1.2], dust: 1, dustTint: 0.1, gravity: GRAVITY },
 };
 
