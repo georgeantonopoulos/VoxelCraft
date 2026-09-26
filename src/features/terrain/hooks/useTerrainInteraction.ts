@@ -935,13 +935,20 @@ export function useTerrainInteraction(
           setBuildMat(sampledMat);
         }
 
+        // Turf digs up as earth clods with a few green tufts (not green chips).
+        const turf = action === 'DIG' && (primaryMat === MaterialType.GRASS || primaryMat === MaterialType.JUNGLE_GRASS);
         emitParticle({
           pos: particlePos,
           dir: particleDir,
           kind: 'debris',
-          fx: impactKindForMaterial(primaryMat),
-          color: getMaterialColor(primaryMat)
+          fx: turf ? 'earth' : impactKindForMaterial(primaryMat),
+          color: turf ? getMaterialColor(MaterialType.DIRT) : getMaterialColor(primaryMat),
+          // Digs are seen from a couple of metres: a fuller burst than a tap.
+          strength: action === 'DIG' ? 1.6 : 1,
         });
+        if (turf) {
+          emitImpact({ position: particlePos, direction: particleDir, kind: 'leaf', color: getMaterialColor(primaryMat), strength: 0.7, floorY: particlePos.y - 0.2 });
+        }
         // Let the burst breathe a bit longer so it actually reads as impact.
         setTimeout(() => onParticle({ active: false }), 140);
         window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true, color: getMaterialColor(primaryMat) } }));
