@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo, Suspense } from 'react';
+import React, { useRef, useEffect, Suspense } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, RapierRigidBody, CapsuleCollider, CuboidCollider, useRapier } from '@react-three/rapier';
 import { PositionalAudio } from '@react-three/drei';
@@ -11,13 +11,12 @@ import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { getItemMetadata } from '../logic/ItemRegistry';
 import { UniversalTool } from './UniversalTool';
 import { emitImpact } from './ImpactFX';
+import { Campfire } from './Campfire';
 import { emitSpark } from './SparkSystem';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
-import CustomShaderMaterial from 'three-custom-shader-material';
 
 // Fire sound URL for spatial audio
 import fireUrl from '@/assets/sounds/fire.mp3?url';
-import { PooledPointLight } from '@core/graphics/PointLightPool';
 
 interface PhysicsItemProps {
   item: ActivePhysicsItem;
@@ -264,29 +263,10 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
       {item.type === ItemType.FIRE && (
         <>
           <CuboidCollider args={[0.4, 0.2, 0.4]} />
-          <group position={[0, 0.1, 0]}>
-            <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 4, Math.PI / 2]}>
-              <cylinderGeometry args={[0.05, 0.05, 0.6]} />
-              <meshStandardMaterial color="#3e2723" />
-            </mesh>
-            <mesh position={[0, 0.05, 0]} rotation={[0, -Math.PI / 4, Math.PI / 2]}>
-              <cylinderGeometry args={[0.05, 0.05, 0.6]} />
-              <meshStandardMaterial color="#4e342e" />
-            </mesh>
-            <mesh position={[0, 0.1, 0]} rotation={[0, 0, Math.PI / 2]}>
-              <cylinderGeometry args={[0.05, 0.05, 0.6]} />
-              <meshStandardMaterial color="#5d4037" />
-            </mesh>
-          </group>
-          <PooledPointLight
-            position={[0, 0.5, 0]}
+          <Campfire
             intensity={getItemMetadata(ItemType.FIRE)?.emissiveIntensity || 2.5}
-            distance={10}
-            color={getItemMetadata(ItemType.FIRE)?.emissive || "#ffaa00"}
-            decay={2}
-            castShadow={false}
+            color="#ff9a4a" // amber firelight (the registry's #ff5500 turned grey stone pink)
           />
-          <FireParticles />
           <FireSound />
         </>
       )}
@@ -294,76 +274,6 @@ export const PhysicsItem: React.FC<PhysicsItemProps> = ({ item }) => {
   );
 };
 
-const FireParticles: React.FC = () => {
-  const meshRef = useRef<THREE.InstancedMesh>(null);
-  // Stable identity: the CSM React wrapper rebuilds its material whenever the
-  // uniforms object changes, and inline literals rebuilt it on every re-render.
-  const uniforms = useMemo(() => ({ uTime: { value: 0 } }), []);
-  const glowRef = useRef<THREE.Mesh>(null);
-  const paramsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  const offsetsAttr = useRef<THREE.InstancedBufferAttribute>(null);
-  const COUNT = 30;
-
-  const FIRE_VSHADER = `
-    attribute vec3 aOffset;
-    attribute vec4 aParams; 
-    uniform float uTime;
-    void main() {
-        float startTime = aParams.x;
-        float life = aParams.y;
-        float speed = aParams.z;
-        float baseScale = aParams.w;
-        float t = mod(uTime + startTime, life);
-        float progress = t / life;
-        vec3 pos = aOffset;
-        pos.y += t * speed;
-        pos.x += sin(uTime * 5.0 + float(gl_InstanceID) * 0.5) * 0.008;
-        pos.z += cos(uTime * 3.0 + float(gl_InstanceID) * 0.3) * 0.008;
-        float size = (1.0 - progress) * 0.25 * baseScale;
-        csm_Position = pos + csm_Position * size;
-    }
-  `;
-
-  useEffect(() => {
-    if (!paramsAttr.current || !offsetsAttr.current) return;
-    for (let i = 0; i < COUNT; i++) {
-      offsetsAttr.current.setXYZ(i, (Math.random() - 0.5) * 0.3, Math.random() * 0.2, (Math.random() - 0.5) * 0.3);
-      paramsAttr.current.setXYZW(i, Math.random() * 2.0, 1.0 + Math.random() * 0.5, 0.4 + Math.random() * 0.8, 0.5 + Math.random() * 0.5);
-    }
-    paramsAttr.current.needsUpdate = true;
-    offsetsAttr.current.needsUpdate = true;
-  }, []);
-
-  useFrame((state) => {
-    if (glowRef.current) glowRef.current.scale.setScalar(1.0 + Math.sin(state.clock.elapsedTime * 8) * 0.1);
-    if (meshRef.current) {
-      const mat = meshRef.current.material as any;
-      if (mat.uniforms) mat.uniforms.uTime.value = state.clock.elapsedTime;
-    }
-  });
-
-  return (
-    <group>
-      <mesh ref={glowRef} position={[0, 0.2, 0]}>
-        <sphereGeometry args={[0.3, 16, 16]} />
-        <meshBasicMaterial color="#ff5500" transparent opacity={0.3} depthWrite={false} />
-      </mesh>
-      <instancedMesh ref={meshRef} args={[undefined, undefined, COUNT]} frustumCulled={false}>
-        <boxGeometry args={[1, 1, 1]}>
-          <instancedBufferAttribute ref={offsetsAttr} attach="attributes-aOffset" args={[new Float32Array(COUNT * 3), 3]} />
-          <instancedBufferAttribute ref={paramsAttr} attach="attributes-aParams" args={[new Float32Array(COUNT * 4), 4]} />
-        </boxGeometry>
-        <CustomShaderMaterial
-          baseMaterial={THREE.MeshBasicMaterial}
-          vertexShader={FIRE_VSHADER}
-          uniforms={uniforms}
-          color={getItemMetadata(ItemType.FIRE)?.color || "#ffcc00"}
-          toneMapped={false}
-        />
-      </instancedMesh>
-    </group>
-  );
-};
 /**
  * FireSound - Spatial audio for campfires using drei's PositionalAudio.
  *
