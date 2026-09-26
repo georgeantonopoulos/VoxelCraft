@@ -15,7 +15,6 @@ import { StumpLayer } from '@features/terrain/components/StumpLayer';
 import { FallingTree } from '@features/flora/components/FallingTree';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
 import { deleteChunkFireflies, setChunkFireflies } from '@features/environment/fireflyRegistry';
-import { getItemMetadata } from '../../interaction/logic/ItemRegistry';
 import { updateSharedUniforms } from '@core/graphics/SharedUniforms';
 import { WorkerPool } from '@core/workers/WorkerPool';
 import { frameProfiler } from '@core/utils/FrameProfiler';
@@ -33,6 +32,7 @@ import {
 } from '@features/terrain/hooks/useTerrainInteraction';
 import { useItemPickup } from '@features/terrain/hooks/useItemPickup';
 import { emitImpact } from '@features/interaction/components/ImpactFX';
+import { ItemPickupFlight } from '@features/interaction/components/ItemPickupFlight';
 import { emitSpark } from '@features/interaction/components/SparkSystem';
 import type { PickupEffect } from '@features/terrain/hooks/useItemPickup';
 
@@ -41,106 +41,6 @@ const MAX_SHAPE_REMESH_PER_FRAME = 4;
 
 /** How long a felled tree prop lives before it is removed from the scene. */
 const FALLING_TREE_LIFETIME_MS = 12000;
-
-const LeafPickupEffect = ({
-  start,
-  color = '#00FFFF',
-  geometry = 'octahedron',
-  item,
-  onDone
-}: {
-  start: THREE.Vector3;
-  color?: string;
-  geometry?: 'octahedron' | 'sphere';
-  item?: ItemType;
-  onDone: () => void;
-}) => {
-  const { camera } = useThree();
-  const meshRef = useRef<THREE.Object3D>(null);
-  const velocity = useRef(new THREE.Vector3(0, 1.5, 0));
-  const phase = useRef<'fall' | 'fly'>('fall');
-  const elapsed = useRef(0);
-  const tmpTarget = useMemo(() => new THREE.Vector3(), []);
-  const tmpForward = useMemo(() => new THREE.Vector3(), []);
-  const pos = useRef(start.clone());
-
-  useEffect(() => {
-    if (meshRef.current) {
-      meshRef.current.position.copy(start);
-    }
-  }, [start]);
-
-  useFrame((_state, delta) => {
-    if (!meshRef.current) return;
-    elapsed.current += delta;
-
-    if (phase.current === 'fall') {
-      velocity.current.y -= 6.0 * delta; // gravity-ish
-      pos.current.addScaledVector(velocity.current, delta);
-
-      // After a short fall, start homing to camera
-      if (elapsed.current > 0.35) {
-        phase.current = 'fly';
-      }
-    } else {
-      // Home toward a point slightly in front of the camera
-      camera.getWorldPosition(tmpTarget);
-      camera.getWorldDirection(tmpForward);
-      tmpTarget.add(tmpForward.multiplyScalar(0.6));
-      tmpTarget.y -= 0.1;
-
-      pos.current.lerp(tmpTarget, 1 - Math.pow(0.25, delta * 10));
-
-      if (pos.current.distanceTo(tmpTarget) < 0.05) {
-        onDone();
-        return;
-      }
-    }
-
-    meshRef.current.position.copy(pos.current);
-    meshRef.current.rotation.y += delta * 4.0;
-  });
-
-  const metadata = item ? getItemMetadata(item) : null;
-  const itemColor = color || metadata?.color || '#00FFFF';
-
-  return (
-    <group ref={meshRef}>
-      {item === ItemType.STICK ? (
-        <mesh rotation={[Math.PI * 0.5, 0, 0]} castShadow receiveShadow>
-          <cylinderGeometry args={[0.05, 0.045, 0.75, 10]} />
-          <meshStandardMaterial color={itemColor} roughness={0.92} metalness={0.0} toneMapped={false} />
-        </mesh>
-      ) : item === ItemType.STONE ? (
-        <mesh castShadow receiveShadow>
-          <dodecahedronGeometry args={[0.18, 0]} />
-          <meshStandardMaterial color={itemColor} roughness={0.92} metalness={0.0} toneMapped={false} />
-        </mesh>
-      ) : item === ItemType.SHARD ? (
-        <mesh castShadow receiveShadow>
-          <octahedronGeometry args={[0.12, 0]} />
-          <meshStandardMaterial color={itemColor} roughness={0.4} metalness={0.8} toneMapped={false} />
-        </mesh>
-      ) : (
-        <mesh castShadow receiveShadow>
-          {geometry === 'sphere' ? (
-            <sphereGeometry args={[0.13, 12, 10]} />
-          ) : (
-            <octahedronGeometry args={[0.15, 0]} />
-          )}
-          <meshStandardMaterial
-            color={itemColor}
-            emissive={metadata?.emissive || itemColor}
-            emissiveIntensity={metadata?.emissiveIntensity || 1.2}
-            roughness={0.3}
-            metalness={0.0}
-            toneMapped={false}
-          />
-        </mesh>
-      )}
-    </group>
-  );
-};
 
 /**
  * VoxelTerrain props.
@@ -534,7 +434,6 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
   const colliderEnablePending = useRef<Set<string>>(new Set());
   const lastColliderCenterKey = useRef<string>('');
 
-  const [leafPickup, setLeafPickup] = useState<{ position: THREE.Vector3; color: string } | null>(null);
   const [floraPickups, setFloraPickups] = useState<PickupEffect[]>([]);
 
   const [fallingTrees, setFallingTrees] = useState<FallingTreeData[]>([]);
@@ -573,8 +472,10 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
     emitGroveEvent({ type: 'tree-felled' });
   }, []);
 
+  // Leaves knocked from a crown drift down (they used to fly a coloured
+  // octahedron into the camera).
   const handleLeafHit = useCallback((position: THREE.Vector3, color?: string) => {
-    setLeafPickup({ position, color: color || '#4CAF50' }); // Default to green
+    emitImpact({ position, direction: new THREE.Vector3(0, -1, 0), kind: 'leaf', color: color || '#5d7a3a', strength: 1.3, floorY: position.y - 3 });
   }, []);
 
   // Use extracted terrain interaction hook
@@ -1735,22 +1636,11 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       {fallingTrees.map(tree => (
         <FallingTree key={tree.id} position={tree.position} type={tree.type} seed={tree.seed} scale={tree.scale} variant={tree.variant} />
       ))}
-      {leafPickup && (
-        <LeafPickupEffect
-          start={leafPickup.position}
-          color={leafPickup.color}
-          onDone={() => {
-            setLeafPickup(null);
-          }}
-        />
-      )}
       {floraPickups.map((fx) => (
-        <LeafPickupEffect
+        <ItemPickupFlight
           key={fx.id}
           start={fx.start}
-          color={fx.color}
-          item={fx.item}
-          geometry="sphere"
+          item={fx.tool ?? fx.item ?? ItemType.STONE}
           onDone={() => {
             setFloraPickups((prev) => prev.filter((p) => p.id !== fx.id));
           }}

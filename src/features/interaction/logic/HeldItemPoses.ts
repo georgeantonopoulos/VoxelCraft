@@ -54,7 +54,7 @@ export const RIGHT_HAND_HELD_ITEM_POSES: Partial<Record<ItemType, HeldItemPose>>
       z: THREE.MathUtils.degToRad(162.0) // flipped 180° from -18° so custom tool attachments face correctly
     }
   },
-  [ItemType.STONE]: { x: PICKAXE_POSE.x, xOffset: -0.3, y: -0.34, z: -0.74, scale: 0.5, rot: { x: 0.35, y: 0.6, z: 0.15 } },
+  [ItemType.STONE]: { x: PICKAXE_POSE.x, xOffset: -0.28, y: -0.33, z: -0.74, scale: 0.4, rot: { x: 0.35, y: 0.6, z: 0.15 } },
   [ItemType.FLORA]: { x: PICKAXE_POSE.x, xOffset: -0.22, y: -0.3, z: -0.7, scale: 0.62, rot: { x: 3, y: 1.4, z: -0.12 } },
   [ItemType.SHARD]: { x: PICKAXE_POSE.x, xOffset: -0.32, y: -0.3, z: -0.7, scale: 1.25, rot: { x: -0.9, y: 0.35, z: 0.45 } },
 };

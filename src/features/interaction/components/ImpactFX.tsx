@@ -48,25 +48,26 @@ interface KindProfile {
   life: [number, number];
   dust: number;
   dustTint: number; // how much lighter than the surface the dust is
+  /** Fall acceleration; leaves drift. */
+  gravity: number;
 }
 
 const PROFILES: Record<ImpactKind, KindProfile> = {
-  stone: { chips: 7, size: [0.018, 0.04], shape: [1.0, 0.35, 0.8], speed: [2.2, 4.2], life: [1.6, 2.4], dust: 0.35, dustTint: 0.35 },
-  earth: { chips: 8, size: [0.03, 0.06], shape: [1.0, 0.8, 0.9], speed: [1.6, 3.2], life: [1.2, 1.8], dust: 1, dustTint: 0.25 },
-  sand: { chips: 5, size: [0.015, 0.03], shape: [1.0, 0.9, 1.0], speed: [1.4, 2.6], life: [0.8, 1.2], dust: 1.4, dustTint: 0.2 },
-  wood: { chips: 7, size: [0.03, 0.06], shape: [0.35, 0.18, 1.6], speed: [2.4, 4.4], life: [1.8, 2.6], dust: 0, dustTint: 0 },
-  leaf: { chips: 6, size: [0.03, 0.05], shape: [1.0, 0.08, 0.8], speed: [0.8, 1.8], life: [1.6, 2.4], dust: 0, dustTint: 0 },
-  snow: { chips: 6, size: [0.025, 0.05], shape: [1.0, 0.9, 1.0], speed: [1.2, 2.4], life: [0.8, 1.2], dust: 1, dustTint: 0.1 },
+  stone: { chips: 7, size: [0.018, 0.04], shape: [1.0, 0.35, 0.8], speed: [2.2, 4.2], life: [1.6, 2.4], dust: 0.35, dustTint: 0.35, gravity: GRAVITY },
+  earth: { chips: 8, size: [0.03, 0.06], shape: [1.0, 0.8, 0.9], speed: [1.6, 3.2], life: [1.2, 1.8], dust: 1, dustTint: 0.25, gravity: GRAVITY },
+  sand: { chips: 5, size: [0.015, 0.03], shape: [1.0, 0.9, 1.0], speed: [1.4, 2.6], life: [0.8, 1.2], dust: 1.4, dustTint: 0.2, gravity: GRAVITY },
+  wood: { chips: 7, size: [0.03, 0.06], shape: [0.35, 0.18, 1.6], speed: [2.4, 4.4], life: [1.8, 2.6], dust: 0, dustTint: 0, gravity: GRAVITY },
+  leaf: { chips: 8, size: [0.035, 0.055], shape: [1.0, 0.06, 0.7], speed: [0.4, 1.2], life: [3.2, 4.4], dust: 0, dustTint: 0, gravity: 1.6 },
+  snow: { chips: 6, size: [0.025, 0.05], shape: [1.0, 0.9, 1.0], speed: [1.2, 2.4], life: [0.8, 1.2], dust: 1, dustTint: 0.1, gravity: GRAVITY },
 };
 
 const CHIP_VERT = /* glsl */ `
-  attribute vec3 aOrigin;
+  attribute vec4 aOrigin;   // xyz, gravity
   attribute vec4 aVel;      // velocity xyz, start time
   attribute vec4 aParams;   // life, size, floorY, spin
   attribute vec3 aShape;
   attribute vec3 aColor;
   uniform float uTime;
-  uniform float uGravity;
   varying vec3 vChipColor;
 
   mat3 axisAngle(vec3 axis, float a) {
@@ -87,11 +88,16 @@ const CHIP_VERT = /* glsl */ `
     } else {
       // Ballistic arc until it meets the floor, then it rests there.
       vec3 v = aVel.xyz;
+      float g = aOrigin.w;
       float drop = max(aOrigin.y - aParams.z, 0.0);
-      float tLand = (v.y + sqrt(v.y * v.y + 2.0 * uGravity * drop)) / uGravity;
+      float tLand = (v.y + sqrt(v.y * v.y + 2.0 * g * drop)) / g;
       float t = min(age, tLand);
-      vec3 p = aOrigin + v * t;
-      p.y -= 0.5 * uGravity * t * t;
+      vec3 p = aOrigin.xyz + v * t;
+      p.y -= 0.5 * g * t * t;
+      // Slow fallers (leaves) sway side to side as they drift down.
+      float flutter = (1.0 - smoothstep(2.0, 6.0, g)) * sin(t * 3.1 + float(gl_InstanceID)) * 0.25 * min(t, 1.0);
+      p.x += flutter;
+      p.z += flutter * 0.6;
       if (age >= tLand) p.y = aParams.z;
 
       // Tumble while flying; landed chips lie still (a little settle roll).
@@ -167,7 +173,7 @@ export const ImpactFX: React.FC = () => {
     geo.setAttribute('normal', base.getAttribute('normal'));
     geo.instanceCount = MAX_CHIPS;
     const attr = (n: number) => new THREE.InstancedBufferAttribute(new Float32Array(MAX_CHIPS * n), n).setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aOrigin', attr(3));
+    geo.setAttribute('aOrigin', attr(4));
     geo.setAttribute('aVel', attr(4));
     geo.setAttribute('aParams', attr(4));
     geo.setAttribute('aShape', attr(3));
@@ -179,7 +185,7 @@ export const ImpactFX: React.FC = () => {
       baseMaterial: THREE.MeshStandardMaterial,
       vertexShader: CHIP_VERT,
       fragmentShader: CHIP_FRAG,
-      uniforms: { uTime: { value: 0 }, uGravity: { value: GRAVITY } },
+      uniforms: { uTime: { value: 0 } },
       roughness: 0.85,
       metalness: 0,
     });
@@ -250,7 +256,8 @@ export const ImpactFX: React.FC = () => {
       for (let i = 0; i < n; i++) {
         const idx = nextChip.current;
         nextChip.current = (nextChip.current + 1) % MAX_CHIPS;
-        aOrigin.setXYZ(idx, o.position.x + rand(-0.04, 0.04), o.position.y + rand(-0.02, 0.05), o.position.z + rand(-0.04, 0.04));
+        const jitter = o.kind === 'leaf' ? 0.6 : 0.04;
+        aOrigin.setXYZW(idx, o.position.x + rand(-jitter, jitter), o.position.y + rand(-0.02, 0.05) + (o.kind === 'leaf' ? rand(-0.4, 0.4) : 0), o.position.z + rand(-jitter, jitter), prof.gravity);
         // A cone around the launch direction, always with some lift.
         const speed = rand(prof.speed[0], prof.speed[1]) * Math.sqrt(strength);
         const spread = 0.9;

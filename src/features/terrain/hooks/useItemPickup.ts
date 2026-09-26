@@ -20,13 +20,15 @@ import {
   rayHitsGeneratedLuminaFlora,
   rayHitsTorch,
 } from '@features/terrain/logic/raycastUtils';
-import { ChunkState, ItemType } from '@/types';
+import { ChunkState, ItemType, CustomTool } from '@/types';
 
 export interface PickupEffect {
   id: string;
   start: THREE.Vector3;
   color?: string;
   item?: ItemType;
+  /** A picked-up crafted tool flies as itself. */
+  tool?: CustomTool;
 }
 
 interface UseItemPickupArgs {
@@ -211,7 +213,7 @@ export function useItemPickup({
           useInventoryStore.getState().addCustomTool(itemData.customToolData);
           const effectId = `${Date.now()}-${Math.random()}`;
           const color = getItemColor(itemData.customToolData.baseType);
-          setPickupEffects((prev) => [...prev, { id: effectId, start: pickedStart!, color }]);
+          setPickupEffects((prev) => [...prev, { id: effectId, start: pickedStart!, color, tool: itemData.customToolData }]);
           emitPickupFeedback('Custom Tool', color);
           return;
         } else if (physicsItemHit.type === ItemType.PICKAXE) {
@@ -219,7 +221,7 @@ export function useItemPickup({
           const effectId = `${Date.now()}-${Math.random()}`;
           const metadata = getItemMetadata(ItemType.PICKAXE);
           const color = metadata?.color ?? '#aaaaaa';
-          setPickupEffects((prev) => [...prev, { id: effectId, start: pickedStart!, color }]);
+          setPickupEffects((prev) => [...prev, { id: effectId, start: pickedStart!, color, item: ItemType.PICKAXE }]);
           emitPickupFeedback(metadata?.name ?? 'Pickaxe', color);
           return;
         } else {

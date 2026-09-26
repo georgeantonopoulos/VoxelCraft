@@ -616,14 +616,8 @@ export function useTerrainInteraction(
                   // SMASH/SHAKE Animation for non-chopping tools
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
-                  onLeafHit(leafPos, leafColor);
-                  emitParticle({
-                    pos: leafPos,
-                    dir: new THREE.Vector3(0, -1, 0),
-                    kind: 'debris',
-                    fx: 'leaf',
-                    color: leafColor
-                  });
+                  // Leaves shaken loose drift down to the tree's foot.
+                  emitImpact({ position: leafPos, direction: new THREE.Vector3(0, -1, 0), kind: 'leaf', color: leafColor, strength: 1.3, floorY: y + 0.02 });
                   if (!treeSoundPlayed) {
                     playSound('wood_hit', { pitch: 0.85 });
                     treeSoundPlayed = true;
@@ -666,14 +660,8 @@ export function useTerrainInteraction(
                   // SMASH/SHAKE Animation
                   const leafPos = new THREE.Vector3(x, y + 2.5 + Math.random() * 2, z);
                   const leafColor = getLeafColorForTreeType(type);
-                  onLeafHit(leafPos, leafColor);
-                  emitParticle({
-                    pos: leafPos,
-                    dir: new THREE.Vector3(0, -1, 0),
-                    kind: 'debris',
-                    fx: 'leaf',
-                    color: leafColor
-                  });
+                  // Leaves shaken loose drift down to the tree's foot.
+                  emitImpact({ position: leafPos, direction: new THREE.Vector3(0, -1, 0), kind: 'leaf', color: leafColor, strength: 1.3, floorY: y + 0.02 });
                   if (!treeSoundPlayed) {
                     playSound('wood_hit', { pitch: 0.85 });
                     treeSoundPlayed = true;
