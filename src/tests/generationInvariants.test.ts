@@ -214,6 +214,21 @@ describe('Every land can start the Keeper\'s Path', () => {
     }
   }, 240_000);
 
+  it('has stones to gather near the start in every land type', () => {
+    for (const type of [WorldType.DEFAULT, WorldType.FROZEN, WorldType.LUSH, WorldType.SKY_ISLANDS, WorldType.CHAOS]) {
+      BiomeManager.setWorldType(type);
+      let stones = 0;
+      try {
+        for (let cx = -1; cx <= 1 && stones === 0; cx++) for (let cz = -1; cz <= 1 && stones === 0; cz++) {
+          stones += TerrainService.generateChunk(cx, cz).rockPositions.length / 8;
+        }
+      } finally {
+        BiomeManager.setWorldType(WorldType.DEFAULT);
+      }
+      expect(stones, `${type} has stones near the start`).toBeGreaterThan(0);
+    }
+  }, 300_000);
+
   it('has Lumina flora to offer the hollows in every land type', () => {
     for (const type of [WorldType.DEFAULT, WorldType.FROZEN, WorldType.LUSH, WorldType.SKY_ISLANDS, WorldType.CHAOS]) {
       BiomeManager.setWorldType(type);
