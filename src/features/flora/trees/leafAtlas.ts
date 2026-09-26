@@ -109,11 +109,14 @@ function paint(type: TreeType, ctx: Ctx) {
         const side = rand() < 0.5 ? -1 : 1;
         const len = SIZE * (0.12 + 0.12 * (1 - Math.abs(t - 0.45)));
         const a = side * (0.6 + rand() * 0.5);
+        // Needle tips stay on the canvas (they ran off the top edge).
+        let l = len;
+        while (l > 4 && !inside(bx + Math.sin(a) * l, y - Math.cos(a) * l * 0.8)) l *= 0.9;
         ctx.strokeStyle = hsl(128 + rand() * 18, 0.45, 0.16 + rand() * 0.14);
         ctx.lineWidth = 1.3;
         ctx.beginPath();
         ctx.moveTo(bx, y);
-        ctx.lineTo(bx + Math.sin(a) * len, y - Math.cos(a) * len * 0.8);
+        ctx.lineTo(bx + Math.sin(a) * l, y - Math.cos(a) * l * 0.8);
         ctx.stroke();
       }
       break;
@@ -122,10 +125,12 @@ function paint(type: TreeType, ctx: Ctx) {
       // Frond: rachis along v with long drooping leaflets.
       ctx.strokeStyle = '#6f7a3a'; ctx.lineWidth = 4;
       ctx.beginPath(); ctx.moveTo(bx, SIZE); ctx.lineTo(bx, 0); ctx.stroke();
-      for (let i = 0; i < 46; i++) {
+      for (let i = 3; i < 46; i++) {
         const t = i / 46;
         const y = SIZE * (1 - t);
-        const len = SIZE * 0.47 * Math.sin(Math.PI * Math.min(1, 0.15 + t)) ;
+        let len = SIZE * 0.47 * Math.sin(Math.PI * Math.min(1, 0.15 + t));
+        // Drooping leaflet ends stay on the canvas (the lowest were cut off).
+        while (len > 4 && !inside(bx + len, y + len * 0.25)) len *= 0.92;
         for (const side of [-1, 1]) {
           ctx.strokeStyle = hsl(95 + rand() * 20, 0.5, 0.22 + rand() * 0.1);
           ctx.lineWidth = 3.2 - t * 1.6;
