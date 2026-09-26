@@ -6,7 +6,10 @@ import { useEnvironmentStore } from '@state/EnvironmentStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { BiomeManager, BiomeType } from '@features/terrain/logic/BiomeManager';
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { WATER_LEVEL } from '@/constants';
+import { WATER_LEVEL, CHUNK_SIZE_XZ } from '@/constants';
+import { chunkDataManager } from '@core/terrain/ChunkDataManager';
+import { TreeType } from '@features/terrain/logic/VegetationConfig';
+import type { LeafSource } from '@core/audio/ambience/ProceduralAmbience';
 
 /**
  * AmbienceDirector: headless. Measures what surrounds the camera (biome, water,
@@ -31,6 +34,52 @@ const BIOME_LIFE: Record<BiomeType, { foliage: number; birds: number }> = {
 };
 
 const PROBE_INTERVAL_S = 0.5;
+
+/** How much each tree type rustles (needles hiss softly, cacti are silent). */
+const RUSTLE_BY_TYPE: Record<number, number> = {
+  [TreeType.OAK]: 1.0,
+  [TreeType.PINE]: 0.55,
+  [TreeType.PALM]: 0.8,
+  [TreeType.JUNGLE]: 1.0,
+  [TreeType.ACACIA]: 0.75,
+  [TreeType.CACTUS]: 0,
+};
+/** Trees farther than this are not heard individually. */
+const LEAF_HEAR_RADIUS = 30;
+
+const scratchForward = new THREE.Vector3();
+
+/** Nearest rustling trees around (x, z), nearest first, plus a 0..1 density of trees within the radius. */
+function nearbyTrees(x: number, y: number, z: number): { sources: LeafSource[]; density: number } {
+  const cx = Math.floor(x / CHUNK_SIZE_XZ), cz = Math.floor(z / CHUNK_SIZE_XZ);
+  const found: (LeafSource & { d2: number })[] = [];
+  let weighted = 0;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      const chunk = chunkDataManager.getChunk(`${cx + dx},${cz + dz}`);
+      const trees = chunk?.treePositions;
+      if (!trees) continue;
+      const ox = (cx + dx) * CHUNK_SIZE_XZ, oz = (cz + dz) * CHUNK_SIZE_XZ;
+      for (let i = 0; i + 4 < trees.length; i += 5) {
+        const strength = RUSTLE_BY_TYPE[trees[i + 3]] ?? 0.8;
+        if (strength <= 0) continue;
+        const tx = trees[i] + ox, tz = trees[i + 2] + oz;
+        const d2 = (tx - x) * (tx - x) + (tz - z) * (tz - z);
+        if (d2 > LEAF_HEAR_RADIUS * LEAF_HEAR_RADIUS) continue;
+        const scale = trees[i + 4] || 1;
+        // The crown, not the trunk base, is where the leaves are.
+        const crownY = trees[i + 1] + 6 * scale;
+        // Trees far above or below (cliffs, caves) are heard less.
+        const dy = Math.abs(crownY - y);
+        const s = strength * THREE.MathUtils.clamp(1 - (dy - 8) / 30, 0.2, 1);
+        found.push({ x: tx, y: crownY, z: tz, strength: s, d2 });
+        weighted += s * (1 - Math.sqrt(d2) / LEAF_HEAR_RADIUS);
+      }
+    }
+  }
+  found.sort((a, b) => a.d2 - b.d2);
+  return { sources: found, density: THREE.MathUtils.clamp(weighted / 8, 0, 1) };
+}
 /** Water sampling rings (metres) and directions per ring. */
 const WATER_RINGS = [6, 16, 32];
 const WATER_DIRS = 8;
@@ -41,6 +90,11 @@ export const AmbienceDirector: React.FC = () => {
   const smooth = useRef({ water: 0, foliage: 0.5, birds: 0.5 });
 
   useFrame((state, delta) => {
+    // The listener follows the camera every frame so positioned sounds pan correctly.
+    const cam = state.camera;
+    cam.getWorldDirection(scratchForward);
+    audioManager.ambience.setListener(cam.position.x, cam.position.y, cam.position.z, scratchForward.x, scratchForward.y, scratchForward.z);
+
     timer.current += delta;
     if (timer.current < PROBE_INTERVAL_S) return;
     timer.current = 0;
@@ -87,7 +141,10 @@ export const AmbienceDirector: React.FC = () => {
     // Smooth biome-driven values so crossing a border fades rather than switches.
     const sm = smooth.current;
     sm.water += (waterHeard - sm.water) * 0.35;
-    sm.foliage += (life.foliage - sm.foliage) * 0.2;
+    // Foliage = trees actually around the player (not the biome's average).
+    const trees = nearbyTrees(p.x, p.y, p.z);
+    audioManager.ambience.setLeafSources(env.undergroundBlend > 0.6 ? [] : trees.sources);
+    sm.foliage += (trees.density - sm.foliage) * 0.3;
     sm.birds += (life.birds - sm.birds) * 0.2;
 
     audioManager.ambience.setScene({

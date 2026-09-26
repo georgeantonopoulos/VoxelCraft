@@ -7,7 +7,9 @@
  *
  * Layers
  *   wind      low rumble + high whistle (altitude, exposure), random-walk gusts
- *   leaves    bright rustle near trees, follows the gusts
+ *   leaves    rustle from the nearest real trees (positioned 3D emitters with
+ *             distance falloff, each gusting on its own) over a faint bed that
+ *             scales with how many trees are nearby
  *   water     river babble / sea swell by proximity
  *   birds     scheduled calls from several synthesised "species" (day, dawn chorus)
  *   insects   crickets (night), cicadas (hot days)
@@ -25,7 +27,7 @@ export interface AmbienceScene {
   underground: number;
   /** 0..1 camera below the water surface. */
   underwater: number;
-  /** 0..1 how much vegetation surrounds the player. */
+  /** 0..1 how many trees surround the player (drives the faint leaf bed and cicadas). */
   foliage: number;
   /** 0..1 bird population of the biome. */
   birdLife: number;
@@ -45,6 +47,27 @@ const DEFAULT_SCENE: AmbienceScene = {
 };
 
 type Rand = () => number;
+
+/** A tree the leaf emitters can attach to (world position of the crown, rustle strength 0..1). */
+export interface LeafSource {
+  x: number;
+  y: number;
+  z: number;
+  strength: number;
+}
+
+/** Positioned rustle emitters (nearest trees). */
+const LEAF_EMITTERS = 4;
+
+interface LeafEmitter {
+  panner: PannerNode;
+  level: GainNode;
+  /** Key of the tree this emitter is attached to ('' = free). */
+  key: string;
+  strength: number;
+  gust: number;
+  gustTarget: number;
+}
 
 /** Small seeded PRNG so the soundscape is varied but not allocation-heavy. */
 function mulberry32(seed: number): Rand {
@@ -93,6 +116,7 @@ export class ProceduralAmbience {
   private windHigh!: GainNode;
   private windHighFilter!: BiquadFilterNode;
   private leaves!: GainNode;
+  private leafEmitters: LeafEmitter[] = [];
   private water!: GainNode;
   private waterFilter!: BiquadFilterNode;
   private cicadas!: GainNode;
@@ -153,16 +177,34 @@ export class ProceduralAmbience {
     this.windHighFilter.type = 'bandpass'; this.windHighFilter.frequency.value = 900; this.windHighFilter.Q.value = 2.5;
     this.loop(pink, 1.07).connect(this.windHighFilter).connect(this.windHigh).connect(this.muffle);
 
-    // Leaves: high-passed white noise, tremolo from a fast random LFO.
+    // Leaves: high-passed white noise with a fast random tremolo. One faint,
+    // non-directional bed, plus positioned emitters on the nearest trees.
+    const tremNoise = this.makeNoise(2, 'brown', 3000);
+    const rustle = (rate: number, out: AudioNode) => {
+      const lh = ctx.createBiquadFilter(); lh.type = 'highpass'; lh.frequency.value = 2600;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
+      const trem = ctx.createGain(); trem.gain.value = 0.6;
+      const tremDepth = ctx.createGain(); tremDepth.gain.value = 0.5;
+      this.loop(tremNoise, 0.8 + this.rand() * 0.5).connect(tremDepth).connect(trem.gain);
+      this.loop(white, rate).connect(lh).connect(lp).connect(trem).connect(out);
+    };
     this.leaves = ctx.createGain();
     this.leaves.gain.value = 0;
-    const lh = ctx.createBiquadFilter(); lh.type = 'highpass'; lh.frequency.value = 2600;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
-    const trem = ctx.createGain(); trem.gain.value = 0.6;
-    const tremLfo = this.loop(this.makeNoise(2, 'brown', 3000), 1);
-    const tremDepth = ctx.createGain(); tremDepth.gain.value = 0.5;
-    tremLfo.connect(tremDepth).connect(trem.gain);
-    this.loop(white, 0.93).connect(lh).connect(lp).connect(trem).connect(this.leaves).connect(this.muffle);
+    rustle(0.93, this.leaves);
+    this.leaves.connect(this.muffle);
+    for (let i = 0; i < LEAF_EMITTERS; i++) {
+      const level = ctx.createGain();
+      level.gain.value = 0;
+      const panner = ctx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 3;
+      panner.rolloffFactor = 1.4;
+      panner.maxDistance = 60;
+      rustle(0.85 + i * 0.07, level);
+      level.connect(panner).connect(this.muffle);
+      this.leafEmitters.push({ panner, level, key: '', strength: 0, gust: 0.5, gustTarget: 0.5 });
+    }
 
     // Water: band-limited noise; the band wobbles for a babbling character.
     this.water = ctx.createGain();
@@ -211,6 +253,52 @@ export class ProceduralAmbience {
     if (this.ctx) this.master.gain.setTargetAtTime(this.volume * AMBIENCE_GAIN, this.ctx.currentTime, 0.2);
   }
 
+  /** Moves the listener to the camera (call every frame; cheap). */
+  setListener(x: number, y: number, z: number, fx: number, fy: number, fz: number): void {
+    const l = this.ctx?.listener;
+    if (!l) return;
+    if (l.positionX) {
+      l.positionX.value = x; l.positionY.value = y; l.positionZ.value = z;
+      l.forwardX.value = fx; l.forwardY.value = fy; l.forwardZ.value = fz;
+      l.upX.value = 0; l.upY.value = 1; l.upZ.value = 0;
+    } else {
+      l.setPosition(x, y, z);
+      l.setOrientation(fx, fy, fz, 0, 1, 0);
+    }
+  }
+
+  /**
+   * Attaches the rustle emitters to these trees (nearest first, at most
+   * LEAF_EMITTERS used). Emitters keep their tree while it stays in the list;
+   * a newly attached emitter fades in from silence so nothing jumps.
+   */
+  setLeafSources(sources: LeafSource[]): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const wanted = new Map<string, LeafSource>();
+    for (const src of sources.slice(0, LEAF_EMITTERS)) wanted.set(`${Math.round(src.x)},${Math.round(src.z)}`, src);
+    // Keep emitters whose tree is still wanted; free the rest.
+    for (const e of this.leafEmitters) {
+      if (e.key && wanted.has(e.key)) wanted.delete(e.key);
+      else if (e.key) { e.key = ''; e.strength = 0; }
+    }
+    const t = ctx.currentTime;
+    for (const e of this.leafEmitters) {
+      if (e.key) continue;
+      const next = wanted.entries().next();
+      if (next.done) break;
+      const [key, src] = next.value;
+      wanted.delete(key);
+      e.key = key;
+      e.strength = src.strength;
+      e.level.gain.cancelScheduledValues(t);
+      e.level.gain.setValueAtTime(0, t);
+      e.panner.positionX.setValueAtTime(src.x, t);
+      e.panner.positionY.setValueAtTime(src.y, t);
+      e.panner.positionZ.setValueAtTime(src.z, t);
+    }
+  }
+
   setScene(scene: Partial<AmbienceScene>): void {
     if (this.locked) return;
     Object.assign(this.scene, scene);
@@ -254,7 +342,16 @@ export class ProceduralAmbience {
   }
 
   getStats() {
-    return { running: this.ctx?.state ?? 'stopped', scene: { ...this.scene }, gust: this.gust };
+    return {
+      running: this.ctx?.state ?? 'stopped',
+      scene: { ...this.scene },
+      gust: this.gust,
+      leafEmitters: this.leafEmitters.map((e) => ({
+        tree: e.key,
+        level: +e.level.gain.value.toFixed(4),
+        at: [e.panner.positionX.value, e.panner.positionY.value, e.panner.positionZ.value].map((v) => +v.toFixed(1)),
+      })),
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -275,7 +372,15 @@ export class ProceduralAmbience {
     this.windLow.gain.setTargetAtTime(0.09 * wind * (0.4 + s.exposure), t, tc);
     this.windHigh.gain.setTargetAtTime(0.04 * wind * (0.2 + s.exposure), t, tc);
     this.windHighFilter.frequency.setTargetAtTime(600 + 900 * this.gust + 500 * s.exposure, t, 0.8);
-    this.leaves.gain.setTargetAtTime(0.05 * outside * s.foliage * (0.2 + 0.8 * this.gust), t, 0.4);
+    // Leaf bed: faint and non-directional; the nearby trees carry the rustle.
+    this.leaves.gain.setTargetAtTime(0.01 * outside * s.foliage * (0.2 + 0.8 * this.gust), t, 0.6);
+    for (const e of this.leafEmitters) {
+      // Each tree catches the wind on its own schedule, following the overall gusts.
+      if (this.rand() < 0.05) e.gustTarget = Math.min(1, Math.max(0, this.gust + (this.rand() - 0.5) * 0.9));
+      e.gust += (e.gustTarget - e.gust) * 0.08;
+      const level = e.key ? 0.045 * outside * e.strength * (0.12 + 0.88 * e.gust) : 0;
+      e.level.gain.setTargetAtTime(level, t, e.key ? 0.5 : 0.3);
+    }
 
     // Water: sea swells slowly, rivers babble steadily.
     this.seaPhase += 0.1 * 0.09 * Math.PI * 2;
