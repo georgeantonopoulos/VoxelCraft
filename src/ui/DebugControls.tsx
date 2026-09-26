@@ -180,12 +180,12 @@ export const DebugControls: React.FC<{
                 haze: { value: 0.25, min: 0.0, max: 1.0, step: 0.01, onChange: props.setAtmosphereHaze, label: 'Haze' },
                 brightness: { value: 1.0, min: 0.6, max: 1.6, step: 0.01, onChange: props.setAtmosphereBrightness, label: 'Brightness' },
                 'Distance Fog': folder({
-                    fogNear: { value: 40, min: 0, max: 120, step: 1, onChange: props.setFogNear, label: 'Near' },
-                    fogFar: { value: 85, min: 20, max: 600, step: 5, onChange: props.setFogFar, label: 'Far' },
+                    fogNear: { value: 30, min: 0, max: 120, step: 1, onChange: props.setFogNear, label: 'Near' },
+                    fogFar: { value: 96, min: 20, max: 600, step: 5, onChange: props.setFogFar, label: 'Far' },
                 }, { collapsed: true }),
                 'Height Fog': folder({
                     hFogEnabled: { value: true, onChange: (v) => props.setHeightFogEnabled(!!v), label: 'Enabled' },
-                    hFogStrength: { value: 0.35, min: 0.0, max: 1.0, step: 0.05, onChange: props.setHeightFogStrength, label: 'Strength' },
+                    hFogStrength: { value: 0.16, min: 0.0, max: 1.0, step: 0.05, onChange: props.setHeightFogStrength, label: 'Strength' },
                     hFogRange: { value: 50.0, min: 5.0, max: 100.0, step: 1.0, onChange: props.setHeightFogRange, label: 'Range' },
                     hFogOffset: { value: 4.0, min: -20.0, max: 60.0, step: 1.0, onChange: props.setHeightFogOffset, label: 'Offset' },
                     biomeFog: { value: true, onChange: (v) => props.setBiomeFogEnabled(!!v), label: 'Biome Fog' },
@@ -221,7 +221,7 @@ export const DebugControls: React.FC<{
             'Terrain': folder({
                 'Material': folder({
                     triplanarDetail: { value: 1.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTriplanarDetail, label: 'Detail Mix' },
-                    saturation: { value: 1.5, min: 0.5, max: 2.0, step: 0.05, onChange: props.setTerrainSaturation, label: 'Saturation' },
+                    saturation: { value: 1.1, min: 0.5, max: 2.0, step: 0.05, onChange: props.setTerrainSaturation, label: 'Saturation' },
                     terrainWetness: { value: true, onChange: (v) => props.setTerrainWetnessEnabled(!!v), label: 'Wetness' },
                     terrainMoss: { value: true, onChange: (v) => props.setTerrainMossEnabled(!!v), label: 'Moss' },
                     terrainRoughnessMin: { value: 0.0, min: 0.0, max: 1.0, step: 0.01, onChange: props.setTerrainRoughnessMin, label: 'Roughness Min' },

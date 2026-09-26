@@ -231,8 +231,8 @@ export const BladeGrassLayer: React.FC<BladeGrassLayerProps> = React.memo(({
         uShaderFogStrength: sharedUniforms.uShaderFogStrength,
 
         // Grass colors (base to tip gradient) - vibrant saturated greens
-        uBaseColor: { value: new THREE.Color(0x4ca832) }, // Vibrant green at base
-        uTipColor: { value: new THREE.Color(0x8bd955) },  // Bright yellow-green at tips
+        uBaseColor: { value: new THREE.Color(0x2f5322) }, // Deep moss at the root
+        uTipColor: { value: new THREE.Color(0x93a452) },  // Dry olive at the tips
       },
       color: 0x41a024,
       roughness: 0.6,

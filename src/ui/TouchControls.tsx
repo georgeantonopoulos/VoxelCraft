@@ -102,11 +102,11 @@ export const TouchControls: React.FC = () => {
           {/* Visual Joystick Indicator (only visible when active) */}
           {joystickOrigin.current && (
             <div
-              className="absolute w-24 h-24 rounded-full border-2 border-white/30 bg-black/20 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+              className="absolute w-24 h-24 rounded-full border border-lichen/30 bg-night/25 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
               style={{ left: joystickOrigin.current.x, top: joystickOrigin.current.y }}
             >
               <div
-                className="absolute w-10 h-10 rounded-full bg-white/50 -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2"
+                className="absolute w-10 h-10 rounded-full bg-parchment/45 -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2"
                 style={{ transform: `translate(calc(-50% + ${joystickPos.x}px), calc(-50% + ${joystickPos.y}px))` }}
               />
             </div>
@@ -114,7 +114,7 @@ export const TouchControls: React.FC = () => {
 
           {/* Hint text if idle */}
           {!joystickOrigin.current && (
-            <div className="absolute bottom-20 left-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
+            <div className="grove-eyebrow absolute bottom-20 left-10 pointer-events-none">
               Move
             </div>
           )}
@@ -123,7 +123,7 @@ export const TouchControls: React.FC = () => {
         {/* Right Half: Look */}
         <div className="w-1/2 h-full relative">
           {!lookId.current && (
-            <div className="absolute bottom-20 right-10 text-white/30 text-sm font-bold uppercase tracking-widest pointer-events-none">
+            <div className="grove-eyebrow absolute bottom-20 right-10 pointer-events-none">
               Look
             </div>
           )}
@@ -131,12 +131,12 @@ export const TouchControls: React.FC = () => {
       </div>
 
       {/* Action Buttons Overlay */}
-      <div className="absolute bottom-8 right-8 flex flex-col gap-4 pointer-events-auto">
+      <div className="absolute bottom-28 right-8 flex flex-col gap-4 pointer-events-auto">
         <div className="flex gap-4">
           {/* PICK UP (Q) */}
           <button
             aria-label="Pick up item"
-            className="w-16 h-16 rounded-full bg-cyan-500/50 border-2 border-cyan-300 text-white text-xs font-bold backdrop-blur-sm active:bg-cyan-500/80 active:scale-95 transition-all flex items-center justify-center"
+            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
             onPointerDown={(event) => {
               event.preventDefault();
               window.dispatchEvent(new Event('vc-item-pickup-request'));
@@ -148,7 +148,7 @@ export const TouchControls: React.FC = () => {
           {/* USE (Right Click): place / throw / build */}
           <button
             aria-label="Use item"
-            className="w-16 h-16 rounded-full bg-emerald-500/50 border-2 border-emerald-300 text-white text-xs font-bold backdrop-blur-sm active:bg-emerald-500/80 active:scale-95 transition-all flex items-center justify-center"
+            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
             onPointerDown={(event) => { event.preventDefault(); touchAction(2, true); }}
             onPointerUp={() => touchAction(2, false)}
             onPointerLeave={() => touchAction(2, false)}
@@ -159,7 +159,7 @@ export const TouchControls: React.FC = () => {
           {/* DIG (Left Click): dig / chop / strike */}
           <button
             aria-label="Dig"
-            className="w-16 h-16 rounded-full bg-red-500/50 border-2 border-red-400 text-white font-bold backdrop-blur-sm active:bg-red-500/80 active:scale-95 transition-all flex items-center justify-center"
+            className="h-16 w-16 rounded-full border border-lichen/35 bg-night/45 text-parchment text-[12px] font-medium tracking-wide backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
             onPointerDown={(event) => { event.preventDefault(); setDigging(true); touchAction(0, true); }}
             onPointerUp={() => { setDigging(false); touchAction(0, false); }}
             onPointerLeave={() => { setDigging(false); touchAction(0, false); }}
@@ -170,7 +170,7 @@ export const TouchControls: React.FC = () => {
 
         {/* JUMP */}
         <button
-          className="w-20 h-20 self-end rounded-full bg-slate-200/50 border-2 border-white text-white font-bold backdrop-blur-sm active:bg-slate-200/80 active:scale-95 transition-all flex items-center justify-center"
+          className="h-20 w-20 self-end rounded-full border border-lichen/45 bg-night/45 text-parchment font-display text-[15px] font-semibold backdrop-blur-sm active:scale-95 active:bg-night/70 transition-all flex items-center justify-center"
           onPointerDown={() => setJumping(true)}
           onPointerUp={() => setJumping(false)}
           onPointerLeave={() => setJumping(false)}

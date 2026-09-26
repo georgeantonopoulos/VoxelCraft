@@ -43,6 +43,7 @@ import { HUD as UI } from '@ui/HUD';
 import { SceneWarmup } from '@features/environment/components/SceneWarmup';
 import { StartupScreen } from '@ui/StartupScreen';
 import { WorldSelectionScreen } from '@ui/WorldSelectionScreen';
+import { writeLastWorld } from '@state/lastWorld';
 import { SettingsMenu } from '@/ui/SettingsMenu';
 import { TouchControls } from '@/ui/TouchControls';
 
@@ -263,8 +264,8 @@ const App: React.FC = () => {
   const [caOffset, setCaOffset] = useState(0.00001);
   const [vignetteDarkness, setVignetteDarkness] = useState(0.35);
 
-  const [fogNear, setFogNear] = useState(40);
-  const [fogFar, setFogFar] = useState(85);
+  const [fogNear, setFogNear] = useState(30);
+  const [fogFar, setFogFar] = useState(96);
   const [atmosphereHaze, setAtmosphereHaze] = useState(0.25);
   const [atmosphereBrightness, setAtmosphereBrightness] = useState(1.0);
   const [sunIntensityMul, setSunIntensityMul] = useState(4.6);
@@ -277,7 +278,7 @@ const App: React.FC = () => {
   const [bloomThreshold, setBloomThreshold] = useState(0.4);
 
   const [heightFogEnabled, setHeightFogEnabled] = useState(true);
-  const [heightFogStrength, setHeightFogStrength] = useState(0.35);
+  const [heightFogStrength, setHeightFogStrength] = useState(0.16);
   const [heightFogRange, setHeightFogRange] = useState(50.0);
   const [heightFogOffset, setHeightFogOffset] = useState(4.0);
 
@@ -293,7 +294,7 @@ const App: React.FC = () => {
   const [giIntensity, setGiIntensity] = useState(1.0);
 
   // Terrain Color Grading (in-shader, not post-processing)
-  const [terrainSaturation, setTerrainSaturation] = useState(1.5);
+  const [terrainSaturation, setTerrainSaturation] = useState(1.1);
 
   // Sun Shadow Params
   const [sunShadowBias, setSunShadowBias] = useState(-0.0005);
@@ -461,6 +462,7 @@ const App: React.FC = () => {
 
       {!worldType ? (
         <WorldSelectionScreen onSelect={(type, seed) => {
+          writeLastWorld(type, seed);
           setWorldSeed(seed);
           setWorldType(type);
         }} />

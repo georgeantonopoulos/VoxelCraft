@@ -17,7 +17,13 @@ export type OrbitConfig = {
 /** Share of the full cycle with the sun above the horizon (rest is dusk-night-dawn). */
 export const DAY_FRACTION = 0.78;
 /** Cycle phase at t = 0: a fraction of the way into the day, so worlds open in mid-morning. */
-export const START_PHASE = DAY_FRACTION * 0.22;
+export const START_PHASE = DAY_FRACTION * 0.17;
+/**
+ * Tilt of the sun's path away from the zenith (like a mid latitude): noon
+ * elevation is 90° minus this. A path through the zenith lit everything from
+ * straight above at midday, which flattened the terrain.
+ */
+export const ORBIT_TILT = 0.6; // ~34°, noon sun at ~56°
 
 /**
  * Calculates the non-linear orbit angle for sun/moon so the day is long and the night short.
@@ -65,8 +71,9 @@ export const getOrbitOffset = (
 ): THREE.Vector3 => {
   // Local orbit in X/Y with a small forward offset in local Z.
   const lx = Math.sin(angle) * radius;
-  const ly = Math.cos(angle) * radius;
-  const lz = planeOffsetZ;
+  const up = Math.cos(angle) * radius;
+  const ly = up * Math.cos(ORBIT_TILT);
+  const lz = planeOffsetZ + up * Math.sin(ORBIT_TILT);
 
   // Yaw the orbit plane around world up so the sun/moon arc can be oriented.
   const c = Math.cos(planeYaw);

@@ -1137,82 +1137,87 @@ export class TerrainService {
             }
         }
 
-        // 5.2 Surface rocks (mountains + beaches; keep scarce)
-        for (let i = 0; i < 22 && rockCandidates.length / 8 < MAX_PICKUP_ROCKS; i++) {
-            const u = hash01p(worldOffsetX, 0, worldOffsetZ, 4200 + i * 3);
-            const v = hash01p(worldOffsetX, 0, worldOffsetZ, 4201 + i * 3);
-            const lx = u * CHUNK_SIZE_XZ;
-            const lz = v * CHUNK_SIZE_XZ;
-            const wx = worldOffsetX + lx;
-            const wz = worldOffsetZ + lz;
+        // 5.2 Surface rocks, placed as small composed groups rather than an even
+        // scatter (an even scatter read as polka dots on open dunes and fields):
+        // - beaches: a few stones along the tide line,
+        // - meadows/forest: now and then a mossy boulder with stones at its foot,
+        // - mountains/rocky heights: tumbled stones, sometimes around a boulder.
+        // Group centres stay 3 m inside the chunk so every stone lies on this
+        // chunk's padded grid.
+        const GOLDEN_ANGLE = 2.39996;
+        for (let c = 0; c < 3 && rockCandidates.length / 8 < MAX_PICKUP_ROCKS; c++) {
+            const cxLocal = 3 + hash01p(worldOffsetX, 0, worldOffsetZ, 4200 + c * 7) * (CHUNK_SIZE_XZ - 6);
+            const czLocal = 3 + hash01p(worldOffsetX, 0, worldOffsetZ, 4201 + c * 7) * (CHUNK_SIZE_XZ - 6);
+            const wx = worldOffsetX + cxLocal;
+            const wz = worldOffsetZ + czLocal;
+
+            const centre = findTopSurfaceAtLocalXZ(cxLocal, czLocal);
+            if (!centre) continue;
+            if (centre.worldY <= WATER_LEVEL + 0.15) continue;
+            // Sacred Grove Check: No ground items in barren zones
+            if (BiomeManager.getSacredGroveInfo(wx, wz).inGrove) continue;
 
             const biome = BiomeManager.getBiomeAt(wx, wz);
-            const top = findTopSurfaceAtLocalXZ(lx, lz);
-            if (!top) continue;
-            if (top.worldY <= WATER_LEVEL + 0.15) continue;
-
-            // Sacred Grove Check: No ground items in barren zones
-            const rockSacredGroveInfo = BiomeManager.getSacredGroveInfo(wx, wz);
-            if (rockSacredGroveInfo.inGrove) continue;
-
-            const matBelow = top.matBelow;
-
-            let want = false;
-            let threshold = 0.0;
+            const mat = centre.matBelow;
+            let chance = 0;
+            let minStones = 2, maxStones = 4;
+            let boulderChance = 0;
             let variant: RockVariant = RockVariant.MOUNTAIN;
 
             if (biome === 'BEACH') {
-                want = true;
-                threshold = 0.35;
+                // Only near the waterline, where the sea would leave them.
+                if (centre.worldY < WATER_LEVEL + 2.5) chance = 0.45;
+                minStones = 3; maxStones = 5;
                 variant = RockVariant.BEACH;
-            } else if (biome === 'MOUNTAINS' || biome === 'ICE_SPIKES') {
-                want = isRockyMaterial(matBelow);
-                threshold = 0.35;
-                variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
-            } else if (isRockyMaterial(matBelow) && top.worldY > 24) {
-                // Exposed stone at higher altitudes.
-                want = true;
-                threshold = 0.16;
-                variant = matBelow === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
-            } else if (isSoilMaterial(matBelow)) {
-                // Field stones on ordinary ground (~1-2 per chunk). Grassland and forest
-                // used to have none, so the early "gather stones" step meant a long hike.
-                want = true;
-                threshold = 0.06;
-                variant = (biome === 'JUNGLE' || biome === 'THE_GROVE') ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            } else if ((biome === 'MOUNTAINS' || biome === 'ICE_SPIKES') && isRockyMaterial(mat)) {
+                chance = 0.5; boulderChance = 0.3; maxStones = 5;
+                variant = mat === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            } else if (isRockyMaterial(mat) && centre.worldY > 24) {
+                chance = 0.25; boulderChance = 0.2;
+                variant = mat === MaterialType.MOSSY_STONE ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            } else if (isSoilMaterial(mat)) {
+                // Field stones keep the early "gather stones" step close at hand.
+                chance = 0.22; boulderChance = 0.35; minStones = 2; maxStones = 3;
+                variant = (biome === 'JUNGLE' || biome === 'THE_GROVE' || biome === 'PLAINS') ? RockVariant.MOSSY : RockVariant.MOUNTAIN;
+            }
+            if (chance <= 0) continue;
+            const p = hash01p(wx, centre.worldY, wz, 4220);
+            if (p > chance) continue;
+
+            let wantsBoulder = largeRockCandidates.length / 6 < MAX_LARGE_ROCKS
+                && hash01p(wx, centre.worldY, wz, 4250) < boulderChance;
+            // A boulder never grows through a tree trunk.
+            for (let t = 0; wantsBoulder && t < treeCandidates.length; t += TREE_STRIDE) {
+                const dx = treeCandidates[t] - cxLocal, dz = treeCandidates[t + 2] - czLocal;
+                if (dx * dx + dz * dz < 12.0) wantsBoulder = false;
+            }
+            let innerRadius = 0.35;
+            if (wantsBoulder) {
+                const radius = 0.9 + hash01p(wx, centre.worldY, wz, 4251) * 1.4; // ~0.9..2.3
+                largeRockCandidates.push(cxLocal, centre.worldY + 0.05, czLocal, radius, variant, p);
+                innerRadius = radius * 0.75;
             }
 
-            if (!want) continue;
-            const p = hash01p(wx, top.worldY, wz, 4220);
-            if (p > threshold) continue;
-
-            // Small local jitter keeps them from reading as grid-snapped.
-            const jx = (hash01p(wx, top.worldY, wz, 4221) - 0.5) * 0.9;
-            const jz = (hash01p(wx, top.worldY, wz, 4222) - 0.5) * 0.9;
-            rockCandidates.push(
-                lx + jx,
-                top.worldY + 0.05,
-                lz + jz,
-                top.normal[0], top.normal[1], top.normal[2],
-                variant,
-                p
-            );
-
-            // Rare large surface rock in mountainous / rocky areas.
-            if (largeRockCandidates.length / 6 < MAX_LARGE_ROCKS) {
-                const bigP = hash01p(wx, top.worldY, wz, 4250);
-                const bigOk = (biome === 'MOUNTAINS' || biome === 'ICE_SPIKES') && isRockyMaterial(matBelow);
-                if (bigOk && bigP < 0.06) {
-                    const radius = 1.1 + hash01p(wx, top.worldY, wz, 4251) * 1.8; // ~1.1..2.9
-                    largeRockCandidates.push(
-                        lx + (hash01p(wx, top.worldY, wz, 4252) - 0.5) * 1.2,
-                        top.worldY + 0.05,
-                        lz + (hash01p(wx, top.worldY, wz, 4253) - 0.5) * 1.2,
-                        radius,
-                        variant,
-                        bigP
-                    );
-                }
+            const count = minStones + Math.floor(hash01p(wx, centre.worldY, wz, 4223) * (maxStones - minStones + 1));
+            const startAngle = hash01p(wx, centre.worldY, wz, 4224) * Math.PI * 2;
+            for (let k = 0; k < count && rockCandidates.length / 8 < MAX_PICKUP_ROCKS; k++) {
+                // Golden-angle spiral with jitter: close together, never on a grid.
+                const ang = startAngle + k * GOLDEN_ANGLE + (hash01p(wx, k, wz, 4225) - 0.5) * 0.6;
+                const rad = innerRadius + 0.25 + Math.sqrt(k + 0.5) * 0.5 * (0.7 + hash01p(wx, k, wz, 4226) * 0.6);
+                const lx = cxLocal + Math.cos(ang) * rad;
+                const lz = czLocal + Math.sin(ang) * rad;
+                const top = findTopSurfaceAtLocalXZ(lx, lz);
+                if (!top) continue;
+                if (top.worldY <= WATER_LEVEL + 0.15) continue;
+                if (Math.abs(top.worldY - centre.worldY) > 2.0) continue; // not across a ledge
+                rockCandidates.push(
+                    lx,
+                    top.worldY + 0.05,
+                    lz,
+                    top.normal[0], top.normal[1], top.normal[2],
+                    variant,
+                    hash01p(wx, k, wz, 4227)
+                );
             }
         }
 

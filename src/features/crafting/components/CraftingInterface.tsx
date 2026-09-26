@@ -42,77 +42,47 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
     return null;
   }, [attachedItems]);
 
-  if (attachmentCount === 0) {
-    return (
-      <div className="absolute left-8 top-1/2 -translate-y-1/2 bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 pointer-events-none">
-        <p className="text-white/50 text-sm italic">Drag items to attachment slots</p>
-      </div>
-    );
-  }
+  const statRow = (label: string, value: string, color: string) => (
+    <div className="flex items-baseline gap-3">
+      <span className="h-1.5 w-1.5 translate-y-[-1px] rotate-45 rounded-[1px]" style={{ background: color, boxShadow: `0 0 6px ${color}` }} />
+      <span className="text-parchment/90">{label}</span>
+      <span className="grove-num ml-auto text-lichen/75">{value}</span>
+    </div>
+  );
 
   return (
-    <div className="absolute left-8 top-1/2 -translate-y-1/2 bg-black/40 backdrop-blur-md rounded-xl p-4 border border-white/10 pointer-events-none min-w-[180px]">
-      {/* Recipe Recognition */}
-      {matchedRecipe && (
-        <div className="mb-3 pb-3 border-b border-white/10">
-          <span className="text-xs uppercase tracking-wider text-emerald-400 font-bold">Recipe Matched</span>
-          <p className="text-white font-bold text-lg">{matchedRecipe}</p>
-        </div>
-      )}
-
-      <h3 className="text-xs uppercase tracking-wider text-white/60 mb-2 font-bold">Tool Stats</h3>
-
-      {/* Capabilities */}
-      <div className="space-y-2 text-sm">
-        {caps.canDig && (
-          <div className="flex items-center gap-2">
-            <span className="text-amber-400">⛏</span>
-            <span className="text-white">Mining</span>
-            <span className="ml-auto text-amber-300 font-mono">{caps.digPower.toFixed(1)}</span>
-          </div>
-        )}
-        {caps.canChop && (
-          <div className="flex items-center gap-2">
-            <span className="text-green-400">🪓</span>
-            <span className="text-white">Chopping</span>
-            <span className="ml-auto text-green-300 font-mono">{caps.woodDamage.toFixed(1)}</span>
-          </div>
-        )}
-        {caps.canSmash && (
-          <div className="flex items-center gap-2">
-            <span className="text-orange-400">💥</span>
-            <span className="text-white">Smashing</span>
-            <span className="ml-auto text-orange-300 font-mono">{caps.shatterForce.toFixed(1)}</span>
-          </div>
-        )}
-        {caps.isLuminaTool && (
-          <div className="flex items-center gap-2">
-            <span className="text-cyan-400">✨</span>
-            <span className="text-white">Lumina</span>
-            <span className="ml-auto text-cyan-300 font-mono">×{caps.luminaCount}</span>
-          </div>
-        )}
-
-        {/* Show damage stats if no special capabilities */}
-        {!caps.canDig && !caps.canChop && !caps.canSmash && (
-          <>
-            <div className="flex items-center gap-2 text-white/70">
-              <span>Wood Dmg</span>
-              <span className="ml-auto font-mono">{caps.woodDamage.toFixed(1)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-white/70">
-              <span>Stone Dmg</span>
-              <span className="ml-auto font-mono">{caps.stoneDamage.toFixed(1)}</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Tip for unlocking capabilities */}
-      {!caps.canDig && !caps.canChop && attachmentCount < 2 && (
-        <p className="mt-3 text-xs text-white/40 italic">
-          Add more shards to unlock abilities
+    <div className="grove-panel absolute left-8 top-1/2 min-w-[220px] -translate-y-1/2 px-5 py-4 pointer-events-none">
+      {attachmentCount === 0 ? (
+        <p className="max-w-[200px] font-display text-[16px] italic leading-snug text-lichen/75">
+          Drag stones, shards or flora from your items onto the glowing points of the stick.
         </p>
+      ) : (
+        <>
+          {matchedRecipe && (
+            <div className="mb-3 border-b border-lichen/15 pb-3">
+              <div className="grove-eyebrow" style={{ color: '#b5d178' }}>Known form</div>
+              <p className="font-display text-[22px] font-semibold text-parchment">{matchedRecipe}</p>
+            </div>
+          )}
+
+          <div className="grove-eyebrow mb-2">What it can do</div>
+          <div className="space-y-1.5 text-[14px]">
+            {caps.canDig && statRow('Mining', caps.digPower.toFixed(1), '#f2cf7c')}
+            {caps.canChop && statRow('Chopping', caps.woodDamage.toFixed(1), '#9dbd62')}
+            {caps.canSmash && statRow('Smashing', caps.shatterForce.toFixed(1), '#f0b3a3')}
+            {caps.isLuminaTool && statRow('Lumina', `×${caps.luminaCount}`, '#a4f2e4')}
+            {!caps.canDig && !caps.canChop && !caps.canSmash && (
+              <>
+                {statRow('Against wood', caps.woodDamage.toFixed(1), 'rgba(215,220,182,0.5)')}
+                {statRow('Against stone', caps.stoneDamage.toFixed(1), 'rgba(215,220,182,0.5)')}
+              </>
+            )}
+          </div>
+
+          {!caps.canDig && !caps.canChop && attachmentCount < 2 && (
+            <p className="mt-3 font-display text-[14px] italic text-lichen/55">More shards will give it purpose.</p>
+          )}
+        </>
       )}
     </div>
   );
@@ -140,7 +110,7 @@ const SlotIndicator = ({ slot, isFilled, onInteract, draggedItem }: any) => {
       >
         <sphereGeometry args={[0.1, 16, 16]} />
         <meshBasicMaterial
-          color={isCompatible ? (hovered ? "#4ade80" : "#22c55e") : (isIncompatible ? (hovered ? "#ef4444" : "#f97316") : "#ffffff")}
+          color={isCompatible ? (hovered ? "#d9eea0" : "#9dbd62") : (isIncompatible ? (hovered ? "#e08a74" : "#b4745f") : "#f1ead3")}
           transparent
           opacity={(hovered || isIncompatible) ? 0.6 : 0.2}
           wireframe={!hovered && !isCompatible && !isIncompatible}
@@ -150,7 +120,7 @@ const SlotIndicator = ({ slot, isFilled, onInteract, draggedItem }: any) => {
       {isCompatible && (
         <mesh scale={hovered ? 1.1 : 1.0}>
           <sphereGeometry args={[0.12, 16, 16]} />
-          <meshBasicMaterial color="#4ade80" transparent opacity={0.1} />
+          <meshBasicMaterial color="#a4f2e4" transparent opacity={0.12} />
         </mesh>
       )}
     </group>
@@ -275,12 +245,13 @@ export const CraftingInterface: React.FC = () => {
   return (
     <div className="absolute inset-0 z-[55] pointer-events-none">
       {/* Semi-transparent blur background only in a central vignette to keep inventory clear */}
-      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" />
+      <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse 55% 55% at 50% 50%, rgba(7,11,10,0.35), rgba(7,11,10,0.8))', backdropFilter: 'blur(3px)' }} />
 
       {/* UI Overlay */}
       <div className="absolute top-12 left-0 right-0 text-center pointer-events-none">
-        <h2 className="text-4xl font-black text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.5)] tracking-tight">CRAFTING</h2>
-        <p className="text-emerald-400 font-bold text-sm uppercase tracking-widest mt-1">Combine materials into a unique tool</p>
+        <div className="grove-eyebrow">The Keeper&apos;s bench</div>
+        <h2 className="grove-text-shadow mt-1 font-display text-[44px] font-semibold leading-none text-parchment">Shape a tool</h2>
+        <p className="mt-2 font-display text-[17px] italic text-lichen/70">Bind what the land gave you to a sturdy stick.</p>
       </div>
 
       {/* Tool Stats Panel */}
@@ -302,7 +273,7 @@ export const CraftingInterface: React.FC = () => {
           <Environment preset="forest" />
           <ambientLight intensity={0.5} />
           <pointLight position={[5, 10, 5]} intensity={1.5} castShadow />
-          <pointLight position={[-5, 5, -5]} intensity={0.5} color="#4ade80" />
+          <pointLight position={[-5, 5, -5]} intensity={0.5} color="#a4f2e4" />
 
           <group position={[0, -0.2, 0]}>
             {/* Base Item */}
@@ -346,7 +317,7 @@ export const CraftingInterface: React.FC = () => {
                     {/* Subtle highlight ring for detachability */}
                     <mesh rotation={[Math.PI / 2, 0, 0]}>
                       <torusGeometry args={[0.15, 0.01, 8, 24]} />
-                      <meshBasicMaterial color="#ef4444" transparent opacity={0.3} />
+                      <meshBasicMaterial color="#f2cf7c" transparent opacity={0.35} />
                     </mesh>
                   </group>
                 )}
@@ -366,28 +337,23 @@ export const CraftingInterface: React.FC = () => {
         </Canvas>
       </div>
 
-      {/* Action Buttons */}
-      <div className="absolute bottom-12 left-0 right-0 flex justify-center gap-6 pointer-events-auto">
-        <button
-          onClick={cancelCrafting}
-          className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-full font-bold transition-all border border-white/20 backdrop-blur-md"
-        >
-          CANCEL
+      {/* Action Buttons (above the hotbar, which stays usable for dragging) */}
+      <div className="absolute bottom-[132px] left-0 right-0 flex justify-center gap-4 pointer-events-auto">
+        <button onClick={cancelCrafting} className="grove-button-quiet px-7 py-2.5 text-[14px]">
+          Set aside
         </button>
-        <button
-          onClick={handleFinish}
-          className="px-10 py-3 bg-emerald-500 hover:bg-emerald-400 text-white rounded-full font-black tracking-widest transition-all shadow-lg shadow-emerald-500/20"
-        >
-          FINISH & SAVE
+        <button onClick={handleFinish} className="grove-button px-10 py-2.5 text-[18px]">
+          Bind the tool
         </button>
       </div>
 
       <button
         onClick={cancelCrafting}
-        className="absolute top-8 right-8 w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-red-500/80 text-white rounded-full transition-all duration-200 pointer-events-auto group border border-white/20 z-[70]"
+        className="absolute right-8 top-8 z-[70] flex h-11 w-11 items-center justify-center rounded-full border border-lichen/20 bg-night/50 text-lichen/70 transition-colors hover:border-lichen/45 hover:text-parchment pointer-events-auto"
         title="Close (C)"
+        aria-label="Close crafting"
       >
-        <span className="text-2xl font-bold group-hover:scale-110 transition-transform">×</span>
+        <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M5 5 L15 15 M15 5 L5 15" /></svg>
       </button>
     </div>
   );

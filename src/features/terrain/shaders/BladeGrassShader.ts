@@ -446,14 +446,14 @@ export const BLADE_GRASS_FRAGMENT = /* glsl */ `
     vec3 viewDir = normalize(cameraPosition - vWorldPos);
     float sss = pow(max(0.0, dot(-viewDir, uSunDir)), 4.0);
     sss *= t; // More translucency at tips
-    col += tipCol * sss * 0.25;
+    col += tipCol * sss * 0.18;
 
     // === Rim Lighting ===
     // Note: vNormal is provided by CustomShaderMaterial, use it directly
     vec3 N = normalize(vNormal);
     float rim = 1.0 - max(0.0, dot(viewDir, N));
     rim = pow(rim, 3.0) * t;
-    col += tipCol * rim * 0.15;
+    col += tipCol * rim * 0.05;
 
     // === Distance Fog ===
     float fogDist = length(vWorldPos - cameraPosition);

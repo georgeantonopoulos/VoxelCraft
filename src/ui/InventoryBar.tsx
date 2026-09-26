@@ -1,8 +1,28 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+
+/** Name of the selected item, shown above the hotbar for a moment after switching. */
+const SelectedName: React.FC<{ name: string; slot: number }> = ({ name, slot }) => {
+    const [visible, setVisible] = useState(false);
+    useEffect(() => {
+        if (!name) { setVisible(false); return; }
+        setVisible(true);
+        const id = window.setTimeout(() => setVisible(false), 1800);
+        return () => window.clearTimeout(id);
+    }, [name, slot]);
+    return (
+        <div
+            className="grove-text-shadow mb-1.5 h-6 font-display text-[19px] font-semibold text-parchment transition-opacity duration-500"
+            style={{ opacity: visible ? 1 : 0 }}
+        >
+            {name}
+        </div>
+    );
+};
 import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
 import { ItemType } from '@/types';
+import { useHudPresence, presenceStyle } from '@/state/HudPresenceStore';
 import { ItemThumbnail } from '@/features/interaction/components/ItemThumbnail';
 
 export const InventoryBar: React.FC = React.memo(() => {
@@ -18,6 +38,7 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     const setDraggedItem = useCraftingStore(state => state.setDraggedItem);
     const isCraftingOpen = useCraftingStore(state => state.isOpen);
+    const hudAwake = useHudPresence(state => state.awake);
 
     const getCount = (item: InventoryItemId) => {
         if (!item) return 0;
@@ -42,8 +63,13 @@ export const InventoryBar: React.FC = React.memo(() => {
         setDraggedItem(null);
     };
 
+    const selectedItem = inventorySlots[selectedSlotIndex];
+    const selectedName = selectedItem ? (getItemMetadata(selectedItem)?.name ?? '') : '';
+
     return (
-        <div className={`absolute bottom-6 left-6 flex gap-2 p-2 bg-slate-900/80 backdrop-blur-md rounded-xl border border-white/10 shadow-xl pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] scale-110 translate-x-4 -translate-y-4' : 'z-50'}`}>
+        <div className={`absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] -translate-y-3 scale-110' : 'z-50'}`}>
+            <SelectedName name={selectedName} slot={selectedSlotIndex} />
+            <div className="grove-panel flex gap-1.5 rounded-[14px] p-1.5" style={presenceStyle(hudAwake || isCraftingOpen, 0.28)}>
             {inventorySlots.map((item, index) => {
                 const isSelected = index === selectedSlotIndex;
                 const metadata = item ? getItemMetadata(item) : null;
@@ -59,35 +85,31 @@ export const InventoryBar: React.FC = React.memo(() => {
                         onDragEnd={handleDragEnd}
                         // Tap/click to select (touch has no number keys or wheel).
                         onClick={() => { if (!isCraftingOpen) useInventoryStore.getState().setSelectedSlotIndex(index); }}
-                        className={`
-              relative w-12 h-12 flex items-center justify-center rounded-lg border-2 transition-all duration-200
-              ${isSelected ? 'border-amber-400 bg-white/10 scale-105 shadow-[0_0_10px_rgba(251,191,36,0.5)]' : 'border-white/20 bg-black/40'}
+                        data-selected={isSelected}
+                        title={metadata?.name}
+                        className={`grove-slot relative flex h-[52px] w-[52px] items-center justify-center rounded-[10px]
               ${isCraftingOpen && !!item && (count > 0 || isCustom) ? 'cursor-grab active:cursor-grabbing' : ''}
             `}
                     >
-                        {/* Slot Number (small overlay) */}
-                        <span className="absolute top-0.5 left-1 text-[8px] font-mono text-white/50">
+                        <span className={`grove-num absolute left-1.5 top-0.5 text-[9px] ${isSelected ? 'text-ember/90' : 'text-lichen/40'}`}>
                             {index + 1}
                         </span>
 
-                        {/* 3D Item Thumbnail */}
                         {item ? (
                             <ItemThumbnail item={item} />
                         ) : (
-                            <div className="w-8 h-8 flex items-center justify-center rounded bg-black/20 border border-white/5 text-[10px] font-mono text-white/40">
-                                --
-                            </div>
+                            <span className="h-1 w-1 rounded-full bg-lichen/20" />
                         )}
 
-                        {/* Stack Count */}
                         {showCount && count > 0 && (
-                            <span className="absolute bottom-0.5 right-1 text-[10px] font-mono text-white/90 drop-shadow">
+                            <span className="grove-num grove-text-shadow absolute bottom-0.5 right-1.5 text-[11px] font-bold text-parchment">
                                 {count}
                             </span>
                         )}
                     </div>
                 );
             })}
+            </div>
         </div>
     );
 });

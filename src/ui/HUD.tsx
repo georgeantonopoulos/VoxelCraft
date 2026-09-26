@@ -4,7 +4,10 @@ import { BiomeManager, BiomeType } from '@/features/terrain/logic/BiomeManager';
 import { InventoryBar } from '@/ui/InventoryBar';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { TargetHealthBar } from '@/ui/TargetHealthBar';
-import { GroveHUD } from '@/ui/GroveHUD';
+import { GroveHUD, VitalityRing } from '@/ui/GroveHUD';
+import { PauseVeil } from '@/ui/PauseVeil';
+import { HudPresenceDirector } from '@/ui/HudPresenceDirector';
+import { useHudPresence, presenceStyle } from '@state/HudPresenceStore';
 
 // --- Minimap Configuration ---
 const MAP_SIZE = 64; // Reduced from 128 for better performance
@@ -116,6 +119,7 @@ const Minimap: React.FC<{ x: number, z: number, rotation: number }> = ({ x: px, 
 export const HUD: React.FC = () => {
   const toggleSettings = useSettingsStore(s => s.toggleSettings);
   const inputMode = useSettingsStore(s => s.inputMode);
+  const hudAwake = useHudPresence(s => s.awake);
 
   // Use throttled subscription from PlayerState singleton (10Hz instead of 60fps)
   // This keeps the UI responsive without constant re-renders.
@@ -138,7 +142,7 @@ export const HUD: React.FC = () => {
   }, []);
 
   const [crosshairHit, setCrosshairHit] = useState(false);
-  const [crosshairColor, setCrosshairColor] = useState<string>('rgba(255, 255, 255, 0.85)');
+  const [crosshairColor, setCrosshairColor] = useState<string>('rgba(241, 234, 211, 0.92)');
   const [pickupFeedback, setPickupFeedback] = useState<{ id: number; name: string; color: string; amount: number } | null>(null);
   const [placementDebug, setPlacementDebug] = useState<string>('');
   const debugMode = useMemo(() => {
@@ -203,7 +207,7 @@ export const HUD: React.FC = () => {
       const ce = e as CustomEvent;
       const detail = (ce.detail ?? {}) as { color?: string; ok?: boolean };
       // Slightly red-tint failed actions; otherwise use the material color from the terrain system.
-      const color = detail.ok === false ? 'rgba(255, 120, 120, 0.95)' : (detail.color ?? 'rgba(255, 255, 255, 0.85)');
+      const color = detail.ok === false ? 'rgba(240, 150, 130, 0.95)' : (detail.color ?? 'rgba(241, 234, 211, 0.92)');
       setCrosshairColor(color);
       setCrosshairHit(true);
       if (timeoutId != null) window.clearTimeout(timeoutId);
@@ -231,10 +235,12 @@ export const HUD: React.FC = () => {
       {pickupFeedback && (
         <div
           key={pickupFeedback.id}
-          className="pickup-feedback absolute left-1/2 top-[57%] -translate-x-1/2 rounded-full border bg-slate-950/75 px-4 py-1.5 text-sm font-semibold tracking-wide shadow-lg backdrop-blur-md"
-          style={{ color: pickupFeedback.color, borderColor: `${pickupFeedback.color}80` }}
+          className="pickup-feedback grove-text-shadow absolute left-1/2 top-[56%] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap"
         >
-          +{pickupFeedback.amount} {pickupFeedback.name}
+          <span className="h-2 w-2 rounded-full" style={{ background: pickupFeedback.color, boxShadow: `0 0 10px ${pickupFeedback.color}` }} />
+          <span className="font-display text-[20px] font-semibold text-parchment">
+            <span className="grove-num">+{pickupFeedback.amount}</span> {pickupFeedback.name}
+          </span>
         </div>
       )}
 
@@ -260,19 +266,24 @@ export const HUD: React.FC = () => {
         </div>
       )}
 
-      {/* Top Right: Settings */}
-      <div className="absolute top-4 right-4 z-50 pointer-events-auto">
+      {/* Top right: world vitality and settings */}
+      <HudPresenceDirector mouseMode={inputMode === 'mouse'} />
+      <div className="absolute right-5 top-4 z-50 flex items-center gap-4" style={presenceStyle(hudAwake, 0)}>
+        <VitalityRing />
         <button
           onClick={toggleSettings}
-          className="p-2 bg-slate-800/80 rounded-full hover:bg-slate-700 text-white shadow-lg backdrop-blur-sm transition-colors"
+          className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full border border-lichen/20 bg-night/45 text-lichen/80 backdrop-blur-sm transition-colors hover:border-lichen/45 hover:text-parchment"
           title="Settings"
+          aria-label="Settings"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.4} stroke="currentColor" className="h-5 w-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.212 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
       </div>
+
+      {inputMode === 'mouse' && <PauseVeil />}
     </div>
   );
 };

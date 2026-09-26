@@ -47,7 +47,7 @@ export const WATER_LEVEL = 4.5;
  * modifications, so a generator change never stamps old edits onto new terrain.
  * Bump whenever generateChunk output changes near the surface.
  */
-export const GEN_VERSION = 5;
+export const GEN_VERSION = 6;
 
 // Physics
 export const GRAVITY = -15.0;

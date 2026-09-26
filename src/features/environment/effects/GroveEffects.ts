@@ -84,8 +84,8 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
   // --- Display-space grade ---
   float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
 
-  // A fading world is slightly muted; restoration brings rich saturation.
-  float sat = mix(0.94, 1.2, uVitality);
+  // A fading world is muted and a little eerie; restoration brings colour back.
+  float sat = mix(0.86, 1.06, uVitality);
   c = mix(vec3(luma), c, sat);
 
   // Split toning: cool shadows, highlights warm up as the world heals.

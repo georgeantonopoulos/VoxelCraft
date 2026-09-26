@@ -567,7 +567,8 @@ export const triplanarFragmentShader = `
 
       // 2. Exponential Squared Fog with biome modulation
       float fogRange = max(uFogFar - uFogNear, 1.0);
-      float density = (4.0 / fogRange) * biomeDensity;
+      // Clear near field, soft distance: ~60% at mid range, ~99% at fog far.
+      float density = (2.2 / fogRange) * biomeDensity;
       float distFactor = max(0.0, fogDist - uFogNear);
       float baseFog = 1.0 - exp(-pow(distFactor * density, 2.0));
 
@@ -593,7 +594,7 @@ export const triplanarFragmentShader = `
 
           // Distance factor: Don't fog the player's feet.
           // Fade in height fog from 5m to 25m.
-          float hDistFactor = smoothstep(5.0, 25.0, fogDist);
+          float hDistFactor = smoothstep(18.0, 60.0, fogDist);
 
           float heightFog = heightFactor * uHeightFogStrength * biomeHeightMul * valleyBoost * hDistFactor;
           fogAmt = clamp(fogAmt + heightFog, 0.0, 1.0);

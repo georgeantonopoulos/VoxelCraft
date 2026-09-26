@@ -78,6 +78,13 @@ const loadPersisted = (seed: number): PersistedGrove | null => {
   }
 };
 
+/** Saved progress for a world, read without binding the store (title screen). */
+export const peekGroveProgress = (seed: number): { essence: number; hollowsRestored: number } | null => {
+  const saved = loadPersisted(seed);
+  if (!saved) return null;
+  return { essence: saved.progression.essence, hollowsRestored: saved.progression.stats.hollowsRestored };
+};
+
 let saveHandle: ReturnType<typeof setTimeout> | null = null;
 const schedulePersist = (get: () => GroveState) => {
   if (typeof window === 'undefined') return;

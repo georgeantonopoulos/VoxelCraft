@@ -183,6 +183,17 @@ Gameplay layer that gives the world a goal: restore dormant Root Hollows.
 - `src/ui/GroveHUD.tsx` - Quest tracker, rank/essence/vitality, compass strip, toasts, H-toggle controls.
 - RootHollow reads `restoredHollows` on mount, so restored hollows stay grown across chunk reloads.
 
+### UI Design Language (2026-09)
+
+Direction: calm, immersive, slightly eerie; nothing on screen that isn't needed right now.
+- Tokens and components live in `src/index.css` (`@theme` colours night/bark/moss/lichen/parchment/lumina/ember/spore; `grove-panel`, `grove-button`, `grove-button-quiet`, `grove-choice`, `grove-key`, `grove-eyebrow`, `grove-text-shadow`). Fonts: Cormorant Garamond (display) + Alegreya Sans (body), loaded in `index.html`. No slate/emerald Tailwind defaults, no emoji icons, no dark boxes behind floating text (text shadow only).
+- Shared ornaments: `src/ui/grove/GroveOrnaments.tsx` (VineRule, RealmGlyph, FireflyField, GroveLogo). GroveLogo blends the key art with `mix-blend-mode: screen` on the `<img>` itself: a mask or animated opacity on a wrapper isolates it and the blend stops working.
+- Quiet HUD: `HudPresenceStore` + `HudPresenceDirector`. Quest tracker, vitality, controls fade out after calm spells; compass rests at 50%, hotbar at 28%. Woken by progress, pickups, item switches, Tab (hold), pause. Touch mode holds it awake.
+- `PauseVeil`: shown whenever the pointer is unlocked in mouse mode ("Click to begin" / "Paused").
+- Title screen offers Continue for the last world (`src/state/lastWorld.ts`; progress is per seed).
+- Surface stones are placed as composed groups (tide-line stones, a boulder with stones at its foot), not an even scatter.
+- Sun path is tilted (`ORBIT_TILT` in celestial.ts, noon ~56°) and the sky fill is ~1/6 of the sun, so light always has a direction. Fog: clear to ~30 m, soft distance (exp2 density 2.2/range).
+
 ### Post-Processing Pipeline
 
 `CinematicComposer.tsx`: SunShafts → N8AO → Bloom + GroveGrade (merged) → [underwater CA] → SMAA, `multisampling={0}`.

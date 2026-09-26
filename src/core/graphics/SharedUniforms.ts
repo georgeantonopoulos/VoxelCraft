@@ -45,7 +45,7 @@ export const sharedUniforms = {
     uGIIntensity: { value: 1.0 },             // GI multiplier: baked open-sky light is ~1.0, so 1.0 = neutral albedo
 
     // Color grading (in-shader, not post-processing)
-    uTerrainSaturation: { value: 1.5 },       // 1.0=neutral, >1=more saturated, <1=desaturated
+    uTerrainSaturation: { value: 1.1 },       // 1.0=neutral, >1=more saturated, <1=desaturated
 
     // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
     // computed during mesh generation. No runtime uniforms needed - it's baked into vertices!

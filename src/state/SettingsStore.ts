@@ -18,6 +18,10 @@ interface SettingsState {
   aoQuality: 'performance' | 'high';
   grassDensity: number; // multiplier on blade grass instance counts (0.35..1.3)
 
+  // Audio (0..1)
+  masterVolume: number;
+  ambienceVolume: number;
+
   // Controls
   inputMode: InputMode;
 
@@ -34,6 +38,9 @@ interface SettingsState {
   setAntialias: (enabled: boolean) => void;
   setDynamicResolution: (enabled: boolean) => void;
   setInputMode: (mode: InputMode) => void;
+  setMasterVolume: (v: number) => void;
+  setAmbienceVolume: (v: number) => void;
+  setViewDistance: (v: number) => void;
   toggleSettings: () => void;
 
   // Apply a preset (sets individual flags)
@@ -66,8 +73,13 @@ export const useSettingsStore = create<SettingsState>()(
       dynamicResolution: true,
       aoQuality: 'performance',
       grassDensity: 1.0,
+      masterVolume: 0.8,
+      ambienceVolume: 1.0,
       inputMode: getInitialInputMode(),
       isSettingsOpen: false,
+      setMasterVolume: (v) => set({ masterVolume: Math.max(0, Math.min(1, v)) }),
+      setAmbienceVolume: (v) => set({ ambienceVolume: Math.max(0, Math.min(1, v)) }),
+      setViewDistance: (v) => set({ viewDistance: Math.max(0.5, Math.min(1.5, v)), qualityPreset: 'custom' }),
 
       setResolutionScale: (scale) => set({ resolutionScale: scale }),
 
@@ -161,6 +173,8 @@ export const useSettingsStore = create<SettingsState>()(
         aoQuality: state.aoQuality,
         grassDensity: state.grassDensity,
         inputMode: state.inputMode,
+        masterVolume: state.masterVolume,
+        ambienceVolume: state.ambienceVolume,
       }),
     }
   )
