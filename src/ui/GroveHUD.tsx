@@ -238,7 +238,7 @@ const ToastItem: React.FC<{ toast: GroveToast }> = ({ toast }) => {
       <div className="grove-eyebrow" style={{ color: tone }}>{eyebrow}</div>
       <div className="mt-0.5 font-display text-[30px] font-semibold leading-tight text-parchment">{title}</div>
       <VineRule className="my-1 opacity-90" width={150} />
-      {detail && <div className="text-[13.5px] text-lichen/85">{detail}</div>}
+      {detail && <div className="text-[14px] font-medium text-parchment/90">{detail}</div>}
     </div>
   );
 };

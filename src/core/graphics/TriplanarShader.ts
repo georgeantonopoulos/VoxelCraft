@@ -265,6 +265,8 @@ export const triplanarFragmentShader = `
 
   // Color grading (in-shader, not post-processing)
   uniform float uTerrainSaturation;      // 1.0=neutral, >1=more saturated
+  uniform float uPlayerGlow;             // Keeper's glow strength (caves, deep night)
+  uniform vec3 uPlayerGlowColor;
 
   // Humidity Spreading System - DISABLED (causes GPU perf issues with array uniforms)
   // TODO: Re-implement using vertex attributes or texture-based approach instead
@@ -538,6 +540,18 @@ export const triplanarFragmentShader = `
     // This affects base material colors before lighting, giving natural results
     col = adjustSaturation(col, uTerrainSaturation);
 
+    // Keeper's glow: a soft light around the camera underground and at deep
+    // night. Emissive, because baked GI is ~0 in caves and scales every lit
+    // term, so a real point light could never show there.
+    vec3 keeperGlow = vec3(0.0);
+    if (uPlayerGlow > 0.001) {
+      vec3 toCam = cameraPosition - vWorldPosition;
+      float d = length(toCam);
+      float fall = (1.0 / (1.0 + d * d * 0.12)) * (1.0 - smoothstep(5.0, 13.0, d));
+      float facing = max(dot(N, toCam / max(d, 1e-3)), 0.0) * 0.75 + 0.25;
+      keeperGlow = col * uPlayerGlowColor * (uPlayerGlow * fall * facing);
+    }
+
     // Apply voxel-based global illumination
     vec3 giLight = getGILight();
     col *= giLight;
@@ -624,7 +638,7 @@ export const triplanarFragmentShader = `
       col = mix(col, tintedFogColor, fogAmt * uShaderFogStrength);
     }
     csm_DiffuseColor = vec4(col, clamp(uOpacity, 0.0, 1.0));
-    csm_Emissive = glow;
+    csm_Emissive = glow + keeperGlow;
     // Apply combined wetness (simulation + humidity) to roughness - wet surfaces are shinier
     if (uWetnessEnabled > 0.5) {
       float roughnessWetness = max(vWetness, totalHumidity * wettabilityFactor * 0.7);

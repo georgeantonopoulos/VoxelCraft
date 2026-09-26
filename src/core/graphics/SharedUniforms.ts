@@ -47,6 +47,10 @@ export const sharedUniforms = {
     // Color grading (in-shader, not post-processing)
     uTerrainSaturation: { value: 1.1 },       // 1.0=neutral, >1=more saturated, <1=desaturated
 
+    // Keeper's glow (AmbientController): soft light around the camera in caves / deep night.
+    uPlayerGlow: { value: 0.0 },
+    uPlayerGlowColor: { value: new THREE.Color('#d8e6cf') },
+
     // NOTE: Humidity spreading now uses vertex attributes (aBaseHumidity, aTreeHumidityBoost)
     // computed during mesh generation. No runtime uniforms needed - it's baked into vertices!
 };

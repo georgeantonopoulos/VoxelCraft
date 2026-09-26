@@ -143,6 +143,10 @@ export const AmbientController: React.FC<{ intensityMul?: number }> = ({ intensi
         hemi.intensity = THREE.MathUtils.lerp(surface, SKY_FILL_CAVE, undergroundBlend) * intensityMul;
         hemi.color.copy(skyNight).lerp(skyDay, day).lerp(caveTint, undergroundBlend);
         hemi.groundColor.copy(groundNight).lerp(groundDay, day).lerp(caveTint, undergroundBlend);
+        // Keeper's glow: enough to read a cave wall a few metres away, fading to dark.
+        const caveGlow = THREE.MathUtils.smoothstep(undergroundBlend, 0.25, 0.85);
+        const nightGlow = (1 - THREE.MathUtils.smoothstep(sunY, -0.3, -0.05)) * 0.25;
+        sharedUniforms.uPlayerGlow.value = Math.max(caveGlow * 0.55, nightGlow);
         frameProfiler.end('ambient-controller');
     });
 
