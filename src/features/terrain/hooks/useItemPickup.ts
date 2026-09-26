@@ -21,6 +21,7 @@ import {
   rayHitsTorch,
 } from '@features/terrain/logic/raycastUtils';
 import { ChunkState, ItemType, CustomTool } from '@/types';
+import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
 
 export interface PickupEffect {
   id: string;
@@ -214,7 +215,7 @@ export function useItemPickup({
           const effectId = `${Date.now()}-${Math.random()}`;
           const color = getItemColor(itemData.customToolData.baseType);
           setPickupEffects((prev) => [...prev, { id: effectId, start: pickedStart!, color, tool: itemData.customToolData }]);
-          emitPickupFeedback('Custom Tool', color);
+          emitPickupFeedback(toolDisplayName(itemData.customToolData), color);
           return;
         } else if (physicsItemHit.type === ItemType.PICKAXE) {
           useInventoryStore.getState().setHasPickaxe(true);

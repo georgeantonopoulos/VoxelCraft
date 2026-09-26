@@ -59,3 +59,26 @@ export const getToolCapabilities = (item: ItemType | CustomTool | null | undefin
         shatterForce: stones * 2.0 + shards * 0.5
     };
 };
+
+/**
+ * What a crafted tool is called, from what it can do (players saw
+ * "Custom Tool" for everything). Pure; used by the hotbar, pickups and the
+ * crafting bench.
+ */
+export const toolDisplayName = (tool: CustomTool | null | undefined): string => {
+    if (!tool) return 'Tool';
+    const caps = getToolCapabilities(tool);
+    const parts = Object.values(tool.attachments);
+    const shards = parts.filter(t => t === ItemType.SHARD).length;
+    const lumina = (caps.luminaCount ?? 0) > 0;
+    let base: string;
+    if (caps.canDig && caps.canChop) base = 'pick-axe';
+    else if (caps.canDig) base = 'pick';
+    else if (caps.canChop) base = 'axe';
+    else if (caps.canSmash) base = 'maul';
+    else if (shards > 0) base = 'spear';
+    else if (lumina) return 'Lumina wand';
+    else return 'Bound stick';
+    const material = base === 'maul' ? 'Stone' : 'Flint';
+    return lumina ? `Lumina ${base}` : `${material} ${base}`;
+};

@@ -49,7 +49,7 @@ export const ITEM_COLORS = {
 
     // Lashing/binding colors
     lashing: {
-        leather: '#755339',    // uColorDirt - leather/vine
+        leather: '#5e4e3c',    // Rawhide sinew, weathered (not orange)
         fiber: '#4a6b2f',      // uColorMoss - plant fiber
     },
 
@@ -140,11 +140,12 @@ export const ITEM_DIMENSIONS = {
         segmentsThumbnail: 8,
     },
     lashing: {
-        wraps: 3,
-        radius: 0.055,       // Slightly larger than stick radius
-        heightSpan: 0.12,
-        tubeRadius: 0.008,
-        tubularSegments: 32,
+        // Tight turns hugging the stick (a loose 3-turn helix read as a spring).
+        wraps: 7,
+        radius: 0.049,       // stick radius + the cord
+        heightSpan: 0.09,
+        tubeRadius: 0.0055,
+        tubularSegments: 112,
         radialSegments: 6,
         tubularSegmentsThumbnail: 16,
         radialSegmentsThumbnail: 4,
@@ -508,7 +509,7 @@ export function createLashingGeometry(slotId: string, isThumbnail = false): THRE
 
     // Don't cache lashing geometry as it depends on slotId
     const points: THREE.Vector3[] = [];
-    const segments = isThumbnail ? 12 : 24;
+    const segments = (isThumbnail ? 6 : 16) * d.wraps;
 
     // Direction alternates based on slot
     const direction = slotId === 'side_right' ? -1 : 1;

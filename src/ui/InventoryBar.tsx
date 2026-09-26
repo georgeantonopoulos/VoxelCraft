@@ -18,6 +18,7 @@ const SelectedName: React.FC<{ name: string; slot: number }> = ({ name, slot }) 
         </div>
     );
 };
+import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
 import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { getItemMetadata } from '@/features/interaction/logic/ItemRegistry';
@@ -64,7 +65,11 @@ export const InventoryBar: React.FC = React.memo(() => {
     };
 
     const selectedItem = inventorySlots[selectedSlotIndex];
-    const selectedName = selectedItem ? (getItemMetadata(selectedItem)?.name ?? '') : '';
+    const customTools = useInventoryStore(state => state.customTools);
+    const selectedName = !selectedItem ? ''
+        : (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
+            ? toolDisplayName(customTools[selectedItem])
+            : (getItemMetadata(selectedItem)?.name ?? '');
 
     return (
         <div className={`absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] -translate-y-3 scale-110' : 'z-50'}`}>

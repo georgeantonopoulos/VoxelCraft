@@ -1,6 +1,7 @@
 import React from 'react';
 import { ItemType, CustomTool } from '@/types';
 import { useInventoryStore } from '@/state/InventoryStore';
+import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 
 /**
  * Hand-drawn item icons in the Grove line style (same stroke language as the
@@ -90,8 +91,20 @@ const Crafted = ({ tool }: { tool: CustomTool }) => {
   const shards = parts.filter((p) => p === ItemType.SHARD).length;
   const stones = parts.filter((p) => p === ItemType.STONE).length;
   const flora = parts.filter((p) => p === ItemType.FLORA).length;
-  if (shards >= 2) return <Pickaxe head={flora ? LUMINA : FLINT} />;
-  if (shards === 1) return <Axe head={flora ? LUMINA : FLINT} />;
+  // The icon follows what the tool does (same rules as its name).
+  const caps = getToolCapabilities(tool);
+  const head = flora ? LUMINA : FLINT;
+  if (caps.canDig) return <Pickaxe head={head} />;
+  if (caps.canChop) return <Axe head={head} />;
+  if (shards > 0 && !stones) {
+    return (
+      <g {...common}>
+        <path d="M9 27 L21 9" stroke={BARK} strokeWidth={2.2} />
+        <path d="M21 9 L25.5 3.5 L23.5 10 Z" fill="rgba(143,163,168,0.25)" stroke={head} strokeWidth={1.3} />
+        <path d="M18.5 12.5 L21 14.5" stroke={FIBRE} strokeWidth={1.1} />
+      </g>
+    );
+  }
   return (
     <g {...common}>
       <path d="M9 27 L22 8" stroke={BARK} strokeWidth={2.2} />

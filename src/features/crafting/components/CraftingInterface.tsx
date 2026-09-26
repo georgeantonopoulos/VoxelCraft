@@ -5,10 +5,10 @@ import { Vector2, AdditiveBlending, CanvasTexture } from 'three';
 
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useInventoryStore } from '@/state/InventoryStore';
-import { STICK_SLOTS, RECIPES } from '../CraftingData';
+import { STICK_SLOTS } from '../CraftingData';
 import { netAttachmentDebit, resolveFinish } from '../craftingTransaction';
 import { ItemType, CustomTool } from '@/types';
-import { getToolCapabilities } from '@/features/interaction/logic/ToolCapabilities';
+import { getToolCapabilities, toolDisplayName } from '@/features/interaction/logic/ToolCapabilities';
 
 import { StickMesh, StoneMesh, ShardMesh, FloraMesh, LashingMesh } from '@/features/interaction/components/UniversalTool';
 
@@ -46,20 +46,8 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
   const caps = useMemo(() => getToolCapabilities(previewTool), [previewTool]);
   const attachmentCount = Object.keys(attachedItems).length;
 
-  // Check for matching recipes
-  const matchedRecipe = useMemo(() => {
-    const filledSlots = Object.keys(attachedItems).sort();
-    for (const recipe of RECIPES) {
-      const recipeSlots = [...recipe.ingredients].sort();
-      if (filledSlots.length === recipeSlots.length &&
-          filledSlots.every((slot, i) => slot === recipeSlots[i])) {
-        // Check if all ingredients are shards (for pickaxe/axe recognition)
-        const allShards = Object.values(attachedItems).every(t => t === ItemType.SHARD);
-        if (allShards) return recipe.result;
-      }
-    }
-    return null;
-  }, [attachedItems]);
+  // What this would be called if bound now.
+  const formName = useMemo(() => toolDisplayName(previewTool), [previewTool]);
 
   const statRow = (label: string, value: string, color: string) => (
     <div className="flex items-baseline gap-3">
@@ -77,12 +65,10 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
         </p>
       ) : (
         <>
-          {matchedRecipe && (
-            <div className="mb-3 border-b border-lichen/15 pb-3">
-              <div className="grove-eyebrow" style={{ color: '#b5d178' }}>Known form</div>
-              <p className="font-display text-[22px] font-semibold text-parchment">{matchedRecipe}</p>
-            </div>
-          )}
+          <div className="mb-3 border-b border-lichen/15 pb-3">
+            <div className="grove-eyebrow" style={{ color: '#b5d178' }}>Taking shape</div>
+            <p className="font-display text-[22px] font-semibold text-parchment">{formName}</p>
+          </div>
 
           <div className="grove-eyebrow mb-2">What it can do</div>
           <div className="space-y-1.5 text-[14px]">
@@ -101,6 +87,7 @@ const ToolStatsPanel: React.FC<{ attachedItems: Record<string, ItemType> }> = ({
           {!caps.canDig && !caps.canChop && attachmentCount < 2 && (
             <p className="mt-3 font-display text-[14px] italic text-lichen/55">More shards will give it purpose.</p>
           )}
+          <p className="mt-3 text-[12px] text-lichen/50">Click a bound part to take it off.</p>
         </>
       )}
     </div>
@@ -335,11 +322,6 @@ export const CraftingInterface: React.FC = () => {
                     {attachedItems[slot.id] === ItemType.STICK && <StickMesh scale={0.4} height={0.5} />}
                     {attachedItems[slot.id] === ItemType.FLORA && <FloraMesh scale={0.4} />}
 
-                    {/* Subtle highlight ring for detachability */}
-                    <mesh rotation={[Math.PI / 2, 0, 0]}>
-                      <torusGeometry args={[0.15, 0.01, 8, 24]} />
-                      <meshBasicMaterial color="#f2cf7c" transparent opacity={0.35} />
-                    </mesh>
                   </group>
                 )}
 
@@ -363,8 +345,12 @@ export const CraftingInterface: React.FC = () => {
         <button onClick={cancelCrafting} className="grove-button-quiet px-7 py-2.5 text-[14px]">
           Set aside
         </button>
-        <button onClick={handleFinish} className="grove-button px-10 py-2.5 text-[18px]">
-          Bind the tool
+        <button
+          onClick={handleFinish}
+          disabled={!editingToolId && Object.keys(attachedItems).length === 0}
+          className="grove-button px-10 py-2.5 text-[18px]"
+        >
+          {editingToolId && Object.keys(attachedItems).length === 0 ? 'Take it apart' : 'Bind the tool'}
         </button>
       </div>
 
