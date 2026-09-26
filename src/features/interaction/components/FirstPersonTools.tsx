@@ -10,6 +10,7 @@ import { UniversalTool } from './UniversalTool';
 import { getToolCapabilities } from '@features/interaction/logic/ToolCapabilities';
 import { frameProfiler } from '@core/utils/FrameProfiler';
 import { useInputStore } from '@/state/InputStore';
+import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
@@ -23,6 +24,12 @@ export const FirstPersonTools: React.FC = () => {
     const torchRef = useRef<THREE.Group>(null); // left hand (torch)
     const rightItemRef = useRef<THREE.Group>(null); // right hand
     const luminaLightRef = useRef<THREE.PointLight>(null);
+    const fillLightRef = useRef<THREE.PointLight>(null);
+    // Body motion carried into the hands: stride bob, look lag, landing dip.
+    const motion = useMemo(() => ({
+        lastCam: new THREE.Vector3(), primed: false, speed: 0, phase: 0, lastVy: 0, dip: 0,
+        lastYaw: 0, lastPitch: 0, lagYaw: 0, lagPitch: 0, euler: new THREE.Euler(0, 0, 0, 'YXZ'),
+    }), []);
 
     // Inventory State
     const inventorySlots = useInventoryStore(state => state.inventorySlots);
@@ -266,6 +273,56 @@ export const FirstPersonTools: React.FC = () => {
             frameProfiler.end('first-person-tools');
             return;
         }
+        // --- Body motion (applied to the whole hand rig, in camera space) ---
+        {
+            const m = motion;
+            const dt = Math.max(delta, 1e-3);
+            const cam = camera.position;
+            m.euler.setFromQuaternion(camera.quaternion, 'YXZ');
+            if (!m.primed) {
+                m.lastCam.copy(cam); m.lastYaw = m.euler.y; m.lastPitch = m.euler.x; m.primed = true;
+            }
+            const dx = cam.x - m.lastCam.x, dz = cam.z - m.lastCam.z, dy = cam.y - m.lastCam.y;
+            m.lastCam.copy(cam);
+            let spd = Math.hypot(dx, dz) / dt;
+            const vy = dy / dt;
+            if (spd > 20) spd = 0; // teleports and respawns
+            m.speed += (Math.min(spd, 8) - m.speed) * Math.min(1, dt * 8);
+            // One bob per stride (footsteps every 1.9 m).
+            m.phase += (Math.min(spd, 8) * dt / 1.9) * Math.PI;
+            const walk = THREE.MathUtils.smoothstep(m.speed, 0.3, 4.0);
+            // Landing: a short dip after a real fall.
+            if (m.lastVy < -4 && vy > -1) m.dip = Math.min(0.07, -m.lastVy * 0.008);
+            m.lastVy = vy;
+            m.dip *= Math.exp(-dt * 7);
+            // Look lag: the hands trail a turn a little, then catch up.
+            let dYaw = m.euler.y - m.lastYaw;
+            if (dYaw > Math.PI) dYaw -= Math.PI * 2; else if (dYaw < -Math.PI) dYaw += Math.PI * 2;
+            const dPitch = m.euler.x - m.lastPitch;
+            m.lastYaw = m.euler.y; m.lastPitch = m.euler.x;
+            const tYaw = THREE.MathUtils.clamp(-dYaw / dt * 0.02, -0.07, 0.07);
+            const tPitch = THREE.MathUtils.clamp(-dPitch / dt * 0.02, -0.05, 0.05);
+            const k = Math.min(1, dt * 10);
+            m.lagYaw += (tYaw - m.lagYaw) * k;
+            m.lagPitch += (tPitch - m.lagPitch) * k;
+            if (groupRef.current) {
+                groupRef.current.position.set(
+                    walk * 0.011 * Math.sin(m.phase) + m.lagYaw * 0.25,
+                    walk * 0.009 * -Math.abs(Math.cos(m.phase)) - m.dip + m.lagPitch * 0.2,
+                    0
+                );
+                groupRef.current.rotation.set(m.lagPitch * 0.6, m.lagYaw * 0.6, walk * 0.012 * Math.sin(m.phase));
+            }
+            // Fill light for the held item follows how bright the surroundings
+            // are (fog colour): full by day, low at night and underground,
+            // where it used to make the hands glow.
+            if (fillLightRef.current) {
+                const fc = sharedUniforms.uFogColor.value as THREE.Color;
+                const lum = fc.r * 0.2126 + fc.g * 0.7152 + fc.b * 0.0722;
+                fillLightRef.current.intensity = 0.12 + 0.88 * THREE.MathUtils.clamp(lum * 1.6, 0, 1);
+            }
+        }
+
         const aspect = size.width / size.height;
         const responsiveX = THREE.MathUtils.clamp(aspect / 1.1, 0.5, 1.0);
         const time = state.clock.getElapsedTime();
@@ -455,7 +512,7 @@ export const FirstPersonTools: React.FC = () => {
 
     return (
         <group ref={groupRef}>
-            <pointLight position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
+            <pointLight ref={fillLightRef} position={[0.5, 0.5, 0.5]} intensity={1.0} distance={2} decay={2} />
             <pointLight
                 ref={luminaLightRef}
                 position={[0.5, 0.2, -0.5]}
