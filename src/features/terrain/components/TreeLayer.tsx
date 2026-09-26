@@ -217,18 +217,23 @@ const getTreeWoodMaterial = (type: number, colors: any) => {
                 float z = dot(radial, bitangent);
                 float angle = ((abs(x) + abs(z)) < 1e-6 ? 0.0 : atan(x, z));
 
-                // Multi-scale noise sampling for rich bark detail
+                // Multi-scale noise in real distances: arc length around the
+                // branch and length along it (~2.4:1 vertical furrows, a few cm apart). Angle
+                // alone gave twigs and trunks the same feature count around,
+                // smearing bark into long streaks on thin branches.
                 float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
-                vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);
-                float nBark = texture(uNoiseTexture, barkP * 0.8).r;
-                float nFine = texture(uNoiseTexture, barkP * 2.5 + vec3(3.0)).g;
+                float rad = max(length(radial), 0.015);
+                vec3 barkP = vec3(cos(angle) * rad * 12.0, sin(angle) * rad * 12.0, along * 5.0);
+                float nBark = texture(uNoiseTexture, barkP).r;
+                float nFine = texture(uNoiseTexture, barkP * 3.0 + vec3(3.0)).g;
                 float nMicro = texture(uNoiseTexture, vPos * 5.0).b;
 
                 float ridges = smoothstep(0.3, 0.7, nBark);
                 float crevices = 1.0 - ridges;
 
                 // Fine vertical bark fibers
-                float fiberDetail = sin(along * 25.0 + nFine * 6.0) * 0.5 + 0.5;
+                // (vertical: they vary around the branch, not along it)
+                float fiberDetail = sin(angle * rad * 70.0 + nFine * 6.0) * 0.5 + 0.5;
                 fiberDetail *= smoothstep(0.3, 0.6, nFine);
 
                 // Micro pores and lichens

@@ -66,6 +66,27 @@ function drawLeaf(ctx: Ctx, x: number, y: number, angle: number, len: number, wi
   ctx.restore();
 }
 
+const MARGIN = 6;
+const inside = (x: number, y: number) => x >= MARGIN && x <= SIZE - MARGIN && y >= MARGIN && y <= SIZE - MARGIN;
+
+/**
+ * Pull a leaf toward the twig base until its whole blade (tip and widest
+ * points) lies inside the texture. Leaves painted past the canvas edge were
+ * clipped to straight lines on the cards.
+ */
+function fitLeaf(bx: number, by: number, a: number, r: number, angle: number, len: number, width: number) {
+  for (let k = 0; k < 24; k++) {
+    const x = bx + Math.cos(a) * r, y = by + Math.sin(a) * r * 0.95;
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const mx = x + c * len * 0.5, my = y + s * len * 0.5;
+    const ok = inside(x, y) && inside(x + c * len, y + s * len)
+      && inside(mx - s * width, my + c * width) && inside(mx + s * width, my - c * width);
+    if (ok) return { x, y, len, width };
+    r *= 0.9; len *= 0.96; width *= 0.96;
+  }
+  return { x: bx, y: by - SIZE * 0.3, len: len * 0.6, width: width * 0.6 };
+}
+
 function drawTwig(ctx: Ctx, x0: number, y0: number, x1: number, y1: number, w: number) {
   ctx.strokeStyle = '#4a3a28';
   ctx.lineWidth = w;
@@ -120,7 +141,9 @@ function paint(type: TreeType, ctx: Ctx) {
       // Bipinnate: thin stems covered in tiny leaflets.
       for (let s = 0; s < 7; s++) {
         const a = -Math.PI / 2 + (rand() - 0.5) * 2.2;
-        const len = SIZE * (0.35 + rand() * 0.4);
+        let len = SIZE * (0.35 + rand() * 0.4);
+        // Keep the stem and its leaflets (reaching ~8 px sideways) on the canvas.
+        while (len > 20 && !inside(bx + Math.cos(a) * len + Math.sign(Math.cos(a)) * 9, by + Math.sin(a) * len - 9)) len *= 0.92;
         const ex = bx + Math.cos(a) * len, ey = by + Math.sin(a) * len;
         drawTwig(ctx, bx, by, ex, ey, 1.4);
         for (let i = 0; i < 26; i++) {
@@ -141,7 +164,8 @@ function paint(type: TreeType, ctx: Ctx) {
         const a = -Math.PI / 2 + (rand() - 0.5) * 2.6;
         const len = SIZE * (0.4 + rand() * 0.2);
         drawTwig(ctx, bx, by, bx + Math.cos(a) * len * 0.3, by + Math.sin(a) * len * 0.3, 2);
-        drawLeaf(ctx, bx + Math.cos(a) * len * 0.25, by + Math.sin(a) * len * 0.25, a, len * 0.8, len * 0.28, 120 + rand() * 18, 0.2 + rand() * 0.08, rand);
+        const f = fitLeaf(bx, by, a, len * 0.25 / 0.95, a, len * 0.8, len * 0.28);
+        drawLeaf(ctx, f.x, f.y, a, f.len, f.width, 120 + rand() * 18, 0.2 + rand() * 0.08, rand);
       }
       break;
     }
@@ -155,8 +179,9 @@ function paint(type: TreeType, ctx: Ctx) {
         const a = -Math.PI / 2 + (rand() - 0.5) * 2.8;
         const r = SIZE * (0.12 + rand() * 0.4);
         const len = SIZE * (0.16 + rand() * 0.1);
-        drawLeaf(ctx, bx + Math.cos(a) * r, by + Math.sin(a) * r * 0.95, a + (rand() - 0.5) * 0.9, len, len * 0.36,
-          102 + rand() * 22, 0.24 + rand() * 0.12, rand);
+        const angle = a + (rand() - 0.5) * 0.9;
+        const f = fitLeaf(bx, by, a, r, angle, len, len * 0.36);
+        drawLeaf(ctx, f.x, f.y, angle, f.len, f.width, 102 + rand() * 22, 0.24 + rand() * 0.12, rand);
       }
     }
   }

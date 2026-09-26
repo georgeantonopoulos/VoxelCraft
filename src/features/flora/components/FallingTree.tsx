@@ -26,12 +26,13 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
         let base = '#3e2723';
         let tip = '#4CAF50'; // Default to green (not cyan)
 
-        if (type === TreeType.OAK) { base = '#4e342e'; tip = '#4CAF50'; }
-        else if (type === TreeType.PINE) { base = '#3e2723'; tip = '#1B5E20'; }
+        // Keep in step with TreeLayer's bark colours (a felled tree must not change colour).
+        if (type === TreeType.OAK) { base = '#5b4a38'; tip = '#4CAF50'; }
+        else if (type === TreeType.PINE) { base = '#4d3b2a'; tip = '#1B5E20'; }
         else if (type === TreeType.PALM) { base = '#795548'; tip = '#8BC34A'; }
-        else if (type === TreeType.ACACIA) { base = '#6D4C41'; tip = '#CDDC39'; }
+        else if (type === TreeType.ACACIA) { base = '#6e5b45'; tip = '#CDDC39'; }
         else if (type === TreeType.CACTUS) { base = '#2E7D32'; tip = '#43A047'; }
-        else if (type === TreeType.JUNGLE) { base = '#5D4037'; tip = '#2E7D32'; }
+        else if (type === TreeType.JUNGLE) { base = '#56483a'; tip = '#2E7D32'; }
 
         return { base, tip };
     }, [type]);
@@ -80,8 +81,10 @@ export const FallingTree: React.FC<FallingTreeProps> = ({ position, type, seed, 
                     float angle = ((abs(x) + abs(z)) < 1e-6 ? 0.0 : atan(x, z));
 
                     float nBase = texture(uNoiseTexture, vPos * 0.35 + vec3(7.0)).r;
-                    vec3 barkP = vec3(cos(angle), sin(angle), along * 1.5);
-                    float nBark = texture(uNoiseTexture, barkP * 0.8).r;
+                    // Real distances around/along the branch (matches TreeLayer).
+                    float rad = max(length(radial), 0.015);
+                    vec3 barkP = vec3(cos(angle) * rad * 12.0, sin(angle) * rad * 12.0, along * 5.0);
+                    float nBark = texture(uNoiseTexture, barkP).r;
 
                     float ridges = smoothstep(0.3, 0.7, nBark);
                     float crevices = 1.0 - ridges;

@@ -205,9 +205,11 @@ export function growTree(type: TreeType, variant = 0, lod: Lod = 'high'): TreeMe
         if (whorl) len = Math.max(0.6, parent.length * sp.lengthRatio * (1 - along) * rr(0.85, 1.1) + 0.4);
         else if (sp.whorl) len = Math.max(0.3, parent.length * 0.35 * rr(0.7, 1.1));
         if (type === TreeType.CACTUS) len = rr(0.9, 1.6);
-        const r = Math.max(node.r * sp.radiusRatio, 0.015);
-        // Start slightly inside the parent so the joint is closed.
-        const start = node.p.clone().addScaledVector(childDir, -node.r * 0.6);
+        // Base a little narrower than the parent and starting just behind its
+        // axis: at 0.6 radii back, the child's cut face reached past the far
+        // side of the (low-poly) parent and showed as a flat plate.
+        const r = Math.max(Math.min(node.r * sp.radiusRatio, node.r * 0.85), 0.015);
+        const start = node.p.clone().addScaledVector(childDir, -node.r * 0.2);
         const child = growBranch(start, childDir, len, r, parent.depth + 1);
         spawnChildren(child);
       }
