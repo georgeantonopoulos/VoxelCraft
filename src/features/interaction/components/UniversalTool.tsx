@@ -69,6 +69,7 @@ export const StickMesh: React.FC<StickMeshProps> = ({
         uInstancing: { value: false },
         uSeed: { value: seed },
         uHeight: { value: height },
+        uSpin: { value: 1 },
         uNoiseTexture: { value: getNoiseTexture() },
         uColor: { value: new THREE.Color(mat.color) }
     }), [seed, height, mat.color]);

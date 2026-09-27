@@ -10,6 +10,10 @@ export const STICK_SHADER = {
     uniform float uSeed;
     uniform float uHeight;
     uniform bool uInstancing;
+    // 1 = turn each piece a random amount about its length (round sticks and
+    // logs); 0 = keep it square (planks: a turned board left its bark edge
+    // and collider behind).
+    uniform float uSpin;
     varying vec2 vUv;
     varying vec3 vWorldPos;
     varying vec3 vLocalPos;
@@ -22,7 +26,7 @@ export const STICK_SHADER = {
         vSeed = seed;
         vLocalPos = position;
 
-        float randRot = fract(sin(seed * 12.9898 + 78.233) * 43758.5453) * 6.28318;
+        float randRot = uSpin * fract(sin(seed * 12.9898 + 78.233) * 43758.5453) * 6.28318;
         float cRot = cos(randRot);
         float sRot = sin(randRot);
         mat3 rotY = mat3(cRot, 0.0, sRot, 0.0, 1.0, 0.0, -sRot, 0.0, cRot);

@@ -31,6 +31,7 @@ const getGroundItemMaterial = (shader: any, color: string, roughness: number, is
       uInstancing: { value: isInstanced },
       uSeed: { value: 0 },
       uHeight: { value: 1.0 },
+      uSpin: { value: 1 },
       uNoiseTexture: { value: getNoiseTexture() },
       uColor: { value: new THREE.Color(color) },
       uDisplacementStrength: { value: shader === ROCK_SHADER ? 0.15 : 0.0 },
