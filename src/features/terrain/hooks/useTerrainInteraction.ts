@@ -54,6 +54,8 @@ import { getRandomDigSound } from '@core/audio';
 import { treeVariant } from '@features/flora/logic/treeInstance';
 import { saveGroundPickup } from '@state/WorldDB';
 import { treeRecordIndex, addFelledStumps } from '@state/pickupKeys';
+import { copperFind } from '@features/building/logic/copperVeins';
+import { revealCopper } from '@features/building/copperFinds';
 
 // Helper to get leaf color for tree type (matches TreeLayer.tsx colors)
 function getLeafColorForTreeType(treeType: number): string {
@@ -449,7 +451,7 @@ export function useTerrainInteraction(
             const raw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
             const at = new THREE.Vector3(raw.x, raw.y, raw.z);
             const away = direction.clone().multiplyScalar(-1).setY(0.7);
-            if (!log || log.state !== 'loose' || log.kind === 'plank' || !caps.canChop) {
+            if (!log || log.state !== 'loose' || (log.kind ?? 'log') !== 'log' || (log.notches ?? 'none') !== 'none' || !caps.canChop) {
               emitImpact({ position: at, direction: away, kind: 'wood', color: '#a88760', strength: 0.3 });
               playSound('wood_hit', { pitch: 0.9, volume: 0.5 });
               return;
@@ -1040,6 +1042,11 @@ export function useTerrainInteraction(
         });
         if (turf) {
           emitImpact({ position: particlePos, direction: particleDir, kind: 'leaf', color: getMaterialColor(primaryMat), strength: 0.7, floorY: particlePos.y - 0.2 });
+        }
+        // Copper hides in veins in the rock a few metres down.
+        if (action === 'DIG') {
+          const find = copperFind(hitPoint.x, hitPoint.y, hitPoint.z, sampledMat, TerrainService.getHeightAt(hitPoint.x, hitPoint.z), Math.random());
+          revealCopper(find, particlePos, particleDir);
         }
         // Let the burst breathe a bit longer so it actually reads as impact.
         setTimeout(() => onParticle({ active: false }), 140);

@@ -12,7 +12,7 @@ import { frameProfiler } from '@core/utils/FrameProfiler';
 import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
-import { LogMesh, PlankMesh } from '@features/building/components/Log';
+import { PieceMesh } from '@features/building/components/PieceMeshes';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
@@ -576,9 +576,9 @@ export const FirstPersonTools: React.FC = () => {
             {selectedItem === ItemType.TORCH && <TorchSound />}
             {carriedLog && (
                 <group position={[0.05, -0.42, -1.1]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
-                    {carriedLog.kind === 'plank'
-                        ? <group rotation={[0, 1.2, 0]}><PlankMesh length={carriedLog.length} halfWidth={carriedLog.radius} bark={carriedLog.bark} /></group>
-                        : <LogMesh length={carriedLog.length} radius={carriedLog.radius} bark={carriedLog.bark} />}
+                    {carriedLog.kind === 'door'
+                        ? <group position={[0, -0.25, 0.25]} rotation={[0, 0, -Math.PI / 2 + 0.08]}><PieceMesh piece={carriedLog} /></group>
+                        : <group rotation={[0, carriedLog.kind === 'plank' || carriedLog.kind === 'roof' ? 1.2 : 0, 0]}><PieceMesh piece={carriedLog} /></group>}
                 </group>
             )}
             <group ref={rightItemRef}>

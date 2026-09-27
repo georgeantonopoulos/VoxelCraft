@@ -86,7 +86,7 @@ export function useItemPickup({
         const id = (logHit.collider.parent()?.userData as { id?: string } | undefined)?.id;
         const log = id ? logs.logs[id] : undefined;
         if (log && (log.state === 'loose' || log.state === 'placed')) {
-          logs.updateLog(log.id, { state: 'carried' });
+          logs.updateLog(log.id, { state: 'carried', onBench: undefined, open: undefined });
           logs.setCarried(log.id);
           window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.75, volume: 0.45 } } }));
           return;

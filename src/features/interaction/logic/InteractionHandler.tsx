@@ -14,6 +14,7 @@ import { emitSpark } from '../components/SparkSystem';
 import { emitImpact } from '../components/ImpactFX';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
 import { useLogStore } from '@/state/LogStore';
+import { tryUseBuildPiece } from '@features/building/useBuildPiece';
 
 /** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
 const THROW_SPAWN_CLEARANCE = 0.8;
@@ -304,6 +305,8 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
       // Right Click: BUILD or Throw
       if (e.button === 2) {
+        // Empty-handed use of a build: swing a door, return to a workbench.
+        if (tryUseBuildPiece(world, rapier, camera.position.clone(), new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion))) return;
         // BUILD with pickaxe or digging tools
         if (pickaxeSelected || capabilities.canDig) {
           setInteractionAction('BUILD');

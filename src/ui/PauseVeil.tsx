@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
+import { useCarpentryStore } from '@/state/CarpentryStore';
 import { VineRule } from '@ui/grove/GroveOrnaments';
 
 /**
@@ -15,6 +16,7 @@ export const PauseVeil: React.FC = () => {
   const settingsOpen = useSettingsStore((s) => s.isSettingsOpen);
   const toggleSettings = useSettingsStore((s) => s.toggleSettings);
   const craftingOpen = useCraftingStore((s) => s.isOpen);
+  const carpentryOpen = useCarpentryStore((s) => s.benchId !== null);
 
   useEffect(() => {
     const onChange = () => {
@@ -26,7 +28,7 @@ export const PauseVeil: React.FC = () => {
     return () => document.removeEventListener('pointerlockchange', onChange);
   }, []);
 
-  if (locked || settingsOpen || craftingOpen) return null;
+  if (locked || settingsOpen || craftingOpen || carpentryOpen) return null;
 
   return (
     <div className="grove-fade-in pointer-events-auto absolute inset-0 z-40 flex cursor-pointer flex-col items-center justify-center"

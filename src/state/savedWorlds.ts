@@ -107,6 +107,7 @@ export const forgetWorld = async (type: WorldType, seed: number): Promise<void> 
     try {
       window.localStorage.removeItem(`vc-grove-v1-${seed}`);
       window.localStorage.removeItem(`vc-logs-v1-${seed}`);
+      window.localStorage.removeItem(`vc-materials-v1-${seed}`);
     } catch { /* storage blocked */ }
   }
   try {

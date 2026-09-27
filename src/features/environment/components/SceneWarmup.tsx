@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Campfire } from '@features/interaction/components/Campfire';
 import { TorchModel } from '@features/interaction/components/TorchModel';
 import { UniversalTool } from '@features/interaction/components/UniversalTool';
-import { LogMesh, PlankMesh } from '@features/building/components/Log';
+import { LogMesh, PlankMesh, PostMesh, RoofBoardMesh, DoorMesh } from '@features/building/components/PieceMeshes';
 import { ItemType } from '@/types';
 import { useThree } from '@react-three/fiber';
 
@@ -71,7 +71,11 @@ export const SceneWarmup: React.FC<{ ready: boolean }> = ({ ready }) => {
             <Campfire />
             <TorchModel length={0.5} />
             <LogMesh length={1} radius={0.15} bark="#5b4a38" />
+            <LogMesh length={1} radius={0.15} bark="#5b4a38" notches="both" />
             <PlankMesh length={1} halfWidth={0.14} bark="#5b4a38" />
+            <PostMesh length={1} halfSide={0.12} />
+            <RoofBoardMesh length={1} halfWidth={0.12} />
+            <DoorMesh height={1.85} halfWidth={0.46} />
             {[ItemType.STICK, ItemType.STONE, ItemType.SHARD, ItemType.FLORA].map((t) => <UniversalTool key={t} item={t} />)}
         </group>
     );

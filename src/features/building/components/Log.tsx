@@ -1,120 +1,69 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { RigidBody, CylinderCollider, CuboidCollider, type RapierRigidBody } from '@react-three/rapier';
-import CustomShaderMaterial from 'three-custom-shader-material';
-import { STICK_SHADER } from '@core/graphics/GroundItemShaders';
-import { getNoiseTexture } from '@core/memory/sharedResources';
-import { useLogStore, PLANK_THICKNESS, type LogData } from '@/state/LogStore';
+import { useLogStore, lastPlaced, PLANK_THICKNESS, ROOF_THICKNESS, DOOR_THICKNESS, type LogData } from '@/state/LogStore';
+import { useMaterialsStore, MATERIALS_PREFIX } from '@/state/MaterialsStore';
 import { useGroveStore } from '@/state/GroveStore';
 import { BuildPreview } from './BuildPreview';
+import { PieceMesh } from './PieceMeshes';
 import { playerState } from '@core/player/PlayerState';
 import { GEN_VERSION } from '@/constants';
 import { TerrainService } from '@features/terrain/logic/terrainService';
 import { settleLogs } from '../logic/settleLogs';
+import { findBenches, type Bench } from '../logic/benches';
+
+export { LogMesh, PlankMesh, PieceMesh, getRingTexture } from './PieceMeshes';
 
 /**
- * A sawn log: a bark cylinder (the stick bark shader, so logs and sticks read
- * as the same wood) with fresh cut ends showing growth rings. Loose logs are
- * dynamic bodies; placed logs are fixed. Live bodies are registered so the
- * player can pick up the one they are looking at.
+ * Building pieces in the world: sawn logs and everything shaped from them.
+ * Loose pieces are dynamic bodies; placed ones are fixed (doors are
+ * kinematic, so they can swing on their hinges). Live bodies are registered
+ * so the player can pick up the one they are looking at.
  */
 
 export const logBodies = new Map<string, RapierRigidBody>();
 
-let ringTexture: THREE.CanvasTexture | null = null;
-export const getRingTexture = (): THREE.CanvasTexture => {
-  if (ringTexture) return ringTexture;
-  const n = 128;
-  const c = document.createElement('canvas');
-  c.width = c.height = n;
-  const g = c.getContext('2d')!;
-  // Pale fresh-cut heartwood, darker sapwood rim, fine growth rings.
-  const grad = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
-  grad.addColorStop(0, '#b08a5a');
-  grad.addColorStop(0.75, '#d8bb8a');
-  grad.addColorStop(0.9, '#c9a574');
-  grad.addColorStop(1, '#5b4a38');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, n, n);
-  g.strokeStyle = 'rgba(110, 80, 45, 0.35)';
-  for (let r = 4; r < n / 2 - 4; r += 3 + Math.random() * 3) {
-    g.lineWidth = 0.6 + Math.random() * 0.8;
-    g.beginPath();
-    g.ellipse(n / 2 + (Math.random() - 0.5), n / 2 + (Math.random() - 0.5), r, r * (0.96 + Math.random() * 0.06), 0, 0, Math.PI * 2);
-    g.stroke();
+/** How far a door swings open (rad). */
+const DOOR_OPEN_ANGLE = 1.75;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+const PieceCollider: React.FC<{ log: LogData }> = ({ log }) => {
+  switch (log.kind) {
+    case 'plank': return <CuboidCollider args={[log.radius, log.length / 2, PLANK_THICKNESS / 2]} />;
+    case 'roof': return <CuboidCollider args={[log.radius, log.length / 2, ROOF_THICKNESS / 2]} />;
+    case 'door': return <CuboidCollider args={[log.radius, log.length / 2, DOOR_THICKNESS / 2]} />;
+    case 'post': return <CuboidCollider args={[log.radius, log.length / 2, log.radius]} />;
+    default: return <CylinderCollider args={[log.length / 2, log.radius]} />;
   }
-  // A radial check crack.
-  g.strokeStyle = 'rgba(60, 40, 25, 0.5)';
-  g.lineWidth = 1;
-  g.beginPath();
-  g.moveTo(n / 2, n / 2);
-  g.lineTo(n * 0.9, n * 0.62);
-  g.stroke();
-  ringTexture = new THREE.CanvasTexture(c);
-  ringTexture.colorSpace = THREE.SRGBColorSpace;
-  return ringTexture;
 };
 
-export const LogMesh: React.FC<{ length: number; radius: number; bark: string; seed?: number }> = ({ length, radius, bark, seed = 1 }) => {
-  const side = useMemo(() => new THREE.CylinderGeometry(radius * 0.93, radius, length, 16, 4, true), [length, radius]);
-  const cap = useMemo(() => new THREE.CircleGeometry(radius * 0.99, 18), [radius]);
-  const capMaterial = useMemo(() => new THREE.MeshStandardMaterial({ map: getRingTexture(), roughness: 0.9 }), []);
-  const uniforms = useMemo(() => ({
-    uInstancing: { value: false },
-    uSeed: { value: seed },
-    uHeight: { value: length },
-    uNoiseTexture: { value: getNoiseTexture() },
-    uColor: { value: new THREE.Color(bark) },
-  }), [seed, length, bark]);
-  useEffect(() => () => { side.dispose(); cap.dispose(); capMaterial.dispose(); }, [side, cap, capMaterial]);
-  return (
-    <group>
-      <mesh geometry={side} castShadow receiveShadow>
-        <CustomShaderMaterial
-          baseMaterial={THREE.MeshStandardMaterial}
-          vertexShader={STICK_SHADER.vertex}
-          fragmentShader={STICK_SHADER.fragment}
-          uniforms={uniforms}
-          color={bark}
-          roughness={0.95}
-          metalness={0}
-        />
-      </mesh>
-      <mesh geometry={cap} material={capMaterial} position={[0, length / 2, 0]} rotation={[-Math.PI / 2, 0, 0]} />
-      <mesh geometry={cap} material={capMaterial} position={[0, -length / 2, 0]} rotation={[Math.PI / 2, 0, 0]} />
-    </group>
-  );
-};
-
-/** A split plank: a pale board, grain along its length, a strip of bark on one edge. */
-export const PlankMesh: React.FC<{ length: number; halfWidth: number; bark: string; seed?: number }> = ({ length, halfWidth, bark, seed = 1 }) => {
-  const board = useMemo(() => new THREE.BoxGeometry(halfWidth * 2, length, PLANK_THICKNESS, 2, 6, 1), [length, halfWidth]);
-  const edge = useMemo(() => new THREE.BoxGeometry(0.012, length * 0.98, PLANK_THICKNESS * 0.9), [length]);
-  const uniforms = useMemo(() => ({
-    uInstancing: { value: false },
-    uSeed: { value: seed },
-    uHeight: { value: length },
-    uNoiseTexture: { value: getNoiseTexture() },
-    uColor: { value: new THREE.Color('#b89a70') },
-  }), [seed, length]);
-  const barkMaterial = useMemo(() => new THREE.MeshStandardMaterial({ color: bark, roughness: 0.95 }), [bark]);
-  useEffect(() => () => { board.dispose(); edge.dispose(); barkMaterial.dispose(); }, [board, edge, barkMaterial]);
-  return (
-    <group>
-      <mesh geometry={board} castShadow receiveShadow>
-        <CustomShaderMaterial
-          baseMaterial={THREE.MeshStandardMaterial}
-          vertexShader={STICK_SHADER.vertex}
-          fragmentShader={STICK_SHADER.fragment}
-          uniforms={uniforms}
-          color="#b89a70"
-          roughness={0.9}
-          metalness={0}
-        />
-      </mesh>
-      <mesh geometry={edge} material={barkMaterial} position={[halfWidth + 0.004, 0, 0]} castShadow />
-    </group>
-  );
+/** Swings a placed door about its hinge edge (local -X) toward its open or shut angle. */
+const useDoorSwing = (log: LogData, body: React.RefObject<RapierRigidBody | null>) => {
+  const angle = useRef(log.open ? -(log.swing ?? 1) * DOOR_OPEN_ANGLE : 0);
+  // The body starts at the shut pose (its props): write the real pose once.
+  const applied = useRef(false);
+  const tmp = useMemo(() => ({ q: new THREE.Quaternion(), turn: new THREE.Quaternion(), hinge: new THREE.Vector3(), p: new THREE.Vector3() }), []);
+  useFrame((_, dt) => {
+    if (log.kind !== 'door' || log.state !== 'placed') return;
+    const b = body.current;
+    if (!b || !b.isValid()) return;
+    const target = log.open ? -(log.swing ?? 1) * DOOR_OPEN_ANGLE : 0;
+    if (applied.current && Math.abs(target - angle.current) < 1e-4) return;
+    applied.current = true;
+    angle.current += (target - angle.current) * Math.min(1, dt * 6);
+    if (Math.abs(target - angle.current) < 0.002) angle.current = target;
+    const base = tmp.q.set(log.rotation[0], log.rotation[1], log.rotation[2], log.rotation[3]);
+    const width = new THREE.Vector3(1, 0, 0).applyQuaternion(base);
+    const center = tmp.p.set(log.position[0], log.position[1], log.position[2]);
+    tmp.hinge.copy(center).addScaledVector(width, -log.radius);
+    tmp.turn.setFromAxisAngle(Y_AXIS, angle.current);
+    const offset = center.clone().sub(tmp.hinge).applyQuaternion(tmp.turn);
+    const pos = tmp.hinge.clone().add(offset);
+    b.setNextKinematicTranslation({ x: pos.x, y: pos.y, z: pos.z });
+    const q = tmp.turn.clone().multiply(base);
+    b.setNextKinematicRotation({ x: q.x, y: q.y, z: q.z, w: q.w });
+  });
 };
 
 const Log: React.FC<{ log: LogData }> = ({ log }) => {
@@ -123,12 +72,14 @@ const Log: React.FC<{ log: LogData }> = ({ log }) => {
     if (body.current) logBodies.set(log.id, body.current);
     return () => { logBodies.delete(log.id); };
   }, [log.id, log.state]);
+  useDoorSwing(log, body);
   const seed = useMemo(() => (parseInt(log.id.replace(/\D/g, '').slice(-6) || '1', 10) % 997) / 97, [log.id]);
+  const type = log.state !== 'placed' ? 'dynamic' : log.kind === 'door' ? 'kinematicPosition' : 'fixed';
   return (
     <RigidBody
       key={`${log.id}-${log.state}`}
       ref={body}
-      type={log.state === 'placed' ? 'fixed' : 'dynamic'}
+      type={type}
       position={log.position}
       quaternion={log.rotation}
       colliders={false}
@@ -138,31 +89,51 @@ const Log: React.FC<{ log: LogData }> = ({ log }) => {
       friction={1.2}
       restitution={0.05}
     >
-      {log.kind === 'plank' ? (
-        <>
-          <CuboidCollider args={[log.radius, log.length / 2, PLANK_THICKNESS / 2]} />
-          <PlankMesh length={log.length} halfWidth={log.radius} bark={log.bark} seed={seed} />
-        </>
-      ) : (
-        <>
-          <CylinderCollider args={[log.length / 2, log.radius]} />
-          <LogMesh length={log.length} radius={log.radius} bark={log.bark} seed={seed} />
-        </>
-      )}
+      <PieceCollider log={log} />
+      <PieceMesh piece={log} seed={seed} />
     </RigidBody>
+  );
+};
+
+/** A worked bench: two holdfast pegs and a few curls of shavings on the top. */
+const BenchDressing: React.FC<{ bench: Bench; top: LogData }> = ({ bench, top }) => {
+  const q = useMemo(() => new THREE.Quaternion(top.rotation[0], top.rotation[1], top.rotation[2], top.rotation[3]), [top.rotation]);
+  const axis = useMemo(() => new THREE.Vector3(0, 1, 0).applyQuaternion(q), [q]);
+  const width = useMemo(() => new THREE.Vector3(1, 0, 0).applyQuaternion(q), [q]);
+  const at = (along: number, across: number, lift: number): [number, number, number] => [
+    bench.top[0] + axis.x * along + width.x * across,
+    bench.top[1] + lift,
+    bench.top[2] + axis.z * along + width.z * across,
+  ];
+  const L = top.length / 2, W = top.radius;
+  return (
+    <group>
+      {[0.8, -0.8].map((k) => (
+        <mesh key={k} position={at(k * L, W * 0.55, 0.03)} castShadow>
+          <cylinderGeometry args={[0.018, 0.022, 0.06, 8]} />
+          <meshStandardMaterial color="#6b5236" roughness={0.9} />
+        </mesh>
+      ))}
+      {[[-0.3, -0.5], [0.15, -0.65], [0.4, -0.35]].map(([a, b], i) => (
+        <mesh key={i} position={at(a * L, b * W, 0.012)} rotation={[Math.PI / 2, 0, i * 1.7]}>
+          <torusGeometry args={[0.028, 0.006, 5, 10, Math.PI * 1.4]} />
+          <meshStandardMaterial color="#d8bb8a" roughness={0.85} />
+        </mesh>
+      ))}
+    </group>
   );
 };
 
 const PLACED_PREFIX = 'vc-logs-v1-';
 
-/** Every loose and placed log (carried ones are drawn in the player's hands). */
+/** Every loose and placed piece (the carried one is drawn in the player's hands). */
 export const LogsLayer: React.FC = () => {
   const logs = useLogStore((s) => s.logs);
   const seed = useGroveStore((s) => s.seed);
 
-  // Logs persist per world seed: placed ones (builds) and loose ones (sawn
-  // logs and planks lying about, at wherever physics left them). A log being
-  // carried is saved as set down at the player's feet.
+  // Pieces persist per world seed: placed ones (builds) and loose ones (sawn
+  // logs and planks lying about, at wherever physics left them). A piece
+  // being carried is saved as set down at the player's feet.
   useEffect(() => {
     if (seed == null) return;
     // A different world: its own logs only.
@@ -184,7 +155,7 @@ export const LogsLayer: React.FC = () => {
       const st = useLogStore.getState();
       const list = Object.values(st.logs).map((l): LogData => {
         if (l.state === 'carried') {
-          return { ...l, state: 'loose', position: [playerState.x, playerState.y + 0.6, playerState.z] };
+          return { ...l, state: 'loose', onBench: undefined, position: [playerState.x, playerState.y + 0.6, playerState.z] };
         }
         if (l.state === 'loose') {
           const body = logBodies.get(l.id);
@@ -207,10 +178,46 @@ export const LogsLayer: React.FC = () => {
     return () => { unsubscribe(); window.clearInterval(timer); window.removeEventListener('beforeunload', save); save(); };
   }, [seed]);
 
+  // The builder's pouch (copper, hinges) belongs to the same world.
+  useEffect(() => {
+    if (seed == null) return;
+    const key = MATERIALS_PREFIX + seed;
+    try {
+      const raw = window.localStorage.getItem(key);
+      useMaterialsStore.getState().load(raw ? JSON.parse(raw) : null);
+    } catch { useMaterialsStore.getState().load(null); }
+    const save = () => {
+      const { copper, hinges } = useMaterialsStore.getState();
+      try { window.localStorage.setItem(key, JSON.stringify({ copper, hinges })); } catch { /* ignore */ }
+    };
+    const unsubscribe = useMaterialsStore.subscribe(save);
+    return () => { unsubscribe(); save(); };
+  }, [seed]);
+
+  // Benches are read from the placed planks. One the player has just
+  // completed (its last plank placed a moment ago) is announced.
+  const benches = useMemo(() => findBenches(Object.values(logs)), [logs]);
+  const known = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const fresh = benches.find((b) => !known.current.has(b.id)
+      && (b.id === lastPlaced.id || b.legIds.includes(lastPlaced.id))
+      && performance.now() - lastPlaced.at < 1500);
+    if (fresh) {
+      useGroveStore.getState().announce({ kind: 'discovery', title: 'A workbench', detail: 'Set a log or plank on it to shape it' });
+      window.dispatchEvent(new CustomEvent('vc-audio-woodwork', { detail: { kind: 'splitDone' } }));
+    }
+    known.current = new Set(benches.map((b) => b.id));
+    // A piece left on a bench that has been taken apart drops where it was.
+    const ids = new Set(benches.map((b) => b.id));
+    const orphans = Object.values(useLogStore.getState().logs).filter((l) => l.onBench && !ids.has(l.onBench));
+    for (const l of orphans) useLogStore.getState().updateLog(l.id, { onBench: undefined, state: 'loose' });
+  }, [benches]);
+
   return (
     <>
       {Object.values(logs).filter((l) => l.state !== 'carried').map((l) => <Log key={`${l.id}-${l.state}`} log={l} />)}
-      <BuildPreview />
+      {benches.map((b) => logs[b.id] && <BenchDressing key={b.id} bench={b} top={logs[b.id]} />)}
+      <BuildPreview benches={benches} />
     </>
   );
 };

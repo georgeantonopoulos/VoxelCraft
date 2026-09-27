@@ -48,6 +48,13 @@ const MAX_SHAPE_REMESH_PER_FRAME = 4;
  */
 const FALLING_TREE_LIFETIME_MS = 10 * 60 * 1000;
 const MAX_FELLED_TREES = 8;
+/**
+ * Sawn logs come in two standard lengths, so logs from different trees make
+ * even walls: 3 m from most trunks (about 2.1 m of floor inside a hut), 2.4 m
+ * from small trees.
+ */
+const WALL_LOG_LENGTH = 3.0;
+const SHORT_WALL_LOG_LENGTH = 2.4;
 
 /**
  * VoxelTerrain props.
@@ -494,14 +501,20 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
       const origin = new THREE.Vector3(t.x, t.y, t.z);
       const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
       const scale = entry.scale;
+      // Long wall-length logs first (a hut wall is one log long), then
+      // whatever is left of the trunk if it is worth carrying.
       const usable = 3.6 * scale;
-      const count = THREE.MathUtils.clamp(Math.round(usable / 1.15), 2, 4);
-      const len = Math.min(1.25, usable / count - 0.06);
+      const lengths: number[] = [];
+      let left = usable;
+      const standard = usable >= WALL_LOG_LENGTH + 0.06 ? WALL_LOG_LENGTH : SHORT_WALL_LOG_LENGTH;
+      while (left >= standard && lengths.length < 3) { lengths.push(standard); left -= standard + 0.06; }
+      if (left >= 0.9 || lengths.length === 0) lengths.push(Math.max(0.9, left));
       const radius = THREE.MathUtils.clamp(0.2 * scale, 0.13, 0.3);
       const logs: LogData[] = [];
-      for (let i = 0; i < count; i++) {
-        const along = 0.3 + i * (len + 0.06) + len / 2;
-        const p = origin.clone().addScaledVector(axis, along);
+      let along = 0.3;
+      lengths.forEach((len, i) => {
+        const p = origin.clone().addScaledVector(axis, along + len / 2);
+        along += len + 0.06;
         logs.push({
           id: `log_${id}_${i}`,
           position: [p.x, p.y + 0.05, p.z],
@@ -510,8 +523,9 @@ export const VoxelTerrain: React.FC<VoxelTerrainProps> = React.memo(({
           radius: radius * (1 - i * 0.08),
           bark: entry.bark,
           state: 'loose',
+          kind: 'log',
         });
-      }
+      });
       useLogStore.getState().addLogs(logs);
       const crown = origin.clone().addScaledVector(axis, 4.2 * scale);
       emitImpact({ position: crown, direction: new THREE.Vector3(0, 1, 0), kind: 'leaf', color: '#5d7a3a', strength: 3, floorY: crown.y - 1.5 });

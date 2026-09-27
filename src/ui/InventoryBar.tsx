@@ -18,7 +18,30 @@ const SelectedName: React.FC<{ name: string; slot: number }> = ({ name, slot }) 
         </div>
     );
 };
+/** A passing note above the hotbar (vc-hud-note { text }): copper found, and the like. */
+const HudNote: React.FC = () => {
+    const [note, setNote] = useState<{ text: string; at: number } | null>(null);
+    useEffect(() => {
+        const on = (e: Event) => {
+            const text = (e as CustomEvent<{ text: string }>).detail?.text;
+            if (text) setNote({ text, at: performance.now() });
+        };
+        window.addEventListener('vc-hud-note', on);
+        return () => window.removeEventListener('vc-hud-note', on);
+    }, []);
+    useEffect(() => {
+        if (!note) return;
+        const id = window.setTimeout(() => setNote(null), 2600);
+        return () => window.clearTimeout(id);
+    }, [note]);
+    return (
+        <div className="grove-text-shadow mb-1 h-5 font-display text-[16px] italic text-[#e3b489] transition-opacity duration-500" style={{ opacity: note ? 1 : 0 }}>
+            {note?.text ?? ''}
+        </div>
+    );
+};
 import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
+import { useBuildModeStore, pieceName } from '@features/building/buildModeStore';
 import { useLogStore } from '@/state/LogStore';
 import { useInventoryStore, InventoryItemId } from '@/state/InventoryStore';
 import { useCraftingStore } from '@/state/CraftingStore';
@@ -68,8 +91,9 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     const selectedItem = inventorySlots[selectedSlotIndex];
     const customTools = useInventoryStore(state => state.customTools);
-    const carrying = useLogStore(state => (state.carriedId ? state.logs[state.carriedId]?.kind ?? 'log' : null));
-    const selectedName = carrying ? `Carrying a ${carrying} · right click to place · Q to set down`
+    const carried = useLogStore(state => (state.carriedId ? state.logs[state.carriedId] : null));
+    const placeMode = useBuildModeStore(state => (carried ? state.modeOf(carried.kind) : null));
+    const selectedName = carried ? `Carrying a ${pieceName(carried.kind, carried.notches)}${carried.kind === 'door' ? '' : ` (${placeMode}, R turns)`} · right click to place · Q to set down`
         : !selectedItem ? ''
         : (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
             ? toolDisplayName(customTools[selectedItem])
@@ -77,6 +101,7 @@ export const InventoryBar: React.FC = React.memo(() => {
 
     return (
         <div className={`absolute bottom-5 left-1/2 flex -translate-x-1/2 flex-col items-center pointer-events-auto transition-all duration-300 ${isCraftingOpen ? 'z-[60] -translate-y-3 scale-110' : 'z-50'}`}>
+            <HudNote />
             <SelectedName name={selectedName} slot={selectedSlotIndex} />
             {/* No tray: a row of hollows strung on a faint vine thread. */}
             <div className="relative flex items-center gap-1" style={presenceStyle(hudAwake || isCraftingOpen, 0.28)}>

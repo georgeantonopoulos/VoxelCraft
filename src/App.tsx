@@ -25,6 +25,8 @@ import { RainFX } from '@features/environment/components/RainFX';
 import { DousingDirector } from '@features/environment/components/DousingDirector';
 import { BubbleSystem } from '@features/environment/BubbleSystem';
 import { CraftingInterface } from '@features/crafting/components/CraftingInterface';
+import { CarpentryInterface } from '@features/building/components/CarpentryInterface';
+import { useCarpentryStore } from '@state/CarpentryStore';
 import { useCraftingStore } from '@state/CraftingStore';
 
 // Environment Features (Refactored)
@@ -267,6 +269,7 @@ const App: React.FC = () => {
 
   // Crafting State
   const isCraftingOpen = useCraftingStore(s => s.isOpen);
+  const isCarpentryOpen = useCarpentryStore(s => s.benchId !== null);
 
   // Debug Local State (Leva managed)
   const [triplanarDetail, setTriplanarDetail] = useState(1.0);
@@ -647,7 +650,7 @@ const App: React.FC = () => {
             skipPost={skipPost || !postProcessingEnabled}
           />
 
-          {gameStarted && inputMode === 'mouse' && !isCraftingOpen && <PointerLockControls onUnlock={handleUnlock} />}
+          {gameStarted && inputMode === 'mouse' && !isCraftingOpen && !isCarpentryOpen && <PointerLockControls onUnlock={handleUnlock} />}
           {gameStarted && inputMode === 'touch' && <TouchCameraControls />}
 
           <SparkSystem />
@@ -665,6 +668,7 @@ const App: React.FC = () => {
       </KeyboardControls>
 
       {gameStarted && <CraftingInterface />}
+      {gameStarted && <CarpentryInterface />}
 
       <TouchControls />
       <SettingsMenu onRestartWorld={handleRestartWorld} />

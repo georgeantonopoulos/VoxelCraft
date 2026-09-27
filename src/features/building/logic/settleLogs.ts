@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { PLANK_THICKNESS, type LogData } from '@/state/LogStore';
+import { pieceHalfDepth, type LogData } from '@/state/LogStore';
 
 /**
  * Re-seat saved logs on terrain that changed under them (a new generator
@@ -24,7 +24,7 @@ const segmentOf = (l: LogData): Seg => {
   const axis = UP.clone().applyQuaternion(q);
   const c = new THREE.Vector3(...l.position);
   const half = l.length / 2;
-  const r = l.kind === 'plank' ? PLANK_THICKNESS / 2 : l.radius;
+  const r = pieceHalfDepth(l);
   return { a: c.clone().addScaledVector(axis, -half), b: c.clone().addScaledVector(axis, half), r, upright: Math.abs(axis.y) > 0.8 };
 };
 
