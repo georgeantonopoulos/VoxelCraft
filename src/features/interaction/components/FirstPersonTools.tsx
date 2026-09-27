@@ -14,6 +14,7 @@ import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
 import { PieceMesh } from '@features/building/components/PieceMeshes';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
 const SWING_CONTACT = STRIKE_CONTACT_MS / 1000;
@@ -262,7 +263,7 @@ export const FirstPersonTools: React.FC = () => {
         const handleImpact = (e: Event) => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
-            if (!document.pointerLockElement) return;
+            if (!isPointerCaptured()) return;
             if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH' || detail.action === 'SAW') {
                 // Contact: recoil (a hard jolt off unbreakable rock).
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;

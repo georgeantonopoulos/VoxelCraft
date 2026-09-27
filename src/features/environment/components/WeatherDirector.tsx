@@ -20,7 +20,18 @@ export const WeatherDirector: React.FC = () => {
 
   useEffect(() => {
     const api = {
-      set: (phase: WeatherPhase) => useWeatherStore.getState().setPhase(phase, pick(WEATHER_PHASES[phase])),
+      /** `hold` keeps the phase until set again; `instant` skips the ease to its sky and rain levels. */
+      set: (phase: WeatherPhase, opts: { hold?: boolean; instant?: boolean } = {}) => {
+        const remaining = opts.hold ? 1e9 : pick(WEATHER_PHASES[phase]);
+        useWeatherStore.getState().setPhase(phase, remaining);
+        // Directly too: the frame loop only notices a store change of phase.
+        clock.current = { phase, remaining };
+        if (opts.instant) {
+          const t = PHASE_TARGETS[phase];
+          levels.current.overcast = t.overcast;
+          levels.current.rain = t.rain;
+        }
+      },
       get: () => useWeatherStore.getState(),
     };
     (window as unknown as { __weather?: typeof api }).__weather = api;

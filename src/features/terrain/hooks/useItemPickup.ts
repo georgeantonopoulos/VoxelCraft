@@ -23,6 +23,7 @@ import {
 import { ChunkState, ItemType, CustomTool } from '@/types';
 import { useLogStore } from '@/state/LogStore';
 import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 
 export interface PickupEffect {
   id: string;
@@ -313,7 +314,7 @@ export function useItemPickup({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'KeyQ') return;
       // Keyboard pickup is only active during pointer-locked gameplay.
-      if (!document.pointerLockElement) return;
+      if (!isPointerCaptured()) return;
       e.preventDefault();
       attemptPickup();
     };

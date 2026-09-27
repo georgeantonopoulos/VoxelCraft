@@ -90,6 +90,15 @@ export class TerrainRuntime {
     return chunk.material[idx] as MaterialType;
   }
 
+  /** Solid ground at a world position (nearest voxel), or null if the chunk isn't loaded. */
+  isSolidAtWorld(wx: number, wy: number, wz: number): boolean | null {
+    const chunk = this.getChunkAtWorld(wx, wz);
+    if (!chunk) return null;
+    const idx = this.getIndexInChunk(chunk, wx, wy, wz);
+    if (idx == null) return null;
+    return chunk.density[idx] > ISO_LEVEL;
+  }
+
   /**
    * Returns true if a world position is inside a liquid voxel.
    *

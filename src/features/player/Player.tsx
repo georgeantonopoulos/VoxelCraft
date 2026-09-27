@@ -159,6 +159,16 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
         const hit = world.castRay(ray, max, true, undefined, undefined, undefined, undefined, isTerrainCollider);
         return hit ? y - hit.timeOfImpact : null;
       },
+      /** What the crosshair rests on (the player's own body skipped): hit point, distance, owner userData. */
+      aim: (max = 12) => {
+        const o = camera.getWorldPosition(new THREE.Vector3());
+        const d = camera.getWorldDirection(new THREE.Vector3());
+        const ray = new rapier.Ray({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z });
+        const hit = world.castRay(ray, max, true, undefined, undefined, undefined, body.current ?? undefined);
+        if (!hit) return null;
+        const p = ray.pointAt(hit.timeOfImpact);
+        return { point: [p.x, p.y, p.z], distance: hit.timeOfImpact, owner: hit.collider.parent()?.userData ?? null };
+      },
     };
     (window as unknown as { __vcDebug?: typeof api }).__vcDebug = api;
     return () => { delete (window as unknown as { __vcDebug?: typeof api }).__vcDebug; };

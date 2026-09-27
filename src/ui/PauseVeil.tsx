@@ -3,6 +3,7 @@ import { useSettingsStore } from '@/state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useCarpentryStore } from '@/state/CarpentryStore';
 import { VineRule } from '@ui/grove/GroveOrnaments';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 
 /**
  * Shown whenever the mouse is free in mouse mode (before the first click and
@@ -11,7 +12,7 @@ import { VineRule } from '@ui/grove/GroveOrnaments';
  * click from reaching it.
  */
 export const PauseVeil: React.FC = () => {
-  const [locked, setLocked] = useState(() => !!document.pointerLockElement);
+  const [locked, setLocked] = useState(() => isPointerCaptured());
   const [everLocked, setEverLocked] = useState(false);
   const settingsOpen = useSettingsStore((s) => s.isSettingsOpen);
   const toggleSettings = useSettingsStore((s) => s.toggleSettings);
@@ -20,7 +21,7 @@ export const PauseVeil: React.FC = () => {
 
   useEffect(() => {
     const onChange = () => {
-      const now = !!document.pointerLockElement;
+      const now = isPointerCaptured();
       setLocked(now);
       if (now) setEverLocked(true);
     };

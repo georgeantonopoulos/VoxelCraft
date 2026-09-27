@@ -116,7 +116,7 @@ export const HUD: React.FC = () => {
   }, []);
 
   return (
-    <div className="absolute inset-0 pointer-events-none select-none">
+    <div id="vc-hud" className="absolute inset-0 pointer-events-none select-none">
       {/* Center Crosshair */}
       <div
         className={`crosshair ${crosshairHit ? 'hit' : ''}`}

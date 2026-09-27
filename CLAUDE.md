@@ -10,13 +10,39 @@ npm run dev          # Start dev server (port 3000)
 npm run build        # Production build
 npm run test:unit    # Run Vitest tests
 npm run preview      # Preview production build
+npm run scene -- <scenario>   # Load a test scene in headless Chrome: screenshots, state, errors
+npm run scene -- all          # Every scenario + contact sheet (visual smoke check)
 ```
+
+## Seeing the game: always use test mode
+
+The game has a test harness built for Claude (`src/testing/`, full reference in
+`src/testing/README.md`). **Use it yourself for every change that shows up at
+runtime** (visuals, shaders, gameplay, UI, physics, audio wiring). Do not ask
+George to launch the game, click through menus or send screenshots to check your
+work, and do not report visual work as done on unit tests alone.
+
+- `npm run scene -- <scenario> [--time 21 --weather rain --at x,z --yaw 90 --give saw] [--do "<js with t = __vcTest>" --key KeyW:800 --click right --shot name]`
+  boots straight into a fixed-seed world (no menus), waits until the scene is
+  truly ready (~7 s), runs the steps, and writes PNGs + `report.json` + `console.log`
+  to `output/scenes/`. Then Read the PNGs and look at them.
+- Scenarios: meadow, forest, shore, river, hollow, cave, night, rain, carpentry, sky
+  (`--list`). Add a scenario to `src/testing/scenarios.ts` when a feature needs a
+  setup none of them gives, instead of repeating steps.
+- Before calling a runtime change finished, run `npm run scene -- all` as well
+  (80 s): it fails on any console error and writes `sheet.png`, one shot per scenario.
+- Compare before and after on the same scene and seed (e.g. `git stash`, run it,
+  `git stash pop`, run it again) when judging a visual change.
+- In a live browser (Chrome/Playwright MCP): `http://localhost:3000/?test=<scenario>&time=..`,
+  then `await __vcTest.ready()`.
+- Improve the harness when it gets in the way: it is a dev tool for Claude, kept
+  as carefully as game code.
 
 ## General Instructions
 
 - **Exploration**: Read the code you are changing and its callers before proposing changes.
 - **Incremental Development**: Break complex tasks into small, logical steps. Verify each step by running tests or builds.
-- **Verification**: Always run `npm run test:unit` and `npm run build` after modifications. If changes affect the UI, suggest a manual smoke test via `npm run dev`.
+- **Verification**: Always run `npm run test:unit` and `npm run build` after modifications. If changes affect anything visible or interactive, check it yourself with `npm run scene` (see "Seeing the game" above).
 - **Clarification**: If an instruction is ambiguous or contradicts the existing architecture, stop and ask for clarification rather than making assumptions.
 - **Code Standards**: Adhere to the "Senior Software Architect" persona. Use strict TypeScript (avoid `any`), maintain existing documentation, and follow the project's established modular patterns.
 - **Safety**: Do not modify `.env` files or core infrastructure configs unless explicitly directed.
@@ -363,7 +389,7 @@ npm run test:unit    # Run all tests
 
 **Integration Tests (Browser)**: Test systems that require DOM, browser APIs, or app initialization.
 - **When to use**: Audio playback, event systems, singleton initialization, React component mounting
-- **Method**: Manual smoke testing via `npm run dev`
+- **Method**: `npm run scene` (test mode; see "Seeing the game"), or `?test=<scenario>` in a live browser
 
 ### Audio System Testing
 

@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useHudPresence } from '@state/HudPresenceStore';
 import { useGroveStore } from '@state/GroveStore';
 import { useInventoryStore } from '@state/InventoryStore';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 
 /** Wakes the quiet HUD when something worth seeing happens. Renders nothing. */
 export const HudPresenceDirector: React.FC<{ mouseMode: boolean }> = ({ mouseMode }) => {
@@ -25,7 +26,7 @@ export const HudPresenceDirector: React.FC<{ mouseMode: boolean }> = ({ mouseMod
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === 'Tab') hold('tab', false); };
     const onBlur = () => hold('tab', false);
     const onLock = () => {
-      if (mouseMode) hold('paused', !document.pointerLockElement);
+      if (mouseMode) hold('paused', !isPointerCaptured());
     };
 
     window.addEventListener('vc-item-picked-up', onPickup);

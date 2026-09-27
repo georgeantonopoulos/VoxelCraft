@@ -103,7 +103,16 @@ export const recordWorldEntered = (type: WorldType, seed: number): void => {
 export const forgetWorld = async (type: WorldType, seed: number): Promise<void> => {
   const rest = readRaw().filter((w) => !sameWorld(w, type, seed));
   writeRaw(rest);
-  if (!rest.some((w) => w.seed === seed)) {
+  await eraseWorldData(type, seed, !rest.some((w) => w.seed === seed));
+};
+
+/**
+ * Erase what was saved for a world, leaving the list alone. `seedWide` also
+ * erases what is kept per seed rather than per world (Grove progress, builds,
+ * copper). Test mode uses this to start each run from a clean world.
+ */
+export const eraseWorldData = async (type: WorldType, seed: number, seedWide: boolean): Promise<void> => {
+  if (seedWide) {
     try {
       window.localStorage.removeItem(`vc-grove-v1-${seed}`);
       window.localStorage.removeItem(`vc-logs-v1-${seed}`);
@@ -121,7 +130,7 @@ export const forgetWorld = async (type: WorldType, seed: number): Promise<void> 
     await worldDB.modifications.where('chunkId').startsWith(prefix).delete();
     await worldDB.groundPickups.where('chunkId').startsWith(prefix).delete();
   } catch {
-    // IndexedDB unavailable: the world is off the list; stale rows are harmless.
+    // IndexedDB unavailable: stale rows are harmless.
   }
 };
 

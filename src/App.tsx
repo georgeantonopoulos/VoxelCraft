@@ -77,6 +77,12 @@ import { playerState } from '@core/player/PlayerState';
 // Audio System
 import { audioManager, SOUND_REGISTRY } from '@core/audio';
 
+// Test mode (?test=<scenario>): straight into a prepared world, see src/testing/README.md
+import { TEST, prepareTestWorld, resolveTestSpawn } from '@/testing/testMode';
+import { orbitOffsetForHour } from '@/testing/testConfig';
+import { TestHarness, TestFrameProbe } from '@/testing/TestHarness';
+import type { SpawnSpot } from '@/testing/scenarios';
+
 const MapDebug = React.lazy(() => import('@/ui/MapDebug').then((module) => ({ default: module.MapDebug })));
 const BeeDebugScene = React.lazy(() => import('@features/creatures/BeeDebugScene').then((module) => ({ default: module.BeeDebugScene })));
 const BeeManager = React.lazy(() => import('@features/creatures/BeeManager').then((module) => ({ default: module.BeeManager })));
@@ -122,16 +128,29 @@ const SpatialAudioListener: React.FC = () => {
   return null;
 };
 
+/** Full day/night cycle = 2 * 2PI / speed seconds: 0.0087 gives ~24 min. */
+const SUN_ORBIT_SPEED = 0.0087;
+
 const App: React.FC = () => {
   const [gameStarted, setGameStarted] = useState(false);
   const [terrainLoaded, setTerrainLoaded] = useState(false);
   const [collidersReady, setCollidersReady] = useState(false);
   const [spawnPos, setSpawnPos] = useState<[number, number, number] | null>(null);
   // The autostart route is a repeatable fast path for profiling and browser smoke tests.
+  // Test mode sets the world once its old saves are erased (prepareTestWorld).
   const [worldType, setWorldType] = useState<WorldType | null>(() =>
-    new URLSearchParams(window.location.search).has('autostart') ? WorldType.DEFAULT : null
+    !TEST && new URLSearchParams(window.location.search).has('autostart') ? WorldType.DEFAULT : null
   );
-  const [worldSeed, setWorldSeed] = useState<number>(() => WorldSeed.fromURLOrRandom());
+  const [worldSeed, setWorldSeed] = useState<number>(() => TEST ? TEST.seed : WorldSeed.fromURLOrRandom());
+  const [testSpawn, setTestSpawn] = useState<SpawnSpot | null>(null);
+
+  useEffect(() => {
+    if (!TEST) return;
+    const test = TEST;
+    let cancelled = false;
+    prepareTestWorld(test).then(() => { if (!cancelled) setWorldType(test.world); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Each world has its own inventory: load it on entry, keep it saved.
   useEffect(() => {
@@ -335,10 +354,11 @@ const App: React.FC = () => {
 
   // Sun Orbit Params
   const [sunOrbitRadius, setSunOrbitRadius] = useState(300);
-  // Full day/night cycle = 2 * 2PI / sunOrbitSpeed seconds: 0.0087 gives ~24 min
-  // (~19 min of daylight, ~5 min of night; see DAY_FRACTION in celestial.ts).
-  const [sunOrbitSpeed, setSunOrbitSpeed] = useState(0.0087);
-  const [sunTimeOffset, setSunTimeOffset] = useState(0.0);
+  // ~19 min of daylight, ~5 min of night (see DAY_FRACTION in celestial.ts).
+  // Test mode holds the sun still at its hour unless time=live.
+  const testHour = TEST && TEST.hour !== 'live' ? TEST.hour : null;
+  const [sunOrbitSpeed, setSunOrbitSpeed] = useState(testHour != null ? 0 : SUN_ORBIT_SPEED);
+  const [sunTimeOffset, setSunTimeOffset] = useState(testHour != null ? orbitOffsetForHour(testHour) : 0.0);
 
   const orbitConfig = useMemo(() => ({
     radius: sunOrbitRadius,
@@ -353,7 +373,7 @@ const App: React.FC = () => {
   const debugMode = useMemo(() => new URLSearchParams(window.location.search).has('debug'), []);
   const debugBeeMode = useMemo(() => new URLSearchParams(window.location.search).get('debug') === 'bee', []);
   const mapMode = useMemo(() => new URLSearchParams(window.location.search).get('mode') === 'map', []);
-  const autoStart = useMemo(() => new URLSearchParams(window.location.search).has('autostart'), []);
+  const autoStart = useMemo(() => !!TEST || new URLSearchParams(window.location.search).has('autostart'), []);
 
   // Initial Logic & Fallback Spawning
   const findSpawnForBiome = useCallback((target: BiomeType): { x: number; z: number } | null => {
@@ -384,14 +404,18 @@ const App: React.FC = () => {
     const requestedBiome = params.get('vcSpawnBiome') as BiomeType | null;
 
     let targetX = 16, targetZ = 16;
-    if (requestedBiome) {
+    const testSpot = TEST ? resolveTestSpawn(TEST) : null;
+    if (TEST) setTestSpawn(testSpot);
+    if (testSpot) {
+      targetX = testSpot.x; targetZ = testSpot.z;
+    } else if (requestedBiome) {
       const hit = findSpawnForBiome(requestedBiome);
       if (hit) { targetX = hit.x; targetZ = hit.z; }
     }
 
     // Floating islands: start on top of solid ground, not over the void or
     // wedged between two islands (the column at the origin is often empty).
-    if (worldType === WorldType.SKY_ISLANDS && !requestedBiome) {
+    if (worldType === WorldType.SKY_ISLANDS && !requestedBiome && !testSpot) {
       const solid = (x: number, z: number) => TerrainService.skyIslandTop(x, z) != null;
       search: for (let r = 0; r <= 160; r += 4) {
         for (let k = 0; k < Math.max(1, r * 1.5); k++) {
@@ -513,7 +537,7 @@ const App: React.FC = () => {
         </Suspense>
       )}
 
-      {!worldType ? (
+      {TEST ? null : !worldType ? (
         <WorldSelectionScreen onSelect={(type, seed) => {
           recordWorldEntered(type, seed);
           setWorldSeed(seed);
@@ -548,6 +572,7 @@ const App: React.FC = () => {
           frameloop="never"
         >
           <FrameLimiter />
+          {TEST && <TestFrameProbe />}
           <SceneWarmup ready={gameStarted && terrainLoaded} />
           <AdaptiveResolution baseDpr={resolutionScale} enabled={dynamicResolution && gameStarted} />
           {gameStarted && <EnvironmentProbe />}
@@ -672,6 +697,17 @@ const App: React.FC = () => {
 
       <TouchControls />
       <SettingsMenu onRestartWorld={handleRestartWorld} />
+      {TEST && (
+        <TestHarness
+          test={TEST}
+          spawn={testSpawn}
+          gameStarted={gameStarted}
+          terrainLoaded={terrainLoaded}
+          setSunTimeOffset={setSunTimeOffset}
+          setSunOrbitSpeed={setSunOrbitSpeed}
+          liveOrbitSpeed={SUN_ORBIT_SPEED}
+        />
+      )}
     </div>
   );
 };
