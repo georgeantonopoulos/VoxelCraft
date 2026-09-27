@@ -1,0 +1,10 @@
+[
+  {"do": "const p = __live('wb-plank-0'); t.lookAt(p[0], p[1] + 0.02, p[2]); await t.frames(3); return 1;"}, {"key": "KeyQ"}, {"key": "KeyR"},
+  {"do": "const [x, z] = __wb.site, [rx, rz] = __wb.right; t.lookAt(x - rx * 0.45, t.groundAt(x - rx * 0.45, z - rz * 0.45), z - rz * 0.45); await t.frames(4); return 1;"}, {"click": "right"}, {"wait": 300},
+  {"do": "const p = __live('wb-plank-1'); t.lookAt(p[0], p[1] + 0.02, p[2]); await t.frames(3); return 1;"}, {"key": "KeyQ"},
+  {"do": "const [x, z] = __wb.site, [rx, rz] = __wb.right; t.lookAt(x + rx * 0.6, t.groundAt(x + rx * 0.6, z + rz * 0.6), z + rz * 0.6); await t.frames(4); return 1;"}, {"click": "right"}, {"wait": 300},
+  {"do": "const p = __live('wb-plank-2'); t.lookAt(p[0], p[1] + 0.02, p[2]); await t.frames(3); return 1;"}, {"key": "KeyQ"},
+  {"do": "const [x, z] = __wb.site; t.lookAt(x, t.groundAt(x, z) + 0.4, z); await t.frames(4); return 1;"}, {"click": "right"}, {"wait": 500},
+  {"do": "const L = __logStore.getState(); for (const id of Object.keys(L.logs)) if (L.logs[id].state === 'loose') L.removeLog(id); await t.key('Space', 60); await t.wait(90); await t.key('Space', 60); const top = L.logs['wb-plank-2'].position; const [rx, rz] = __wb.right, [fx, fz] = __wb.fwd; t.teleport(top[0] - fx * 1.7 + rx * 1.2, top[1] + 0.2, top[2] - fz * 1.7 + rz * 1.2); await t.frames(20); t.lookAt(top[0], top[1] - 0.35, top[2]); await t.frames(20); return __groveStore.getState().toasts.map(x => x.notice.title);"},
+  {"shot": "ref-bench"}
+]

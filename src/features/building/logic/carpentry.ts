@@ -79,8 +79,8 @@ export function cutsFor(piece: LogData): Cut[] {
         },
         {
           id: 'post', title: 'Posts',
-          blurb: 'Squared timber with a tenon on top. Stand them at the corners of a frame and lay logs across them.',
-          needs: { axe: true }, lengths: lengthChoices(L, 2),
+          blurb: 'Squared timber. Short posts at the corners make a level base on sloping ground: they snap one wall log apart, and logs laid across them sit square.',
+          needs: { axe: true }, lengths: lengthChoices(L),
         },
         {
           id: 'tall', title: 'Tall planks',

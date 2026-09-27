@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { useCarpentryStore } from '@/state/CarpentryStore';
+import { useSketchbookStore } from '@/state/SketchbookStore';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { VineRule } from '@ui/grove/GroveOrnaments';
 
 /**
@@ -11,16 +13,17 @@ import { VineRule } from '@ui/grove/GroveOrnaments';
  * click from reaching it.
  */
 export const PauseVeil: React.FC = () => {
-  const [locked, setLocked] = useState(() => !!document.pointerLockElement);
+  const [locked, setLocked] = useState(() => isPointerCaptured());
   const [everLocked, setEverLocked] = useState(false);
   const settingsOpen = useSettingsStore((s) => s.isSettingsOpen);
   const toggleSettings = useSettingsStore((s) => s.toggleSettings);
   const craftingOpen = useCraftingStore((s) => s.isOpen);
   const carpentryOpen = useCarpentryStore((s) => s.benchId !== null);
+  const sketchbookOpen = useSketchbookStore((s) => s.open);
 
   useEffect(() => {
     const onChange = () => {
-      const now = !!document.pointerLockElement;
+      const now = isPointerCaptured();
       setLocked(now);
       if (now) setEverLocked(true);
     };
@@ -28,7 +31,7 @@ export const PauseVeil: React.FC = () => {
     return () => document.removeEventListener('pointerlockchange', onChange);
   }, []);
 
-  if (locked || settingsOpen || craftingOpen || carpentryOpen) return null;
+  if (locked || settingsOpen || craftingOpen || carpentryOpen || sketchbookOpen) return null;
 
   return (
     <div className="grove-fade-in pointer-events-auto absolute inset-0 z-40 flex cursor-pointer flex-col items-center justify-center"
@@ -49,6 +52,12 @@ export const PauseVeil: React.FC = () => {
             onClick={(e) => { e.stopPropagation(); toggleSettings(); }}
           >
             Settings
+          </button>
+          <button
+            className="grove-button-quiet px-6 py-2 text-[13px]"
+            onClick={(e) => { e.stopPropagation(); useSketchbookStore.getState().setOpen(true); }}
+          >
+            Building sketches
           </button>
         </div>
       </div>

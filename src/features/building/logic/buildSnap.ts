@@ -68,6 +68,8 @@ export interface Placement {
   onBench?: string;
   /** Doors: which way it swings. */
   swing?: 1 | -1;
+  /** Other placed pieces moved to fit (a bench leg driven down to level). */
+  adjust?: { id: string; position: [number, number, number]; rotation?: [number, number, number, number] }[];
 }
 
 /** How far a post or standing board is sunk into the ground. */
@@ -238,27 +240,222 @@ const placeEave = (i: SnapInput, wall: LogData): Placement => {
 };
 
 /**
- * A post or standing board set on the ground near another of its kind
- * levels its top with it (sunk deeper or standing proud by up to 35 cm), so
- * bench legs, frame posts and board walls line up on sloping ground.
+ * A post or standing board set on the ground near others of its kind levels
+ * its top with theirs, so bench legs, foundation posts and board walls line
+ * up on uneven ground. On higher ground the new one is sunk deeper; on lower
+ * ground the others (the level group it joins) are driven down to match,
+ * each keeping at least MIN_EXPOSED above its ground. Small rises stand a
+ * touch proud.
  */
-const LEVEL_REACH = 1.8;
-const LEVEL_SPAN = 0.35;
-const levelWithNeighbour = (i: SnapInput, pos: THREE.Vector3): THREE.Vector3 => {
+const LEVEL_REACH_BOARD = 1.8;
+/** Reaches the far corner of a 2.5 m square base. */
+const LEVEL_REACH_POST = 3.7;
+const MIN_EXPOSED = 0.3;
+const MAX_PROUD = 0.1;
+/** Centre spacing a second bench leg snaps to beside a lone first one. */
+export const LEG_SPACING = 0.9;
+/**
+ * Post-to-post spacings for a square base: a standard wall log's length less
+ * its two notch overhangs (3 m logs: 2.5 m; 2.4 m logs: 1.9 m), so sill logs
+ * laid across the posts meet at notched corners.
+ */
+export const POST_SPACINGS = [2.5, 1.9];
+
+interface Leveled { position: THREE.Vector3; adjust?: { id: string; position: [number, number, number] }[] }
+
+const topOfUpright = (l: LogData): number => l.position[1] + l.length / 2;
+
+/** Is anything resting on top of this upright? */
+const carriesSomething = (i: SnapInput, u: LogData): boolean => i.placed.some((o) => o.id !== u.id && !o.onBench
+  && Math.abs(o.position[1] - topOfUpright(u)) < 0.6
+  && Math.hypot(o.position[0] - u.position[0], o.position[2] - u.position[2]) < 0.5 + o.length / 2);
+
+const levelWithNeighbour = (i: SnapInput, pos: THREE.Vector3): Leveled => {
   const c = i.carried;
   const board = isBoard(c.kind);
-  let best: { top: number; d: number } | null = null;
-  for (const l of i.placed) {
-    if (l.onBench || isBoard(l.kind) !== board || l.kind === 'door') continue;
-    const f = frameOf(l);
-    if (!isUpright(f)) continue;
-    const d = Math.hypot(f.center.x - pos.x, f.center.z - pos.z);
-    if (d > LEVEL_REACH || (best && d > best.d)) continue;
-    best = { top: f.center.y + l.length / 2, d };
+  const reachXZ = board ? LEVEL_REACH_BOARD : LEVEL_REACH_POST;
+  const ups = i.placed.filter((l) => !l.onBench && l.kind !== 'door' && isBoard(l.kind) === board && isUpright(frameOf(l))
+    && Math.hypot(l.position[0] - pos.x, l.position[2] - pos.z) <= reachXZ);
+  if (!ups.length) return { position: pos };
+  ups.sort((p, q) => Math.hypot(p.position[0] - pos.x, p.position[2] - pos.z) - Math.hypot(q.position[0] - pos.x, q.position[2] - pos.z));
+  const ref = topOfUpright(ups[0]);
+  const group = ups.filter((u) => Math.abs(topOfUpright(u) - ref) < 0.12);
+  const groupTop = Math.max(...group.map(topOfUpright));
+  const myGround = pos.y - c.length / 2 + (board ? BOARD_SINK : SINK);
+  const myTop = pos.y + c.length / 2;
+  const shift = groupTop - myTop;
+  if (shift <= MAX_PROUD) {
+    // Sink this one (or let it stand a touch proud) to the group's height.
+    if (groupTop - myGround < MIN_EXPOSED) return { position: pos };
+    return { position: pos.clone().setY(pos.y + shift) };
   }
-  if (!best) return pos;
-  const shift = best.top - (pos.y + c.length / 2);
-  return Math.abs(shift) <= LEVEL_SPAN ? pos.clone().setY(pos.y + shift) : pos;
+  // Lower ground here: drive the group down to this one's height, if they can all go.
+  for (const u of group) {
+    if (carriesSomething(i, u)) return { position: pos };
+    if (myTop - i.groundAt(u.position[0], u.position[2]) < MIN_EXPOSED) return { position: pos };
+  }
+  return { position: pos, adjust: group.map((u) => ({ id: u.id, position: [u.position[0], u.position[1] - shift, u.position[2]] as [number, number, number] })) };
+};
+
+/**
+ * A second standing board aimed near a lone first one snaps to a bench leg's
+ * spacing from it, in line with its face or its edge (whichever the aim is
+ * nearer), turned the same way. Boards in a wall run are left alone.
+ */
+const partnerLegSpot = (i: SnapInput): { position: THREE.Vector3; rotation: THREE.Quaternion; partner: LogData; dir: THREE.Vector3 } | null => {
+  const c = i.carried;
+  const uprights = i.placed.filter((l) => !l.onBench && l.kind !== 'door' && isBoard(l.kind) && isUpright(frameOf(l)));
+  let best: { l: LogData; d: number } | null = null;
+  for (const l of uprights) {
+    const d = Math.hypot(l.position[0] - i.point.x, l.position[2] - i.point.z);
+    if (d < 0.3 || d > 1.8 || (best && d > best.d)) continue;
+    const lone = !uprights.some((o) => o.id !== l.id && Math.hypot(o.position[0] - l.position[0], o.position[2] - l.position[2]) < 0.6);
+    if (lone) best = { l, d };
+  }
+  if (!best) return null;
+  const f = frameOf(best.l);
+  const off = i.point.clone().sub(f.center).setY(0);
+  const n = horizontal(f.normal), w = horizontal(f.width);
+  const alongN = off.dot(n), alongW = off.dot(w);
+  const dir = Math.abs(alongN) >= Math.abs(alongW) ? n.multiplyScalar(Math.sign(alongN) || 1) : w.multiplyScalar(Math.sign(alongW) || 1);
+  const p = f.center.clone().addScaledVector(dir, LEG_SPACING);
+  p.y = i.groundAt(p.x, p.z) + c.length / 2 - BOARD_SINK;
+  return { position: p, rotation: f.q.clone(), partner: best.l, dir };
+};
+
+/** Height of a workbench top above the ground (legs longer than this are driven in). */
+export const BENCH_HEIGHT = 0.8;
+
+/**
+ * The second bench leg joins the first: both stand face-on across the line
+ * between them (end panels, so the top rests on their full width), and both
+ * are driven into the ground to leave a working height, level with each other.
+ */
+const pairLegs = (i: SnapInput, leg: { position: THREE.Vector3; partner: LogData; dir: THREE.Vector3 }): Placement | null => {
+  const c = i.carried;
+  const A = leg.partner;
+  const faceAcross = uprightQuat(new THREE.Vector3().crossVectors(UP, leg.dir).normalize());
+  const gA = i.groundAt(A.position[0], A.position[2]);
+  const gB = i.groundAt(leg.position.x, leg.position.z);
+  const aTop = A.position[1] + A.length / 2;
+  const bMaxTop = gB + c.length - BOARD_SINK;
+  let top = Math.min(Math.max(gA, gB) + BENCH_HEIGHT, aTop, bMaxTop);
+  // Too steep to pair (a leg would have to be lifted off its ground): stand it on its own.
+  if (top < Math.max(gA, gB) + MIN_EXPOSED) return null;
+  const pos = leg.position.clone().setY(top - c.length / 2);
+  const rot: [number, number, number, number] = [faceAcross.x, faceAcross.y, faceAcross.z, faceAcross.w];
+  return {
+    position: pos, rotation: faceAcross, valid: i.normal.y > 0.6,
+    adjust: [{ id: A.id, position: [A.position[0], top - A.length / 2, A.position[2]], rotation: rot }],
+  };
+};
+
+/**
+ * A post aimed near where a square base's next corner would be (one wall
+ * span from an existing post, square to it) snaps there, turned the same way.
+ */
+const cornerPostSpot = (i: SnapInput): { position: THREE.Vector3; rotation: THREE.Quaternion } | null => {
+  const c = i.carried;
+  const posts = i.placed.filter((l) => !l.onBench && !isBoard(l.kind) && isUpright(frameOf(l)));
+  let best: { p: THREE.Vector3; q: THREE.Quaternion; d: number } | null = null;
+  for (const post of posts) {
+    const f = frameOf(post);
+    for (const axis of [horizontal(f.width), horizontal(f.normal)]) {
+      for (const span of POST_SPACINGS) {
+        for (const sgn of [1, -1]) {
+          const spot = f.center.clone().addScaledVector(axis, sgn * span);
+          const d = Math.hypot(spot.x - i.point.x, spot.z - i.point.z);
+          if (d > 0.9 || (best && d >= best.d)) continue;
+          if (posts.some((o) => Math.hypot(o.position[0] - spot.x, o.position[2] - spot.z) < 0.4)) continue;
+          best = { p: spot, q: f.q.clone(), d };
+        }
+      }
+    }
+  }
+  if (!best) return null;
+  best.p.y = i.groundAt(best.p.x, best.p.z) + c.length / 2 - SINK;
+  return { position: best.p, rotation: best.q };
+};
+
+/**
+ * A pair of level uprights (bench legs, posts) near `p`: the one whose
+ * midpoint is nearest, close enough for a piece of length `len` to span.
+ */
+const uprightPairNear = (i: SnapInput, p: THREE.Vector3, len: number): { mid: THREE.Vector3; dir: THREE.Vector3 } | null => {
+  const ups = i.placed.filter((l) => !l.onBench && l.kind !== 'door' && isUpright(frameOf(l)));
+  let best: { mid: THREE.Vector3; dir: THREE.Vector3; d: number } | null = null;
+  for (let a = 0; a < ups.length; a++) {
+    for (let b = a + 1; b < ups.length; b++) {
+      const A = ups[a], B = ups[b];
+      const ta = A.position[1] + A.length / 2, tb = B.position[1] + B.length / 2;
+      if (Math.abs(ta - tb) > 0.12) continue;
+      const d = new THREE.Vector3(B.position[0] - A.position[0], 0, B.position[2] - A.position[2]);
+      const dist = d.length();
+      if (dist < 0.4 || dist > len + 0.1) continue;
+      const mid = new THREE.Vector3((A.position[0] + B.position[0]) / 2, Math.max(ta, tb), (A.position[2] + B.position[2]) / 2);
+      const m = Math.hypot(mid.x - p.x, mid.z - p.z);
+      if (m > 1.3 || (best && m > best.d)) continue;
+      best = { mid, dir: d.normalize(), d: m };
+    }
+  }
+  return best ? { mid: best.mid, dir: best.dir } : null;
+};
+
+/**
+ * Two bench legs near `p`: a lone pair of standing boards (nothing else
+ * standing within 0.6 m of either, so not part of a board wall) with level
+ * tops, close enough for a board of length `len` to span them.
+ */
+export const benchLegPairNear = (placed: LogData[], p: THREE.Vector3, len: number): { mid: THREE.Vector3; dir: THREE.Vector3 } | null => {
+  const legs = placed.filter((l) => !l.onBench && l.kind === 'plank' && isUpright(frameOf(l)));
+  const near = (a: LogData, b: LogData) => Math.hypot(a.position[0] - b.position[0], a.position[2] - b.position[2]);
+  let best: { mid: THREE.Vector3; dir: THREE.Vector3; d: number } | null = null;
+  for (let a = 0; a < legs.length; a++) {
+    for (let b = a + 1; b < legs.length; b++) {
+      const A = legs[a], B = legs[b];
+      const dist = near(A, B);
+      if (dist < 0.4 || dist > len + 0.1) continue;
+      const ta = A.position[1] + A.length / 2, tb = B.position[1] + B.length / 2;
+      if (Math.abs(ta - tb) > 0.12) continue;
+      if (legs.some((o) => o !== A && o !== B && (near(o, A) < 0.6 || near(o, B) < 0.6))) continue;
+      const mid = new THREE.Vector3((A.position[0] + B.position[0]) / 2, Math.max(ta, tb), (A.position[2] + B.position[2]) / 2);
+      const d = Math.min(Math.hypot(mid.x - p.x, mid.z - p.z), Math.hypot(A.position[0] - p.x, A.position[2] - p.z), Math.hypot(B.position[0] - p.x, B.position[2] - p.z));
+      if (d > 1.3 || (best && d > best.d)) continue;
+      best = { mid, dir: new THREE.Vector3(B.position[0] - A.position[0], 0, B.position[2] - A.position[2]).normalize(), d };
+    }
+  }
+  return best ? { mid: best.mid, dir: best.dir } : null;
+};
+
+/**
+ * Two parallel lying logs (or beams) near `p` with level tops, far enough
+ * apart for a board of length `len` to lie across both (sawhorses, joists).
+ * Returns where the board's middle goes and its direction (across the logs).
+ */
+export const logPairNear = (placed: LogData[], p: THREE.Vector3, len: number): { mid: THREE.Vector3; dir: THREE.Vector3 } | null => {
+  const logs = placed.filter((l) => !l.onBench && !isBoard(l.kind) && !isUpright(frameOf(l)));
+  let best: { mid: THREE.Vector3; dir: THREE.Vector3; d: number } | null = null;
+  for (let a = 0; a < logs.length; a++) {
+    for (let b = a + 1; b < logs.length; b++) {
+      const A = frameOf(logs[a]), B = frameOf(logs[b]);
+      const ax = horizontal(A.axis);
+      if (Math.abs(ax.dot(horizontal(B.axis))) < 0.9) continue;
+      const ta = A.center.y + logs[a].radius, tb = B.center.y + logs[b].radius;
+      if (Math.abs(ta - tb) > 0.12) continue;
+      // Where the board crosses each log: the points on their lines nearest the aim, kept on the logs.
+      const onA = A.center.clone().addScaledVector(ax, THREE.MathUtils.clamp(p.clone().sub(A.center).dot(ax), -logs[a].length / 2, logs[a].length / 2));
+      const onB = B.center.clone().addScaledVector(ax, THREE.MathUtils.clamp(p.clone().sub(B.center).dot(ax), -logs[b].length / 2, logs[b].length / 2));
+      const across = onB.clone().sub(onA).setY(0);
+      const gap = Math.abs(across.dot(new THREE.Vector3(-ax.z, 0, ax.x)));
+      if (gap < 0.4 || gap > len + 0.1) continue;
+      const mid = onA.clone().add(onB).multiplyScalar(0.5).setY(Math.max(ta, tb));
+      const d = Math.hypot(mid.x - p.x, mid.z - p.z);
+      if (d > gap / 2 + 0.8 || (best && d > best.d)) continue;
+      const perp = new THREE.Vector3(-ax.z, 0, ax.x);
+      best = { mid, dir: perp.multiplyScalar(Math.sign(across.dot(perp)) || 1), d };
+    }
+  }
+  return best ? { mid: best.mid, dir: best.dir } : null;
 };
 
 /**
@@ -305,6 +502,19 @@ const placeBoard = (i: SnapInput): Placement => {
   const t = i.target;
   const half = pieceHalfDepth(c);
   const mode = i.mode;
+  // A plank near a pair of bench legs is the table top, whichever way it was
+  // set (after two standing legs the plank is still "standing": nobody wants
+  // a third leg stacked on a leg).
+  if (c.kind === 'plank' && mode !== 'pitched') {
+    const legs = benchLegPairNear(i.placed, i.point, c.length);
+    if (legs) return { position: legs.mid.addScaledVector(UP, half), rotation: lyingQuat(legs.dir), valid: true };
+  }
+  // A flat board aimed at one of two level parallel logs lies across both
+  // (sawhorse bench, floor joists).
+  if (mode === 'flat' && t && !isBoard(t.kind) && !isUpright(frameOf(t))) {
+    const pair = logPairNear(i.placed, i.point, c.length);
+    if (pair) return { position: pair.mid.addScaledVector(UP, half), rotation: lyingQuat(pair.dir), valid: true };
+  }
   if (t && isBoard(t.kind) && t.kind !== 'door' && boardStance(frameOf(t)) === mode) return besideBoard(i, t);
   if (t && mode === 'pitched' && c.kind === 'roof') {
     const tf = frameOf(t);
@@ -326,8 +536,17 @@ const placeBoard = (i: SnapInput): Placement => {
       p.y = topOf(t, tf) + c.length / 2;
       return { position: p, rotation: uprightQuat(across), valid: true };
     }
-    const p = levelWithNeighbour(i, i.point.clone().addScaledVector(UP, c.length / 2 - BOARD_SINK));
-    return { position: p, rotation: uprightQuat(across), valid: i.normal.y > 0.6 };
+    const leg = partnerLegSpot(i);
+    const paired = leg ? pairLegs(i, leg) : null;
+    if (paired) return paired;
+    const lv = levelWithNeighbour(i, i.point.clone().addScaledVector(UP, c.length / 2 - BOARD_SINK));
+    return { position: lv.position, rotation: uprightQuat(across), valid: i.normal.y > 0.6, adjust: lv.adjust };
+  }
+  // A flat board near a pair of level legs becomes a table top across them,
+  // wherever it is aimed (not only at a leg's thin top edge).
+  if (mode === 'flat' && !(t && isBoard(t.kind) && boardStance(frameOf(t)) === 'flat')) {
+    const pair = uprightPairNear(i, i.point, c.length);
+    if (pair) return { position: pair.mid.addScaledVector(UP, half), rotation: lyingQuat(pair.dir), valid: true };
   }
   // Flat or pitched: length across the view.
   let rot = lyingQuat(across);
@@ -362,8 +581,9 @@ const placeTimber = (i: SnapInput): Placement => {
       p.y = topOf(t, tf) + len / 2;
       return { position: p, rotation: uprightQuat(a), valid: true };
     }
-    const p = levelWithNeighbour(i, i.point.clone().addScaledVector(UP, len / 2 - SINK));
-    return { position: p, rotation: uprightQuat(acrossDir(i, i.point)), valid: i.normal.y > 0.6 };
+    const leg = cornerPostSpot(i);
+    const lv = levelWithNeighbour(i, leg ? leg.position : i.point.clone().addScaledVector(UP, len / 2 - SINK));
+    return { position: lv.position, rotation: leg ? leg.rotation : uprightQuat(acrossDir(i, i.point)), valid: i.normal.y > 0.6, adjust: lv.adjust };
   }
   // Lying.
   if (t) {
@@ -372,7 +592,32 @@ const placeTimber = (i: SnapInput): Placement => {
       // On a post: span to the nearest post at the same height, else sit centred.
       const top = topOf(t, tf);
       const span = spanFrom(i, t, tf, len);
-      if (span) return { position: span.mid.addScaledVector(UP, r), rotation: lyingQuat(span.dir), valid: true };
+      if (span) {
+        // A sill across two posts. If the other pair of sills already rests on
+        // these posts, this one crosses them at a notched corner, half a log up.
+        const pos = span.mid.addScaledVector(UP, r);
+        const ends = [tf.center.clone(), tf.center.clone().addScaledVector(span.dir, span.mid.clone().setY(tf.center.y).distanceTo(tf.center) * 2)];
+        let rest = -Infinity;
+        let restR = 0;
+        let restNotched = false;
+        for (const l of i.placed) {
+          if (l.onBench || isBoard(l.kind)) continue;
+          const lf = frameOf(l);
+          if (isUpright(lf) || Math.abs(horizontal(lf.axis).dot(span.dir)) > 0.3) continue;
+          if (lf.center.y < top || lf.center.y > top + 1.2) continue;
+          const onPost = ends.some((e) => {
+            const d = e.clone().sub(lf.center).setY(0);
+            const along = THREE.MathUtils.clamp(d.dot(horizontal(lf.axis)), -l.length / 2, l.length / 2);
+            return d.addScaledVector(horizontal(lf.axis), -along).length() < 0.3;
+          });
+          if (onPost && lf.center.y > rest) { rest = lf.center.y; restR = l.radius; restNotched = (l.notches ?? 'none') !== 'none'; }
+        }
+        if (rest > -Infinity) {
+          const mine = (c.kind ?? 'log') === 'log' && (c.notches ?? 'none') !== 'none';
+          pos.y = rest + (mine && restNotched ? 0.5 : mine || restNotched ? 0.75 : 1) * (restR + r);
+        }
+        return { position: pos, rotation: lyingQuat(span.dir), valid: true };
+      }
       const p = tf.center.clone();
       p.y = top + r;
       return { position: p, rotation: lyingQuat(acrossDir(i, i.point)), valid: true };
@@ -411,7 +656,8 @@ const placeTimber = (i: SnapInput): Placement => {
         const at = center.clone().setY(y);
         for (const k of [-0.5, 0, 0.5]) {
           const p = at.clone().addScaledVector(axisDir, k * len);
-          if (y - r < i.groundAt(p.x, p.z) - 0.25 * r) return false;
+          // A log may bed a little into the soil (up to 0.6 r), not sink into it.
+          if (y - r < i.groundAt(p.x, p.z) - 0.6 * r) return false;
         }
         return !i.placed.some((l) => {
           if (l.id === t.id || l.onBench || isBoard(l.kind)) return false;
@@ -439,7 +685,15 @@ const placeTimber = (i: SnapInput): Placement => {
     const notchSide = t.notches === 'one' ? 1 : (s || 1);
     return { position: center, rotation: lyingQuat(c.notches === 'one' ? a.clone().multiplyScalar(notchSide) : a), valid: true };
   }
-  return { position: i.point.clone().addScaledVector(UP, r * 0.85), rotation: lyingQuat(acrossDir(i, i.point)), valid: i.normal.y > 0.45 };
+  // On bare ground: rest on the highest ground under it (never half buried);
+  // on a slope the low end stands off the ground.
+  const dir = acrossDir(i, i.point);
+  let high = i.point.y;
+  for (const k of [-0.5, -0.25, 0.25, 0.5]) {
+    const at = i.point.clone().addScaledVector(dir, k * len);
+    high = Math.max(high, i.groundAt(at.x, at.z));
+  }
+  return { position: i.point.clone().setY(high + r * 0.85), rotation: lyingQuat(dir), valid: i.normal.y > 0.45 };
 };
 
 export function computePlacement(i: SnapInput): Placement {

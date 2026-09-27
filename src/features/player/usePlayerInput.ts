@@ -3,6 +3,7 @@ import { useInputStore } from '@/state/InputStore';
 import { useSettingsStore } from '@/state/SettingsStore';
 import { useCraftingStore } from '@/state/CraftingStore';
 import { isCarpentryOpen } from '@/state/CarpentryStore';
+import { isSketchbookOpen } from '@/state/SketchbookStore';
 
 const NO_INPUT = { move: { x: 0, z: 0 }, jump: false, shift: false, crouch: false } as const;
 
@@ -12,7 +13,7 @@ export const usePlayerInput = () => {
 
   return () => {
     // Menus own the keyboard: the player must not walk while crafting or in settings.
-    if (useCraftingStore.getState().isOpen || isCarpentryOpen() || useSettingsStore.getState().isSettingsOpen) {
+    if (useCraftingStore.getState().isOpen || isCarpentryOpen() || isSketchbookOpen() || useSettingsStore.getState().isSettingsOpen) {
       return { move: { ...NO_INPUT.move }, jump: false, shift: false, crouch: false };
     }
     if (inputMode === 'touch') {

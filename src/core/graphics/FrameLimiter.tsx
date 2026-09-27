@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { useSettingsStore } from '@/state/SettingsStore';
 
 /**
@@ -21,7 +22,7 @@ export const FrameLimiter: React.FC = () => {
     const pausedGap = 1000 / PAUSED_FPS - 1.5;
     const paused = () => {
       const st = useSettingsStore.getState();
-      return st.isSettingsOpen || (st.inputMode === 'mouse' && !document.pointerLockElement);
+      return st.isSettingsOpen || (st.inputMode === 'mouse' && !isPointerCaptured());
     };
     let last = -Infinity;
     let id = 0;

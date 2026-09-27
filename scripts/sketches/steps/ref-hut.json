@@ -1,0 +1,10 @@
+[
+  {"do": "await t.key('Space', 60); await t.wait(90); await t.key('Space', 60); const h = __hut, c = h.center; const g = t.groundAt(c.x, c.z); t.teleport(c.x - 4.2, g + 1.4, c.z + 4.4); await t.frames(20); t.lookAt(c.x - 1.3, g + 1.2, c.z + 1.3); await t.frames(20); return 1;"},
+  {"shot": "ref-corner"},
+  {"do": "const h = __hut, c = h.center; const g = t.groundAt(c.x, c.z); t.teleport(c.x + 0.6, g + 1.2, c.z + 5.2); await t.frames(20); t.lookAt(c.x + 0.4, g + 1.3, c.z); await t.frames(20); return 1;"},
+  {"shot": "ref-doorway"},
+  {"do": "const h = __hut, c = h.center; const g = t.groundAt(c.x, c.z); t.teleport(c.x + 6.5, g + 1.8, c.z + 0.2); await t.frames(20); t.lookAt(c.x, g + 2.2, c.z); await t.frames(20); return 1;"},
+  {"shot": "ref-roof"},
+  {"do": "const L = __logStore.getState().logs, d = L[__hut.door]; t.teleport(d.position[0] + 0.3, d.position[1], d.position[2] + 2.0); await t.frames(20); t.lookAt(d.position[0], d.position[1] + 0.1, d.position[2]); await t.frames(20); return 1;"},
+  {"shot": "ref-door"}
+]

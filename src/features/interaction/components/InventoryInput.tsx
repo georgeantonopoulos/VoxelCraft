@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useInventoryStore } from '@state/InventoryStore';
 import { useLogStore } from '@/state/LogStore';
 import { createWheelStepper } from '@features/interaction/logic/wheelStepper';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -23,7 +24,7 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
 
     const handleWheel = (e: WheelEvent) => {
       // Inventory scrolling is a gameplay input; only respond when pointer is locked.
-      if (!document.pointerLockElement) return;
+      if (!isPointerCaptured()) return;
       // Prevent the page from scrolling while in pointer lock on some browsers.
       e.preventDefault();
       const carrying = !!useLogStore.getState().carriedId;
@@ -38,7 +39,7 @@ export const InventoryInput: React.FC<{ enabled: boolean }> = ({ enabled }) => {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!document.pointerLockElement) return;
+      if (!isPointerCaptured()) return;
       if (isTextInputTarget(e.target)) return;
 
       // Handle both top-row digits and numpad digits.

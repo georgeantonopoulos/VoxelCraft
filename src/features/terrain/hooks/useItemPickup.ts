@@ -21,7 +21,12 @@ import {
   rayHitsTorch,
 } from '@features/terrain/logic/raycastUtils';
 import { ChunkState, ItemType, CustomTool } from '@/types';
-import { useLogStore } from '@/state/LogStore';
+import { useLogStore, pieceHalfDepth } from '@/state/LogStore';
+import { lyingQuat } from '@features/building/logic/pieceFrame';
+import { loadSummary } from '@features/building/buildModeStore';
+import { collapseUnsupportedNear } from '@features/building/collapse';
+import { makeGroundProbe } from '@features/building/groundProbe';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { toolDisplayName } from '@features/interaction/logic/ToolCapabilities';
 
 export interface PickupEffect {
@@ -64,33 +69,57 @@ export function useItemPickup({
       // Arm's reach (it was 10 m: things vanished from across a clearing).
       const maxDist = 4.0;
 
-      // Logs are carried in both hands, not pocketed: Q takes one up or sets
-      // the carried one down in front.
+      // Building pieces are carried in the arms, not pocketed. Q takes up the
+      // piece looked at and adds it to the load while it fits (CARRY_CAPACITY);
+      // with arms already full of wood only loose pieces are taken, never a
+      // piece of a build. Q anywhere else sets the whole load down in a pile.
       const logs = useLogStore.getState();
-      if (logs.carriedId) {
+      const carrying = logs.carried.length > 0;
+      const logHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined,
+        (c: { parent: () => { userData?: unknown } | null }) => (c.parent()?.userData as { type?: string } | undefined)?.type === 'log');
+      const hitId = (logHit?.collider.parent()?.userData as { id?: string } | undefined)?.id;
+      const hitLog = hitId ? logs.logs[hitId] : undefined;
+      if (hitLog && (hitLog.state === 'loose' || (!carrying && hitLog.state === 'placed'))) {
+        const wasPlaced = hitLog.state === 'placed';
+        if (logs.pickUp(hitLog.id)) {
+          window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.75, volume: 0.45 } } }));
+          // The first time wood is taken up, point to the building sketches (once per browser).
+          try {
+            if (!window.localStorage.getItem('vc-sketch-hint-v1')) {
+              window.localStorage.setItem('vc-sketch-hint-v1', '1');
+              window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: 'J opens your old building sketches' } }));
+            }
+          } catch { /* storage blocked */ }
+          // Taken out of a build: what it held up falls.
+          if (wasPlaced) collapseUnsupportedNear(makeGroundProbe(world, rapier), new THREE.Vector3(...hitLog.position));
+          if (carrying) {
+            const st = useLogStore.getState();
+            window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: `Carrying ${loadSummary(st.carried.map((c) => st.logs[c]))}` } }));
+          }
+        } else {
+          window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: 'Your arms are full · Q at open ground sets the load down' } }));
+        }
+        return;
+      }
+      if (carrying) {
         const flat = new THREE.Vector3(dir.x, 0, dir.z);
         if (flat.lengthSq() < 1e-6) flat.set(0, 0, -1);
         flat.normalize();
         const at = origin.clone().addScaledVector(flat, 1.3);
         at.y -= 0.6;
-        // Lay it across the view: long axis sideways.
-        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-flat.z, 0, flat.x));
-        logs.updateLog(logs.carriedId, { state: 'loose', position: [at.x, at.y, at.z], rotation: [q.x, q.y, q.z, q.w] });
-        logs.setCarried(null);
+        // A neat pile across the view, faces up, the first taken up at the bottom.
+        const q = lyingQuat(new THREE.Vector3(-flat.z, 0, flat.x));
+        let lift = 0;
+        for (const id of [...logs.carried]) {
+          const piece = logs.logs[id];
+          if (!piece) continue;
+          const half = pieceHalfDepth(piece);
+          logs.updateLog(id, { state: 'loose', position: [at.x, at.y + lift + half, at.z], rotation: [q.x, q.y, q.z, q.w] });
+          logs.release(id);
+          lift += half * 2 + 0.03;
+        }
         window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.6, volume: 0.5 } } }));
         return;
-      }
-      const logHit = world.castRay(new rapier.Ray(origin, dir), maxDist, true, undefined, undefined, undefined, undefined,
-        (c: { parent: () => { userData?: unknown } | null }) => (c.parent()?.userData as { type?: string } | undefined)?.type === 'log');
-      if (logHit?.collider) {
-        const id = (logHit.collider.parent()?.userData as { id?: string } | undefined)?.id;
-        const log = id ? logs.logs[id] : undefined;
-        if (log && (log.state === 'loose' || log.state === 'placed')) {
-          logs.updateLog(log.id, { state: 'carried', onBench: undefined, open: undefined });
-          logs.setCarried(log.id);
-          window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.75, volume: 0.45 } } }));
-          return;
-        }
       }
 
       // Pick a single closest target along the ray:
@@ -313,7 +342,7 @@ export function useItemPickup({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'KeyQ') return;
       // Keyboard pickup is only active during pointer-locked gameplay.
-      if (!document.pointerLockElement) return;
+      if (!isPointerCaptured()) return;
       e.preventDefault();
       attemptPickup();
     };

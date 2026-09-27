@@ -5,9 +5,12 @@ import { useRapier } from '@react-three/rapier';
 import { useLogStore, lastPlaced, PLANK_THICKNESS, ROOF_THICKNESS, DOOR_THICKNESS, type LogData } from '@/state/LogStore';
 import { emitImpact } from '@features/interaction/components/ImpactFX';
 import { TerrainService } from '@features/terrain/logic/terrainService';
-import { computePlacement, type Placement } from '../logic/buildSnap';
-import type { Bench } from '../logic/benches';
+import { computePlacement, benchLegPairNear, logPairNear, type Placement } from '../logic/buildSnap';
+import { SAWHORSE_MAX_LENGTH, type Bench } from '../logic/benches';
+import { frameOf, isUpright } from '../logic/pieceFrame';
 import { useBuildModeStore } from '../buildModeStore';
+import { isHeld, supportedSet } from '../logic/support';
+import { makeGroundProbe } from '../groundProbe';
 
 /**
  * Placing a carried piece. A ghost shows where it will go, softly green when
@@ -36,12 +39,35 @@ const ghostGeometry = (p: LogData): THREE.BufferGeometry => {
   }
 };
 
+/** A short note walking the player through a workbench, after each piece that starts one. */
+const benchHint = (id: string) => {
+  const all = Object.values(useLogStore.getState().logs).filter((l) => l.state === 'placed');
+  const piece = all.find((l) => l.id === id);
+  if (!piece) return;
+  const note = (text: string) => window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text } }));
+  const f = frameOf(piece);
+  const p = new THREE.Vector3(...piece.position);
+  if (piece.kind === 'plank' && isUpright(f)) {
+    if (benchLegPairNear(all, p, 3.1)) note('Bench legs set · now lay a plank across them');
+    else if (!all.some((o) => o.id !== id && o.kind === 'plank' && isUpright(frameOf(o)) && Math.hypot(o.position[0] - p.x, o.position[2] - p.z) < 1.8)) {
+      note('A bench leg · set a second standing plank beside it');
+    }
+  } else if ((piece.kind ?? 'log') === 'log' && !isUpright(f) && piece.length <= SAWHORSE_MAX_LENGTH && logPairNear(all, p, 3.1)) {
+    note('Two sawhorses · lay a plank flat across them for a bench');
+  }
+};
+
 export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
   const { camera } = useThree();
   const { world, rapier } = useRapier();
   const carried = useLogStore((s) => (s.carriedId ? s.logs[s.carriedId] : null));
   const ghost = useRef<THREE.Group>(null);
   const placement = useRef<Placement | null>(null);
+  // Will the piece stay where it is set? (orange ghost, and it falls when placed)
+  const heldRef = useRef(true);
+  const probe = useMemo(() => makeGroundProbe(world, rapier), [world, rapier]);
+  // Supported pieces, recomputed only when the pieces change.
+  const supportCache = useRef<{ logs: unknown; pieces: LogData[] }>({ logs: null, pieces: [] });
   const benchesRef = useRef(benches);
   benchesRef.current = benches;
   const dir = useMemo(() => new THREE.Vector3(), []);
@@ -54,7 +80,8 @@ export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
       if (!piece) return;
       useBuildModeStore.getState().cycle(piece.kind);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.code === 'KeyR' && useLogStore.getState().carriedId) toggle(); };
+    // One step per press: a held key's auto-repeat skipped past the wanted mode.
+    const onKey = (e: KeyboardEvent) => { if (e.code === 'KeyR' && !e.repeat && useLogStore.getState().carriedId) toggle(); };
     window.addEventListener('vc-build-rotate', toggle);
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('vc-build-rotate', toggle); window.removeEventListener('keydown', onKey); };
@@ -70,6 +97,17 @@ export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
         window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 1.6, volume: 0.25 } } }));
         return;
       }
+      // Nothing holds it there: let go of it and it falls.
+      if (!p.onBench && !heldRef.current) {
+        logs.updateLog(id, {
+          state: 'loose',
+          position: [p.position.x, p.position.y + 0.02, p.position.z],
+          rotation: [p.rotation.x, p.rotation.y, p.rotation.z, p.rotation.w],
+        });
+        logs.release(id);
+        window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: 'Nothing holds it there · it falls' } }));
+        return;
+      }
       logs.updateLog(id, {
         state: 'placed',
         position: [p.position.x, p.position.y, p.position.z],
@@ -77,7 +115,9 @@ export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
         onBench: p.onBench,
         ...(p.swing ? { swing: p.swing, open: false } : {}),
       });
-      logs.setCarried(null);
+      logs.release(id);
+      // A neighbour moved to fit (a bench leg driven down to level with this one).
+      for (const a of p.adjust ?? []) logs.updateLog(a.id, a.rotation ? { position: a.position, rotation: a.rotation } : { position: a.position });
       lastPlaced.id = id;
       lastPlaced.at = performance.now();
       const base = p.position.clone();
@@ -87,6 +127,7 @@ export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
         return;
       }
       emitImpact({ position: base, direction: UP, kind: 'earth', color: '#6b5236', strength: 0.6, floorY: base.y - 1 });
+      benchHint(id);
       window.dispatchEvent(new CustomEvent('vc-audio-play', { detail: { soundId: 'wood_hit', options: { pitch: 0.55, volume: 0.9 } } }));
     };
     window.addEventListener('vc-log-place-request', onPlace);
@@ -122,13 +163,23 @@ export const BuildPreview: React.FC<{ benches: Bench[] }> = ({ benches }) => {
       view: dir.clone(),
       placed,
       benches: benchesRef.current,
-      groundAt: (x, z) => TerrainService.getHeightAt(x, z),
+      groundAt: (x, z) => probe(x, z, point.y) ?? TerrainService.getHeightAt(x, z),
     });
     placement.current = p;
+    if (supportCache.current.logs !== all) {
+      const placedNow = Object.values(all).filter((l) => l.state === 'placed');
+      const held = supportedSet(placedNow, probe);
+      supportCache.current = { logs: all, pieces: placedNow.filter((l) => held.has(l.id)) };
+    }
+    heldRef.current = !!p.onBench || isHeld({
+      ...carried, state: 'placed', onBench: p.onBench,
+      position: [p.position.x, p.position.y, p.position.z],
+      rotation: [p.rotation.x, p.rotation.y, p.rotation.z, p.rotation.w],
+    }, supportCache.current.pieces, probe);
     g.visible = true;
     g.position.copy(p.position);
     g.quaternion.copy(p.rotation);
-    const tone = !p.valid ? '#b4745f' : p.onBench ? '#e0b86a' : '#9dbd62';
+    const tone = !p.valid ? '#b4745f' : p.onBench ? '#e0b86a' : !heldRef.current ? '#e08a3c' : '#9dbd62';
     ghostMaterial.color.set(tone);
     ghostMaterial.emissive.set(tone);
   });

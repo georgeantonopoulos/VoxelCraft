@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import { PLAYER_SPEED, JUMP_FORCE } from '@/constants';
 import { MaterialType } from '@/types';
-import { useLogStore } from '@/state/LogStore';
+import { useLogStore, CARRY_CAPACITY } from '@/state/LogStore';
 import { useGroveStore } from '@state/GroveStore';
 import { strideMultiplier } from '@features/grove/questLine';
 import { terrainRuntime } from '@features/terrain/logic/TerrainRuntime';
@@ -99,6 +99,8 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
   const strideDistance = useRef(0);
   // Rings on the water around the body (wading, swimming, landing in it).
   const rippleTimer = useRef(0);
+  // Swim strokes / treading sounds while floating or underwater.
+  const swimSoundTimer = useRef(0);
   const wasAtSurface = useRef(false);
   const spacePressHandled = useRef<boolean>(false);
 
@@ -158,6 +160,16 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
         const ray = new rapier.Ray({ x, y, z }, { x: 0, y: -1, z: 0 });
         const hit = world.castRay(ray, max, true, undefined, undefined, undefined, undefined, isTerrainCollider);
         return hit ? y - hit.timeOfImpact : null;
+      },
+      /** What the crosshair rests on (the player's own body skipped): hit point, distance, owner userData. */
+      aim: (max = 12) => {
+        const o = camera.getWorldPosition(new THREE.Vector3());
+        const d = camera.getWorldDirection(new THREE.Vector3());
+        const ray = new rapier.Ray({ x: o.x, y: o.y, z: o.z }, { x: d.x, y: d.y, z: d.z });
+        const hit = world.castRay(ray, max, true, undefined, undefined, undefined, body.current ?? undefined);
+        if (!hit) return null;
+        const p = ray.pointAt(hit.timeOfImpact);
+        return { point: [p.x, p.y, p.z], distance: hit.timeOfImpact, owner: hit.collider.parent()?.userData ?? null };
       },
     };
     (window as unknown as { __vcDebug?: typeof api }).__vcDebug = api;
@@ -334,8 +346,9 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
     const crouchMul = isCrouching.current ? CROUCH_SPEED_MULTIPLIER : 1.0;
     // Keeper rank perk: faster stride on foot (see questLine.strideMultiplier).
     const strideMul = strideMultiplier(useGroveStore.getState().progression.essence);
-    // Carrying a log slows the walk.
-    const carryMul = useLogStore.getState().carriedId ? 0.65 : 1.0;
+    // Carrying slows the walk, more for a heavier load (a full load: 0.65).
+    const logStore = useLogStore.getState();
+    const carryMul = logStore.carried.length ? 1 - 0.35 * Math.min(1, logStore.carryLoad() / CARRY_CAPACITY) : 1.0;
     const baseSpeed = isFlying ? FLY_SPEED : (inWater ? SWIM_SPEED : PLAYER_SPEED * crouchMul * strideMul * carryMul);
     const drag = (inWater && !isFlying) ? (1.0 - 0.35 * submersion) : 1.0;
 
@@ -429,7 +442,22 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
 
     // Footsteps: one per stride while walking on the ground or wading.
     const horizSpeed = Math.hypot(scratchVelocity.x, scratchVelocity.z);
-    if (!isFlying && horizSpeed > 0.6) {
+    // How deep the water is at the feet: wading below ~1.15 m, floating above it.
+    const bodyFeetY = pos.y - (isCrouching.current ? CAPSULE_HALF_HEIGHT_CROUCHED : CAPSULE_HALF_HEIGHT_NORMAL) - CAPSULE_RADIUS;
+    const waterAtFeet = inWater ? (seaSurfaceY != null ? seaSurfaceY - bodyFeetY : 0.6) : 0;
+    const swimming = inWater && !isFlying && (waterAtFeet > 1.15 || isFullyUnderwater);
+    if (swimming) {
+      // Strokes while moving (every ~1 s, alternating arms), a slow slosh treading water;
+      // underwater, muffled swirls and bubble trails.
+      swimSoundTimer.current -= delta;
+      if (swimSoundTimer.current <= 0) {
+        const moving = horizSpeed > 0.5 || Math.abs(scratchVelocity.y) > 1.2;
+        const kind = isFullyUnderwater ? 'under' : moving ? 'stroke' : 'tread';
+        swimSoundTimer.current = isFullyUnderwater ? (moving ? 1.2 : 3.5) : moving ? 1.0 : 2.4;
+        window.dispatchEvent(new CustomEvent('vc-audio-water', { detail: { kind, depth: 1, loudness: moving ? 0.8 : 0.5 } }));
+      }
+      strideDistance.current = 0;
+    } else if (!isFlying && horizSpeed > 0.6) {
       strideDistance.current += horizSpeed * delta;
       const stride = isCrouching.current ? 1.1 : 1.9;
       if (strideDistance.current >= stride) {
@@ -443,7 +471,12 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
           : null;
         if (surface) {
           const loudness = (isCrouching.current ? 0.35 : 0.75) * Math.min(1, horizSpeed / PLAYER_SPEED);
-          window.dispatchEvent(new CustomEvent('vc-audio-footstep', { detail: { surface, loudness } }));
+          if (surface === 'water') {
+            // Wading: a splash, bubbles and the drag of the leg, heavier the deeper it is.
+            window.dispatchEvent(new CustomEvent('vc-audio-water', { detail: { kind: 'wade', depth: THREE.MathUtils.clamp(waterAtFeet / 1.1, 0, 1), loudness: loudness * 1.2 } }));
+          } else {
+            window.dispatchEvent(new CustomEvent('vc-audio-footstep', { detail: { surface, loudness } }));
+          }
         }
       }
     } else {
@@ -457,6 +490,7 @@ export const Player = ({ position = [16, 32, 16] }: { position?: [number, number
       if (!wasAtSurface.current && vel.y < -3) {
         const strength = Math.min(2, -vel.y / 6);
         addWaterRipple(pos.x, pos.z, 1.2 + strength * 0.5);
+        window.dispatchEvent(new CustomEvent('vc-audio-water', { detail: { kind: 'plunge', depth: strength, loudness: 1 } }));
         emitImpact({ position: new THREE.Vector3(pos.x, seaSurfaceY, pos.z), kind: 'water', color: '#d6e4e2', strength, floorY: seaSurfaceY });
       }
       rippleTimer.current -= delta;

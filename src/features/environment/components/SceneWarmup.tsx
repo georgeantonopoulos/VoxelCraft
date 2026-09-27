@@ -38,7 +38,14 @@ export const SceneWarmup: React.FC<{ ready: boolean }> = ({ ready }) => {
         // Let the first streamed chunks and effects mount before compiling.
         const id = window.setTimeout(() => {
             if (cancelled) return;
-            const done = () => { if (!cancelled) window.setTimeout(() => setPrototypes(false), 1000); };
+            const done = () => {
+                if (cancelled) return;
+                window.setTimeout(() => {
+                    setPrototypes(false);
+                    // Test mode waits for this before calling the scene ready.
+                    window.dispatchEvent(new Event('vc-warmup-done'));
+                }, 1000);
+            };
             // Without the parallel-compile extension compileAsync only warns and
             // compiles synchronously anyway; do that directly (once, at load).
             if (gl.extensions.has('KHR_parallel_shader_compile')) {

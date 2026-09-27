@@ -93,7 +93,12 @@ export const InventoryBar: React.FC = React.memo(() => {
     const customTools = useInventoryStore(state => state.customTools);
     const carried = useLogStore(state => (state.carriedId ? state.logs[state.carriedId] : null));
     const placeMode = useBuildModeStore(state => (carried ? state.modeOf(carried.kind) : null));
-    const selectedName = carried ? `Carrying a ${pieceName(carried.kind, carried.notches)}${carried.kind === 'door' ? '' : ` (${placeMode}, R turns)`} · right click to place · Q to set down`
+    const loadCount = useLogStore(state => state.carried.length);
+    const inHand = carried ? `${pieceName(carried.kind, carried.notches)}${carried.kind === 'door' ? '' : ` (${placeMode}, R turns)`}` : '';
+    const selectedName = carried
+        ? (loadCount > 1
+            ? `Carrying ${loadCount} pieces · right click places the ${inHand} · Q sets the load down`
+            : `Carrying a ${inHand} · right click to place · Q to set down`)
         : !selectedItem ? ''
         : (typeof selectedItem === 'string' && selectedItem.startsWith('tool_'))
             ? toolDisplayName(customTools[selectedItem])

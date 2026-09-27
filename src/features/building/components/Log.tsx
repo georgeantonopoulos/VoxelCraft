@@ -137,7 +137,7 @@ export const LogsLayer: React.FC = () => {
   useEffect(() => {
     if (seed == null) return;
     // A different world: its own logs only.
-    useLogStore.setState({ logs: {}, carriedId: null });
+    useLogStore.setState({ logs: {}, carried: [], carriedId: null });
     try {
       const raw = window.localStorage.getItem(PLACED_PREFIX + seed);
       const parsed = raw ? (JSON.parse(raw) as LogData[] | { gen: number; logs: LogData[] }) : [];
@@ -155,7 +155,9 @@ export const LogsLayer: React.FC = () => {
       const st = useLogStore.getState();
       const list = Object.values(st.logs).map((l): LogData => {
         if (l.state === 'carried') {
-          return { ...l, state: 'loose', onBench: undefined, position: [playerState.x, playerState.y + 0.6, playerState.z] };
+          // The load is saved as a pile at the player's feet.
+          const k = Math.max(0, st.carried.indexOf(l.id));
+          return { ...l, state: 'loose', onBench: undefined, position: [playerState.x, playerState.y + 0.6 + k * 0.2, playerState.z] };
         }
         if (l.state === 'loose') {
           const body = logBodies.get(l.id);

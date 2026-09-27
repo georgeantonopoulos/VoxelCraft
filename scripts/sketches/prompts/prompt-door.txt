@@ -1,0 +1,5 @@
+Use your image generation tool to create ONE image, then save it as a PNG file at door.png in the current directory. Do not edit any other files.
+
+Reference: the attached screenshot from a game shows a plank door standing in the doorway of a log wall: four vertical boards with two copper strap hinges on the side against the wall logs; round log ends of the crossing wall at the right.
+
+Draw it as a hand-drawn illustration from an old carpenter's field notebook: brown iron-gall ink linework with light cross-hatching and a faint sepia watercolour wash, on plain aged cream paper. It must accurately resemble the pieces in the screenshot: the same pieces, proportions, joints and arrangement. Draw only the wooden pieces (leave out the ground texture, grass, trees, sky, stones, the tool in hand and any interface). No text, no labels, no border, no people. Centered subject, square image, clean background of aged paper.

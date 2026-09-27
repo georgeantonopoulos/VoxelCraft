@@ -284,6 +284,7 @@ const CONTROL_ROWS: Array<[string[], string]> = [
   [['Right click'], 'Place · throw · use'],
   [['Q'], 'Gather · take up or set down a log'],
   [['R'], 'Turn a carried log (or scroll)'],
+  [['J'], 'Building sketches'],
   [['C'], 'Craft (with a stick selected)'],
   [['1–9'], 'Choose item (or scroll)'],
   [['Esc'], 'Pause'],

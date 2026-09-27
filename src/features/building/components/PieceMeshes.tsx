@@ -128,19 +128,13 @@ export const PlankMesh: React.FC<{ length: number; halfWidth: number; bark: stri
   );
 };
 
-/** Squared timber with a tenon on top. */
+/** Squared timber, flat on top (a stub tenon read as a notch cut in one side). */
 export const PostMesh: React.FC<{ length: number; halfSide: number; seed?: number }> = ({ length, halfSide, seed = 1 }) => {
   const body = useDisposable(() => new THREE.BoxGeometry(halfSide * 2, length, halfSide * 2, 1, 6, 1), [length, halfSide]);
-  const tenon = useDisposable(() => new THREE.BoxGeometry(halfSide * 0.9, 0.09, halfSide * 0.9), [halfSide]);
   return (
-    <group>
-      <mesh geometry={body} castShadow receiveShadow>
-        <Wood color={HEWN_WOOD} length={length} seed={seed} />
-      </mesh>
-      <mesh geometry={tenon} position={[0, length / 2 + 0.045, 0]} castShadow>
-        <meshStandardMaterial color={SAWN_WOOD} roughness={0.9} />
-      </mesh>
-    </group>
+    <mesh geometry={body} castShadow receiveShadow>
+      <Wood color={HEWN_WOOD} length={length} seed={seed} />
+    </mesh>
   );
 };
 

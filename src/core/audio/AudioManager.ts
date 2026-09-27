@@ -19,6 +19,7 @@
 
 import { SoundCategory } from './types';
 import { ProceduralAmbience, type FootstepSurface, type WoodworkSound } from './ambience/ProceduralAmbience';
+import type { WaterSoundKind } from './ambience/WaterSounds';
 import type { MusicCue } from './ambience/GroveMusic';
 import type {
   SoundDefinition,
@@ -63,6 +64,11 @@ export class AudioManager {
   private readonly handleFootstep = (e: Event) => {
     const d = (e as CustomEvent<{ surface?: FootstepSurface; loudness?: number }>).detail;
     if (d?.surface) this.ambience.footstep(d.surface, d.loudness ?? 0.7);
+  };
+  /** vc-audio-water: { kind: wade|stroke|tread|under|plunge, depth (plunge: strength), loudness } from the player. */
+  private readonly handleWater = (e: Event) => {
+    const d = (e as CustomEvent<{ kind?: WaterSoundKind; depth?: number; loudness?: number }>).detail;
+    if (d?.kind) this.ambience.bodyInWater(d.kind, d.depth ?? 0.5, d.loudness ?? 0.8);
   };
   /** vc-audio-woodwork: { kind: 'saw' | 'sawDone' | 'split' | 'splitDone', loudness? } */
   private readonly handleWoodwork = (e: Event) => {
@@ -169,6 +175,7 @@ export class AudioManager {
     window.addEventListener('vc-music-cue', this.handleMusicCue);
     window.addEventListener('vc-audio-footstep', this.handleFootstep);
     window.addEventListener('vc-audio-woodwork', this.handleWoodwork);
+    window.addEventListener('vc-audio-water', this.handleWater);
     window.addEventListener('pointerdown', this.startAmbience);
     window.addEventListener('keydown', this.startAmbience);
   }
@@ -449,6 +456,7 @@ export class AudioManager {
     window.removeEventListener('vc-music-cue', this.handleMusicCue);
     window.removeEventListener('vc-audio-footstep', this.handleFootstep);
     window.removeEventListener('vc-audio-woodwork', this.handleWoodwork);
+    window.removeEventListener('vc-audio-water', this.handleWater);
     window.removeEventListener('pointerdown', this.startAmbience);
     window.removeEventListener('keydown', this.startAmbience);
     this.ambience.dispose();

@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 commit_c0af3a2_changes.md
+
+# Test-mode scene runs (npm run scene)
+output/scenes/

@@ -440,7 +440,7 @@ export function useTerrainInteraction(
             return;
           }
 
-          // --- LOOSE LOG --- an axe splits it into two planks.
+          // --- LOOSE LOG --- a saw cuts it in half; an axe splits a log into two planks.
           if (userData.type === 'log' && ((physicsHit as any).timeOfImpact ?? Infinity) <= STRIKE_REACH) {
             const logs = useLogStore.getState();
             const log = logs.logs[userData.id];
@@ -451,6 +451,47 @@ export function useTerrainInteraction(
             const raw = ray.pointAt((physicsHit as any).timeOfImpact ?? 0);
             const at = new THREE.Vector3(raw.x, raw.y, raw.z);
             const away = direction.clone().multiplyScalar(-1).setY(0.7);
+            // A saw cuts a loose log, plank, post or roof board in half (short
+            // bench legs before there is a bench to cut them on).
+            if (log && log.state === 'loose' && log.kind !== 'door' && caps.canSaw && !caps.canChop) {
+              if (log.length < 0.9) {
+                emitImpact({ position: at, direction: away, kind: 'wood', color: '#a88760', strength: 0.3 });
+                window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: 'Too short to saw in half' } }));
+                return;
+              }
+              const h = useEntityHistoryStore.getState().damageEntity(`saw-${log.id}`, 2, 6, 'Sawing');
+              emitImpact({ position: at, direction: away, kind: 'sand', color: '#dcc49a', strength: 1.0, floorY: at.y - 0.5 });
+              woodwork('saw');
+              window.dispatchEvent(new CustomEvent('tool-impact', { detail: { action, ok: true } }));
+              if (h <= 0) {
+                useEntityHistoryStore.getState().setTargetEntity(null);
+                const live = logBodies.get(log.id);
+                const body = live && live.isValid() ? live : undefined;
+                const t = body ? body.translation() : { x: log.position[0], y: log.position[1], z: log.position[2] };
+                const r = body ? body.rotation() : { x: log.rotation[0], y: log.rotation[1], z: log.rotation[2], w: log.rotation[3] };
+                const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+                const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+                // The -Y half is turned end for end, so a notch it keeps sits at its +Y end.
+                const flipped = q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI));
+                const half = log.length / 2 - 0.01;
+                const notchesOf = (upper: boolean) => (log.notches === 'both' || (log.notches === 'one' && upper) ? 'one' as const : 'none' as const);
+                logs.removeLog(log.id);
+                logs.addLogs([1, -1].map((s, i) => {
+                  const p = new THREE.Vector3(t.x, t.y, t.z).addScaledVector(axis, s * (log.length / 4 + 0.01));
+                  const rot = s > 0 ? q : flipped;
+                  return {
+                    ...log,
+                    id: `${log.id}_h${i}`,
+                    position: [p.x, p.y + 0.03, p.z] as [number, number, number],
+                    rotation: [rot.x, rot.y, rot.z, rot.w] as [number, number, number, number],
+                    length: half,
+                    notches: log.kind === 'log' || !log.kind ? notchesOf(s > 0) : undefined,
+                  };
+                }));
+                woodwork('sawDone');
+              }
+              return;
+            }
             if (!log || log.state !== 'loose' || (log.kind ?? 'log') !== 'log' || (log.notches ?? 'none') !== 'none' || !caps.canChop) {
               emitImpact({ position: at, direction: away, kind: 'wood', color: '#a88760', strength: 0.3 });
               playSound('wood_hit', { pitch: 0.9, volume: 0.5 });

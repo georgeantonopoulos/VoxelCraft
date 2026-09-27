@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as THREE from 'three';
-import type { LogData } from '@/state/LogStore';
+import { useLogStore, loadOf, CARRY_CAPACITY, type LogData } from '@/state/LogStore';
 import { findBenches, workpieceOn } from '@features/building/logic/benches';
 import { cutsFor, missingFor, applyCut, DOOR_HEIGHT } from '@features/building/logic/carpentry';
-import { computePlacement, notchInset, type SnapInput, type PlaceMode } from '@features/building/logic/buildSnap';
+import { computePlacement, notchInset, LEG_SPACING, POST_SPACINGS, BENCH_HEIGHT, type SnapInput, type PlaceMode } from '@features/building/logic/buildSnap';
+import { isHeld, supportedSet, type GroundAt } from '@features/building/logic/support';
 import { lyingQuat, uprightQuat, frameOf } from '@features/building/logic/pieceFrame';
 import { copperFind, veinStrength } from '@features/building/logic/copperVeins';
 import { buildNotchedLogGeometry } from '@features/building/logic/pieceGeometry';
@@ -21,10 +22,10 @@ const piece = (p: Partial<LogData>): LogData => ({
 
 const lying = (at: [number, number, number], dir: THREE.Vector3, p: Partial<LogData> = {}) => piece({ position: at, rotation: q4(lyingQuat(dir)), ...p });
 
-const snap = (carried: LogData, mode: PlaceMode, point: THREE.Vector3, target: LogData | undefined, placed: LogData[], view = new THREE.Vector3(0, -0.3, -1).normalize()): ReturnType<typeof computePlacement> => {
+const snap = (carried: LogData, mode: PlaceMode, point: THREE.Vector3, target: LogData | undefined, placed: LogData[], view = new THREE.Vector3(0, -0.3, -1).normalize(), groundAt: (x: number, z: number) => number = () => 0): ReturnType<typeof computePlacement> => {
   const input: SnapInput = {
     carried, mode, point, normal: new THREE.Vector3(0, 1, 0), target, view, placed,
-    benches: findBenches(placed), groundAt: () => 0,
+    benches: findBenches(placed), groundAt,
   };
   return computePlacement(input);
 };
@@ -55,6 +56,29 @@ describe('workbench', () => {
     expect(p.position.y).toBeCloseTo(0.8 + 0.03, 5);
     const made = piece({ ...board, state: 'placed', position: [p.position.x, p.position.y, p.position.z], rotation: q4(p.rotation) });
     expect(findBenches([legA, legB, made])).toHaveLength(1);
+  });
+
+  it('a plank still in standing mode aimed at the legs becomes the table top (not a third leg)', () => {
+    const board = piece({ state: 'carried', kind: 'plank', length: 1.48, radius: 0.13 });
+    const p = snap(board, 'standing', new THREE.Vector3(-0.45, 0.8, 0.02), legA, [legA, legB]);
+    expect(p.position.x).toBeCloseTo(0, 5);
+    expect(p.position.y).toBeCloseTo(0.8 + 0.03, 5);
+    const made = piece({ ...board, state: 'placed', position: [p.position.x, p.position.y, p.position.z], rotation: q4(p.rotation) });
+    expect(findBenches([legA, legB, made])).toHaveLength(1);
+  });
+
+  it('two short logs lying side by side with a plank across them make a sawhorse bench', () => {
+    const h1 = lying([0, 0.2, -0.45], X, { id: 'h1', length: 1.2 });
+    const h2 = lying([0, 0.2, 0.45], X, { id: 'h2', length: 1.2 });
+    const board = piece({ state: 'carried', kind: 'plank', length: 1.48, radius: 0.13 });
+    const p = snap(board, 'flat', new THREE.Vector3(0.1, 0.4, -0.45), h1, [h1, h2]);
+    expect(p.position.z).toBeCloseTo(0, 5);
+    expect(p.position.y).toBeCloseTo(0.4 + 0.03, 5);
+    const made = piece({ ...board, state: 'placed', position: [p.position.x, p.position.y, p.position.z], rotation: q4(p.rotation) });
+    expect(findBenches([h1, h2, made])).toHaveLength(1);
+    // Long wall logs are not sawhorses.
+    const w1 = lying([0, 0.2, -0.45], X, { id: 'w1', length: 3 }), w2 = lying([0, 0.2, 0.45], X, { id: 'w2', length: 3 });
+    expect(findBenches([w1, w2, made])).toHaveLength(0);
   });
 
   it('a piece aimed at the bench top lies on it, and the bench is then busy', () => {
@@ -176,15 +200,60 @@ describe('log walls', () => {
   });
 });
 
-describe('levelling', () => {
-  it('a bench leg on lower ground stands level with the other leg', () => {
-    const legA = piece({ kind: 'plank', length: 0.8, radius: 0.12, position: [0, 0.35, 0], rotation: q4(uprightQuat(X)) });
-    const leg = piece({ state: 'carried', kind: 'plank', length: 0.8, radius: 0.12 });
-    const p = snap(leg, 'standing', new THREE.Vector3(0.9, -0.25, 0), undefined, [legA]);
+describe('bench legs on uneven ground', () => {
+  const leg = () => piece({ state: 'carried', kind: 'plank', length: 0.8, radius: 0.12 });
+  // First leg on the ground at x = 0 (ground height 0), 5 cm sunk: top at 0.75.
+  const legA = () => piece({ id: 'legA', kind: 'plank', length: 0.8, radius: 0.12, position: [0, 0.35, 0], rotation: q4(uprightQuat(X)) });
+  const place = (slope: number) => {
+    const g = (x: number) => slope * x;
+    return snap(leg(), 'standing', new THREE.Vector3(1.0, g(1.0), 0), undefined, [legA()], undefined, (x) => g(x));
+  };
+
+  it('a second leg aimed near the first snaps to bench spacing, turned the same way', () => {
+    const p = place(0);
+    expect(p.position.x).toBeCloseTo(LEG_SPACING, 5);
+    expect(p.position.z).toBeCloseTo(0, 5);
     expect(p.position.y + 0.4).toBeCloseTo(0.75, 5);
-    // Too far down the slope to reach: it just stands on the ground.
-    const far = snap(leg, 'standing', new THREE.Vector3(0.9, -0.8, 0), undefined, [legA]);
-    expect(far.position.y).toBeCloseTo(-0.8 + 0.4 - 0.05, 5);
+  });
+
+  it('on higher ground it is sunk deeper, level with the first', () => {
+    const p = place(0.3);
+    expect(p.position.y + 0.4).toBeCloseTo(0.75, 5);
+    expect(p.adjust![0].position[1] + 0.4).toBeCloseTo(0.75, 5); // the first leg stays put (only turns)
+  });
+
+  it('long legs are driven in to a working height, both turned face-on across the top', () => {
+    const tall = () => piece({ id: 'tallA', kind: 'plank', length: 1.48, radius: 0.13, position: [0, 0.74 - 0.05, 0], rotation: q4(uprightQuat(X)) });
+    const p = snap(piece({ state: 'carried', kind: 'plank', length: 1.48, radius: 0.13 }), 'standing', new THREE.Vector3(1.0, 0, 0), undefined, [tall()]);
+    expect(p.position.y + 0.74).toBeCloseTo(BENCH_HEIGHT, 5);
+    expect(p.adjust![0].position[1] + 0.74).toBeCloseTo(BENCH_HEIGHT, 5);
+    // Faces across the line between the legs (normal along it).
+    const f = frameOf({ position: [0, 0, 0], rotation: q4(p.rotation) });
+    expect(Math.abs(f.normal.x)).toBeCloseTo(1, 5);
+  });
+
+  it('on lower ground the first leg is driven down to match', () => {
+    const p = place(-0.3);
+    const top = p.position.y + 0.4;
+    expect(top).toBeCloseTo(-0.27 + 0.75, 5);
+    expect(p.adjust?.[0].id).toBe('legA');
+    expect(p.adjust![0].position[1] + 0.4).toBeCloseTo(top, 5);
+  });
+
+  it('too steep to pair: it just stands on its ground where aimed', () => {
+    const p = place(0.6);
+    expect(p.position.y + 0.4).toBeCloseTo(0.6 + 0.75, 5);
+  });
+
+  it('a flat plank aimed at the ground near two level legs becomes the table top', () => {
+    const A = legA();
+    const B = piece({ id: 'legB', kind: 'plank', length: 0.8, radius: 0.12, position: [0.9, 0.35, 0], rotation: q4(uprightQuat(X)) });
+    const top = piece({ state: 'carried', kind: 'plank', length: 3, radius: 0.18 });
+    const p = snap(top, 'flat', new THREE.Vector3(0.6, 0, 0.8), undefined, [A, B]);
+    expect(p.position.x).toBeCloseTo(0.45, 5);
+    expect(p.position.y).toBeCloseTo(0.75 + 0.03, 5);
+    const made = piece({ ...top, state: 'placed', position: [p.position.x, p.position.y, p.position.z], rotation: q4(p.rotation) });
+    expect(findBenches([A, B, made])).toHaveLength(1);
   });
 });
 
@@ -264,5 +333,137 @@ describe('notched log mesh', () => {
     let minTop = Infinity;
     for (let i = 0; i < pos.length; i += 3) if (Math.abs(pos[i + 1] - (1.2 - 0.25)) < 0.02 && Math.abs(pos[i]) < 0.02 && pos[i + 2] > 0) minTop = Math.min(minTop, pos[i + 2]);
     expect(minTop).toBeCloseTo(0.1, 2);
+  });
+});
+
+describe('carrying a load', () => {
+  const reset = () => useLogStore.setState({ logs: {}, carried: [], carriedId: null });
+  const loose = (id: string, p: Partial<LogData>) => piece({ id, state: 'loose', ...p });
+
+  it('takes up to six tall planks; the last taken is in hand', () => {
+    reset();
+    const planks = Array.from({ length: 7 }, (_, k) => loose(`p${k}`, { kind: 'plank', length: 3, radius: 0.12 }));
+    useLogStore.getState().addLogs(planks);
+    const took = planks.map((p) => useLogStore.getState().pickUp(p.id));
+    expect(took).toEqual([true, true, true, true, true, true, false]);
+    const st = useLogStore.getState();
+    expect(st.carriedId).toBe('p5');
+    expect(st.carryLoad()).toBe(CARRY_CAPACITY);
+    expect(st.logs.p6.state).toBe('loose');
+  });
+
+  it('a wall log fills the arms; a door leaves room for three boards', () => {
+    reset();
+    useLogStore.getState().addLogs([loose('log', { length: 3 }), loose('b', { kind: 'plank', length: 1.2, radius: 0.12 }), loose('door', { kind: 'door', length: 1.85, radius: 0.46 })]);
+    expect(useLogStore.getState().pickUp('log')).toBe(true);
+    expect(useLogStore.getState().pickUp('b')).toBe(false);
+    useLogStore.getState().release('log');
+    expect(useLogStore.getState().pickUp('door')).toBe(true);
+    expect(useLogStore.getState().pickUp('b')).toBe(true);
+    expect(loadOf({ kind: 'plank', length: 1.2 })).toBe(0.5);
+  });
+
+  it('placing the piece in hand brings the next one to hand', () => {
+    reset();
+    useLogStore.getState().addLogs([loose('a', { kind: 'plank', length: 3, radius: 0.12 }), loose('b', { kind: 'roof', length: 2.4, radius: 0.12 })]);
+    useLogStore.getState().pickUp('a');
+    useLogStore.getState().pickUp('b');
+    useLogStore.getState().updateLog('b', { state: 'placed' });
+    useLogStore.getState().release('b');
+    expect(useLogStore.getState().carriedId).toBe('a');
+    useLogStore.getState().removeLog('a');
+    expect(useLogStore.getState().carriedId).toBeNull();
+  });
+});
+
+describe('gravity', () => {
+  const flat: GroundAt = () => 0;
+  const post = (id: string, x: number, z: number, top = 0.8) => piece({ id, kind: 'post', length: 1, radius: 0.14, position: [x, top - 0.5, z], rotation: q4(uprightQuat(X)) });
+
+  it('a log on the ground is held; one floating in the air is not', () => {
+    expect(isHeld(lying([0, 0.17, 0], X), [], flat)).toBe(true);
+    expect(isHeld(lying([0, 1.2, 0], X), [], flat)).toBe(false);
+  });
+
+  it('a beam across two posts is held; one hanging off a single post by its end is not', () => {
+    const A = post('A', -1.25, 0), B = post('B', 1.25, 0);
+    const beam = lying([0, 1.0, 0], X);
+    expect(isHeld(beam, [A, B], flat)).toBe(true);
+    const cantilever = lying([1.25 + 1.1, 1.0, 0], X);
+    expect(isHeld(cantilever, [B], flat)).toBe(false);
+    // Balanced on one post under its middle: held.
+    expect(isHeld(lying([1.25, 1.0, 0], X), [B], flat)).toBe(true);
+  });
+
+  it('taking a post away drops the beam it held (and what the beam held)', () => {
+    const A = post('A', -1.25, 0), B = post('B', 1.25, 0);
+    const beam = lying([0, 1.0, 0], X, { id: 'beam' });
+    const onBeam = lying([0, 1.4, 0], X, { id: 'onBeam' });
+    expect(supportedSet([A, B, beam, onBeam], flat).has('onBeam')).toBe(true);
+    const after = supportedSet([A, beam, onBeam], flat);
+    expect(after.has('beam')).toBe(false);
+    expect(after.has('onBeam')).toBe(false);
+  });
+
+  it('a door holds nothing up: a doorway log with only its corner end held falls', () => {
+    const corner = lying([-0.6, 0.4, 0.95], new THREE.Vector3(0, 0, 1), { id: 'corner' }); // crossing wall under the corner end
+    const doorwayLog = lying([0, 0.6, 0], X, { id: 'dw', length: 1.48, notches: 'one' });
+    const door = piece({ id: 'door', kind: 'door', length: 1.85, radius: 0.46, position: [1.24, 0.95, 0], rotation: q4(uprightQuat(X)) });
+    expect(isHeld(doorwayLog, [corner, door], () => null)).toBe(false);
+  });
+
+  it('a long log laid flush over a short one tips off its end', () => {
+    const short = lying([0, 0.2, 0], X, { length: 1.2, id: 'short' });
+    const long = lying([0.9, 0.59, 0], X, { length: 3, id: 'long' }); // flush at x = -0.6, overhanging 1.8 m
+    expect(isHeld(long, [short], () => null)).toBe(false);
+    const centred = lying([0, 0.59, 0], X, { length: 3 });
+    expect(isHeld(centred, [short], () => null)).toBe(true);
+  });
+
+  it('a roof board is held by its eave alone', () => {
+    const south = lying([0, 1.0, 0], X), north = lying([0, 1.0, -2.4], X);
+    const board = piece({ state: 'carried', kind: 'roof', length: 2.4, radius: 0.12 });
+    const p = snap(board, 'pitched', new THREE.Vector3(0.3, 1.2, 0), south, [south, north]);
+    const placedBoard = piece({ ...board, state: 'placed', position: [p.position.x, p.position.y, p.position.z], rotation: q4(p.rotation) });
+    expect(isHeld(placedBoard, [south, north], flat)).toBe(true);
+  });
+});
+
+describe('a square base on posts', () => {
+  const postC = () => piece({ state: 'carried', kind: 'post', length: 1, radius: 0.14 });
+  const P1 = () => piece({ id: 'P1', kind: 'post', length: 1, radius: 0.14, position: [0, 0.38, 0], rotation: q4(uprightQuat(X)) });
+
+  it('the next post snaps one wall span away, square to the first', () => {
+    const p = snap(postC(), 'upright', new THREE.Vector3(2.3, 0, 0.3), undefined, [P1()]);
+    expect(p.position.x).toBeCloseTo(POST_SPACINGS[0], 5);
+    expect(p.position.z).toBeCloseTo(0, 5);
+  });
+
+  it('on lower ground the posts already set are driven down to level', () => {
+    const slope = (x: number) => -0.1 * x;
+    const P2 = piece({ id: 'P2', kind: 'post', length: 1, radius: 0.14, position: [0, 0.38, 2.5], rotation: q4(uprightQuat(X)) });
+    const p = snap(postC(), 'upright', new THREE.Vector3(2.5, slope(2.5), 0), undefined, [P1(), P2], undefined, (x) => slope(x));
+    expect(p.adjust?.map((a) => a.id).sort()).toEqual(['P1', 'P2']);
+    expect(p.adjust![0].position[1] + 0.5).toBeCloseTo(p.position.y + 0.5, 5);
+  });
+
+  it('sills span the posts; the second pair crosses the first half a log up', () => {
+    const top = 0.88;
+    const posts = [[0, 0], [2.5, 0], [0, 2.5], [2.5, 2.5]].map(([x, z], k) => piece({ id: `Q${k}`, kind: 'post', length: 1, radius: 0.14, position: [x, top - 0.5, z], rotation: q4(uprightQuat(X)) }));
+    const sill = () => piece({ state: 'carried', notches: 'both' });
+    const a = snap(sill(), 'lying', new THREE.Vector3(0, top, 0.05), posts[0], posts, new THREE.Vector3(0, -0.3, -1).normalize());
+    expect(a.position.x).toBeCloseTo(1.25, 5);
+    expect(a.position.y).toBeCloseTo(top + 0.2, 5);
+    const A = piece({ ...sill(), id: 'sillA', state: 'placed', position: [a.position.x, a.position.y, a.position.z], rotation: q4(a.rotation) });
+    // Looking along +X now: across the view is Z, so it spans Q0 -> Q2.
+    const b = snap(sill(), 'lying', new THREE.Vector3(0, top, 0.05), posts[0], [...posts, A], new THREE.Vector3(1, -0.3, 0).normalize());
+    expect(b.position.z).toBeCloseTo(1.25, 5);
+    expect(b.position.y).toBeCloseTo(top + 0.2 + 0.2, 5);
+  });
+
+  it('a log on sloping bare ground rests on the high point', () => {
+    const slope = (x: number) => 0.2 * x;
+    const p = snap(piece({ state: 'carried' }), 'lying', new THREE.Vector3(0, 0, 0), undefined, [], new THREE.Vector3(0, -0.3, -1).normalize(), (x) => slope(x));
+    expect(p.position.y).toBeCloseTo(slope(1.2) + 0.2 * 0.85, 5);
   });
 });

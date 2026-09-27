@@ -12,7 +12,9 @@ import { frameProfiler } from '@core/utils/FrameProfiler';
 import { useInputStore } from '@/state/InputStore';
 import { sharedUniforms } from '@core/graphics/SharedUniforms';
 import { useLogStore } from '@/state/LogStore';
+import { useShallow } from 'zustand/react/shallow';
 import { PieceMesh } from '@features/building/components/PieceMeshes';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 /** Swing timeline (seconds). Contact must match the delayed strike. */
@@ -29,6 +31,16 @@ export const FirstPersonTools: React.FC = () => {
     const fillLightRef = useRef<THREE.PointLight>(null);
     // A log carried in both hands, across the lower view (hands are busy).
     const carriedLog = useLogStore((st) => (st.carriedId ? st.logs[st.carriedId] : null));
+    // Everything else in the arms (the piece in hand is the last), top down, at most six shown.
+    const loadBelow = useLogStore(useShallow((st) => st.carried.slice(0, -1).reverse().slice(0, 6).map((id) => st.logs[id]).filter(Boolean)));
+    const underLoad = useMemo(() => {
+        let drop = carriedLog ? (carriedLog.kind === 'plank' || carriedLog.kind === 'roof' ? 0.08 : carriedLog.radius * 2) : 0;
+        return loadBelow.map((piece) => {
+            const at = drop;
+            drop += piece.kind === 'plank' || piece.kind === 'roof' ? 0.07 : piece.kind === 'door' ? 0.1 : piece.radius * 2;
+            return { piece, drop: at };
+        });
+    }, [loadBelow, carriedLog]);
     // Body motion carried into the hands: stride bob, look lag, landing dip.
     const motion = useMemo(() => ({
         lastCam: new THREE.Vector3(), primed: false, speed: 0, phase: 0, lastVy: 0, dip: 0,
@@ -262,7 +274,7 @@ export const FirstPersonTools: React.FC = () => {
         const handleImpact = (e: Event) => {
             const ce = e as CustomEvent;
             const detail = (ce.detail ?? {}) as { action?: string; ok?: boolean };
-            if (!document.pointerLockElement) return;
+            if (!isPointerCaptured()) return;
             if (detail.action === 'DIG' || detail.action === 'CHOP' || detail.action === 'SMASH' || detail.action === 'SAW') {
                 // Contact: recoil (a hard jolt off unbreakable rock).
                 impactKickTarget.current = detail.ok === false ? 1.0 : 0.65;
@@ -581,6 +593,12 @@ export const FirstPersonTools: React.FC = () => {
                         : <group rotation={[0, carriedLog.kind === 'plank' || carriedLog.kind === 'roof' ? 1.2 : 0, 0]}><PieceMesh piece={carriedLog} /></group>}
                 </group>
             )}
+            {/* The rest of the load, stacked under the piece in hand. */}
+            {carriedLog && carriedLog.kind !== 'door' && underLoad.map(({ piece, drop }) => (
+                <group key={piece.id} position={[0.05, -0.42 - drop, -1.1]} rotation={[0.1, 0.12, Math.PI / 2 - 0.08]}>
+                    <group rotation={[0, piece.kind === 'plank' || piece.kind === 'roof' || piece.kind === 'door' ? 1.2 : 0, 0]}><PieceMesh piece={piece} /></group>
+                </group>
+            ))}
             <group ref={rightItemRef}>
                 {/* 
                   Prevent UniversalTool from rendering the torch (and its extra PointLight) 

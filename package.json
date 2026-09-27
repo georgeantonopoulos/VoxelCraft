@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:unit": "vitest run",
-    "bench": "vitest bench --run"
+    "bench": "vitest bench --run",
+    "scene": "node scripts/scene.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -32,6 +33,7 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.22",
+    "playwright-core": "^1.63.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.8.2",

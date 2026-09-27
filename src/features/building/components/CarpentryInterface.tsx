@@ -171,10 +171,10 @@ export const CarpentryInterface: React.FC = () => {
 
   const takeBack = () => {
     if (!piece) return;
-    const store = useLogStore.getState();
-    if (store.carriedId) return;
-    store.updateLog(piece.id, { state: 'carried', onBench: undefined });
-    store.setCarried(piece.id);
+    if (!useLogStore.getState().pickUp(piece.id)) {
+      window.dispatchEvent(new CustomEvent('vc-hud-note', { detail: { text: 'Your arms are full · set the load down first' } }));
+      return;
+    }
     close();
   };
 

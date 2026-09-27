@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useEntityHistoryStore } from '@/state/EntityHistoryStore';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { useSettingsStore } from '@/state/SettingsStore';
 
 export const TargetHealthBar: React.FC = () => {
@@ -9,9 +10,9 @@ export const TargetHealthBar: React.FC = () => {
     const [visible, setVisible] = useState(false);
     // Paused (mouse free in mouse mode): the pause veil owns the centre of the screen.
     const mouseMode = useSettingsStore(state => state.inputMode) === 'mouse';
-    const [locked, setLocked] = useState(() => !!document.pointerLockElement);
+    const [locked, setLocked] = useState(() => isPointerCaptured());
     useEffect(() => {
-        const onChange = () => setLocked(!!document.pointerLockElement);
+        const onChange = () => setLocked(isPointerCaptured());
         document.addEventListener('pointerlockchange', onChange);
         return () => document.removeEventListener('pointerlockchange', onChange);
     }, []);

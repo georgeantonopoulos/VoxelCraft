@@ -8,6 +8,7 @@ import { emitGroveEvent } from '@features/grove/groveEvents';
 import { PlacedTorch } from '@features/interaction/components/PlacedTorch';
 import { ItemType } from '@/types';
 import { frameProfiler } from '@core/utils/FrameProfiler';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { PooledPointLight, type VirtualPointLight } from '@core/graphics/PointLightPool';
 
 function isTextInputTarget(target: EventTarget | null): boolean {
@@ -134,7 +135,7 @@ export const FloraPlacer: React.FC = () => {
             // Right mouse button = "use/build" for the currently selected item.
             if (e.button !== 2) return;
             // Only place items when in gameplay (pointer lock).
-            if (!document.pointerLockElement) return;
+            if (!isPointerCaptured()) return;
             // Avoid stealing focus from UI inputs/debug panels.
             if (isTextInputTarget(e.target)) return;
             e.preventDefault();

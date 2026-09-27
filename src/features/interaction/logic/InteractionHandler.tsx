@@ -19,6 +19,7 @@ import { tryUseBuildPiece } from '@features/building/useBuildPiece';
 /** Horizontal distance from the eye at which thrown items spawn (capsule radius 0.4 + item size). */
 const THROW_SPAWN_CLEARANCE = 0.8;
 import { getToolCapabilities } from './ToolCapabilities';
+import { isPointerCaptured } from '@core/input/pointerCapture';
 import { STRIKE_CONTACT_MS } from '@features/terrain/hooks/useTerrainInteraction';
 
 interface InteractionHandlerProps {
@@ -108,7 +109,7 @@ export const InteractionHandler: React.FC<InteractionHandlerProps> = () => {
 
     // `fromTouch` marks presses from the on-screen touch buttons (no pointer lock on touch).
     const handleMouseDown = (e: MouseEvent | { button: number; fromTouch: true }) => {
-      if (!('fromTouch' in e) && !document.pointerLockElement) return;
+      if (!('fromTouch' in e) && !isPointerCaptured()) return;
 
       // Hands full: a carried log can only be set in place (right click).
       if (useLogStore.getState().carriedId) {

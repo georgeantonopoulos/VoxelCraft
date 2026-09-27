@@ -19,6 +19,7 @@
  */
 
 import { GroveMusic, type MusicCue } from './GroveMusic';
+import { playWaterSound, type WaterSoundKind } from './WaterSounds';
 
 export interface AmbienceScene {
   /** 0..1 sun height factor: 0 = night, 1 = full day. */
@@ -344,6 +345,13 @@ export class ProceduralAmbience {
       o.start(t);
       o.stop(t + 0.12);
     }
+  }
+
+  /** The player's body in water: wading strides, swim strokes, a plunge (WaterSounds.ts). */
+  bodyInWater(kind: WaterSoundKind, depth: number, loudness: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || !this.stepNoise) return;
+    playWaterSound({ ctx, out: this.muffle, reverb: this.reverbSend, noise: this.stepNoise, rand: this.rand }, kind, depth, loudness);
   }
 
   /** Short musical motif for a discovery or milestone. */
